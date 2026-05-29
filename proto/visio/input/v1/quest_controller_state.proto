@@ -1,0 +1,59 @@
+// visio/input/v1/quest_controller_state.proto
+//
+// Snapshot of BOTH Quest VR controllers at one sample tick, published
+// on STREAM_CONTROLLER_STATE. The two controllers share the Quest's
+// OpenXR poll cycle, so they are inherently frame-coherent — bundling
+// them into one message guarantees that pairing without any
+// receiver-side alignment.
+//
+// Parity note: replaces the per-controller-side fields embedded in
+// UMI v3's T_POSE (F_LEFT_BUTTON_*, F_LEFT_TRIGGER, F_LEFT_GRIP,
+// F_LEFT_THUMBSTICK, F_LEFT_THUMBSTICK_CLICK, and right-side
+// equivalents). All of those collapse into one ControllerState
+// sub-message per side, both carried in one QuestControllerState.
+//
+// Presence: each side is an optional sub-message. If the user only has
+// one controller tracked, the absent side is left unset (proto3
+// message-field presence semantics). The published cadence is the
+// Quest's pose rate (~72-90 Hz).
+
+syntax = "proto3";
+
+package visio.input.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// State of a single Quest VR controller at one sample tick.
+message ControllerState {
+  // Face buttons.
+  bool button_a    = 1;
+  bool button_b    = 2;
+  bool button_menu = 3;
+
+  // Analog trigger, range [0.0, 1.0]. 0 = fully released.
+  float trigger = 4;
+
+  // Analog grip, range [0.0, 1.0]. 0 = fully released.
+  float grip = 5;
+
+  // Thumbstick. Each axis in [-1.0, 1.0]; (0, 0) = centered.
+  float thumbstick_x = 6;
+  float thumbstick_y = 7;
+
+  // Thumbstick click (a button under the stick that fires when pressed).
+  bool thumbstick_click = 8;
+}
+
+// Frame-coherent snapshot of both Quest controllers.
+message QuestControllerState {
+  // Sample time on the producer's local monotonic clock.
+  google.protobuf.Timestamp timestamp = 1;
+
+  // Left controller state. Unset if the left controller is not present
+  // / not tracked at this tick.
+  ControllerState left = 2;
+
+  // Right controller state. Unset if the right controller is not
+  // present / not tracked at this tick.
+  ControllerState right = 3;
+}

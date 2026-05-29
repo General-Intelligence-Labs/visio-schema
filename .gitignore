@@ -1,0 +1,8 @@
+# Generated language bindings — built by `make gen`. Vendored at
+# release tags only; HEAD stays source-only.
+gen/
+
+# buf installed locally via npm.
+node_modules/
+package.json
+package-lock.json

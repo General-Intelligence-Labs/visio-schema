@@ -1,0 +1,36 @@
+// visio/geometry/v1/twist.proto
+//
+// 6-DoF velocity (linear + angular) in a named reference frame.
+//
+// Used on STREAM_TWIST. Foxglove does not ship a Twist message
+// (only Velocity3 for linear), so we define our own — but we
+// compose it from foxglove.Vector3 primitives so it plays nicely
+// with anything that expects Foxglove geometry.
+//
+// Parity note: replaces UMI v3's F_*_VELOCITY fields inside T_POSE
+// (which carried a 6-float (vx,vy,vz,wx,wy,wz) packed array per body
+// part). Each velocity now lives on its own STREAM_TWIST with the
+// corresponding body part's stream_index.
+
+syntax = "proto3";
+
+package visio.geometry.v1;
+
+import "foxglove/Vector3.proto";
+import "google/protobuf/timestamp.proto";
+
+message Twist {
+  // Acquisition time on the producer's local monotonic clock.
+  google.protobuf.Timestamp timestamp = 1;
+
+  // The frame this velocity is expressed in. Convention matches
+  // foxglove.PoseInFrame: typically the body frame of the moving
+  // object. TF tree transforms live on STREAM_TF.
+  string frame_id = 2;
+
+  // Linear velocity, m/s.
+  foxglove.Vector3 linear = 3;
+
+  // Angular velocity, rad/s.
+  foxglove.Vector3 angular = 4;
+}

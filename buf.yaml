@@ -1,0 +1,31 @@
+version: v2
+modules:
+  - path: proto
+  - path: third_party/foxglove-sdk/schemas/proto
+    lint:
+      use: []
+    breaking:
+      use: []
+lint:
+  use:
+    - STANDARD
+  except:
+    # We use proto packages like `visio.sensor.v1`, `visio.ros.geometry_msgs.v1`,
+    # etc. — the standard rule wants the *file* path to mirror the package, which
+    # would force every leaf dir to host the file directly. Our layout puts
+    # multiple .protos under a single v1 dir for related types, which is the
+    # common convention in larger schemas. Skip the strict check.
+    - PACKAGE_DIRECTORY_MATCH
+    # Foxglove's proto package is `foxglove`, not `foxglove.v1`. Don't fail their
+    # files for our convention.
+    - PACKAGE_VERSION_SUFFIX
+    # Our enum values are scope-prefixed by the enum's logical category
+    # (DEVICE_*, STREAM_*, MAGNET_*) rather than the exact enum name
+    # (DEVICE_CLASS_*, STREAM_KIND_*, MAGNET_STATUS_*). The Google style
+    # rule would balloon every value with an extra prefix; the scoped
+    # form is already collision-safe across our enums.
+    - ENUM_VALUE_PREFIX
+    - ENUM_ZERO_VALUE_SUFFIX
+breaking:
+  use:
+    - FILE

@@ -1,0 +1,56 @@
+// visio/service/device_info/v1/device_info.proto
+//
+// Published by every peer at boot (and optionally periodically thereafter)
+// on STREAM_DEVICE_INFO. Recorders and hub aggregators use it to
+// pre-register MCAP channels and to understand the bus topology
+// without waiting for the first sensor message on each stream.
+//
+// Parity note: replaces UMI v3's T_DEVICE_INFO_REQ / T_DEVICE_INFO_RESP
+// pair. The query side becomes the Identify Command (see
+// visio/control/v1/command.proto); the response shape is folded into
+// this single DeviceInfo message.
+
+syntax = "proto3";
+
+package visio.service.device_info.v1;
+
+import "visio/wire/v1/header.proto";
+
+// One stream this device produces, with optional per-instance label
+// for human inspection (e.g. "left index finger imu", "fisheye left").
+message StreamCapability {
+  visio.wire.v1.StreamKind stream = 1;
+  uint32 stream_index            = 2;
+  // Optional human-readable label (free-form, presentation-only).
+  string label                    = 3;
+}
+
+message DeviceInfo {
+  // The peer this DeviceInfo describes. Matches the wire Header's
+  // `device` field on every message this peer produces.
+  visio.wire.v1.DeviceClass device = 1;
+
+  // Firmware / app version (free-form, typically semver "1.2.3").
+  string firmware_version = 2;
+
+  // Hardware revision string (e.g. "v3", "rev_b", "umi-gripper-v2").
+  string hardware_revision = 3;
+
+  // Human-readable model name (e.g. "UMI Gripper", "Quest 3").
+  string model = 4;
+
+  // Serial number, MAC, or persistent UUID (opaque to the bus; useful
+  // for fleet bookkeeping). Optional.
+  string serial = 5;
+
+  // Stream capabilities this device produces. Recorders use this to
+  // pre-register MCAP channels at session start instead of
+  // lazy-on-first-publish.
+  repeated StreamCapability streams = 6;
+
+  // Boot wall-clock time (seconds since Unix epoch). Used by recorders
+  // to convert this peer's monotonic ns timestamps to absolute Unix
+  // time for MCAP log_time. Set to 0 if the device has no RTC; in that
+  // case the recorder substitutes its own wall clock at session start.
+  uint64 boot_unix_seconds = 7;
+}

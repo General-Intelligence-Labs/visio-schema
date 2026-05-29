@@ -1,0 +1,21 @@
+// visio/service/heartbeat/v1/heartbeat.proto
+//
+// Periodic liveness ping on STREAM_HEARTBEAT. Cadence ~1 Hz typical.
+// Identity and timestamp live in the wire Header; this message body
+// carries optional health hints.
+//
+// Parity note: replaces UMI v3's T_HEART (which was an empty payload).
+// Visio adds a single optional `queue_depth` field so peers can
+// communicate backpressure without a separate health stream.
+
+syntax = "proto3";
+
+package visio.service.heartbeat.v1;
+
+message Heartbeat {
+  // Instantaneous outbound queue depth on the sender's bus, in
+  // messages. 0 means "no backpressure." Higher values let receivers
+  // (and recorders) know the sender is falling behind. Optional;
+  // recipients should treat 0 as "not reported" when ambiguity exists.
+  uint32 queue_depth = 1;
+}

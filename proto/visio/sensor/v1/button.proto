@@ -1,0 +1,41 @@
+// visio/sensor/v1/button.proto
+//
+// Edge-triggered binary sensor reading from a physical button on a
+// device (gripper start/stop button, glove side button, etc.).
+// Emitted on press and release transitions only — NOT continuously
+// sampled.
+//
+// The producer's job is to report WHAT button changed state and WHEN.
+// The CONSUMER decides what the press means: a host-side recorder
+// might map a gripper button press to "start recording"; a teleop
+// pipeline might map it to "release object". The button schema makes
+// no assumption about intent.
+//
+// Parity note: replaces UMI v3's T_CONTROL (which was a single bool
+// + timestamp). Visio names the button explicitly so a single device
+// can emit events from multiple physical buttons on the same stream.
+//
+// Quest VR controller buttons live in a separate stream
+// (STREAM_CONTROLLER_STATE -> visio.input.v1.QuestControllerState),
+// which is continuously sampled at the Quest's pose cadence rather
+// than edge-triggered.
+
+syntax = "proto3";
+
+package visio.sensor.v1;
+
+import "google/protobuf/timestamp.proto";
+
+message ButtonEvent {
+  // Transition time on the producer's local monotonic clock.
+  google.protobuf.Timestamp timestamp = 1;
+
+  // Device-defined button identifier, free-form. Examples: "primary",
+  // "secondary", "left_finger_tip", "menu". Producers SHOULD list
+  // their button ids in their DeviceInfo description; consumers
+  // SHOULD treat unknown ids as no-op rather than error.
+  string button_id = 2;
+
+  // True for press, false for release.
+  bool pressed = 3;
+}

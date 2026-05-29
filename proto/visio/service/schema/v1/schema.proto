@@ -1,0 +1,47 @@
+// visio/service/schema/v1/schema.proto
+//
+// Runtime schema descriptor query / response on STREAM_SCHEMA_QUERY.
+// Any peer can ask any other peer "give me the FileDescriptorProto
+// for this StreamKind"; responders that have the descriptor reply.
+// Recorders also use this internally to resolve descriptors before
+// writing MCAP Schema records.
+//
+// Visio addition; no UMI v3 equivalent.
+
+syntax = "proto3";
+
+package visio.service.schema.v1;
+
+import "visio/wire/v1/header.proto";
+
+// Sent by a peer that wants the protobuf descriptor for a given
+// StreamKind. The responder is the SchemaQueryService on any peer
+// that has it registered.
+message Request {
+  // The StreamKind whose payload schema is being requested.
+  visio.wire.v1.StreamKind stream = 1;
+
+  // Echo-back ID to match Response to Request. Per-initiator
+  // monotonic counter; uniqueness within initiator only.
+  uint64 request_id = 2;
+}
+
+// Response carrying the serialized google.protobuf.FileDescriptorProto
+// for the requested stream's payload type. Bytes are usable as-is in
+// an MCAP Schema record's `data` field.
+message Response {
+  // Echo of Request.stream.
+  visio.wire.v1.StreamKind stream = 1;
+
+  // Echo of Request.request_id.
+  uint64 request_id = 2;
+
+  // Protobuf full name of the payload type, e.g. "visio.sensor.v1.Imu".
+  // Useful so callers don't have to redo the StreamKind -> name lookup.
+  string payload_type = 3;
+
+  // Serialized google.protobuf.FileDescriptorProto for the file that
+  // defines `payload_type`. Empty if the responder does not have the
+  // descriptor (caller should try another responder).
+  bytes file_descriptor = 4;
+}
