@@ -8,8 +8,8 @@ If anything in code disagrees with this document, this document wins.
 
 Every Visio wire message consists of:
 
-1. A small **`HEADER_LEN`** (2 bytes, little-endian unsigned 16-bit)
-   giving the size of the serialized Header in bytes.
+1. A small **`HEADER_LEN`** (1 byte, unsigned 8-bit) giving the size
+   of the serialized Header in bytes.
 2. The **Header** — `visio.wire.v1.Header` protobuf payload, length
    `HEADER_LEN` bytes.
 3. The **payload** — the inner message bytes; protobuf-encoded per
@@ -26,7 +26,7 @@ UDP). See section 3.
 core frame (always the same):
 ┌──────────────┬────────────────┬──────────────┬───────────────┐
 │ HEADER_LEN   │ header_pb      │ payload      │ CRC16         │
-│ u16_le       │ (HEADER_LEN B) │ (variable)   │ u16_le        │
+│ u8           │ (HEADER_LEN B) │ (variable)   │ u16_le        │
 └──────────────┴────────────────┴──────────────┴───────────────┘
                 ▲                ▲              ▲
                 covered by CRC ──┴──────────────┘
@@ -56,8 +56,12 @@ is semantically `uint8` (`[0, 255]`); values `0..127` encode as
 
 Typical serialized Header size: **~21-25 bytes**.
 
-`HEADER_LEN` is `u16` rather than `u8` so the Header can grow with
-optional fields in future versions without a wire-format break.
+`HEADER_LEN` is a single byte: the ~21-25 byte Header never approaches
+255 bytes, and it grows *compatibly* via optional protobuf fields, so a
+wider length field buys nothing. There is also **no separate header
+version byte** — structural breaks are handled by the proto package
+version (`visio.wire.v1` → `v2`). (This field was `u16` in an earlier
+draft; the narrowing is a deliberate pre-1.0 wire change.)
 
 ## 3. Per-Endpoint frame wrappers
 
@@ -69,7 +73,7 @@ explicit total length prefix.
 ```
 ┌──────────────┬──────────────┬────────────┬──────────┬─────────┐
 │ TOTAL_LEN    │ HEADER_LEN   │ header_pb  │ payload  │ CRC16   │
-│ u32_le       │ u16_le       │ N bytes    │ M bytes  │ u16_le  │
+│ u32_le       │ u8           │ N bytes    │ M bytes  │ u16_le  │
 └──────────────┴──────────────┴────────────┴──────────┴─────────┘
 ```
 
@@ -108,7 +112,7 @@ needed (datagram boundaries are intrinsic).
 ```
 ┌──────────────┬────────────┬──────────┬─────────┐
 │ HEADER_LEN   │ header_pb  │ payload  │ CRC16   │
-│ u16_le       │ N bytes    │ M bytes  │ u16_le  │
+│ u8           │ N bytes    │ M bytes  │ u16_le  │
 └──────────────┴────────────┴──────────┴─────────┘
 ```
 

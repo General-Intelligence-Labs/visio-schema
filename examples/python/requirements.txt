@@ -1,0 +1,5 @@
+# Dependencies for visio_foxglove.py (the visio-schema package itself is
+# assumed already importable — `pip install -e python` or `make wheel`).
+pyserial>=3.5
+mcap>=1.1
+foxglove-sdk>=0.10

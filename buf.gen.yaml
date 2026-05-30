@@ -1,7 +1,10 @@
+# buf generates Python only. C++ codegen runs via local protoc in the
+# Makefile because the buf cpp remote plugin emits code requiring a
+# newer libprotobuf runtime than is widely installable (Ubuntu 24.04 ships
+# 32.x; conda-forge ships 31.x). Local protoc tracks the local libprotobuf,
+# so its output matches whatever lib the visio-mq C++ target links against.
 version: v2
 plugins:
-  - remote: buf.build/protocolbuffers/cpp
-    out: gen/cpp
   - remote: buf.build/protocolbuffers/python
     out: gen/python
   - remote: buf.build/protocolbuffers/pyi

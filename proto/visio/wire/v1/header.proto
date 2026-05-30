@@ -22,7 +22,34 @@ syntax = "proto3";
 
 package visio.wire.v1;
 
+import "google/protobuf/descriptor.proto";
 import "google/protobuf/timestamp.proto";
+
+// Per-enum-value annotations declaring the wire-payload protobuf type
+// and the MCAP Schema.name that go with each StreamKind. Read at
+// runtime by visio-mq's SchemaRegistry via the EnumValueDescriptor
+// extension API in both Python and C++. The proto file is the
+// canonical source of truth; docs/stream_type_map.md is a
+// human-readable view of these annotations.
+//
+// Dual-payload service streams (STREAM_TIMESYNC, STREAM_SCHEMA_QUERY)
+// carry one of two types per direction. They are deliberately left
+// UNannotated so SchemaRegistry returns None for them; service
+// implementations hand-code the two-type dispatch.
+//
+// Tag numbers >= 50000 are inside the user-defined option range.
+extend google.protobuf.EnumValueOptions {
+  // Protobuf full name of the payload that follows the Header on the
+  // wire when this StreamKind is set. E.g. "visio.sensor.v1.ImuRaw".
+  string visio_proto_type        = 60000;
+
+  // MCAP Schema.name to register when writing this stream to an MCAP
+  // file. Usually identical to visio_proto_type; differs for the
+  // ROS-mimic pattern (STREAM_IMU_QUAT registers as the ROS-canonical
+  // "geometry_msgs/msg/Quaternion" so Foxglove Studio's orientation
+  // panels render natively).
+  string visio_mcap_schema_name  = 60001;
+}
 
 // Identifies a peer on the bus. Used for:
 //   - Header `device` field      (origin, immutable across hops)
@@ -66,75 +93,120 @@ enum StreamKind {
   STREAM_UNKNOWN          = 0;
 
   // Sensors (1..9)
-  STREAM_IMU_RAW          = 1;   // -> visio.sensor.v1.ImuRaw
-                                 //    Bundled per-IMU raw samples
-                                 //    (gyro/accel/mag/temp), per-sample
-                                 //    timestamps preserved.
-  STREAM_ENCODER_RAW      = 2;   // -> visio.sensor.v1.EncoderRaw
-                                 //    Bundled per-encoder raw samples
-                                 //    (count, magnitude, AGC, magnet
-                                 //    status). Calibrated joint position
-                                 //    publishes on STREAM_JOINT_STATES
-                                 //    as foxglove.JointStates.
-  STREAM_SYSTEM_HEALTH    = 3;   // -> visio.sensor.v1.SystemHealth
-  STREAM_BUTTON_EVENT     = 4;   // -> visio.sensor.v1.ButtonEvent
-  STREAM_IMU_QUAT         = 5;   // -> visio.ros.geometry_msgs.v1.Quaternion
-                                 //    Per-sample fused orientation (chip
-                                 //    NDOF or host VQF). Strict 4-double
-                                 //    mimic of ROS geometry_msgs/Quaternion,
-                                 //    registered in MCAP under that exact
-                                 //    schema name so Foxglove orientation
-                                 //    panels render natively. Decoupled
-                                 //    cadence from STREAM_IMU_RAW.
+  STREAM_IMU_RAW          = 1   [
+    (visio_proto_type)       = "visio.sensor.v1.ImuRaw",
+    (visio_mcap_schema_name) = "visio.sensor.v1.ImuRaw"
+  ];
+  STREAM_ENCODER_RAW      = 2   [
+    (visio_proto_type)       = "visio.sensor.v1.EncoderRaw",
+    (visio_mcap_schema_name) = "visio.sensor.v1.EncoderRaw"
+  ];
+  STREAM_SYSTEM_HEALTH    = 3   [
+    (visio_proto_type)       = "visio.sensor.v1.SystemHealth",
+    (visio_mcap_schema_name) = "visio.sensor.v1.SystemHealth"
+  ];
+  STREAM_BUTTON_EVENT     = 4   [
+    (visio_proto_type)       = "visio.sensor.v1.ButtonEvent",
+    (visio_mcap_schema_name) = "visio.sensor.v1.ButtonEvent"
+  ];
+  STREAM_IMU_QUAT         = 5   [
+    (visio_proto_type)       = "visio.ros.geometry_msgs.v1.Quaternion",
+    (visio_mcap_schema_name) = "geometry_msgs/msg/Quaternion"
+  ];
   // 6..9 reserved for future sensor kinds
 
   // Vision (10..19)
-  STREAM_VIDEO_COMPRESSED = 10;  // -> foxglove.CompressedVideo
-  STREAM_IMAGE_COMPRESSED = 11;  // -> foxglove.CompressedImage
-  STREAM_IMAGE_RAW        = 12;  // -> foxglove.RawImage
-  STREAM_CAMERA_CALIB     = 13;  // -> foxglove.CameraCalibration
+  STREAM_VIDEO_COMPRESSED = 10  [
+    (visio_proto_type)       = "foxglove.CompressedVideo",
+    (visio_mcap_schema_name) = "foxglove.CompressedVideo"
+  ];
+  STREAM_IMAGE_COMPRESSED = 11  [
+    (visio_proto_type)       = "foxglove.CompressedImage",
+    (visio_mcap_schema_name) = "foxglove.CompressedImage"
+  ];
+  STREAM_IMAGE_RAW        = 12  [
+    (visio_proto_type)       = "foxglove.RawImage",
+    (visio_mcap_schema_name) = "foxglove.RawImage"
+  ];
+  STREAM_CAMERA_CALIB     = 13  [
+    (visio_proto_type)       = "foxglove.CameraCalibration",
+    (visio_mcap_schema_name) = "foxglove.CameraCalibration"
+  ];
   // 14..19 reserved for future vision kinds
 
   // Audio (20..29)
-  STREAM_AUDIO_PCM        = 20;  // -> foxglove.RawAudio (pcm-s16 only)
-  STREAM_AUDIO_COMPRESSED = 21;  // -> visio.sensor.v1.AudioCompressed
+  STREAM_AUDIO_PCM        = 20  [
+    (visio_proto_type)       = "foxglove.RawAudio",
+    (visio_mcap_schema_name) = "foxglove.RawAudio"
+  ];
+  STREAM_AUDIO_COMPRESSED = 21  [
+    (visio_proto_type)       = "visio.sensor.v1.AudioCompressed",
+    (visio_mcap_schema_name) = "visio.sensor.v1.AudioCompressed"
+  ];
   // 22..29 reserved
 
   // Spatial / state (30..39)
-  STREAM_POSE             = 30;  // -> foxglove.PoseInFrame
-  STREAM_TWIST            = 31;  // -> visio.geometry.v1.Twist
-  STREAM_TF               = 32;  // -> foxglove.FrameTransforms
-  STREAM_JOINT_STATES     = 33;  // -> foxglove.JointStates
+  STREAM_POSE             = 30  [
+    (visio_proto_type)       = "foxglove.PoseInFrame",
+    (visio_mcap_schema_name) = "foxglove.PoseInFrame"
+  ];
+  STREAM_TWIST            = 31  [
+    (visio_proto_type)       = "visio.geometry.v1.Twist",
+    (visio_mcap_schema_name) = "visio.geometry.v1.Twist"
+  ];
+  STREAM_TF               = 32  [
+    (visio_proto_type)       = "foxglove.FrameTransforms",
+    (visio_mcap_schema_name) = "foxglove.FrameTransforms"
+  ];
+  STREAM_JOINT_STATES     = 33  [
+    (visio_proto_type)       = "foxglove.JointStates",
+    (visio_mcap_schema_name) = "foxglove.JointStates"
+  ];
   // 34..39 reserved
 
   // Input / control (40..49) — virtual user input and host-to-device
   // control directives. (Physical button events live under STREAM_BUTTON_EVENT
   // in the Sensors range, since a button is a sensor reading whose
   // meaning is the receiver's to interpret.)
-  STREAM_CONTROLLER_STATE = 40;  // -> visio.input.v1.QuestControllerState
-                                 //    Bundles both controllers' state in
-                                 //    one frame-coherent message per tick
-                                 //    (stream_index = 0 singleton).
-  STREAM_COMMAND          = 41;  // -> visio.control.v1.Command
+  STREAM_CONTROLLER_STATE = 40  [
+    (visio_proto_type)       = "visio.input.v1.QuestControllerState",
+    (visio_mcap_schema_name) = "visio.input.v1.QuestControllerState"
+  ];
+  STREAM_COMMAND          = 41  [
+    (visio_proto_type)       = "visio.control.v1.Command",
+    (visio_mcap_schema_name) = "visio.control.v1.Command"
+  ];
   // 42..49 reserved
 
   // Logging (50..59)
-  STREAM_LOG              = 50;  // -> foxglove.Log
+  STREAM_LOG              = 50  [
+    (visio_proto_type)       = "foxglove.Log",
+    (visio_mcap_schema_name) = "foxglove.Log"
+  ];
   // 51..59 reserved
 
-  // Session services (60..69)
+  // Session services (60..69). TIMESYNC and SCHEMA_QUERY carry one of
+  // two payload types per direction (Request / Response) — they are
+  // deliberately UNannotated so the SchemaRegistry returns None and
+  // service implementations hand-code the two-type dispatch.
   STREAM_TIMESYNC         = 60;  // -> visio.service.timesync.v1.{Request,Response}
-  STREAM_DEVICE_INFO      = 61;  // -> visio.service.device_info.v1.DeviceInfo
-  STREAM_HEARTBEAT        = 62;  // -> visio.service.heartbeat.v1.Heartbeat
+  STREAM_DEVICE_INFO      = 61  [
+    (visio_proto_type)       = "visio.service.device_info.v1.DeviceInfo",
+    (visio_mcap_schema_name) = "visio.service.device_info.v1.DeviceInfo"
+  ];
+  STREAM_HEARTBEAT        = 62  [
+    (visio_proto_type)       = "visio.service.heartbeat.v1.Heartbeat",
+    (visio_mcap_schema_name) = "visio.service.heartbeat.v1.Heartbeat"
+  ];
   STREAM_SCHEMA_QUERY     = 63;  // -> visio.service.schema.v1.{Request,Response}
 
   // 64..99 reserved for future GI Labs stream kinds
   STREAM_CUSTOM           = 100;
 }
 
-// The wire Header. Serialized as protobuf and preceded by a 2-byte
-// little-endian HEADER_LEN field on every framed Endpoint. The
-// payload bytes follow immediately after the Header on the wire.
+// The wire Header. Serialized as protobuf and preceded by a 1-byte
+// HEADER_LEN field on every framed Endpoint. The payload bytes follow
+// immediately after the Header on the wire.
 message Header {
   // Origin DeviceClass. Set once at the producing peer; immutable
   // across hops.

@@ -124,47 +124,51 @@ class PeerOffset:
 
 ## 4. Bus rx-rewrite contract
 
-When the Bus dispatches an inbound `Message` to subscribers, it
-rewrites the Header `timestamp` field IN PLACE before fanout and
-attaches a per-message `timestamp_synced` flag visible to subscribers:
+The Bus rewrites the Header `timestamp` field IN PLACE on every inbound,
+before any per-stream handlers fire and before the message is relayed to
+sinks. The rewrite is installed by the `TimesyncService` as an
+**all-streams middleware handler** — `bus.on_message(stream=None, ...)` —
+rather than via a special bus attribute. The bus calls it because it's
+registered, not because it has any built-in notion of timesync.
 
 ```python
-def on_inbound(self, msg: Message):
-    sender = msg.header.routed_from
-    offset = self.timesync.peer_offset(sender)  # None until converged
-    if offset is not None:
-        msg.header.timestamp = add_ns(msg.header.timestamp, offset)
-        msg.timestamp_synced = True
-    else:
-        # Pre-convergence: forward the message but mark the timestamp
-        # as untrustworthy. The Header field is left at the producer's
-        # clock value (we do NOT zero or sentinel it — replay must still
-        # reconstruct).
-        msg.timestamp_synced = False
-    self._dispatch(msg)
+class TimesyncService:
+    def __init__(self, bus, ...):
+        # All-streams handler: fires on every inbound before relay.
+        bus.on_message(None, self._rewrite_timestamp)
+        # Per-stream handler: NTP exchange handling.
+        bus.on_message(STREAM_TIMESYNC, self._on_timesync)
+        bus.schedule_periodic(interval_s, self._send_requests)
+
+    def _rewrite_timestamp(self, msg, from_ep):
+        offset = self._offsets.get(msg.routed_from)   # None until converged
+        if offset is not None:
+            msg.timestamp.FromNanoseconds(
+                msg.timestamp.ToNanoseconds() + offset)
+        # else: pre-convergence — leave timestamp at producer's clock.
 ```
 
-**Subscriber contract**: subscribers MUST check `msg.timestamp_synced`
-before using `msg.header.timestamp` for any cross-peer alignment or
-correlation. Implementations of the in-memory `Message` struct
-(`visio-mq/cpp/`, `visio-mq/python/`) MUST expose this flag.
+Pre-convergence the rewrite is a no-op — `Header.timestamp` stays at the
+producer's clock value (we do NOT zero or sentinel it; replay must still
+reconstruct). Consumers that need to know convergence state ask
+`timesync.has_offset(routed_from)` directly.
 
-The flag is NOT serialized on the wire — it is a property of the
-local Bus's knowledge state, not of the message itself. A peer that
-reads the same MCAP later may have full timesync data and would set
-the flag to True; another peer reading the same file mid-startup
-would set it False. The flag is a runtime assertion, not durable
-metadata.
+**Convergence is queryable, not annotated.** There is no per-message
+`timestamp_synced` flag. Consumers that care about cross-peer alignment
+call `timesync.has_offset(msg.routed_from)` on the receive side. This
+keeps the in-memory `Message` struct a straight mirror of the wire
+Header (no runtime-only fields) and makes convergence a property of the
+bus's knowledge state, not of each individual message.
 
-Recommended subscriber-side behaviors when `timestamp_synced == False`:
+Recommended subscriber-side behavior when the offset is unknown:
 
 - **High-rate sensor producers** (publishers): unaffected — they
   publish using their own local clock, no read of `Header.timestamp`
   needed.
 - **Sensor consumers that align across peers** (e.g., LeRobot
-  exporter): drop or buffer the message until later cycles where
-  `timestamp_synced == True`. The brief startup window is acceptable
-  loss for the alignment guarantee.
+  exporter): drop or buffer the message until
+  `services.timesync.has_offset(routed_from)` returns True. The brief
+  startup window is acceptable loss for the alignment guarantee.
 - **MCAP recorder**: write the message; rely on MCAP's own log_time
   (which it computes from `Header.timestamp` + the recorder's
   mono→Unix offset). The recorder MAY annotate the MCAP record's
@@ -180,13 +184,13 @@ Important subtleties:
   receiver C uses the offset for B (because B already rewrote
   `timestamp` on its own rx).
 - The Bus does NOT rewrite payload-internal timestamps (e.g., the
-  `Imu.timestamp` inside the payload bytes). Those stay in the
-  origin producer's clock domain. Consumers that want consistency
-  use Header.timestamp; consumers that need the raw producer time
-  use the payload field.
-- A subscriber's handler receives a `Message` whose `header.timestamp`
-  is "in this receiver's local mono clock" — always — once timesync
-  has converged. Subscribers don't do offset math themselves.
+  `ImuRaw.first_sample_time` inside the payload bytes). Those stay
+  in the origin producer's clock domain. Consumers that want
+  consistency use Header.timestamp; consumers that need the raw
+  producer time use the payload field.
+- A subscriber's handler receives a `Message` whose `timestamp` is
+  "in this receiver's local mono clock" — once timesync has
+  converged. Subscribers don't do offset math themselves.
 
 ## 5. Initiator / responder roles
 

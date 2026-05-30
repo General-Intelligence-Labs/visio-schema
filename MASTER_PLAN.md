@@ -18,18 +18,22 @@ something here contradicts code, the document wins until updated.
 - Codegen for multiple languages (C++, Python, Java, Swift).
 - Stable versioned releases that downstream consumers can pin.
 
-This repo contains ONLY schema, codegen plumbing, and specs. No
-transport implementation, no bus, no MCAP code — those live in
-`visio-mq`.
+This repo contains the schema, codegen plumbing, specs, and the wire
+**framing codec** — the executable form of those specs (the
+HEADER_LEN/CRC/COBS frame in `docs/framing.md`), shipped inside the same
+package as the generated bindings. No transport, no bus, no recording —
+those live in `visio-mq`.
 
 ## 2. Scope boundaries (what this repo is NOT)
 
-- Not a transport library.
-- Not a recording library.
-- Not an SDK with batteries — just the contract + spec docs.
+- Not a transport library (no sockets, serial I/O, bus, or endpoints).
+- Not a recording library (no MCAP read/write in the package).
+- The contract + spec docs + the framing codec that implements them —
+  nothing more.
 - Not version-tied to any specific consumer; consumers pin a version.
-- No application logic, no service implementations, no examples beyond
-  what is needed to validate codegen.
+- No application logic or service implementations. The only code beyond
+  the generated bindings + framing codec is the standalone `examples/`,
+  which are NOT part of the installable package.
 
 ## 3. Repo layout
 
@@ -95,9 +99,16 @@ visio-schema/
 │               └── quaternion.proto       in MCAP under their ROS schema
 │                                          names so Foxglove panels render
 │                                          natively (used by STREAM_IMU_QUAT)
-└── gen/                   generated per-language outputs
-                           (gitignored at HEAD; vendored at release tags
-                           for downstream zero-codegen consumption)
+├── gen/                   generated per-language outputs
+│                          (gitignored at HEAD; vendored at release tags
+│                          for downstream zero-codegen consumption)
+├── python/                hand-written `visio.wire` codec (frame/crc/cobs +
+│                          message + stream reflection); packaged together
+│                          with gen/python as the single `visio-schema` wheel
+├── cpp/                   hand-written `visio::wire` codec + the one
+│                          `visio_schema` CMake target (gen bindings + codec)
+└── examples/              standalone demos (python + cpp); NOT part of the
+                           installable package
 ```
 
 `buf.yaml` declares two roots for proto resolution:
@@ -240,29 +251,30 @@ consistency with Foxglove and with our own payload schemas.
 
 ### Wire frame format (per Endpoint)
 
-The Header is preceded by a 2-byte little-endian `HEADER_LEN` field
-giving the size of the serialized Header. The payload bytes follow
-immediately. CRC16 covers `HEADER_LEN || header || payload`.
+The Header is preceded by a 1-byte `HEADER_LEN` field giving the size
+of the serialized Header. The payload bytes follow immediately. CRC16
+covers `HEADER_LEN || header || payload`.
 
 ```
 TCP:
-[ TOTAL_LEN:u32_le ][ HEADER_LEN:u16_le ][ header_pb:N ]
+[ TOTAL_LEN:u32_le ][ HEADER_LEN:u8 ][ header_pb:N ]
                    [ payload:M ][ CRC16:u16_le ]
 
 Serial (COBS):
-[ COBS( [ HEADER_LEN:u16_le ][ header_pb:N ]
+[ COBS( [ HEADER_LEN:u8 ][ header_pb:N ]
         [ payload:M ][ CRC16:u16_le ] ) ][ 0x00 ]
 
 UDP:
-[ HEADER_LEN:u16_le ][ header_pb:N ][ payload:M ][ CRC16:u16_le ]
+[ HEADER_LEN:u8 ][ header_pb:N ][ payload:M ][ CRC16:u16_le ]
    per datagram
 
 MCAP, WebSocket: native record/frame boundaries; no Visio framing.
 ```
 
-`HEADER_LEN` is `u16` (not `u8`) so the Header can grow with optional
-fields without a wire-format break — that evolvability is the whole
-reason we kept it protobuf.
+`HEADER_LEN` is a single `u8`: the Header grows *compatibly* via optional
+protobuf fields (no wire break), and the `visio.wire.vN` package version
+covers structural breaks — so one byte suffices and there is no separate
+header version byte.
 
 ### McapEndpoint field mapping
 
@@ -382,7 +394,10 @@ static array in each language binding.
 
 ## 10. Explicit non-goals
 
-- Transport code (TCP, Serial, USB CDC, MCAP) — lives in `visio-mq`.
+- Transport code (TCP, Serial, USB CDC, sockets, bus endpoints) and
+  recording/replay (MCAP read/write) — live in `visio-mq`. (The framing
+  *codec* — the HEADER_LEN/CRC/COBS byte layout — ships here, inside the
+  package, as the executable form of `docs/framing.md`.)
 - Bus, Endpoint, Service classes — live in `visio-mq`.
 - CLI tools — live in `visio-mq`.
 - Recording / replay logic — lives in `visio-mq`.

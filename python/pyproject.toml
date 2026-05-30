@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "visio-schema"
+version = "0.1.0.dev0"
+description = "Visio wire contract — generated protobuf bindings + the framing codec"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "GI Labs" }]
+# The hand-written codec needs these at runtime; the generated bindings
+# only need protobuf. One package, one dependency set.
+dependencies = [
+    "protobuf>=5.26",
+    "cobs>=1.2",
+    "crc>=7.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "mypy>=1.10",
+    "ruff>=0.5",
+]
+
+# The wheel ships ONE `visio` import root combining the hand-written
+# modules under python/visio and the generated bindings under
+# gen/python/visio. `make wheel` stages both trees together before
+# building; for dev/tests, conftest.py adds ../gen/python to sys.path so
+# the two halves resolve as one PEP 420 namespace package.
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["visio*"]
+namespaces = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: cross-boundary tests (serial/pty, cross-language)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "RUF"]

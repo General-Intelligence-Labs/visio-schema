@@ -1,10 +1,24 @@
 # StreamKind → Payload Type — canonical mapping
 
 Each `visio.wire.v1.StreamKind` value maps **1:1** to a payload
-protobuf type. This table is the canonical contract; both
-implementations (`visio-mq/cpp/` and `visio-mq/python/`) generate a
-static lookup array from this document. McapEndpoint also uses it to
-pick the MCAP `Schema.name` to register when writing a channel.
+protobuf type. The **canonical source of truth** is the
+`(visio_proto_type)` and `(visio_mcap_schema_name)` custom
+`EnumValueOptions` annotations on `StreamKind` in
+[`proto/visio/wire/v1/header.proto`](../proto/visio/wire/v1/header.proto).
+The table below is a human-readable view; if it disagrees with the
+proto, fix the proto.
+
+Both implementations (`visio-mq/cpp/` and `visio-mq/python/`) read
+these annotations at runtime via the protobuf descriptor API — no
+codegen script, no markdown parsing. McapEndpoint reads
+`visio_mcap_schema_name` to pick the MCAP `Schema.name` to register
+when writing a channel.
+
+Dual-payload service streams (`STREAM_TIMESYNC`, `STREAM_SCHEMA_QUERY`)
+carry one of two protobuf types per direction (Request / Response)
+and are deliberately left UNannotated — `SchemaRegistry` returns
+`None` for them, and the service implementations hand-code the
+two-type dispatch.
 
 ## Mapping table
 

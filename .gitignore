@@ -6,3 +6,12 @@ gen/
 node_modules/
 package.json
 package-lock.json
+
+# C++ build trees + Python build/test artifacts.
+build/
+dist/
+cpp/build/
+examples/cpp/build/
+__pycache__/
+*.egg-info/
+.pytest_cache/

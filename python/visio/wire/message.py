@@ -1,0 +1,67 @@
+"""Neutral in-memory Visio message — the wire Header fields + payload.
+
+This is the codec-level view of a message: the six `visio.wire.v1.Header`
+fields plus the inner payload bytes, with helpers to round-trip a Message
+through the core frame codec. It carries no bus/transport semantics —
+higher layers (e.g. visio-mq's Bus) own sequence stamping and the
+timesync `timestamp` rewrite.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from google.protobuf.timestamp_pb2 import Timestamp
+
+from visio.wire.codec.frame import decode_frame, encode_frame
+from visio.wire.v1.header_pb2 import Header
+
+
+@dataclass
+class Message:
+    """A wire message: `visio.wire.v1.Header` fields + payload bytes."""
+
+    stream: int = 0                                  # StreamKind enum value
+    stream_index: int = 0                            # uint8 [0, 255]
+    payload: bytes = b""
+
+    device: int = 0                                  # DeviceClass; 0 == DEVICE_UNKNOWN
+    routed_from: int = 0                             # DeviceClass; 0 == DEVICE_UNKNOWN
+    seq: int = 0                                     # uint32, per (stream, stream_index)
+    timestamp: Timestamp = field(default_factory=Timestamp)
+
+    def to_header(self) -> Header:
+        """Build the wire Header protobuf for this Message."""
+        h = Header()
+        h.device = self.device
+        h.routed_from = self.routed_from
+        h.stream = self.stream
+        h.stream_index = self.stream_index
+        h.seq = self.seq
+        h.timestamp.CopyFrom(self.timestamp)
+        return h
+
+    @classmethod
+    def from_header(cls, header: Header, payload: bytes) -> Message:
+        """Build a Message from a decoded Header + payload bytes."""
+        ts = Timestamp()
+        ts.CopyFrom(header.timestamp)
+        return cls(
+            stream=header.stream,
+            stream_index=header.stream_index,
+            payload=payload,
+            device=header.device,
+            routed_from=header.routed_from,
+            seq=header.seq,
+            timestamp=ts,
+        )
+
+
+def encode_message(msg: Message) -> bytes:
+    """Serialize a Message into the core wire frame (no transport wrapper)."""
+    return encode_frame(msg.to_header(), msg.payload)
+
+
+def decode_message(frame: bytes) -> Message:
+    """Parse a core wire frame into a Message. Raises FrameError on error."""
+    header, payload = decode_frame(frame)
+    return Message.from_header(header, payload)
