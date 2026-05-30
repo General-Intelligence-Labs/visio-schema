@@ -77,7 +77,7 @@ docker setups, etc.) is ignored.
    `visio_schema.wire.v1.Header.stream` enum values that map to foxglove
    types now sees the new field set; old peers continue to work
    because protobuf forward-compatibility tolerates unknown fields.
-4. Downstream `visio-mq` regenerates bindings on the next pull. No
+4. Downstream `visio` regenerates bindings on the next pull. No
    API change unless we explicitly start using newly-introduced
    foxglove fields.
 
@@ -93,4 +93,4 @@ The submodule bump is **always** a deliberate PR. We never auto-update.
   mimic is `geometry_msgs/msg/Quaternion`. Future additions follow
   the same pattern; document them here when they land.
 - It does NOT cover how to write a Foxglove converter extension. That
-  belongs in `visio-mq`'s docs if/when we ship one.
+  belongs in `visio`'s docs if/when we ship one.

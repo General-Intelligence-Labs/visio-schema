@@ -245,4 +245,4 @@ On Wi-Fi the convergence is to ±500 µs, sufficient for sensor
 alignment but not for fine-grained latency analysis.
 
 These bounds are the conformance target for
-`visio-mq/tests/interop/test_timesync.py`.
+`visio/tests/interop/test_timesync.py`.

@@ -2,7 +2,7 @@
 
 The public contract for the Visio sensor/data ecosystem. Defines every
 message type, the wire envelope, the per-transport wire framing rules,
-and the timesync algorithm. Both `visio-mq` (C++ and Python) and any
+and the timesync algorithm. Both `visio` (C++ and Python) and any
 third-party consumer depend on this repo.
 
 This document is the canonical statement of intent for the repo. If
@@ -22,7 +22,7 @@ This repo contains the schema, codegen plumbing, specs, and the wire
 **framing codec** — the executable form of those specs (the
 HEADER_LEN/CRC/COBS frame in `docs/framing.md`), shipped inside the same
 package as the generated bindings. No transport, no bus, no recording —
-those live in `visio-mq`.
+those live in `visio`.
 
 ## 2. Scope boundaries (what this repo is NOT)
 
@@ -207,7 +207,7 @@ both mean the same thing. Cheap redundancy that lets MCAP payloads
 remain self-contained for non-Visio readers.
 
 Submodule bump policy: only bump on a deliberate `visio-schema` PR with
-spec review. Downstream `visio-mq` regenerates bindings against the
+spec review. Downstream `visio` regenerates bindings against the
 new submodule commit on the next pull. See `docs/foxglove_compat.md`
 for the full type-mapping table and bump procedure.
 
@@ -307,7 +307,7 @@ static array in each language binding.
 - buf for everything: `buf lint`, `buf generate`, `buf breaking`.
 - Plugins:
   - C++: `protoc-gen-cpp` (header-only outputs vendored into
-    `visio-mq/cpp/third_party/` at consumer side).
+    `visio/cpp/third_party/` at consumer side).
   - Python: `protoc-gen-python` + `protoc-gen-mypy` for type stubs.
   - Java: `protoc-gen-java` (post-Phase 2).
   - Swift: `protoc-gen-swift` (post-Phase 2).
@@ -386,8 +386,8 @@ static array in each language binding.
 
 - The `.proto` files **and** the `docs/` specs together form the
   conformance contract.
-- `visio-mq` (C++ and Python) MUST conform.
-- Cross-language interop tests live in `visio-mq/tests/interop/` and
+- `visio` (C++ and Python) MUST conform.
+- Cross-language interop tests live in `visio/tests/interop/` and
   validate both impls against the same contract.
 - Any change to `docs/framing.md` or `docs/timesync.md` is a breaking
   change at the spec level, even if `.proto` files are untouched.
@@ -395,14 +395,14 @@ static array in each language binding.
 ## 10. Explicit non-goals
 
 - Transport code (TCP, Serial, USB CDC, sockets, bus endpoints) and
-  recording/replay (MCAP read/write) — live in `visio-mq`. (The framing
+  recording/replay (MCAP read/write) — live in `visio`. (The framing
   *codec* — the HEADER_LEN/CRC/COBS byte layout — ships here, inside the
   package, as the executable form of `docs/framing.md`.)
-- Bus, Endpoint, Service classes — live in `visio-mq`.
-- CLI tools — live in `visio-mq`.
-- Recording / replay logic — lives in `visio-mq`.
+- Bus, Endpoint, Service classes — live in `visio`.
+- CLI tools — live in `visio`.
+- Recording / replay logic — lives in `visio`.
 - Migration tooling from UMI v3 — lives in
-  `visio-mq/tools/v3_bridge/` if and when needed.
+  `visio/tools/v3_bridge/` if and when needed.
 - ROS / DDS bridges.
 - A schema registry server. (Descriptors ride inline in
   `STREAM_DEVICE_INFO` Responses — `file_descriptor_sets` map keyed by

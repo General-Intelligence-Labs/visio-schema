@@ -8,7 +8,7 @@ protobuf type. The **canonical source of truth** is the
 The table below is a human-readable view; if it disagrees with the
 proto, fix the proto.
 
-Both implementations (`visio-mq/cpp/` and `visio-mq/python/`) read
+Both implementations (`visio/cpp/` and `visio/python/`) read
 these annotations at runtime via the protobuf descriptor API — no
 codegen script, no markdown parsing. McapEndpoint reads
 `visio_mcap_schema_name` to pick the MCAP `Schema.name` to register
@@ -86,7 +86,7 @@ per message for no real benefit since these streams are low-rate.)
 
 ## Codegen note
 
-The C++ and Python implementations of `visio-mq` use this table to
+The C++ and Python implementations of `visio` use this table to
 emit a static lookup array of the form:
 
 ```cpp
@@ -109,7 +109,7 @@ STREAM_MAP: dict[StreamKind, StreamMapping] = { ... }
 ```
 
 The mappings are generated, not hand-written, from this document. A
-script under `visio-mq/tools/gen_stream_map.py` (Phase 1 deliverable)
+script under `visio/tools/gen_stream_map.py` (Phase 1 deliverable)
 parses this markdown table and emits both forms.
 
 ## How to add a new stream type

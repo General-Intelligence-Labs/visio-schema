@@ -3,7 +3,7 @@
 Minimal, dependency-light demos of the Visio wire. They use only the
 `visio-schema` package (generated bindings + framing codec) plus a couple of
 thin libraries. They are intentionally small — the heavier, bus-integrated
-machinery lives in `visio-mq`.
+machinery lives in `visio`.
 
 First make the package importable (from the repo root):
 
