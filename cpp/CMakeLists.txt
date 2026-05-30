@@ -20,11 +20,11 @@ find_package(Protobuf CONFIG REQUIRED)
 find_package(absl CONFIG REQUIRED)
 
 # ---- generated bindings ----------------------------------------------------
-# `make gen` emits the .pb.cc/.pb.h into ../gen/cpp. They compile straight
-# into this library so consumers link ONE target for both the generated
-# bindings and the hand-written codec.
-set(VISIO_GEN_CPP "${CMAKE_CURRENT_SOURCE_DIR}/../gen/cpp")
-if(NOT EXISTS "${VISIO_GEN_CPP}/visio/wire/v1/header.pb.h")
+# `make gen` emits the .pb.cc/.pb.h into cpp/generated (in-package, next to
+# the hand-written codec). They compile straight into this library so
+# consumers link ONE target for both the generated bindings and the codec.
+set(VISIO_GEN_CPP "${CMAKE_CURRENT_SOURCE_DIR}/generated")
+if(NOT EXISTS "${VISIO_GEN_CPP}/visio_schema/wire/v1/header.pb.h")
   message(FATAL_ERROR
     "visio-schema generated C++ bindings not found at ${VISIO_GEN_CPP}.\n"
     "Run `make gen` in the repo root first.")

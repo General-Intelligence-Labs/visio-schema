@@ -15,10 +15,12 @@ from importlib import import_module
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-GEN_PYTHON = REPO_ROOT / "gen" / "python"
+# Generated bindings now live in-package under python/visio_schema (next to
+# the hand-written codec); there is no separate gen/ tree.
+PKG_ROOT = REPO_ROOT / "python"
 
-if not GEN_PYTHON.is_dir():
-    raise SystemExit(f"missing {GEN_PYTHON} — run `make gen` first")
+if not (PKG_ROOT / "visio_schema" / "wire" / "v1" / "header_pb2.py").is_file():
+    raise SystemExit(f"missing generated bindings under {PKG_ROOT} — run `make gen` first")
 
 try:
     import google.protobuf  # noqa: F401 — presence check only
@@ -29,38 +31,41 @@ except ModuleNotFoundError:
         "do not require it)"
     )
 
-sys.path.insert(0, str(GEN_PYTHON))
+sys.path.insert(0, str(PKG_ROOT))
 
-# Every visio.* module we generate. Listed explicitly (not glob-discovered)
-# so a missing file is caught here rather than passing silently.
+# Every visio_schema.* module we generate. Listed explicitly (not
+# glob-discovered) so a missing file is caught here rather than passing
+# silently.
 VISIO_MODULES = [
-    "visio.wire.v1.header_pb2",
-    "visio.sensor.v1.imu_raw_pb2",
-    "visio.sensor.v1.encoder_raw_pb2",
-    "visio.sensor.v1.system_health_pb2",
-    "visio.sensor.v1.audio_compressed_pb2",
-    "visio.sensor.v1.button_pb2",
-    "visio.ros.geometry_msgs.v1.quaternion_pb2",
-    "visio.input.v1.quest_controller_state_pb2",
-    "visio.geometry.v1.twist_pb2",
-    "visio.control.v1.command_pb2",
-    "visio.service.timesync.v1.timesync_pb2",
-    "visio.service.device_info.v1.device_info_pb2",
-    "visio.service.heartbeat.v1.heartbeat_pb2",
-    "visio.service.schema.v1.schema_pb2",
+    "visio_schema.wire.v1.header_pb2",
+    "visio_schema.sensor.v1.imu_raw_pb2",
+    "visio_schema.sensor.v1.encoder_raw_pb2",
+    "visio_schema.sensor.v1.system_health_pb2",
+    "visio_schema.sensor.v1.audio_compressed_pb2",
+    "visio_schema.sensor.v1.button_pb2",
+    "visio_schema.calibration.v1.imu_pb2",
+    "visio_schema.ros.geometry_msgs.v1.quaternion_pb2",
+    "visio_schema.input.v1.quest_controller_state_pb2",
+    "visio_schema.geometry.v1.twist_pb2",
+    "visio_schema.control.v1.command_pb2",
+    "visio_schema.service.timesync.v1.timesync_pb2",
+    "visio_schema.service.device_info.v1.device_info_pb2",
+    "visio_schema.service.heartbeat.v1.heartbeat_pb2",
 ]
 
-# A representative subset of foxglove.* modules we depend on. If foxglove
-# codegen is broken, our visio.* modules that import it (via Vector3 /
-# Quaternion) will fail above; this list is a belt-and-suspenders check
-# for the ones we explicitly reference in StreamKind mappings.
+# A representative subset of foxglove.* modules we depend on. They ship
+# under `visio_schema.foxglove` (the top-level `foxglove` package belongs to the
+# official Foxglove SDK); only the python import path is namespaced, the
+# protobuf descriptor names stay `foxglove.*`. If foxglove codegen is broken,
+# our visio.* modules that import it (via Vector3 / Quaternion) fail above;
+# this is a belt-and-suspenders check for the ones in StreamKind mappings.
 FOXGLOVE_MODULES = [
-    "foxglove.Vector3_pb2",
-    "foxglove.Quaternion_pb2",
-    "foxglove.CompressedVideo_pb2",
-    "foxglove.PoseInFrame_pb2",
-    "foxglove.FrameTransforms_pb2",
-    "foxglove.JointStates_pb2",
+    "visio_schema.foxglove.Vector3_pb2",
+    "visio_schema.foxglove.Quaternion_pb2",
+    "visio_schema.foxglove.CompressedVideo_pb2",
+    "visio_schema.foxglove.PoseInFrame_pb2",
+    "visio_schema.foxglove.FrameTransforms_pb2",
+    "visio_schema.foxglove.JointStates_pb2",
 ]
 
 failures: list[tuple[str, str]] = []

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from visio.wire.codec.cobs import cobs_decode, cobs_encode
+from visio_schema.wire.codec.cobs import cobs_decode, cobs_encode
 
 
 @pytest.mark.parametrize(

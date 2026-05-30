@@ -1,8 +1,8 @@
-#include "visio/wire/codec/crc16.hpp"
+#include "visio_schema/wire/codec/crc16.hpp"
 
 #include <array>
 
-namespace visio::wire {
+namespace visio_schema::wire {
 
 namespace {
 
@@ -36,4 +36,4 @@ std::uint16_t Crc16(const void* data, std::size_t n) noexcept {
   return Crc16({static_cast<const std::byte*>(data), n});
 }
 
-}  // namespace visio::wire
+}  // namespace visio_schema::wire

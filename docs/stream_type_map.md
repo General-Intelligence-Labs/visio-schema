@@ -1,6 +1,6 @@
 # StreamKind → Payload Type — canonical mapping
 
-Each `visio.wire.v1.StreamKind` value maps **1:1** to a payload
+Each `visio_schema.wire.v1.StreamKind` value maps **1:1** to a payload
 protobuf type. The **canonical source of truth** is the
 `(visio_proto_type)` and `(visio_mcap_schema_name)` custom
 `EnumValueOptions` annotations on `StreamKind` in
@@ -14,7 +14,7 @@ codegen script, no markdown parsing. McapEndpoint reads
 `visio_mcap_schema_name` to pick the MCAP `Schema.name` to register
 when writing a channel.
 
-Dual-payload service streams (`STREAM_TIMESYNC`, `STREAM_SCHEMA_QUERY`)
+Dual-payload service streams (`STREAM_TIMESYNC`, `STREAM_DEVICE_INFO`)
 carry one of two protobuf types per direction (Request / Response)
 and are deliberately left UNannotated — `SchemaRegistry` returns
 `None` for them, and the service implementations hand-code the
@@ -26,11 +26,12 @@ two-type dispatch.
 |---|---:|---|---|---|
 | `STREAM_UNKNOWN` | 0 | — (never publish) | — | — |
 | **Sensors (1..9)** | | | | |
-| `STREAM_IMU_RAW` | 1 | `visio.sensor.v1.ImuRaw` | `visio.sensor.v1.ImuRaw` | visio |
-| `STREAM_ENCODER_RAW` | 2 | `visio.sensor.v1.EncoderRaw` | `visio.sensor.v1.EncoderRaw` | visio |
-| `STREAM_SYSTEM_HEALTH` | 3 | `visio.sensor.v1.SystemHealth` | `visio.sensor.v1.SystemHealth` | visio |
-| `STREAM_BUTTON_EVENT` | 4 | `visio.sensor.v1.ButtonEvent` | `visio.sensor.v1.ButtonEvent` | visio |
-| `STREAM_IMU_QUAT` | 5 | `visio.ros.geometry_msgs.v1.Quaternion` | **`geometry_msgs/msg/Quaternion`** | visio (ROS-named) |
+| `STREAM_IMU_RAW` | 1 | `visio_schema.sensor.v1.ImuRaw` | `visio_schema.sensor.v1.ImuRaw` | visio |
+| `STREAM_ENCODER_RAW` | 2 | `visio_schema.sensor.v1.EncoderRaw` | `visio_schema.sensor.v1.EncoderRaw` | visio |
+| `STREAM_SYSTEM_HEALTH` | 3 | `visio_schema.sensor.v1.SystemHealth` | `visio_schema.sensor.v1.SystemHealth` | visio |
+| `STREAM_BUTTON_EVENT` | 4 | `visio_schema.sensor.v1.ButtonEvent` | `visio_schema.sensor.v1.ButtonEvent` | visio |
+| `STREAM_IMU_QUAT` | 5 | `visio_schema.ros.geometry_msgs.v1.Quaternion` | **`geometry_msgs/msg/Quaternion`** | visio (ROS-named) |
+| `STREAM_IMU_CALIBRATION` | 6 | `visio_schema.calibration.v1.ImuCalibration` | `visio_schema.calibration.v1.ImuCalibration` | visio |
 | **Vision (10..19)** | | | | |
 | `STREAM_VIDEO_COMPRESSED` | 10 | `foxglove.CompressedVideo` | `foxglove.CompressedVideo` | foxglove |
 | `STREAM_IMAGE_COMPRESSED` | 11 | `foxglove.CompressedImage` | `foxglove.CompressedImage` | foxglove |
@@ -38,22 +39,22 @@ two-type dispatch.
 | `STREAM_CAMERA_CALIB` | 13 | `foxglove.CameraCalibration` | `foxglove.CameraCalibration` | foxglove |
 | **Audio (20..29)** | | | | |
 | `STREAM_AUDIO_PCM` | 20 | `foxglove.RawAudio` | `foxglove.RawAudio` | foxglove |
-| `STREAM_AUDIO_COMPRESSED` | 21 | `visio.sensor.v1.AudioCompressed` | `visio.sensor.v1.AudioCompressed` | visio |
+| `STREAM_AUDIO_COMPRESSED` | 21 | `visio_schema.sensor.v1.AudioCompressed` | `visio_schema.sensor.v1.AudioCompressed` | visio |
 | **Spatial / state (30..39)** | | | | |
 | `STREAM_POSE` | 30 | `foxglove.PoseInFrame` | `foxglove.PoseInFrame` | foxglove |
-| `STREAM_TWIST` | 31 | `visio.geometry.v1.Twist` | `visio.geometry.v1.Twist` | visio |
+| `STREAM_TWIST` | 31 | `visio_schema.geometry.v1.Twist` | `visio_schema.geometry.v1.Twist` | visio |
 | `STREAM_TF` | 32 | `foxglove.FrameTransforms` | `foxglove.FrameTransforms` | foxglove |
 | `STREAM_JOINT_STATES` | 33 | `foxglove.JointStates` | `foxglove.JointStates` | foxglove |
 | **Input / control (40..49)** | | | | |
-| `STREAM_CONTROLLER_STATE` | 40 | `visio.input.v1.QuestControllerState` | `visio.input.v1.QuestControllerState` | visio |
-| `STREAM_COMMAND` | 41 | `visio.control.v1.Command` | `visio.control.v1.Command` | visio |
+| `STREAM_CONTROLLER_STATE` | 40 | `visio_schema.input.v1.QuestControllerState` | `visio_schema.input.v1.QuestControllerState` | visio |
+| `STREAM_COMMAND` | 41 | `visio_schema.control.v1.Command` | `visio_schema.control.v1.Command` | visio |
 | **Logging (50..59)** | | | | |
 | `STREAM_LOG` | 50 | `foxglove.Log` | `foxglove.Log` | foxglove |
 | **Services (60..69)** | | | | |
-| `STREAM_TIMESYNC` | 60 | `visio.service.timesync.v1.{Request,Response}` (oneof on wire) | `visio.service.timesync.v1.Request` / `Response` | visio |
-| `STREAM_DEVICE_INFO` | 61 | `visio.service.device_info.v1.DeviceInfo` | `visio.service.device_info.v1.DeviceInfo` | visio |
-| `STREAM_HEARTBEAT` | 62 | `visio.service.heartbeat.v1.Heartbeat` | `visio.service.heartbeat.v1.Heartbeat` | visio |
-| `STREAM_SCHEMA_QUERY` | 63 | `visio.service.schema.v1.{Request,Response}` | `visio.service.schema.v1.Request` / `Response` | visio |
+| `STREAM_TIMESYNC` | 60 | `visio_schema.service.timesync.v1.{Request,Response}` (dual-payload) | `visio_schema.service.timesync.v1.Request` / `Response` | visio |
+| `STREAM_DEVICE_INFO` | 61 | `visio_schema.service.device_info.v1.{Request,Response}` (dual-payload; descriptors ride inline) | `visio_schema.service.device_info.v1.Request` / `Response` | visio |
+| `STREAM_HEARTBEAT` | 62 | `visio_schema.service.heartbeat.v1.Heartbeat` | `visio_schema.service.heartbeat.v1.Heartbeat` | visio |
+| 63 | reserved (was `STREAM_SCHEMA_QUERY`; descriptors now ride inline in `STREAM_DEVICE_INFO` Response) | — | — | — |
 | **OSS extension** | | | | |
 | `STREAM_CUSTOM` | 100 | (third-party — see DeviceInfo.streams.label) | (custom string per producer) | external |
 
@@ -62,19 +63,19 @@ two-type dispatch.
 For most rows the MCAP `Schema.name` field equals the protobuf full
 name. **One exception** is `STREAM_IMU_QUAT`: we register the
 Schema record under the **ROS name** `geometry_msgs/msg/Quaternion`
-rather than the protobuf full name `visio.ros.geometry_msgs.v1.Quaternion`,
+rather than the protobuf full name `visio_schema.ros.geometry_msgs.v1.Quaternion`,
 because Foxglove Studio's orientation panels match on the ROS name
 string. The protobuf bytes are still parsed via the embedded
 `FileDescriptorProto`; only the human-readable name string changes.
 
-This is the pattern any future `visio.ros.*` mimic uses: the proto
-package preserves a stable internal identity (`visio.ros.X.v1.Y`),
+This is the pattern any future `visio_schema.ros.*` mimic uses: the proto
+package preserves a stable internal identity (`visio_schema.ros.X.v1.Y`),
 the MCAP Schema.name preserves the public ROS contract
 (`X/msg/Y`).
 
 ## Service streams and oneof payloads
 
-`STREAM_TIMESYNC` and `STREAM_SCHEMA_QUERY` carry one of two message
+`STREAM_TIMESYNC` and `STREAM_DEVICE_INFO` carry one of two message
 types each (`Request` or `Response`). Producers select by encoding
 whichever message they want as the payload; receivers attempt both
 parses and route accordingly. The wire `Header.stream` value is the

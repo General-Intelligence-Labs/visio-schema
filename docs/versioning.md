@@ -23,8 +23,8 @@ bumps to `v1.0.0` and after that breaking changes become rare events.
 Every proto package lives under a `vN` suffix:
 
 ```
-proto/visio/sensor/v1/imu_raw.proto      package visio.sensor.v1
-proto/visio/wire/v1/header.proto         package visio.wire.v1
+proto/visio/sensor/v1/imu_raw.proto      package visio_schema.sensor.v1
+proto/visio/wire/v1/header.proto         package visio_schema.wire.v1
 ```
 
 If we ever need to break a single package's wire contract, we add a

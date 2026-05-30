@@ -75,7 +75,7 @@ visio-schema/
 │       │   │                              no frame_id — body frame
 │       │   │                              implicit per stream_index)
 │       │   │                              (fused quat path uses
-│       │   │                              visio.ros.geometry_msgs.v1.
+│       │   │                              visio_schema.ros.geometry_msgs.v1.
 │       │   │                              Quaternion for Foxglove
 │       │   │                              orientation panel rendering)
 │       │   ├── encoder_raw.proto          T_POSITION_ENCODER raw
@@ -102,7 +102,7 @@ visio-schema/
 ├── gen/                   generated per-language outputs
 │                          (gitignored at HEAD; vendored at release tags
 │                          for downstream zero-codegen consumption)
-├── python/                hand-written `visio.wire` codec (frame/crc/cobs +
+├── python/                hand-written `visio_schema.wire` codec (frame/crc/cobs +
 │                          message + stream reflection); packaged together
 │                          with gen/python as the single `visio-schema` wheel
 ├── cpp/                   hand-written `visio::wire` codec + the one
@@ -113,11 +113,11 @@ visio-schema/
 
 `buf.yaml` declares two roots for proto resolution:
 - `third_party/foxglove-sdk/schemas/proto`  (for `foxglove.*` imports)
-- `proto`                                    (for `visio.*` imports)
+- `proto`                                    (for `visio_schema.*` imports)
 
 ## 4. Core decisions (locked from design conversation)
 
-- proto3, our own namespace is `visio.*`.
+- proto3, our own namespace is `visio_schema.*`.
 - We reuse `foxglove.*` schemas wherever Foxglove already defines a
   reasonable type. See section 4a below.
 - Per-domain versioning via package path (`sensor/v1`, `sensor/v2`);
@@ -130,7 +130,7 @@ visio-schema/
   / Foxglove layer. Left/right and similar instance distinctions are
   separate enum values (no `device_index` field on the wire).
 - **The wire Header is a small protobuf message**
-  (`visio.wire.v1.Header`) preceded by a 2-byte little-endian
+  (`visio_schema.wire.v1.Header`) preceded by a 2-byte little-endian
   `HEADER_LEN` field on every framed Endpoint. Protobuf gives us
   evolvability (optional fields without a wire-format break) at the
   cost of ~3-8 extra bytes per message vs fixed-binary; we accept
@@ -141,7 +141,7 @@ visio-schema/
   producer's original timestamp lives **inside the payload** for
   self-contained replay and is never duplicated in the header. All
   Visio schemas use `google.protobuf.Timestamp` consistently —
-  exception: `visio.service.timesync.v1` uses bare `uint64` for
+  exception: `visio_schema.service.timesync.v1` uses bare `uint64` for
   `t0`/`t1`/`t2` because the NTP math operates on raw mono integers.
 - Relays are supported: each hop's receiver applies the Timesync
   offset for `routed_from` (not `device`) to rewrite `timestamp`.
@@ -151,13 +151,13 @@ visio-schema/
   work out of the box).
 - **Raw IMU and fused orientation are separate, bundled streams, never
   resampled at the publisher.**
-  - `STREAM_IMU_RAW` (`visio.sensor.v1.ImuRaw`) carries bundled raw
+  - `STREAM_IMU_RAW` (`visio_schema.sensor.v1.ImuRaw`) carries bundled raw
     gyro/accel/(mag)/temp samples from one IMU instance. Each sample
     carries its own `t_offset_ns` captured at sensor read time. One
     bundle is emitted per FIFO drain (~60 Hz on UMI hardware,
     ~3-4 samples per bundle at 200 Hz gyro ODR).
   - `STREAM_IMU_QUAT` carries per-sample fused orientation as
-    `visio.ros.geometry_msgs.v1.Quaternion` — a strict 4-double
+    `visio_schema.ros.geometry_msgs.v1.Quaternion` — a strict 4-double
     (x, y, z, w) mimic of ROS's `geometry_msgs/msg/Quaternion`.
     McapEndpoint registers the MCAP Schema record with
     `name = "geometry_msgs/msg/Quaternion"`, so Foxglove's
@@ -175,7 +175,7 @@ visio-schema/
     rate, silently discarding any intra-grid raw samples buffered in
     the IMU's OutputRing.
 - **Same split pattern for encoders.** `STREAM_ENCODER_RAW`
-  (`visio.sensor.v1.EncoderRaw`) carries bundled raw sensor readouts —
+  (`visio_schema.sensor.v1.EncoderRaw`) carries bundled raw sensor readouts —
   raw count, magnetic-field magnitude, AGC, magnet-detection status —
   for bring-up and field debugging. The calibrated joint position
   (the [0, 1] normalized open/close value that gripper-control and
@@ -190,15 +190,15 @@ visio-schema/
 release tag (currently `sdk/v0.24.0`). We consume only
 `schemas/proto/foxglove/*.proto`; the rest of the SDK is ignored. Our
 `buf.yaml` adds the schemas root as a second proto resolution root, so
-`visio.*` messages can `import "foxglove/Vector3.proto"` etc. directly.
+`visio_schema.*` messages can `import "foxglove/Vector3.proto"` etc. directly.
 
 Three categories of message reuse:
 
 | Category | Examples | Visio's role |
 |---|---|---|
 | **Adopt as-is** | `foxglove.CompressedVideo`, `CompressedImage`, `RawImage`, `CameraCalibration`, `PoseInFrame`, `FrameTransform[s]`, `JointState[s]`, `Vector3`, `Quaternion`, `Pose`, `Log` | Publish under the Foxglove type name on Visio topics. Wire envelope's `payload_type` is e.g. `"foxglove.CompressedVideo"`. McapEndpoint registers the foxglove schema record verbatim. Foxglove Studio reads our MCAPs natively. |
-| **Pattern after** | `visio.sensor.v1.Imu` (no Foxglove equivalent; mirror `sensor_msgs/Imu` shape but use `foxglove.Quaternion` / `foxglove.Vector3` primitives so it composes) | Closest analogue is ROS's `sensor_msgs/Imu`; we follow it for field semantics but stay in our namespace + reuse Foxglove primitives where possible. |
-| **Wholly ours** | `visio.sensor.v1.Encoder`, `Tactile`; `visio.control.v1.*`; `visio.service.*`; `visio.wire.v1.Envelope`; (optional) `visio.sensor.v1.AudioCompressed` | Application-specific or transport-internal; Foxglove has no opinion. |
+| **Pattern after** | `visio_schema.sensor.v1.Imu` (no Foxglove equivalent; mirror `sensor_msgs/Imu` shape but use `foxglove.Quaternion` / `foxglove.Vector3` primitives so it composes) | Closest analogue is ROS's `sensor_msgs/Imu`; we follow it for field semantics but stay in our namespace + reuse Foxglove primitives where possible. |
+| **Wholly ours** | `visio_schema.sensor.v1.Encoder`, `Tactile`; `visio_schema.control.v1.*`; `visio_schema.service.*`; `visio_schema.wire.v1.Envelope`; (optional) `visio_schema.sensor.v1.AudioCompressed` | Application-specific or transport-internal; Foxglove has no opinion. |
 
 Two timestamps tolerated by design: Foxglove messages carry an inner
 `google.protobuf.Timestamp` (sensor acquisition time). That overlaps
@@ -213,7 +213,7 @@ for the full type-mapping table and bump procedure.
 
 ## 5. Wire Header (v1, protobuf)
 
-`visio.wire.v1.Header` is a small protobuf message defined in
+`visio_schema.wire.v1.Header` is a small protobuf message defined in
 `proto/visio/wire/v1/header.proto`. Shape:
 
 ```
@@ -272,7 +272,7 @@ MCAP, WebSocket: native record/frame boundaries; no Visio framing.
 ```
 
 `HEADER_LEN` is a single `u8`: the Header grows *compatibly* via optional
-protobuf fields (no wire break), and the `visio.wire.vN` package version
+protobuf fields (no wire break), and the `visio_schema.wire.vN` package version
 covers structural breaks — so one byte suffices and there is no separate
 header version byte.
 
@@ -320,8 +320,8 @@ static array in each language binding.
 ## 7. Versioning
 
 - Repo tags follow semver: `v0.1.0`, `v0.2.0`, ..., `v1.0.0`.
-- Message-level versioning via proto package (`visio.sensor.v1.*`,
-  `visio.sensor.v2.*`).
+- Message-level versioning via proto package (`visio_schema.sensor.v1.*`,
+  `visio_schema.sensor.v2.*`).
 - `buf breaking` gates any PR touching `proto/`.
 - Spec docs (`docs/framing.md`, `docs/timesync.md`) are part of the
   contract; changes to them follow the same semver rules even when no
@@ -367,7 +367,7 @@ static array in each language binding.
   procedure.
 - `docs/versioning.md`: semver policy + `buf breaking` enforcement.
 - C++ + Python codegen targets working end-to-end against both
-  `visio.*` and `foxglove.*` types.
+  `visio_schema.*` and `foxglove.*` types.
 - First release tag: `v0.1.0`.
 
 ### Phase 2 — language coverage + tooling
@@ -404,5 +404,6 @@ static array in each language binding.
 - Migration tooling from UMI v3 — lives in
   `visio-mq/tools/v3_bridge/` if and when needed.
 - ROS / DDS bridges.
-- A schema registry server. (The on-bus `SchemaQueryService` covers
-  ad-hoc descriptor fetch; nothing more.)
+- A schema registry server. (Descriptors ride inline in
+  `STREAM_DEVICE_INFO` Responses — `file_descriptor_sets` map keyed by
+  proto FQN; every peer's set self-describes.)

@@ -4,9 +4,9 @@ from __future__ import annotations
 import pytest
 from google.protobuf.timestamp_pb2 import Timestamp
 
-from visio.wire.codec.frame import FrameError, decode_frame, encode_frame
-from visio.wire.message import Message, decode_message, encode_message
-from visio.wire.v1.header_pb2 import DeviceClass, Header, StreamKind
+from visio_schema.wire.codec.frame import FrameError, decode_frame, encode_frame
+from visio_schema.wire.message import Message, decode_message, encode_message
+from visio_schema.wire.v1.header_pb2 import DeviceClass, Header, StreamKind
 
 
 def _make_header() -> Header:

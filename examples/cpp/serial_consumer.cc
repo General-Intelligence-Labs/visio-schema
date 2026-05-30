@@ -27,10 +27,10 @@
 #include <string_view>
 #include <vector>
 
-#include "visio/sensor/v1/imu_raw.pb.h"
-#include "visio/wire/codec/cobs.hpp"
-#include "visio/wire/codec/frame.hpp"
-#include "visio/wire/v1/header.pb.h"
+#include "visio_schema/sensor/v1/imu_raw.pb.h"
+#include "visio_schema/wire/codec/cobs.hpp"
+#include "visio_schema/wire/codec/frame.hpp"
+#include "visio_schema/wire/v1/header.pb.h"
 
 namespace {
 
@@ -89,17 +89,17 @@ int main(int argc, char** argv) {
       if (encoded.empty()) continue;  // bare delimiter / empty frame
 
       std::vector<std::uint8_t> decoded;
-      if (!visio::wire::CobsDecode(encoded, &decoded)) {
+      if (!visio_schema::wire::CobsDecode(encoded, &decoded)) {
         std::cerr << "drop: COBS decode failed (" << encoded.size() << " B)\n";
         continue;
       }
-      visio::wire::v1::Header header;
+      visio_schema::wire::v1::Header header;
       std::string payload;
       const std::string_view frame(
           reinterpret_cast<const char*>(decoded.data()), decoded.size());
-      const auto status = visio::wire::DecodeFrame(frame, &header, &payload);
-      if (status != visio::wire::FrameStatus::kOk) {
-        std::cerr << "drop: " << visio::wire::FrameStatusName(status) << "\n";
+      const auto status = visio_schema::wire::DecodeFrame(frame, &header, &payload);
+      if (status != visio_schema::wire::FrameStatus::kOk) {
+        std::cerr << "drop: " << visio_schema::wire::FrameStatusName(status) << "\n";
         continue;
       }
 
@@ -109,8 +109,8 @@ int main(int argc, char** argv) {
                 << " seq=" << header.seq()
                 << " payload=" << payload.size() << "B";
       // Demo: actually parse one stream type to show the payload decodes.
-      if (header.stream() == visio::wire::v1::STREAM_IMU_RAW) {
-        visio::sensor::v1::ImuRaw imu;
+      if (header.stream() == visio_schema::wire::v1::STREAM_IMU_RAW) {
+        visio_schema::sensor::v1::ImuRaw imu;
         if (imu.ParseFromString(payload)) {
           std::cout << " imu_samples=" << imu.samples_size();
         }

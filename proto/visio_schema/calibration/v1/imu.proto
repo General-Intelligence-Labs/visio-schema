@@ -1,0 +1,40 @@
+// visio_schema/calibration/v1/imu.proto
+//
+// Per-IMU intrinsic calibration. Published as ordinary stream messages on
+// STREAM_IMU_CALIBRATION (typically at 1 Hz, like Foxglove's
+// foxglove.CameraCalibration on STREAM_CAMERA_CALIB) — recorders write
+// each message to MCAP like any sensor channel; Foxglove Studio renders
+// natively.
+//
+// stream_index on the wire Header matches the data IMU's stream_index on
+// STREAM_IMU_RAW so the recorder can join (raw, calibration) at view time.
+//
+// Apply as: `corrected = scale * (raw - bias)`. `mounting_pose` locates
+// this IMU's frame in the device's reference frame.
+
+syntax = "proto3";
+
+package visio_schema.calibration.v1;
+
+import "foxglove/Pose.proto";
+
+message ImuCalibration {
+  // Accelerometer bias in m/s² (subtract from raw before scaling).
+  double accel_bias_x = 1;
+  double accel_bias_y = 2;
+  double accel_bias_z = 3;
+  // Accelerometer per-axis scale (unitless; identity = no scaling).
+  double accel_scale_x = 4;
+  double accel_scale_y = 5;
+  double accel_scale_z = 6;
+  // Gyroscope bias in rad/s.
+  double gyro_bias_x  = 7;
+  double gyro_bias_y  = 8;
+  double gyro_bias_z  = 9;
+  // Gyroscope per-axis scale.
+  double gyro_scale_x = 10;
+  double gyro_scale_y = 11;
+  double gyro_scale_z = 12;
+  // Static mounting transform (IMU frame → device reference frame).
+  foxglove.Pose mounting_pose = 13;
+}

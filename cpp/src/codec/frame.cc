@@ -1,11 +1,11 @@
-#include "visio/wire/codec/frame.hpp"
+#include "visio_schema/wire/codec/frame.hpp"
 
 #include <limits>
 #include <stdexcept>
 
-#include "visio/wire/codec/crc16.hpp"
+#include "visio_schema/wire/codec/crc16.hpp"
 
-namespace visio::wire {
+namespace visio_schema::wire {
 
 namespace {
 
@@ -33,7 +33,7 @@ const char* FrameStatusName(FrameStatus s) noexcept {
   return "unknown";
 }
 
-std::string EncodeFrame(const visio::wire::v1::Header& header,
+std::string EncodeFrame(const visio_schema::wire::v1::Header& header,
                         std::string_view payload) {
   const std::string hbytes = header.SerializeAsString();
   if (hbytes.size() > std::numeric_limits<std::uint8_t>::max()) {
@@ -50,7 +50,7 @@ std::string EncodeFrame(const visio::wire::v1::Header& header,
 }
 
 FrameStatus DecodeFrame(std::string_view frame,
-                        visio::wire::v1::Header* header,
+                        visio_schema::wire::v1::Header* header,
                         std::string* payload_out) {
   if (frame.size() < 3) {
     return FrameStatus::kFrameTooShort;
@@ -74,4 +74,4 @@ FrameStatus DecodeFrame(std::string_view frame,
   return FrameStatus::kOk;
 }
 
-}  // namespace visio::wire
+}  // namespace visio_schema::wire

@@ -44,7 +44,7 @@ deferred to MCAP-write time (separate concern, see
 ### Wire shape
 
 ```proto
-package visio.service.timesync.v1;
+package visio_schema.service.timesync.v1;
 
 message Request {
   uint64 t0           = 1;

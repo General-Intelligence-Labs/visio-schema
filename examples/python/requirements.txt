@@ -1,5 +1,6 @@
-# Dependencies for visio_foxglove.py (the visio-schema package itself is
+# Dependencies for the Python examples (the visio-schema package itself is
 # assumed already importable — `pip install -e python` or `make wheel`).
-pyserial>=3.5
-mcap>=1.1
-foxglove-sdk>=0.10
+pyserial>=3.5          # visio_foxglove.py: live serial read
+mcap>=1.1              # MCAP recording / sample generation
+foxglove-sdk>=0.10     # visio_foxglove.py: live Foxglove WebSocket server
+av>=11                 # make_sample_mcap.py: H.264 video stream (optional)

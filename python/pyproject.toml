@@ -24,14 +24,14 @@ dev = [
     "ruff>=0.5",
 ]
 
-# The wheel ships ONE `visio` import root combining the hand-written
-# modules under python/visio and the generated bindings under
-# gen/python/visio. `make wheel` stages both trees together before
-# building; for dev/tests, conftest.py adds ../gen/python to sys.path so
-# the two halves resolve as one PEP 420 namespace package.
+# The wheel ships ONE `visio_schema` import root combining the hand-written
+# codec modules and the generated bindings, both under python/visio_schema
+# (`make gen` emits the bindings in-package). The generated foxglove.*
+# bindings are relocated under visio_schema.foxglove so they don't collide
+# with the official `foxglove` SDK package.
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["visio*"]
+include = ["visio_schema*"]
 namespaces = true
 
 [tool.pytest.ini_options]

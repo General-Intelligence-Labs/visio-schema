@@ -1,6 +1,11 @@
-# Generated language bindings — built by `make gen`. Vendored at
-# release tags only; HEAD stays source-only.
-gen/
+# Generated protobuf bindings — built by `make gen`, live in-package next to
+# the hand-written codec. Source-only at HEAD; vendored at release tags.
+# Python:
+python/visio_schema/**/*_pb2.py
+python/visio_schema/**/*_pb2.pyi
+python/visio_schema/foxglove/
+# C++:
+cpp/generated/
 
 # buf installed locally via npm.
 node_modules/

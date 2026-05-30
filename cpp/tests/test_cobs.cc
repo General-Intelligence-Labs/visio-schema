@@ -1,4 +1,4 @@
-#include "visio/wire/codec/cobs.hpp"
+#include "visio_schema/wire/codec/cobs.hpp"
 
 #include <gtest/gtest.h>
 
@@ -14,12 +14,12 @@ std::string Decoded(const std::vector<std::uint8_t>& v) {
 }
 
 bool Roundtrip(std::string_view s, std::string* out) {
-  std::vector<std::uint8_t> encoded = visio::wire::CobsEncode(s);
+  std::vector<std::uint8_t> encoded = visio_schema::wire::CobsEncode(s);
   for (std::uint8_t b : encoded) {
     if (b == 0) return false;  // no 0x00 may appear in the encoded run
   }
   std::vector<std::uint8_t> decoded;
-  if (!visio::wire::CobsDecode(
+  if (!visio_schema::wire::CobsDecode(
           std::string_view(reinterpret_cast<const char*>(encoded.data()),
                            encoded.size()),
           &decoded)) {

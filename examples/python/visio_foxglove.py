@@ -1,24 +1,27 @@
 #!/usr/bin/env python3
-"""Minimal Visio → MCAP / Foxglove Studio bridge.
+"""Stream live Visio serial data to Foxglove Studio and/or an MCAP file.
 
-Read Visio messages from a **live serial port** or a **visio-written MCAP
-file**, and send them to an **MCAP file** and/or a **live Foxglove Studio**
-WebSocket server. Depends only on the `visio-schema` package plus three thin
-libraries (see requirements.txt).
+Reads Visio messages from a **live serial port** (COBS-delimited core frames,
+framing.md §3.2) and fans them out to a **live Foxglove Studio** WebSocket
+server and/or an **MCAP recording**. Depends only on the `visio-schema`
+package plus a couple of thin libraries (see requirements.txt).
 
-    # live serial -> Foxglove Studio (connect Studio to ws://localhost:8765)
+    # live serial -> Foxglove Studio (it prints a URL to open)
     python visio_foxglove.py --serial /dev/ttyUSB0 --foxglove
 
     # live serial -> record an MCAP (and watch live at the same time)
     python visio_foxglove.py --serial /dev/ttyUSB0 --out run.mcap --foxglove
 
-    # replay a recorded MCAP into Foxglove Studio
-    python visio_foxglove.py --mcap run.mcap --foxglove
+`--foxglove` starts a WebSocket *data source* server (not itself a viewer) and
+prints a URL; open it in Foxglove Studio, or in Studio choose
+Open connection → Foxglove WebSocket → ws://localhost:8765.
 
-Foxglove Studio can also just open the written .mcap directly (File ▸ Open).
+To look at an MCAP **file** (a recording, or one from make_sample_mcap.py),
+just open it directly in Foxglove Studio: **File ▸ Open local file**. No need
+to run this script for that.
 
-This is deliberately minimal — one blocking loop, no bus, no threads. The
-heavier, bus-integrated recording/replay machinery lives in visio-mq.
+Deliberately minimal — one read loop, no bus, no threads. The heavier,
+bus-integrated transport lives in visio-mq.
 """
 from __future__ import annotations
 
@@ -28,18 +31,17 @@ from collections.abc import Iterator
 
 from google.protobuf.timestamp_pb2 import Timestamp
 
-from visio.wire.codec import FrameError, cobs_decode, decode_frame
-from visio.wire.message import Message
-from visio.wire.streams import (
+from visio_schema.wire.codec import cobs_decode, decode_frame
+from visio_schema.wire.message import Message
+from visio_schema.wire.streams import (
     REGISTRY,
     file_descriptor_set,
-    parse_topic,
     synthesized_topic,
 )
 
 
 # --------------------------------------------------------------------------- #
-# Sources                                                                      #
+# Source                                                                       #
 # --------------------------------------------------------------------------- #
 def read_serial(port: str, baud: int) -> Iterator[Message]:
     """Yield Messages from a live serial port (COBS-delimited core frames,
@@ -62,32 +64,10 @@ def read_serial(port: str, baud: int) -> Iterator[Message]:
                 continue
             try:
                 header, payload = decode_frame(cobs_decode(encoded))
-            except (FrameError, Exception) as exc:  # noqa: BLE001 wire boundary
+            except Exception as exc:  # noqa: BLE001 drop malformed frame, framing.md §5
                 print(f"drop: {exc}", file=sys.stderr)
                 continue
             yield Message.from_header(header, payload)
-
-
-def read_mcap(path: str) -> Iterator[Message]:
-    """Yield Messages from a visio-written MCAP file."""
-    from mcap.reader import make_reader
-
-    with open(path, "rb") as f:
-        for _schema, channel, message in make_reader(f).iter_messages():
-            try:
-                device, stream, stream_index = parse_topic(channel.topic)
-            except ValueError:
-                continue  # not a synthesized visio topic; skip
-            ts = Timestamp()
-            ts.FromNanoseconds(message.log_time)
-            yield Message(
-                stream=stream,
-                stream_index=stream_index,
-                payload=message.data,
-                device=device,
-                seq=message.sequence,
-                timestamp=ts,
-            )
 
 
 # --------------------------------------------------------------------------- #
@@ -99,8 +79,15 @@ def _ns(ts: Timestamp) -> int:
 
 class McapSink:
     """Write Messages to a spec-conformant MCAP (framing.md §5, MASTER_PLAN §5):
-    payload bytes verbatim, schema from the protobuf FileDescriptorSet under
-    its (possibly ROS-remapped) name, topic synthesized from the Header."""
+    payload bytes verbatim, schema from the protobuf FileDescriptorSet, topic
+    synthesized from the Header.
+
+    The schema NAME is the protobuf full name (mapping.proto_type), NOT the
+    ROS-remapped mcap_schema_name: for a protobuf channel Foxglove resolves the
+    type by looking the schema name up inside the FileDescriptorSet, so it must
+    match a type in that set. (The ROS-name remap only applies to ros2msg
+    channels — see examples/README.)
+    """
 
     def __init__(self, path: str) -> None:
         from mcap.writer import Writer
@@ -115,14 +102,16 @@ class McapSink:
         mapping = REGISTRY.for_kind(msg.stream)
         if mapping is None:
             return  # unknown / unannotated stream; nothing to register
-        schema_id = self._schema_ids.get(mapping.mcap_schema_name)
+
+        schema_id = self._schema_ids.get(mapping.proto_type)
         if schema_id is None:
             schema_id = self._w.register_schema(
-                name=mapping.mcap_schema_name,
+                name=mapping.proto_type,
                 encoding="protobuf",
                 data=file_descriptor_set(mapping.proto_type),
             )
-            self._schema_ids[mapping.mcap_schema_name] = schema_id
+            self._schema_ids[mapping.proto_type] = schema_id
+
         topic = synthesized_topic(msg.device, msg.stream, msg.stream_index)
         channel_id = self._channel_ids.get(topic)
         if channel_id is None:
@@ -130,6 +119,7 @@ class McapSink:
                 topic=topic, message_encoding="protobuf", schema_id=schema_id
             )
             self._channel_ids[topic] = channel_id
+
         ts = _ns(msg.timestamp)
         self._w.add_message(
             channel_id=channel_id,
@@ -147,7 +137,8 @@ class McapSink:
 class FoxgloveSink:
     """Publish Messages to a live Foxglove WebSocket server. Each (stream,
     stream_index) becomes one protobuf channel; Studio decodes payloads from
-    the schema descriptor — we never parse them here."""
+    the schema descriptor — we never parse them here. Schema name is the
+    protobuf full name (see McapSink for why)."""
 
     def __init__(self, port: int) -> None:
         import foxglove
@@ -156,6 +147,7 @@ class FoxgloveSink:
         self._server = foxglove.start_server(port=port)
         self._channels: dict[str, object] = {}
         print(f"Foxglove WebSocket server on ws://localhost:{port}", file=sys.stderr)
+        print(f"open Foxglove Studio at:\n  {self._server.app_url()}", file=sys.stderr)
 
     def write(self, msg: Message) -> None:
         mapping = REGISTRY.for_kind(msg.stream)
@@ -168,7 +160,7 @@ class FoxgloveSink:
                 topic,
                 message_encoding="protobuf",
                 schema=self._fg.Schema(
-                    name=mapping.mcap_schema_name,
+                    name=mapping.proto_type,
                     encoding="protobuf",
                     data=file_descriptor_set(mapping.proto_type),
                 ),
@@ -185,11 +177,10 @@ class FoxgloveSink:
 # --------------------------------------------------------------------------- #
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    src = p.add_mutually_exclusive_group(required=True)
-    src.add_argument("--serial", metavar="PORT", help="read live from a serial port")
-    src.add_argument("--mcap", metavar="IN.mcap", help="read from an MCAP file")
+    p.add_argument("--serial", metavar="PORT", required=True,
+                   help="serial port to read live from (e.g. /dev/ttyUSB0)")
     p.add_argument("--baud", type=int, default=921600, help="serial baud (default 921600)")
-    p.add_argument("--out", metavar="OUT.mcap", help="also write messages to an MCAP file")
+    p.add_argument("--out", metavar="OUT.mcap", help="also record messages to an MCAP file")
     p.add_argument("--foxglove", action="store_true", help="serve live to Foxglove Studio")
     p.add_argument("--port", type=int, default=8765, help="Foxglove WS port (default 8765)")
     args = p.parse_args(argv)
@@ -197,7 +188,6 @@ def main(argv: list[str] | None = None) -> int:
     if not args.out and not args.foxglove:
         p.error("choose at least one sink: --out and/or --foxglove")
 
-    source = read_serial(args.serial, args.baud) if args.serial else read_mcap(args.mcap)
     sinks: list[McapSink | FoxgloveSink] = []
     if args.out:
         sinks.append(McapSink(args.out))
@@ -206,25 +196,17 @@ def main(argv: list[str] | None = None) -> int:
 
     n = 0
     try:
-        for msg in source:
+        for msg in read_serial(args.serial, args.baud):
             for sink in sinks:
                 sink.write(msg)
             n += 1
-        # A finite source (MCAP) drained: keep the Foxglove server up so
-        # Studio can still connect and scrub the just-published messages.
-        if args.foxglove:
-            print(f"replayed {n} messages; serving — Ctrl-C to stop", file=sys.stderr)
-            import time
-
-            while True:
-                time.sleep(1)
     except KeyboardInterrupt:
         pass
     finally:
         for sink in sinks:
             sink.close()
     print(f"done ({n} messages)", file=sys.stderr)
-    return 0
+    return n
 
 
 if __name__ == "__main__":

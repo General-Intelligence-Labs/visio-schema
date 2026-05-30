@@ -1,4 +1,4 @@
-#include "visio/wire/codec/crc16.hpp"
+#include "visio_schema/wire/codec/crc16.hpp"
 
 #include <gtest/gtest.h>
 
@@ -8,7 +8,7 @@
 namespace {
 
 std::uint16_t Crc(std::string_view s) {
-  return visio::wire::Crc16(s.data(), s.size());
+  return visio_schema::wire::Crc16(s.data(), s.size());
 }
 
 TEST(Crc16, CheckValue) {

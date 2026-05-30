@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from visio.wire.codec.crc16 import crc16
+from visio_schema.wire.codec.crc16 import crc16
 
 
 def test_check_value() -> None:

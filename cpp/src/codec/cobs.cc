@@ -1,6 +1,6 @@
-#include "visio/wire/codec/cobs.hpp"
+#include "visio_schema/wire/codec/cobs.hpp"
 
-namespace visio::wire {
+namespace visio_schema::wire {
 
 std::vector<std::uint8_t> CobsEncode(std::string_view data) {
   std::vector<std::uint8_t> out;
@@ -52,4 +52,4 @@ bool CobsDecode(std::string_view encoded, std::vector<std::uint8_t>* out) {
   return true;
 }
 
-}  // namespace visio::wire
+}  // namespace visio_schema::wire

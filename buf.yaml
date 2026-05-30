@@ -10,7 +10,7 @@ lint:
   use:
     - STANDARD
   except:
-    # We use proto packages like `visio.sensor.v1`, `visio.ros.geometry_msgs.v1`,
+    # We use proto packages like `visio_schema.sensor.v1`, `visio_schema.ros.geometry_msgs.v1`,
     # etc. — the standard rule wants the *file* path to mirror the package, which
     # would force every leaf dir to host the file directly. Our layout puts
     # multiple .protos under a single v1 dir for related types, which is the

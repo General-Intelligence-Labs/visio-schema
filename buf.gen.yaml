@@ -2,10 +2,15 @@
 # Makefile because the buf cpp remote plugin emits code requiring a
 # newer libprotobuf runtime than is widely installable (Ubuntu 24.04 ships
 # 32.x; conda-forge ships 31.x). Local protoc tracks the local libprotobuf,
-# so its output matches whatever lib the visio-mq C++ target links against.
+# so its output matches whatever lib the visio-schema C++ target links against.
+#
+# Output goes straight into the Python package tree (python/) so the
+# generated bindings and the hand-written codec are ONE package. `make gen`
+# then relocates the foxglove.* bindings under visio_schema.foxglove (see Makefile)
+# so they don't collide with the official `foxglove` SDK package.
 version: v2
 plugins:
   - remote: buf.build/protocolbuffers/python
-    out: gen/python
+    out: python
   - remote: buf.build/protocolbuffers/pyi
-    out: gen/python
+    out: python
