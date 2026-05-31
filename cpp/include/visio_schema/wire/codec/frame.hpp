@@ -6,7 +6,7 @@
 #include <string>
 #include <string_view>
 
-#include "visio_schema/wire/v1/header.pb.h"
+#include "visio_schema/wire/message.hpp"
 
 namespace visio_schema::wire {
 
@@ -21,16 +21,14 @@ enum class FrameStatus : std::uint8_t {
 // Human-readable name for a FrameStatus (for log/drop messages).
 const char* FrameStatusName(FrameStatus s) noexcept;
 
-// Serialize header + payload into the core wire frame. Throws
-// std::length_error if the serialized Header exceeds the u8 HEADER_LEN cap
-// (255 bytes) — which the ~21-25 byte Header never approaches in practice.
-std::string EncodeFrame(const visio_schema::wire::v1::Header& header,
-                        std::string_view payload);
+// Serialize a message's Header + payload into the core wire frame. The Header
+// is a fixed, small protobuf (<= visio_schema_wire_v1_Header_size bytes, far
+// under the u8 HEADER_LEN cap), so encoding is infallible.
+std::string EncodeFrame(const Message& msg);
 
-// Parse a core wire frame. On success returns kOk and fills `header` /
-// `payload_out`. On failure returns a typed status; callers log and drop.
-FrameStatus DecodeFrame(std::string_view frame,
-                        visio_schema::wire::v1::Header* header,
-                        std::string* payload_out);
+// Parse a core wire frame into `out`. On success returns kOk; on any
+// shape/CRC/parse error returns a typed status and leaves `out` unspecified.
+// Callers log and drop (framing.md §5).
+FrameStatus DecodeFrame(std::string_view frame, Message* out);
 
 }  // namespace visio_schema::wire

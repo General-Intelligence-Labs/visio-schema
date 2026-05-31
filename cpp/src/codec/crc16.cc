@@ -23,17 +23,14 @@ constexpr auto kTable = MakeTable();
 
 }  // namespace
 
-std::uint16_t Crc16(std::span<const std::byte> data) noexcept {
+std::uint16_t Crc16(const void* data, std::size_t n) noexcept {
+  const auto* bytes = static_cast<const std::uint8_t*>(data);
   std::uint16_t crc = 0xFFFF;
-  for (std::byte b : data) {
+  for (std::size_t i = 0; i < n; ++i) {
     crc = static_cast<std::uint16_t>(
-        (crc << 8) ^ kTable[((crc >> 8) ^ std::to_integer<std::uint8_t>(b)) & 0xFF]);
+        (crc << 8) ^ kTable[((crc >> 8) ^ bytes[i]) & 0xFF]);
   }
   return crc;
-}
-
-std::uint16_t Crc16(const void* data, std::size_t n) noexcept {
-  return Crc16({static_cast<const std::byte*>(data), n});
 }
 
 }  // namespace visio_schema::wire

@@ -4,8 +4,8 @@
 python/visio_schema/**/*_pb2.py
 python/visio_schema/**/*_pb2.pyi
 python/visio_schema/foxglove/
-# C++:
-cpp/generated/
+# C++ (nanopb only; no host full-protobuf C++ output):
+cpp/generated_nanopb/
 
 # buf installed locally via npm.
 node_modules/

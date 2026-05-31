@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
-project(visio_schema CXX)
+project(visio_schema CXX C)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 17)  # embeddable target is gcc 8.3 / C++17 (no <span>)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -10,51 +10,53 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
 
-# ---- protobuf --------------------------------------------------------------
-# Hint to conda's protobuf install. Override CMAKE_PREFIX_PATH on the command
-# line to use a different install (system, vcpkg, etc.).
-if(DEFINED ENV{CONDA_PREFIX})
-  list(APPEND CMAKE_PREFIX_PATH "$ENV{CONDA_PREFIX}")
-endif()
-find_package(Protobuf CONFIG REQUIRED)
-find_package(absl CONFIG REQUIRED)
+# The embeddable wire library is nanopb-only — no full libprotobuf, no abseil —
+# so it cross-compiles for the RV1106 (HDK / vendor SDK, uClibc armv7). The wire
+# codec only (de)serializes the Header, but a device ORIGINATES payloads (camera
+# frames, IMU/encoder batches, DeviceInfo, ...) and needs their nanopb structs
+# too — so we compile the WHOLE generated tree. Per-field encoding (zero-copy
+# callback for big blobs, bounded inline for small fields, pointer for the
+# once-per-run DeviceInfo Response) is set in proto/nanopb.options. Host-side
+# full-protobuf tooling lives in the Python package.
 
-# ---- generated bindings ----------------------------------------------------
-# `make gen` emits the .pb.cc/.pb.h into cpp/generated (in-package, next to
-# the hand-written codec). They compile straight into this library so
-# consumers link ONE target for both the generated bindings and the codec.
-set(VISIO_GEN_CPP "${CMAKE_CURRENT_SOURCE_DIR}/generated")
-if(NOT EXISTS "${VISIO_GEN_CPP}/visio_schema/wire/v1/header.pb.h")
+set(NANOPB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/nanopb")
+set(NANOPB_GEN "${CMAKE_CURRENT_SOURCE_DIR}/generated_nanopb")
+
+if(NOT EXISTS "${NANOPB_GEN}/visio_schema/wire/v1/header.pb.h")
   message(FATAL_ERROR
-    "visio-schema generated C++ bindings not found at ${VISIO_GEN_CPP}.\n"
-    "Run `make gen` in the repo root first.")
+    "nanopb bindings not found at ${NANOPB_GEN}. Run `make gen` first.")
 endif()
-file(GLOB_RECURSE VISIO_GEN_SRCS CONFIGURE_DEPENDS "${VISIO_GEN_CPP}/*.pb.cc")
+if(NOT EXISTS "${NANOPB_DIR}/pb_encode.c")
+  message(FATAL_ERROR
+    "nanopb runtime not found at ${NANOPB_DIR}. "
+    "Run `git submodule update --init third_party/nanopb`.")
+endif()
 
-# ---- the one wholistic library: bindings + framing codec -------------------
+# Every generated payload type, not just the Header. CONFIGURE_DEPENDS re-globs
+# when the set changes (e.g. a new proto added to the schema).
+file(GLOB_RECURSE NANOPB_GEN_SRCS CONFIGURE_DEPENDS "${NANOPB_GEN}/*.pb.c")
+
 add_library(visio_schema STATIC
-  ${VISIO_GEN_SRCS}
+  # nanopb runtime
+  "${NANOPB_DIR}/pb_encode.c"
+  "${NANOPB_DIR}/pb_decode.c"
+  "${NANOPB_DIR}/pb_common.c"
+  # nanopb-generated bindings for the whole schema (Header + all payloads)
+  ${NANOPB_GEN_SRCS}
+  # hand-written codec
   src/codec/crc16.cc
   src/codec/cobs.cc
   src/codec/frame.cc
 )
 target_include_directories(visio_schema PUBLIC
-  "${VISIO_GEN_CPP}"
+  "${NANOPB_DIR}"
+  "${NANOPB_GEN}"
   "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
-target_link_libraries(visio_schema PUBLIC protobuf::libprotobuf)
 add_library(visio::schema ALIAS visio_schema)
 
-# ---- tests (top-level build only) ------------------------------------------
-if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-  set(_visio_schema_tests_default ON)
-else()
-  set(_visio_schema_tests_default OFF)
-endif()
-option(VISIO_SCHEMA_BUILD_TESTS "Build visio-schema codec tests"
-       ${_visio_schema_tests_default})
-
-if(VISIO_SCHEMA_BUILD_TESTS)
+# ---- tests (top-level host builds only; skipped when cross-compiling) -------
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT CMAKE_CROSSCOMPILING)
   include(FetchContent)
   FetchContent_Declare(
     googletest

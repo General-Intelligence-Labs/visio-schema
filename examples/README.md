@@ -49,6 +49,12 @@ No server, no `--foxglove` — file playback is Studio's job, not this script's.
 Add a **Plot** panel for `/glove_left/imu_raw/3`, a **3D**/orientation panel for
 `/glove_left/imu_quat/3`, and an **Image** panel for `/ego/video_compressed/0`.
 
+> These scripts use a small standalone `McapSink` so they depend only on
+> `visio-schema`. The bus-integrated, embeddable recorder is `McapEndpoint` in
+> the **visio** package (`visio.mq.endpoints.mcap` / the C++
+> `visio::mq::McapEndpoint`) — attach it to a `Bus` as a sink. See
+> `visio/README.md`.
+
 > H.264 video needs the `av` package (`pip install av`); without it the sample
 > is written IMU-only.
 

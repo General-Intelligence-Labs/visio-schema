@@ -4,8 +4,8 @@
 #   make lint      - lint our protos (visio.* namespace; foxglove ignored)
 #   make breaking  - check for wire-breaking changes vs main (skipped if
 #                    main doesn't exist yet, e.g. before first commit/push)
-#   make gen       - lint, then generate C++ + Python bindings IN-PACKAGE
-#                    (python/visio_schema + cpp/generated)
+#   make gen       - lint, then generate Python (full-protobuf) + C++ (nanopb)
+#                    bindings IN-PACKAGE (python/visio_schema + cpp/generated_nanopb)
 #   make test      - codegen sanity check: import every generated Python module
 #   make pytest    - run the Python codec tests (python/tests)
 #   make cpp       - build + run the C++ codec tests (cpp/)
@@ -17,22 +17,32 @@
 
 BUF := $(shell command -v buf 2>/dev/null || echo node_modules/.bin/buf)
 PYTHON := $(shell command -v python3 2>/dev/null || echo python)
-PROTOC := $(shell command -v protoc 2>/dev/null)
-
-PROTO_PATHS := -I proto -I third_party/foxglove-sdk/schemas/proto
-PROTO_FILES := $(shell find proto -name '*.proto') $(shell find third_party/foxglove-sdk/schemas/proto -name '*.proto')
+# Use the VENDORED nanopb generator (third_party/nanopb submodule) rather than
+# a system one, so the generated .pb.c always matches the runtime (pb_encode.c
+# etc.) the embedded build links. Needs the protobuf python module on $(PYTHON).
+NANOPB := $(PYTHON) third_party/nanopb/generator/nanopb_generator.py
 
 # Generated bindings live INSIDE the packages (one wholistic tree per
 # language), not in a separate gen/ dir.
 PY_PKG  := python
-CPP_GEN := cpp/generated
+# nanopb C bindings for the embeddable C++ build (RV1106 / HDK) — no full
+# libprotobuf. This covers the WHOLE schema, not just the wire Header: the bus
+# RELAYS payloads as opaque bytes, but a device ORIGINATES them (camera frames,
+# IMU/encoder batches, DeviceInfo, ...) and must encode each type. Per-field
+# encoding (zero-copy callback for big blobs, bounded inline for small fields,
+# pointer for the once-per-run DeviceInfo Response) lives in proto/nanopb.options.
+NANOPB_GEN     := cpp/generated_nanopb
+NANOPB_OPTIONS := proto/nanopb.options
+# The vendored nanopb ships the well-known protos (timestamp.proto, etc.).
+NANOPB_WKT_INC := third_party/nanopb/generator/proto
+FOXGLOVE_PROTO := third_party/foxglove-sdk/schemas/proto
 
 .PHONY: lint breaking gen test pytest cpp wheel clean help
 
 help:
 	@echo "make lint      - lint protos"
 	@echo "make breaking  - check for wire-breaking changes vs main"
-	@echo "make gen       - lint, then regenerate python/visio_schema + cpp/generated bindings"
+	@echo "make gen       - lint, then regenerate python/visio_schema + cpp/generated_nanopb bindings"
 	@echo "make test      - import every generated Python module (codegen sanity)"
 	@echo "make pytest    - run the Python codec tests (python/tests)"
 	@echo "make cpp       - build + run the C++ codec tests (cpp/)"
@@ -66,13 +76,29 @@ gen: lint
 	@find $(PY_PKG)/visio_schema \( -name '*_pb2.py' -o -name '*_pb2.pyi' \) -print0 \
 	  | xargs -0 -r sed -i -E \
 	      's/^from foxglove import /from visio_schema.foxglove import /; s/^import foxglove\./import visio_schema.foxglove./'
-	# ---- C++: generate into cpp/generated via local protoc
-	@if [ -z "$(PROTOC)" ]; then \
-	  echo "make gen: protoc not found in PATH; skipping C++ codegen"; \
-	else \
-	  rm -rf $(CPP_GEN); mkdir -p $(CPP_GEN); \
-	  $(PROTOC) $(PROTO_PATHS) --cpp_out=$(CPP_GEN) $(PROTO_FILES); \
-	fi
+	# No host full-protobuf C++ output: the only C++ consumer is the embeddable
+	# stack, which is nanopb-only. Host-side full-protobuf tooling is Python.
+	# ---- C++ (embeddable/nanopb): the WHOLE schema (our protos + the foxglove
+	# types our streams use + the WKT timestamp). This is what the RV1106 (HDK)
+	# build links — no full libprotobuf. nanopb won't create nested output dirs,
+	# so mirror the proto tree first. --error-on-unmatched guards the options
+	# file against drift (a renamed field silently losing its bound).
+	rm -rf $(NANOPB_GEN); mkdir -p $(NANOPB_GEN)
+	@cd proto && find . -type d -exec mkdir -p "$(CURDIR)/$(NANOPB_GEN)/{}" \;
+	@cd $(FOXGLOVE_PROTO) && find . -type d -exec mkdir -p "$(CURDIR)/$(NANOPB_GEN)/{}" \;
+	@mkdir -p $(NANOPB_GEN)/google/protobuf
+	$(NANOPB) -f $(NANOPB_OPTIONS) \
+	  --proto-path=proto \
+	  --proto-path=$(FOXGLOVE_PROTO) \
+	  --proto-path=$(NANOPB_WKT_INC) \
+	  --output-dir=$(NANOPB_GEN) \
+	  $(shell cd proto && find . -name '*.proto' | sed 's|^\./||') \
+	  $(shell cd $(FOXGLOVE_PROTO) && find . -name '*.proto' | sed 's|^\./||') \
+	  google/protobuf/timestamp.proto \
+	  google/protobuf/duration.proto
+	# ---- C++ static StreamKind table (host-side; replaces nanopb-impossible
+	# descriptor reflection). Proto annotations are the source of truth.
+	@$(PYTHON) scripts/gen_stream_map.py $(NANOPB_GEN)
 
 test: gen
 	@$(PYTHON) tests/test_imports.py
@@ -82,7 +108,7 @@ test: gen
 pytest: gen
 	cd python && $(PYTHON) -m pytest tests -q
 
-# C++ codec tests. Needs a protobuf CONFIG install (conda/system/vcpkg).
+# C++ codec tests. nanopb-only — no libprotobuf/abseil install needed.
 cpp: gen
 	cmake -S cpp -B cpp/build
 	cmake --build cpp/build -j
@@ -96,6 +122,6 @@ wheel: gen
 	@echo "wheel written to dist/"
 
 clean:
-	rm -rf $(CPP_GEN) cpp/build examples/cpp/build dist build
+	rm -rf $(NANOPB_GEN) cpp/build examples/cpp/build dist build
 	find $(PY_PKG)/visio_schema \( -name '*_pb2.py' -o -name '*_pb2.pyi' \) -delete
 	rm -rf $(PY_PKG)/visio_schema/foxglove

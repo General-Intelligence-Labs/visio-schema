@@ -4,10 +4,8 @@
 // serial port, decodes each Header, and prints it. This is the shape a
 // Linux-class embedded board (e.g. an RV1106 gripper) would use: a blocking
 // read loop, no bus, no threads, depending only on the single `visio_schema`
-// target (generated bindings + framing codec).
-//
-// A true bare-metal MCU would swap the generated libprotobuf bindings for
-// nanopb, but the COBS / CRC / frame-split logic below is identical.
+// target (nanopb bindings + framing codec) — no libprotobuf, no abseil, the
+// same code path that cross-compiles for the RV1106 / HDK.
 //
 //   build:  cmake -S examples/cpp -B examples/cpp/build && cmake --build examples/cpp/build
 //   run:    ./examples/cpp/build/serial_consumer /dev/ttyUSB0

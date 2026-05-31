@@ -1,0 +1,48 @@
+# nanopb field options for the embeddable C++ codegen (device encode path).
+#
+# One global options file (passed to nanopb_generator with -f) instead of a
+# per-proto .options next to each file — the foxglove schemas live in a git
+# submodule we don't edit, so a central file is the only clean place to bound
+# their fields too. Patterns are `package.Message.field` and accept `*`.
+#
+# Strategy:
+#   - Unbounded / high-rate buffers (video / image / audio `data`, and the
+#     IMU / encoder `samples` batches): left as the nanopb default pb_callback_t.
+#     The producer streams straight from its existing frame buffer or sensor
+#     FIFO as it encodes — zero-copy, no malloc, any size. Crucially this also
+#     lets a 1 s IMU storage bundle (~200 samples) through, which a fixed array
+#     could not. (No entry here = stays callback.)
+#   - Small fixed-shape strings (frame_id, format tag, button id): bounded
+#     inline char[N], so they need no malloc and have predictable footprint.
+#   - DeviceInfo Response (built once per run, carries KB-scale serialized
+#     FileDescriptorSets): FT_POINTER. Allocates only what is actually sent and
+#     frees after — a fixed cap would reserve count x big-value permanently.
+
+# ---- Vision: bounded tags, blob stays callback ----------------------------
+foxglove.CompressedVideo.frame_id   max_size:32
+foxglove.CompressedVideo.format     max_size:8
+foxglove.CompressedImage.frame_id   max_size:32
+foxglove.CompressedImage.format     max_size:8
+
+# ---- Sensors: short button id (samples stay callback — see strategy above) -
+visio_schema.sensor.v1.ButtonEvent.button_id   max_size:32
+
+# ---- Geometry: short frame id ---------------------------------------------
+visio_schema.geometry.v1.Twist.frame_id   max_size:32
+
+# ---- DeviceInfo discovery: built once per run, so favor pointer/bounded over
+#      callbacks. Strings + the repeated lists are FT_POINTER (allocate only
+#      what is sent, free after). The map<string,bytes> is special: nanopb
+#      silently keeps a `map` field as a callback if you ask for FT_POINTER, so
+#      instead bound the entry COUNT inline and make the (KB-scale) value a
+#      pointer — char key[128] + pb_bytes_array_t *value, no callback.
+visio_schema.service.device_info.v1.DeviceInfo.firmware_version    type:FT_POINTER
+visio_schema.service.device_info.v1.DeviceInfo.hardware_revision   type:FT_POINTER
+visio_schema.service.device_info.v1.DeviceInfo.model               type:FT_POINTER
+visio_schema.service.device_info.v1.DeviceInfo.serial              type:FT_POINTER
+visio_schema.service.device_info.v1.DeviceInfo.streams             type:FT_POINTER
+visio_schema.service.device_info.v1.OutputStream.label             type:FT_POINTER
+visio_schema.service.device_info.v1.Response.devices                        type:FT_POINTER
+visio_schema.service.device_info.v1.Response.file_descriptor_sets           max_count:32
+visio_schema.service.device_info.v1.Response.FileDescriptorSetsEntry.key    max_size:128
+visio_schema.service.device_info.v1.Response.FileDescriptorSetsEntry.value  type:FT_POINTER

@@ -1,7 +1,7 @@
 #include "visio_schema/wire/codec/frame.hpp"
 
-#include <limits>
-#include <stdexcept>
+#include <pb_decode.h>
+#include <pb_encode.h>
 
 #include "visio_schema/wire/codec/crc16.hpp"
 
@@ -20,6 +20,18 @@ std::uint16_t ReadU16LE(const char* p) {
       (static_cast<std::uint8_t>(p[1]) << 8));
 }
 
+visio_schema_wire_v1_Header ToHeader(const Message& msg) {
+  visio_schema_wire_v1_Header h = visio_schema_wire_v1_Header_init_zero;
+  h.device = msg.device;
+  h.routed_from = msg.routed_from;
+  h.stream = msg.stream;
+  h.stream_index = msg.stream_index;
+  h.seq = msg.seq;
+  h.has_timestamp = true;
+  h.timestamp = msg.timestamp;
+  return h;
+}
+
 }  // namespace
 
 const char* FrameStatusName(FrameStatus s) noexcept {
@@ -33,25 +45,26 @@ const char* FrameStatusName(FrameStatus s) noexcept {
   return "unknown";
 }
 
-std::string EncodeFrame(const visio_schema::wire::v1::Header& header,
-                        std::string_view payload) {
-  const std::string hbytes = header.SerializeAsString();
-  if (hbytes.size() > std::numeric_limits<std::uint8_t>::max()) {
-    throw std::length_error("Header too large for u8 HEADER_LEN");
-  }
+std::string EncodeFrame(const Message& msg) {
+  visio_schema_wire_v1_Header header = ToHeader(msg);
+  // The Header is bounded by the generated max size, which is far under the u8
+  // HEADER_LEN cap — so this stack buffer always fits and pb_encode can't fail.
+  pb_byte_t hbuf[visio_schema_wire_v1_Header_size];
+  pb_ostream_t os = pb_ostream_from_buffer(hbuf, sizeof(hbuf));
+  pb_encode(&os, visio_schema_wire_v1_Header_fields, &header);
+  const std::size_t header_len = os.bytes_written;
+
   std::string out;
-  out.reserve(1 + hbytes.size() + payload.size() + 2);
-  out.push_back(static_cast<char>(hbytes.size()));  // HEADER_LEN (u8)
-  out.append(hbytes);
-  out.append(payload);
+  out.reserve(1 + header_len + msg.payload.size() + 2);
+  out.push_back(static_cast<char>(header_len));  // HEADER_LEN (u8)
+  out.append(reinterpret_cast<const char*>(hbuf), header_len);
+  out.append(msg.payload);
   const std::uint16_t crc = Crc16(out.data(), out.size());
   PackU16LE(&out, crc);
   return out;
 }
 
-FrameStatus DecodeFrame(std::string_view frame,
-                        visio_schema::wire::v1::Header* header,
-                        std::string* payload_out) {
+FrameStatus DecodeFrame(std::string_view frame, Message* out) {
   if (frame.size() < 3) {
     return FrameStatus::kFrameTooShort;
   }
@@ -62,15 +75,25 @@ FrameStatus DecodeFrame(std::string_view frame,
   }
   const std::string_view covered = frame.substr(0, frame.size() - 2);
   const std::uint16_t got_crc = ReadU16LE(frame.data() + frame.size() - 2);
-  const std::uint16_t want_crc = Crc16(covered.data(), covered.size());
-  if (got_crc != want_crc) {
+  if (got_crc != Crc16(covered.data(), covered.size())) {
     return FrameStatus::kCrcMismatch;
   }
-  if (!header->ParseFromArray(frame.data() + 1, header_len)) {
+
+  visio_schema_wire_v1_Header header = visio_schema_wire_v1_Header_init_zero;
+  pb_istream_t is = pb_istream_from_buffer(
+      reinterpret_cast<const pb_byte_t*>(frame.data() + 1), header_len);
+  if (!pb_decode(&is, visio_schema_wire_v1_Header_fields, &header)) {
     return FrameStatus::kHeaderParseError;
   }
-  const std::size_t payload_len = frame.size() - 1 - 2 - header_len;
-  payload_out->assign(frame.data() + payload_end, payload_len);
+
+  out->device = header.device;
+  out->routed_from = header.routed_from;
+  out->stream = header.stream;
+  out->stream_index = header.stream_index;
+  out->seq = header.seq;
+  out->timestamp = header.timestamp;
+  out->payload.assign(frame.data() + payload_end,
+                      frame.size() - payload_end - 2);
   return FrameStatus::kOk;
 }
 

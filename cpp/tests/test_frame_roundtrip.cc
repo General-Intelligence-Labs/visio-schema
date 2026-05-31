@@ -2,98 +2,82 @@
 
 #include <gtest/gtest.h>
 
-#include <string>
-
 #include "visio_schema/wire/message.hpp"
-#include "visio_schema/wire/v1/header.pb.h"
+
+using visio_schema::wire::DecodeFrame;
+using visio_schema::wire::EncodeFrame;
+using visio_schema::wire::FrameStatus;
+using visio_schema::wire::Message;
 
 namespace {
 
-visio_schema::wire::v1::Header MakeHeader() {
-  visio_schema::wire::v1::Header h;
-  h.set_device(visio_schema::wire::v1::DEVICE_GRIPPER_LEFT);
-  h.set_routed_from(visio_schema::wire::v1::DEVICE_GRIPPER_LEFT);
-  h.set_stream(visio_schema::wire::v1::STREAM_IMU_RAW);
-  h.set_stream_index(3);
-  h.set_seq(42);
-  h.mutable_timestamp()->set_seconds(1700000000);
-  h.mutable_timestamp()->set_nanos(123456789);
-  return h;
-}
-
-TEST(Frame, RoundtripSimple) {
-  const visio_schema::wire::v1::Header header = MakeHeader();
-  const std::string payload = "\xde\xad\xbe\xef";
-  const std::string frame = visio_schema::wire::EncodeFrame(header, payload);
-  visio_schema::wire::v1::Header decoded_header;
-  std::string decoded_payload;
-  const auto status =
-      visio_schema::wire::DecodeFrame(frame, &decoded_header, &decoded_payload);
-  EXPECT_EQ(status, visio_schema::wire::FrameStatus::kOk);
-  EXPECT_EQ(decoded_header.SerializeAsString(), header.SerializeAsString());
-  EXPECT_EQ(decoded_payload, payload);
-}
-
-TEST(Frame, RoundtripEmptyPayload) {
-  const visio_schema::wire::v1::Header header = MakeHeader();
-  const std::string frame = visio_schema::wire::EncodeFrame(header, "");
-  visio_schema::wire::v1::Header decoded_header;
-  std::string decoded_payload;
-  const auto status =
-      visio_schema::wire::DecodeFrame(frame, &decoded_header, &decoded_payload);
-  EXPECT_EQ(status, visio_schema::wire::FrameStatus::kOk);
-  EXPECT_EQ(decoded_payload, "");
-}
-
-TEST(Frame, MessageRoundtrip) {
-  visio_schema::wire::Message msg;
-  msg.device = visio_schema::wire::v1::DEVICE_GLOVE_LEFT;
-  msg.routed_from = visio_schema::wire::v1::DEVICE_HOST;
-  msg.stream = visio_schema::wire::v1::STREAM_IMU_RAW;
-  msg.stream_index = 7;
-  msg.seq = 11;
-  msg.payload = "\x01\x02\x03";
-
-  const std::string frame =
-      visio_schema::wire::EncodeFrame(visio_schema::wire::MsgToHeader(msg), msg.payload);
-  visio_schema::wire::v1::Header h;
-  std::string payload;
-  ASSERT_EQ(visio_schema::wire::DecodeFrame(frame, &h, &payload),
-            visio_schema::wire::FrameStatus::kOk);
-  const visio_schema::wire::Message back = visio_schema::wire::HeaderToMsg(h, payload);
-  EXPECT_EQ(back.device, msg.device);
-  EXPECT_EQ(back.stream, msg.stream);
-  EXPECT_EQ(back.stream_index, msg.stream_index);
-  EXPECT_EQ(back.seq, msg.seq);
-  EXPECT_EQ(back.payload, msg.payload);
-}
-
-TEST(Frame, CrcMismatchDetected) {
-  std::string frame = visio_schema::wire::EncodeFrame(MakeHeader(), "hello");
-  frame.back() ^= 0xFF;  // corrupt the last CRC byte
-  visio_schema::wire::v1::Header decoded_header;
-  std::string decoded_payload;
-  EXPECT_EQ(visio_schema::wire::DecodeFrame(frame, &decoded_header, &decoded_payload),
-            visio_schema::wire::FrameStatus::kCrcMismatch);
-}
-
-TEST(Frame, HeaderLenOverflowDetected) {
-  // First byte claims a 255-byte header, but the buffer is tiny.
-  std::string bad;
-  bad.push_back(static_cast<char>(0xFF));  // HEADER_LEN = 255
-  bad.append("short");
-  visio_schema::wire::v1::Header decoded_header;
-  std::string decoded_payload;
-  EXPECT_EQ(visio_schema::wire::DecodeFrame(bad, &decoded_header, &decoded_payload),
-            visio_schema::wire::FrameStatus::kHeaderLenOverflow);
-}
-
-TEST(Frame, ShortFrameDetected) {
-  visio_schema::wire::v1::Header decoded_header;
-  std::string decoded_payload;
-  EXPECT_EQ(
-      visio_schema::wire::DecodeFrame("\x00\x00", &decoded_header, &decoded_payload),
-      visio_schema::wire::FrameStatus::kFrameTooShort);
+Message MakeMsg() {
+  Message m;
+  m.device = visio_schema_wire_v1_DeviceClass_DEVICE_GRIPPER_LEFT;
+  m.routed_from = visio_schema_wire_v1_DeviceClass_DEVICE_GRIPPER_LEFT;
+  m.stream = visio_schema_wire_v1_StreamKind_STREAM_IMU_RAW;
+  m.stream_index = 3;
+  m.seq = 42;
+  m.timestamp.seconds = 1'700'000'000;
+  m.timestamp.nanos = 123'456'789;
+  return m;
 }
 
 }  // namespace
+
+TEST(FrameTest, RoundtripSimple) {
+  Message m = MakeMsg();
+  m.payload = "\xde\xad\xbe\xef";
+  Message decoded;
+  ASSERT_EQ(DecodeFrame(EncodeFrame(m), &decoded), FrameStatus::kOk);
+  EXPECT_EQ(decoded.device, m.device);
+  EXPECT_EQ(decoded.routed_from, m.routed_from);
+  EXPECT_EQ(decoded.stream, m.stream);
+  EXPECT_EQ(decoded.stream_index, m.stream_index);
+  EXPECT_EQ(decoded.seq, m.seq);
+  EXPECT_EQ(decoded.timestamp.seconds, m.timestamp.seconds);
+  EXPECT_EQ(decoded.timestamp.nanos, m.timestamp.nanos);
+  EXPECT_EQ(decoded.payload, m.payload);
+}
+
+TEST(FrameTest, RoundtripEmptyPayload) {
+  Message decoded;
+  ASSERT_EQ(DecodeFrame(EncodeFrame(MakeMsg()), &decoded), FrameStatus::kOk);
+  EXPECT_TRUE(decoded.payload.empty());
+}
+
+// A relay must forward a stream value it doesn't know — the hub decodes the
+// Header and re-emits the opaque payload verbatim. This is the guarantee that
+// survives dropping descriptor reflection on the embedded side.
+TEST(FrameTest, UnknownStreamRelays) {
+  Message m = MakeMsg();
+  m.stream = static_cast<visio_schema_wire_v1_StreamKind>(77);  // undefined value
+  m.payload = std::string("\x01\x02\x03", 3);
+  Message decoded;
+  ASSERT_EQ(DecodeFrame(EncodeFrame(m), &decoded), FrameStatus::kOk);
+  EXPECT_EQ(static_cast<int>(decoded.stream), 77);
+  EXPECT_EQ(decoded.payload, std::string("\x01\x02\x03", 3));
+}
+
+TEST(FrameTest, CorruptCrcRejected) {
+  Message m = MakeMsg();
+  m.payload = "hello";
+  std::string frame = EncodeFrame(m);
+  frame.back() ^= 0xFF;
+  Message decoded;
+  EXPECT_EQ(DecodeFrame(frame, &decoded), FrameStatus::kCrcMismatch);
+}
+
+TEST(FrameTest, FrameTooShortRejected) {
+  Message decoded;
+  EXPECT_EQ(DecodeFrame(std::string("\x01", 1), &decoded),
+            FrameStatus::kFrameTooShort);
+}
+
+TEST(FrameTest, HeaderLenOverflowRejected) {
+  std::string bad;
+  bad.push_back(static_cast<char>(0xFF));  // HEADER_LEN = 255, buffer far shorter
+  bad.append("short");
+  Message decoded;
+  EXPECT_EQ(DecodeFrame(bad, &decoded), FrameStatus::kHeaderLenOverflow);
+}
