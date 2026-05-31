@@ -48,7 +48,6 @@ VISIO_MODULES = [
     "visio_schema.input.v1.quest_controller_state_pb2",
     "visio_schema.geometry.v1.twist_pb2",
     "visio_schema.control.v1.command_pb2",
-    "visio_schema.service.timesync.v1.timesync_pb2",
     "visio_schema.service.device_info.v1.device_info_pb2",
     "visio_schema.service.heartbeat.v1.heartbeat_pb2",
 ]
@@ -58,7 +57,7 @@ VISIO_MODULES = [
 # official Foxglove SDK); only the python import path is namespaced, the
 # protobuf descriptor names stay `foxglove.*`. If foxglove codegen is broken,
 # our visio.* modules that import it (via Vector3 / Quaternion) fail above;
-# this is a belt-and-suspenders check for the ones in StreamKind mappings.
+# this is a belt-and-suspenders check for the foxglove payload types we use.
 FOXGLOVE_MODULES = [
     "visio_schema.foxglove.Vector3_pb2",
     "visio_schema.foxglove.Quaternion_pb2",

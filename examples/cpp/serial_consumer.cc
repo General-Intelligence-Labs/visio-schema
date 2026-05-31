@@ -7,6 +7,12 @@
 // target (nanopb bindings + framing codec) — no libprotobuf, no abseil, the
 // same code path that cross-compiles for the RV1106 / HDK.
 //
+// The wire Header now addresses every message by a compact `stream_id` (control
+// ids < CONTROL_STREAM_FIRST_DYNAMIC are hop-local; data ids are negotiated and
+// hub-remapped). Mapping a stream_id to a topic/type needs the DeviceInfo
+// announce stream — out of scope for this minimal demo, which just prints the
+// id + payload size.
+//
 //   build:  cmake -S examples/cpp -B examples/cpp/build && cmake --build examples/cpp/build
 //   run:    ./examples/cpp/build/serial_consumer /dev/ttyUSB0
 //
@@ -25,10 +31,9 @@
 #include <string_view>
 #include <vector>
 
-#include "visio_schema/sensor/v1/imu_raw.pb.h"
 #include "visio_schema/wire/codec/cobs.hpp"
 #include "visio_schema/wire/codec/frame.hpp"
-#include "visio_schema/wire/v1/header.pb.h"
+#include "visio_schema/wire/message.hpp"
 
 namespace {
 
@@ -57,7 +62,6 @@ int OpenSerial(const char* path, speed_t baud) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  GOOGLE_PROTOBUF_VERIFY_VERSION;
   const char* path = (argc > 1) ? argv[1] : "/dev/ttyGS0";
 
   const int fd = OpenSerial(path, B921600);
@@ -91,29 +95,17 @@ int main(int argc, char** argv) {
         std::cerr << "drop: COBS decode failed (" << encoded.size() << " B)\n";
         continue;
       }
-      visio_schema::wire::v1::Header header;
-      std::string payload;
+      visio_schema::wire::Message msg;
       const std::string_view frame(
           reinterpret_cast<const char*>(decoded.data()), decoded.size());
-      const auto status = visio_schema::wire::DecodeFrame(frame, &header, &payload);
+      const auto status = visio_schema::wire::DecodeFrame(frame, &msg);
       if (status != visio_schema::wire::FrameStatus::kOk) {
         std::cerr << "drop: " << visio_schema::wire::FrameStatusName(status) << "\n";
         continue;
       }
 
-      std::cout << "device=" << header.device()
-                << " stream=" << header.stream()
-                << " idx=" << header.stream_index()
-                << " seq=" << header.seq()
-                << " payload=" << payload.size() << "B";
-      // Demo: actually parse one stream type to show the payload decodes.
-      if (header.stream() == visio_schema::wire::v1::STREAM_IMU_RAW) {
-        visio_schema::sensor::v1::ImuRaw imu;
-        if (imu.ParseFromString(payload)) {
-          std::cout << " imu_samples=" << imu.samples_size();
-        }
-      }
-      std::cout << '\n';
+      std::cout << "stream_id=" << msg.stream_id << " seq=" << msg.seq
+                << " payload=" << msg.payload.size() << "B\n";
     }
   }
 

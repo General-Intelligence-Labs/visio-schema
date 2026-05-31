@@ -14,7 +14,7 @@
 #     could not. (No entry here = stays callback.)
 #   - Small fixed-shape strings (frame_id, format tag, button id): bounded
 #     inline char[N], so they need no malloc and have predictable footprint.
-#   - DeviceInfo Response (built once per run, carries KB-scale serialized
+#   - DeviceInfo announce (rebuilt per emit, carries KB-scale serialized
 #     FileDescriptorSets): FT_POINTER. Allocates only what is actually sent and
 #     frees after — a fixed cap would reserve count x big-value permanently.
 
@@ -30,17 +30,22 @@ visio_schema.sensor.v1.ButtonEvent.button_id   max_size:32
 # ---- Geometry: short frame id ---------------------------------------------
 visio_schema.geometry.v1.Twist.frame_id   max_size:32
 
-# ---- DeviceInfo discovery: built once per run, so favor pointer/bounded over
-#      callbacks. Strings + the repeated lists are FT_POINTER (allocate only
-#      what is sent, free after). Each OutputStream's KB-scale descriptor bytes
-#      are also FT_POINTER, so a device with N streams allocates exactly its N
-#      descriptors and frees them when the Response is freed.
+# ---- DeviceInfo discovery: a periodic announce, built fresh per emit, that
+#      carries KB-scale serialized FileDescriptorSets. Everything variable-length
+#      is FT_POINTER rather than callback: a device with N channels then encodes
+#      by assigning N Channel structs (each with its strings + schema bytes), and
+#      the receiver DECODES the same way — nanopb auto-allocates the repeated
+#      Channel array and every nested string/bytes, then frees them when the
+#      DeviceInfo is released. (Callbacks would force a hand-written
+#      encode/decode function per field; FT_POINTER is plain struct assignment.)
+#      Channel mirrors the Foxglove channel; `schema` is the FileDescriptorSet.
+visio_schema.service.device_info.v1.DeviceInfo.device_name         type:FT_POINTER
 visio_schema.service.device_info.v1.DeviceInfo.firmware_version    type:FT_POINTER
 visio_schema.service.device_info.v1.DeviceInfo.hardware_revision   type:FT_POINTER
-visio_schema.service.device_info.v1.DeviceInfo.model               type:FT_POINTER
 visio_schema.service.device_info.v1.DeviceInfo.serial              type:FT_POINTER
-visio_schema.service.device_info.v1.DeviceInfo.streams             type:FT_POINTER
-visio_schema.service.device_info.v1.OutputStream.label                type:FT_POINTER
-visio_schema.service.device_info.v1.OutputStream.proto_type           type:FT_POINTER
-visio_schema.service.device_info.v1.OutputStream.file_descriptor_set  type:FT_POINTER
-visio_schema.service.device_info.v1.Response.devices                  type:FT_POINTER
+visio_schema.service.device_info.v1.DeviceInfo.channels            type:FT_POINTER
+visio_schema.service.device_info.v1.Channel.topic                  type:FT_POINTER
+visio_schema.service.device_info.v1.Channel.encoding               type:FT_POINTER
+visio_schema.service.device_info.v1.Channel.schema_name            type:FT_POINTER
+visio_schema.service.device_info.v1.Channel.schema_encoding        type:FT_POINTER
+visio_schema.service.device_info.v1.Channel.schema                 type:FT_POINTER

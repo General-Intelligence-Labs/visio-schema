@@ -13,10 +13,8 @@ namespace {
 
 Message MakeMsg() {
   Message m;
-  m.device = visio_schema_wire_v1_DeviceClass_DEVICE_GRIPPER_LEFT;
-  m.routed_from = visio_schema_wire_v1_DeviceClass_DEVICE_GRIPPER_LEFT;
-  m.stream = visio_schema_wire_v1_StreamKind_STREAM_IMU_RAW;
-  m.stream_index = 3;
+  // A dynamic data stream id (>= CONTROL_STREAM_FIRST_DYNAMIC).
+  m.stream_id = visio_schema_wire_v1_ControlStream_CONTROL_STREAM_FIRST_DYNAMIC + 3;
   m.seq = 42;
   m.timestamp.seconds = 1'700'000'000;
   m.timestamp.nanos = 123'456'789;
@@ -30,10 +28,7 @@ TEST(FrameTest, RoundtripSimple) {
   m.payload = "\xde\xad\xbe\xef";
   Message decoded;
   ASSERT_EQ(DecodeFrame(EncodeFrame(m), &decoded), FrameStatus::kOk);
-  EXPECT_EQ(decoded.device, m.device);
-  EXPECT_EQ(decoded.routed_from, m.routed_from);
-  EXPECT_EQ(decoded.stream, m.stream);
-  EXPECT_EQ(decoded.stream_index, m.stream_index);
+  EXPECT_EQ(decoded.stream_id, m.stream_id);
   EXPECT_EQ(decoded.seq, m.seq);
   EXPECT_EQ(decoded.timestamp.seconds, m.timestamp.seconds);
   EXPECT_EQ(decoded.timestamp.nanos, m.timestamp.nanos);
@@ -46,16 +41,16 @@ TEST(FrameTest, RoundtripEmptyPayload) {
   EXPECT_TRUE(decoded.payload.empty());
 }
 
-// A relay must forward a stream value it doesn't know — the hub decodes the
+// A relay must forward a stream id it doesn't know — the hub decodes the
 // Header and re-emits the opaque payload verbatim. This is the guarantee that
 // survives dropping descriptor reflection on the embedded side.
 TEST(FrameTest, UnknownStreamRelays) {
   Message m = MakeMsg();
-  m.stream = static_cast<visio_schema_wire_v1_StreamKind>(77);  // undefined value
+  m.stream_id = 9999;  // an id this peer has no mapping for
   m.payload = std::string("\x01\x02\x03", 3);
   Message decoded;
   ASSERT_EQ(DecodeFrame(EncodeFrame(m), &decoded), FrameStatus::kOk);
-  EXPECT_EQ(static_cast<int>(decoded.stream), 77);
+  EXPECT_EQ(decoded.stream_id, 9999u);
   EXPECT_EQ(decoded.payload, std::string("\x01\x02\x03", 3));
 }
 

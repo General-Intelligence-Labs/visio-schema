@@ -7,6 +7,11 @@ types fall into which bucket, and why.
 
 ## Three categories
 
+> The `StreamKind` column below is **historical** — streams are now string-named
+> topics, and a payload's identity is its protobuf full name carried in
+> `DeviceInfo.Channel.schema_name` (see `stream_type_map.md`). Read the former
+> `STREAM_*` entries as "the topic/channel that carries this payload type".
+
 | Category | Where the schema lives | MCAP `Schema.name` written | Foxglove Studio renders? |
 |---|---|---|---|
 | **A. Adopt-as-is (Foxglove)** | `third_party/foxglove-sdk/schemas/proto/foxglove/*.proto` | foxglove-native name (e.g. `foxglove.CompressedVideo`) | yes, native |
@@ -52,9 +57,8 @@ proto-name distinction.
 | `visio_schema.input.v1.QuestControllerState` | `STREAM_CONTROLLER_STATE` | Quest controller buttons + sticks for BOTH hands per tick. No Foxglove equivalent (`foxglove.JointStates` is the closest but joints are continuous, not buttons). |
 | `visio_schema.control.v1.Command` | `STREAM_COMMAND` | Host→device intents (StartRecording, StopRecording, Identify). Application-specific. |
 | `visio_schema.geometry.v1.Twist` | `STREAM_TWIST` | 6-DoF velocity. Foxglove only has linear `Velocity3`; no Twist. We use `foxglove.Vector3` primitives so it composes. |
-| `visio_schema.service.timesync.v1.{Request,Response}` | `STREAM_TIMESYNC` | NTP-style exchange; bus-layer concern, no analogue. |
-| `visio_schema.service.device_info.v1.{Request,Response}` | `STREAM_DEVICE_INFO` | Discovery + identity + stream-capability declaration; each `OutputStream` carries its schema inline (`proto_type` + `file_descriptor_set`) — descriptors ride with the Response, no separate schema-query service. |
-| `visio_schema.service.heartbeat.v1.Heartbeat` | `STREAM_HEARTBEAT` | Liveness + backpressure hint. |
+| `visio_schema.service.device_info.v1.DeviceInfo` | DEVICE_INFO control stream (id 1) | Periodic announce: identity + the `Channel`s this device produces; each `Channel` carries its schema inline (`schema_name` + `schema` FileDescriptorSet), so a listener self-describes every stream. No Request/Response. |
+| `visio_schema.service.heartbeat.v1.Heartbeat` | HEARTBEAT control stream (id 3) | Liveness + backpressure hint + NTP-style timesync beacon (the 4-timestamp loop rides the heartbeat; bus-layer concern, no analogue). |
 | `visio_schema.calibration.v1.ImuCalibration` | `STREAM_IMU_CALIBRATION` | Per-IMU bias / scale / mounting pose. Published as a regular stream message (Foxglove convention — same shape as `foxglove.CameraCalibration` on `STREAM_CAMERA_CALIB`). |
 
 ## Foxglove submodule policy

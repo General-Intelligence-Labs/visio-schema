@@ -53,6 +53,11 @@ target_include_directories(visio_schema PUBLIC
   "${NANOPB_GEN}"
   "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
+# DeviceInfo (its repeated Channel list + each Channel's strings/bytes) uses
+# nanopb FT_POINTER fields, which require malloc support to encode/decode.
+# PUBLIC so pb_decode.c, the generated *.pb.c, and every consumer (the
+# DeviceInfoService encode/decode + pb_release) compile with the same ABI.
+target_compile_definitions(visio_schema PUBLIC PB_ENABLE_MALLOC)
 add_library(visio::schema ALIAS visio_schema)
 
 # ---- tests (top-level host builds only; skipped when cross-compiling) -------

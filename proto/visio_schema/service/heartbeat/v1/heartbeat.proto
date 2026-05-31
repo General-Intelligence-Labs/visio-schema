@@ -1,21 +1,52 @@
 // visio/service/heartbeat/v1/heartbeat.proto
 //
-// Periodic liveness ping on STREAM_HEARTBEAT. Cadence ~1 Hz typical.
-// Identity and timestamp live in the wire Header; this message body
-// carries optional health hints.
+// Liveness beacon AND NTP-style timesync in one message, on the
+// CONTROL_STREAM_HEARTBEAT control stream (hop-local — the bus never
+// relays it; each directly-connected peer runs its own liveness + sync).
+// Cadence ~1 Hz typical. The wire Header carries only stream_id/seq/
+// timestamp; a neighbour is identified by the endpoint its beacons arrive
+// on, so there is no device field here.
 //
-// Parity note: replaces UMI v3's T_HEART (which was an empty payload).
-// Visio adds a single optional `queue_depth` field so peers can
-// communicate backpressure without a separate health stream.
+// Beacon timesync (replaces the retired standalone timesync exchange — see
+// docs/timesync.md). Two roles, both driven by this one message:
+//
+//   - Initiator: emits a beacon carrying only `tx_mono_ns` (its wire-stamped
+//     send time).
+//   - Responder: on receiving an initiating beacon, replies with a beacon
+//     that echoes the peer's send in `echo_tx_mono_ns` and stamps its own
+//     receive time in `echo_rx_mono_ns` (plus its own fresh `tx_mono_ns`).
+//
+// The initiator, on receiving the echo, closes the loop:
+//     rtt    = now - echo_tx_mono_ns                  (our clock both ends)
+//     offset = echo_rx_mono_ns - (echo_tx_mono_ns + rtt/2)
+// i.e. the peer's clock minus our clock at the RTT midpoint. Per-peer
+// offset uses min-RTT selection over a sliding window.
+//
+// `tx_mono_ns` is stamped as close to the wire as possible via the bus's
+// priority send path (no outbox queueing), so it isn't biased by queue
+// latency. All three fields are bare uint64 in the producer's local
+// monotonic clock — immune to the Header.timestamp offset-rewrite.
 
 syntax = "proto3";
 
 package visio_schema.service.heartbeat.v1;
 
 message Heartbeat {
-  // Instantaneous outbound queue depth on the sender's bus, in
-  // messages. 0 means "no backpressure." Higher values let receivers
-  // (and recorders) know the sender is falling behind. Optional;
-  // recipients should treat 0 as "not reported" when ambiguity exists.
-  uint32 queue_depth = 1;
+  // Sender's local monotonic clock (ns) at send, stamped at the wire by
+  // the bus's priority send path. Always set.
+  uint64 tx_mono_ns = 1;
+
+  // On a response beacon: the `tx_mono_ns` this sender is echoing back to
+  // the peer that originated it (the peer's clock). 0 on an initiating
+  // beacon — its presence is what marks a beacon as a response.
+  uint64 echo_tx_mono_ns = 2;
+
+  // On a response beacon: this sender's local monotonic clock (ns) at the
+  // moment it received the beacon identified by `echo_tx_mono_ns`. 0 on an
+  // initiating beacon.
+  uint64 echo_rx_mono_ns = 3;
+
+  // Optional backpressure hint: instantaneous outbound queue depth on the
+  // sender's bus, in messages. 0 means "no backpressure" / "not reported."
+  uint32 queue_depth = 4;
 }

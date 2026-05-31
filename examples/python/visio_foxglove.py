@@ -20,6 +20,14 @@ To look at an MCAP **file** (a recording, or one from make_sample_mcap.py),
 just open it directly in Foxglove Studio: **File ▸ Open local file**. No need
 to run this script for that.
 
+Dynamic streams: the wire Header carries a compact `stream_id`, not a stream
+type. Each device announces its channels (topic + schema) on the DeviceInfo
+control stream (id CONTROL_STREAM_DEVICE_INFO); this reader keeps a local
+`stream_id -> Channel` table from those announces and resolves each data frame
+against it. A frame whose id hasn't been announced yet is dropped until it is
+(drop-until-mapped). Over a direct point-to-point link the announced channel
+ids are exactly the data-frame ids, so no remap is needed here.
+
 Deliberately minimal — one read loop, no bus, no threads. The heavier,
 bus-integrated transport lives in visio-mq.
 """
@@ -30,14 +38,32 @@ import sys
 from collections.abc import Iterator
 
 from google.protobuf.timestamp_pb2 import Timestamp
+from visio_schema.service.device_info.v1.device_info_pb2 import Channel, DeviceInfo
 
 from visio_schema.wire.codec import cobs_decode, decode_frame
 from visio_schema.wire.message import Message
-from visio_schema.wire.streams import (
-    REGISTRY,
-    file_descriptor_set,
-    synthesized_topic,
-)
+from visio_schema.wire.v1.header_pb2 import ControlStream
+
+_DEVICE_INFO = ControlStream.CONTROL_STREAM_DEVICE_INFO
+
+
+# --------------------------------------------------------------------------- #
+# Channel table: learn stream_id -> Channel from DeviceInfo announces          #
+# --------------------------------------------------------------------------- #
+class ChannelTable:
+    """Maps a data-frame ``stream_id`` to the announced :class:`Channel`
+    describing it (topic + schema). Fed by DeviceInfo announces; over a direct
+    link the announced ``Channel.id`` equals the data-frame ``stream_id``."""
+
+    def __init__(self) -> None:
+        self._by_id: dict[int, Channel] = {}
+
+    def learn(self, di: DeviceInfo) -> None:
+        for ch in di.channels:
+            self._by_id[ch.id] = ch
+
+    def resolve(self, stream_id: int) -> Channel | None:
+        return self._by_id.get(stream_id)
 
 
 # --------------------------------------------------------------------------- #
@@ -78,16 +104,14 @@ def _ns(ts: Timestamp) -> int:
 
 
 class McapSink:
-    """Write Messages to a spec-conformant MCAP (framing.md §5, MASTER_PLAN §5):
-    payload bytes verbatim, schema from the protobuf FileDescriptorSet, topic
-    synthesized from the Header.
+    """Write Messages to a spec-conformant MCAP: payload bytes verbatim, schema
+    and topic taken from the resolved :class:`Channel` (the DeviceInfo announce).
 
-    The schema NAME is the protobuf full name (mapping.proto_type), NOT the
-    ROS-remapped mcap_schema_name: for a protobuf channel Foxglove resolves the
-    type by looking the schema name up inside the FileDescriptorSet, so it must
-    match a type in that set. (The ROS-name remap only applies to ros2msg
-    channels — see examples/README.)
-    """
+    The schema NAME is the protobuf full name (Channel.schema_name) and the
+    schema DATA is the FileDescriptorSet (Channel.schema): for a protobuf
+    channel Foxglove resolves the type by looking the schema name up inside the
+    embedded set, so they must match. A message whose stream_id has not been
+    announced yet is dropped (drop-until-mapped)."""
 
     def __init__(self, path: str) -> None:
         from mcap.writer import Writer
@@ -96,29 +120,26 @@ class McapSink:
         self._w = Writer(self._f)
         self._w.start()
         self._schema_ids: dict[str, int] = {}
-        self._channel_ids: dict[str, int] = {}
+        self._channel_ids: dict[int, int] = {}
 
-    def write(self, msg: Message) -> None:
-        mapping = REGISTRY.for_kind(msg.stream)
-        if mapping is None:
-            return  # unknown / unannotated stream; nothing to register
-
-        schema_id = self._schema_ids.get(mapping.proto_type)
+    def write(self, msg: Message, ch: Channel) -> None:
+        schema_id = self._schema_ids.get(ch.schema_name)
         if schema_id is None:
             schema_id = self._w.register_schema(
-                name=mapping.proto_type,
-                encoding="protobuf",
-                data=file_descriptor_set(mapping.proto_type),
+                name=ch.schema_name,
+                encoding=ch.schema_encoding or "protobuf",
+                data=ch.schema,
             )
-            self._schema_ids[mapping.proto_type] = schema_id
+            self._schema_ids[ch.schema_name] = schema_id
 
-        topic = synthesized_topic(msg.device, msg.stream, msg.stream_index)
-        channel_id = self._channel_ids.get(topic)
+        channel_id = self._channel_ids.get(msg.stream_id)
         if channel_id is None:
             channel_id = self._w.register_channel(
-                topic=topic, message_encoding="protobuf", schema_id=schema_id
+                topic=ch.topic,
+                message_encoding=ch.encoding or "protobuf",
+                schema_id=schema_id,
             )
-            self._channel_ids[topic] = channel_id
+            self._channel_ids[msg.stream_id] = channel_id
 
         ts = _ns(msg.timestamp)
         self._w.add_message(
@@ -135,41 +156,33 @@ class McapSink:
 
 
 class FoxgloveSink:
-    """Publish Messages to a live Foxglove WebSocket server. Each (stream,
-    stream_index) becomes one protobuf channel; Studio decodes payloads from
-    the schema descriptor — we never parse them here. Schema name is the
-    protobuf full name (see McapSink for why)."""
+    """Publish Messages to a live Foxglove WebSocket server. Each stream_id
+    becomes one protobuf channel built from the resolved Channel; Studio decodes
+    payloads from the schema descriptor — we never parse them here."""
 
     def __init__(self, port: int) -> None:
         import foxglove
 
         self._fg = foxglove
         self._server = foxglove.start_server(port=port)
-        self._channels: dict[str, object] = {}
+        self._channels: dict[int, object] = {}
         print(f"Foxglove WebSocket server on ws://localhost:{port}", file=sys.stderr)
         print(f"open Foxglove Studio at:\n  {self._server.app_url()}", file=sys.stderr)
 
-    def write(self, msg: Message) -> None:
-        mapping = REGISTRY.for_kind(msg.stream)
-        if mapping is None:
-            return
-        topic = synthesized_topic(msg.device, msg.stream, msg.stream_index)
-        channel = self._channels.get(topic)
+    def write(self, msg: Message, ch: Channel) -> None:
+        channel = self._channels.get(msg.stream_id)
         if channel is None:
             channel = self._fg.Channel(
-                topic,
-                message_encoding="protobuf",
+                ch.topic,
+                message_encoding=ch.encoding or "protobuf",
                 schema=self._fg.Schema(
-                    name=mapping.proto_type,
-                    encoding="protobuf",
-                    data=file_descriptor_set(mapping.proto_type),
+                    name=ch.schema_name,
+                    encoding=ch.schema_encoding or "protobuf",
+                    data=ch.schema,
                 ),
             )
-            self._channels[topic] = channel
+            self._channels[msg.stream_id] = channel
         channel.log(msg.payload, log_time=_ns(msg.timestamp))
-
-    def close(self) -> None:
-        self._server.stop()
 
 
 # --------------------------------------------------------------------------- #
@@ -194,11 +207,20 @@ def main(argv: list[str] | None = None) -> int:
     if args.foxglove:
         sinks.append(FoxgloveSink(args.port))
 
+    table = ChannelTable()
     n = 0
     try:
         for msg in read_serial(args.serial, args.baud):
+            if msg.stream_id == _DEVICE_INFO:
+                di = DeviceInfo()
+                di.ParseFromString(msg.payload)
+                table.learn(di)
+                continue
+            ch = table.resolve(msg.stream_id)
+            if ch is None:
+                continue  # drop-until-mapped: announce not seen yet
             for sink in sinks:
-                sink.write(msg)
+                sink.write(msg, ch)
             n += 1
     except KeyboardInterrupt:
         pass

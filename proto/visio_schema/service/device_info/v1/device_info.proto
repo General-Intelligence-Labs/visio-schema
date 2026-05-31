@@ -1,133 +1,79 @@
 // visio_schema/service/device_info/v1/device_info.proto
 //
-// Discovery service riding the bus on STREAM_DEVICE_INFO. The stream is
-// dual-payload (Request / Response), matching the TimesyncService
-// convention so the same parse-Response-first dispatcher applies.
+// Discovery service on the CONTROL_STREAM_DEVICE_INFO control stream.
 //
-// Request fanout uses the bus's existing auto-relay — the initiator
-// publishes one Request, hubs forward it to their downstream sinks, and
-// every reachable peer's DeviceInfoService replies with its subtree
-// snapshot. Hub aggregation collects child Responses inside a
-// `child_timeout_s` window, then upstreams [self, ...children] as one
-// Response. Hubs absorb child Responses (return False from the bus
-// `on_message` handler) so the root sees exactly one Response per
-// subtree.
+// Each device periodically broadcasts the channels it produces (default 1 Hz;
+// also immediately on link-up and on channel-set change). A hub remaps each
+// child's channel ids into its own unified id space and re-broadcasts a merged
+// DeviceInfo upward. There is no request/response — discovery is a pure
+// periodic push, matching the Foxglove "advertise your channels" convention.
 //
-// Schema descriptors ride inline on each OutputStream
-// (`devices[*].streams[*].file_descriptor_set`), so a DeviceInfo is
-// self-describing and no separate SchemaQuery service is needed
-// (STREAM_SCHEMA_QUERY is reserved in header.proto).
+// `Channel` mirrors a Foxglove channel field-for-field (ws-protocol / MCAP) so
+// bridging to a Foxglove server or an MCAP file is a pure field copy. Each
+// channel carries its schema inline (a serialized FileDescriptorSet), so a
+// DeviceInfo is self-describing: a fresh listener bootstraps from any single
+// announcement with no compiled-in schema registry.
 //
-// Calibration is NOT in DeviceInfo. Devices publish calibration as
-// ordinary stream messages (foxglove.CameraCalibration on
-// STREAM_CAMERA_CALIB, visio_schema.calibration.v1.ImuCalibration on
-// STREAM_IMU_CALIBRATION, etc.) — the OutputStream list declares them
-// alongside sensor streams; the recorder writes them as regular MCAP
-// Message records.
+// Calibration is NOT special-cased here. Devices declare calibration outputs
+// as ordinary channels (e.g. foxglove.CameraCalibration,
+// visio_schema.calibration.v1.ImuCalibration) alongside sensor channels; the
+// recorder writes them as regular MCAP Message records.
 
 syntax = "proto3";
 
 package visio_schema.service.device_info.v1;
 
-import "visio_schema/wire/v1/header.proto";
+// One stream a device produces, described exactly as a Foxglove channel.
+message Channel {
+  // Per-link numeric label for this channel. Assigned by the producing
+  // device (from CONTROL_STREAM_FIRST_DYNAMIC up); rewritten into a unified id
+  // by each hub as it relays. The wire Header's `stream_id` carries this value.
+  uint32 id = 1;
 
-// Sent by a peer that wants every reachable device to identify itself
-// and its produced streams. Bus auto-relay carries it down the tree;
-// the initiator receives one aggregated Response per subtree.
-message Request {
-  // Initiator's identity (the same value used in this peer's wire
-  // Header `device` field).
-  visio_schema.wire.v1.DeviceClass initiator = 1;
+  // Fully-qualified topic, e.g. "/glove_left/imus/3/raw". Shape convention:
+  // /<device>/<sensor-group>/<index>/<sub-field>. This is the stream's stable
+  // global identity; `id` is only a per-link compression label.
+  string topic = 2;
 
-  // Per-initiator monotonic counter — matches Response to Request and
-  // lets aggregating hubs key their per-Request collection state.
-  uint64 request_id = 2;
+  // Message encoding of the payloads on this channel, e.g. "protobuf".
+  string encoding = 3;
+
+  // Fully-qualified protobuf type name of the payload,
+  // e.g. "visio_schema.sensor.v1.ImuRaw".
+  string schema_name = 4;
+
+  // Serialized google.protobuf.FileDescriptorSet (payload type + transitive
+  // deps) — exactly the bytes an MCAP Schema record's `data` field expects and
+  // a Foxglove ws-protocol channel's `schema` carries.
+  bytes schema = 5;
+
+  // Encoding of `schema`, e.g. "protobuf".
+  string schema_encoding = 6;
 }
 
-// One device's identity + capability declaration. Standalone-
-// serializable (test fixtures, persistent caches).
+// A device's identity + the channels it currently produces. Broadcast
+// periodically; a hub merges its descendants' channels (with remapped ids)
+// into its own announcement.
 message DeviceInfo {
-  // The peer this DeviceInfo describes. Matches the wire Header's
-  // `device` field on every message this peer produces.
-  visio_schema.wire.v1.DeviceClass device = 1;
+  // Human-readable, stable device name; also the Command.target_device key and
+  // the leading topic segment for this device's channels.
+  string device_name = 1;
+
+  // Channels this device (and, for a hub, its descendants) produce.
+  repeated Channel channels = 2;
 
   // Firmware / app version (free-form, typically semver "1.2.3").
-  string firmware_version = 2;
+  string firmware_version = 3;
 
-  // Hardware revision string (e.g. "v3", "rev_b", "umi-gripper-v2").
-  string hardware_revision = 3;
+  // Hardware revision string (e.g. "v3", "rev_b").
+  string hardware_revision = 4;
 
-  // Human-readable model name (e.g. "UMI Gripper", "Quest 3").
-  string model = 4;
-
-  // Serial number, MAC, or persistent UUID (opaque to the bus; useful
-  // for fleet bookkeeping). Optional.
+  // Serial number, MAC, or persistent UUID (opaque to the bus). Optional.
   string serial = 5;
 
-  // Streams this device produces. Includes calibration streams
-  // (STREAM_CAMERA_CALIB, STREAM_IMU_CALIBRATION, ...) alongside
-  // sensor-data streams — the consumer differentiates by StreamKind.
-  repeated OutputStream streams = 6;
-
-  // Boot wall-clock time (seconds since Unix epoch). Used by recorders
-  // to convert this peer's monotonic ns timestamps to absolute Unix
-  // time for MCAP log_time. Set to 0 if the device has no RTC; in that
-  // case the recorder substitutes its own wall clock at session start.
-  uint64 boot_unix_seconds = 7;
-}
-
-// One stream this device produces. The (stream, stream_index) pair is
-// unique within a device. `label` is optional, presentation-only.
-//
-// The stream carries its OWN schema inline: `proto_type` (the payload's
-// protobuf full name) + `file_descriptor_set` (the serialized
-// FileDescriptorSet a recorder/Foxglove needs to decode it). This makes each
-// stream self-describing — a recorder needs no compiled-in registry to map the
-// StreamKind enum to a type, and a device built from a newer schema can
-// advertise a StreamKind the consumer doesn't know. The producer fills both
-// from the value it would record (on-device: the baked-in FileDescriptorSetFor
-// blob). Both empty for unannotated/dual-payload streams.
-message OutputStream {
-  visio_schema.wire.v1.StreamKind stream = 1;
-  uint32 stream_index = 2;
-  // Optional human-readable label (free-form, presentation-only).
-  string label = 3;
-  // Protobuf full name of this stream's payload, e.g.
-  // "visio_schema.sensor.v1.ImuRaw". Empty for unannotated streams.
-  string proto_type = 4;
-  // Serialized google.protobuf.FileDescriptorSet (payload type + transitive
-  // deps) — exactly the bytes an MCAP Schema record's `data` field expects.
-  // Repeated verbatim across streams of the same type (descriptors are small
-  // and DeviceInfo is low-rate); the consumer dedupes by proto_type.
-  bytes file_descriptor_set = 5;
-}
-
-// Subtree snapshot from the responder. Hubs aggregate children's
-// Responses into `devices` before replying upstream; leaves ship
-// `devices = [self]`.
-message Response {
-  // Echo of Request.initiator and Request.request_id for matching at
-  // the original initiator.
-  visio_schema.wire.v1.DeviceClass initiator = 1;
-  uint64 request_id = 2;
-
-  // Responder identity. Unique tag (3) — distinguishes Response from
-  // Request in the parse-Response-first dispatcher; Request leaves this
-  // at the default 0 / DEVICE_UNKNOWN. Same trick TimesyncService uses
-  // for its `responder` field.
-  visio_schema.wire.v1.DeviceClass responder = 3;
-
-  // Flat list of DeviceInfos in the subtree rooted at `responder`.
-  // devices[0] is the responder itself; the rest are descendants whose
-  // Responses arrived during the responder's collection window. The
-  // initiator merges by DeviceInfo.device across multiple Responses,
-  // so a hub's aggregated devices and a direct child Response coexist
-  // without duplication.
-  repeated DeviceInfo devices = 4;
-
-  // Schema descriptors now ride inline on each OutputStream
-  // (DeviceInfo.streams[*].file_descriptor_set) so a DeviceInfo is
-  // self-describing and hubs need only forward `devices` verbatim.
-  reserved 5;
-  reserved "file_descriptor_sets";
+  // Boot wall-clock time (seconds since Unix epoch). Lets recorders convert
+  // this device's monotonic ns timestamps to absolute Unix time for MCAP
+  // log_time. 0 if the device has no RTC (the recorder substitutes its own
+  // wall clock at session start).
+  uint64 boot_unix_seconds = 6;
 }

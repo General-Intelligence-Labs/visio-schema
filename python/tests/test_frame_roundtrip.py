@@ -6,15 +6,12 @@ from google.protobuf.timestamp_pb2 import Timestamp
 
 from visio_schema.wire.codec.frame import FrameError, decode_frame, encode_frame
 from visio_schema.wire.message import Message, decode_message, encode_message
-from visio_schema.wire.v1.header_pb2 import DeviceClass, Header, StreamKind
+from visio_schema.wire.v1.header_pb2 import Header
 
 
 def _make_header() -> Header:
     h = Header()
-    h.device = DeviceClass.DEVICE_GRIPPER_LEFT
-    h.routed_from = DeviceClass.DEVICE_GRIPPER_LEFT
-    h.stream = StreamKind.STREAM_IMU_RAW
-    h.stream_index = 3
+    h.stream_id = 17
     h.seq = 42
     ts = Timestamp()
     ts.seconds = 1_700_000_000
@@ -51,11 +48,8 @@ def test_roundtrip_large_payload() -> None:
 
 def test_message_roundtrip() -> None:
     msg = Message(
-        stream=StreamKind.STREAM_IMU_RAW,
-        stream_index=3,
+        stream_id=17,
         payload=b"\x01\x02\x03",
-        device=DeviceClass.DEVICE_GLOVE_LEFT,
-        routed_from=DeviceClass.DEVICE_HOST,
         seq=7,
     )
     msg.timestamp.seconds = 1_700_000_000

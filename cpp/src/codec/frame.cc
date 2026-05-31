@@ -22,10 +22,7 @@ std::uint16_t ReadU16LE(const char* p) {
 
 visio_schema_wire_v1_Header ToHeader(const Message& msg) {
   visio_schema_wire_v1_Header h = visio_schema_wire_v1_Header_init_zero;
-  h.device = msg.device;
-  h.routed_from = msg.routed_from;
-  h.stream = msg.stream;
-  h.stream_index = msg.stream_index;
+  h.stream_id = msg.stream_id;
   h.seq = msg.seq;
   h.has_timestamp = true;
   h.timestamp = msg.timestamp;
@@ -86,10 +83,7 @@ FrameStatus DecodeFrame(std::string_view frame, Message* out) {
     return FrameStatus::kHeaderParseError;
   }
 
-  out->device = header.device;
-  out->routed_from = header.routed_from;
-  out->stream = header.stream;
-  out->stream_index = header.stream_index;
+  out->stream_id = header.stream_id;
   out->seq = header.seq;
   out->timestamp = header.timestamp;
   out->payload.assign(frame.data() + payload_end,

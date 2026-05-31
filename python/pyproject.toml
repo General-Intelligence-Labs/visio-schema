@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "visio-schema"
-version = "0.1.0.dev0"
+version = "0.2.0.dev0"
 description = "Visio wire contract — generated protobuf bindings + the framing codec"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }

@@ -12,18 +12,15 @@
 #include <string>
 
 #include "google/protobuf/timestamp.pb.h"    // nanopb: google_protobuf_Timestamp
-#include "visio_schema/wire/v1/header.pb.h"   // nanopb: DeviceClass/StreamKind/Header
+#include "visio_schema/wire/v1/header.pb.h"   // nanopb: Header + ControlStream
 
 namespace visio_schema::wire {
 
+// A stream is named globally by a topic string and labelled on the wire by a
+// compact per-link `stream_id` (control ids < CONTROL_STREAM_FIRST_DYNAMIC are
+// hop-local; data ids are negotiated and hub-remapped).
 struct Message {
-  visio_schema_wire_v1_DeviceClass device =
-      visio_schema_wire_v1_DeviceClass_DEVICE_UNKNOWN;
-  visio_schema_wire_v1_DeviceClass routed_from =
-      visio_schema_wire_v1_DeviceClass_DEVICE_UNKNOWN;
-  visio_schema_wire_v1_StreamKind stream =
-      visio_schema_wire_v1_StreamKind_STREAM_UNKNOWN;
-  std::uint32_t stream_index = 0;   // semantically uint8 [0, 255]
+  std::uint32_t stream_id = 0;
   std::uint32_t seq = 0;
   google_protobuf_Timestamp timestamp = google_protobuf_Timestamp_init_zero;
 

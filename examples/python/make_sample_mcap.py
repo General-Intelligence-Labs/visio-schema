@@ -4,10 +4,15 @@
 Writes one MCAP containing several synthetic streams at once, using the same
 `McapSink` the live example ships:
 
-  - STREAM_IMU_RAW    bundled raw gyro/accel        -> /glove_left/imu_raw/3
-  - STREAM_IMU_QUAT   slowly rotating orientation   -> /glove_left/imu_quat/3
-  - STREAM_VIDEO_COMPRESSED  H.264 moving colour bar -> /ego/video_compressed/0
-                      (only if PyAV is installed: `pip install av`)
+  - ImuRaw          bundled raw gyro/accel        -> /glove_left/imus/3/raw
+  - Quaternion      slowly rotating orientation   -> /glove_left/imus/3/quat
+  - CompressedVideo H.264 moving colour bar       -> /ego/cam/0/video
+                    (only if PyAV is installed: `pip install av`)
+
+Dynamic streams: each output is a `Channel` (topic + schema_name +
+FileDescriptorSet) with a per-stream numeric id from CONTROL_STREAM_FIRST_DYNAMIC
+up — exactly what a device would announce over DeviceInfo. We hand the channel
+to the sink alongside each message, mirroring the live reader's resolve step.
 
 Then just open the file in Foxglove Studio — **File ▸ Open local file** — and
 add panels: a Plot for the IMU fields, an Image panel for the video. (The live
@@ -25,9 +30,10 @@ import math
 import sys
 from pathlib import Path
 
+from visio_schema.service.device_info.v1.device_info_pb2 import Channel
 from visio_schema.wire.message import Message
-from visio_schema.wire.streams import message_class
-from visio_schema.wire.v1.header_pb2 import DeviceClass, StreamKind
+from visio_schema.wire.streams import file_descriptor_set, message_class
+from visio_schema.wire.v1.header_pb2 import ControlStream
 
 # Reuse the McapSink shipped with the live example (sibling file, not a package).
 _EXAMPLE = Path(__file__).resolve().parent / "visio_foxglove.py"
@@ -37,22 +43,46 @@ _spec.loader.exec_module(_ex)
 
 START_NS = 1_700_000_000 * 1_000_000_000      # fixed epoch -> reproducible file
 
-# IMU (on a glove)
-GLOVE = DeviceClass.DEVICE_GLOVE_LEFT
-IMU_INDEX = 3                                  # one finger's IMU
+# Stream ids are assigned from the first dynamic id up, as a device would.
+_FIRST = ControlStream.CONTROL_STREAM_FIRST_DYNAMIC
+
+# IMU (on a glove), one finger's IMU at index 3.
+IMU_RAW_TOPIC = "/glove_left/imus/3/raw"
+IMU_QUAT_TOPIC = "/glove_left/imus/3/quat"
 RAW_HZ, BUNDLE_HZ, QUAT_HZ = 200, 20, 50
 
-# Video (on an egocentric rig)
-EGO = DeviceClass.DEVICE_EGO
-CAM_INDEX = 0
+# Video (on an egocentric rig).
+VIDEO_TOPIC = "/ego/cam/0/video"
 VID_W, VID_H, VID_FPS = 320, 240, 30
+
+_IMU_RAW = "visio_schema.sensor.v1.ImuRaw"
+_QUAT = "visio_schema.ros.geometry_msgs.v1.Quaternion"
+_VIDEO = "foxglove.CompressedVideo"
+
+
+def _channel(stream_id: int, topic: str, proto_type: str) -> Channel:
+    """Build the Channel a device would announce for this output stream."""
+    return Channel(
+        id=stream_id,
+        topic=topic,
+        encoding="protobuf",
+        schema_name=proto_type,
+        schema=file_descriptor_set(proto_type),
+        schema_encoding="protobuf",
+    )
+
+
+# Assign ids up front, as a device numbering its own outputs would.
+CH_IMU_RAW = _channel(_FIRST + 0, IMU_RAW_TOPIC, _IMU_RAW)
+CH_IMU_QUAT = _channel(_FIRST + 1, IMU_QUAT_TOPIC, _QUAT)
+CH_VIDEO = _channel(_FIRST + 2, VIDEO_TOPIC, _VIDEO)
 
 
 # --------------------------------------------------------------------------- #
 # IMU streams                                                                   #
 # --------------------------------------------------------------------------- #
 def _imu_raw_bundle(t0_ns: int, n_samples: int, spin: float) -> bytes:
-    m = message_class("visio_schema.sensor.v1.ImuRaw")()
+    m = message_class(_IMU_RAW)()
     m.first_sample_time.FromNanoseconds(t0_ns)
     dt = 1_000_000_000 // RAW_HZ
     for i in range(n_samples):
@@ -64,7 +94,7 @@ def _imu_raw_bundle(t0_ns: int, n_samples: int, spin: float) -> bytes:
 
 
 def _imu_quat(angle_rad: float) -> bytes:
-    q = message_class("visio_schema.ros.geometry_msgs.v1.Quaternion")()
+    q = message_class(_QUAT)()
     q.w = math.cos(angle_rad / 2)
     q.z = math.sin(angle_rad / 2)              # rotation about +Z
     return q.SerializeToString()
@@ -77,24 +107,20 @@ def _gen_imu(sink, seconds: float) -> int:
     for k in range(int(seconds * BUNDLE_HZ)):
         t = START_NS + k * bundle_dt
         spin = 0.5 * math.sin(2 * math.pi * 0.2 * k / BUNDLE_HZ)   # gentle sway
-        msg = Message(
-            stream=StreamKind.STREAM_IMU_RAW, stream_index=IMU_INDEX,
-            payload=_imu_raw_bundle(t, samples_per_bundle, spin), device=GLOVE, seq=k,
-        )
+        msg = Message(stream_id=CH_IMU_RAW.id, seq=k,
+                      payload=_imu_raw_bundle(t, samples_per_bundle, spin))
         msg.timestamp.FromNanoseconds(t)
-        sink.write(msg)
+        sink.write(msg, CH_IMU_RAW)
         n += 1
 
     quat_dt = 1_000_000_000 // QUAT_HZ
     total = int(seconds * QUAT_HZ)
     for k in range(total):
         t = START_NS + k * quat_dt
-        msg = Message(
-            stream=StreamKind.STREAM_IMU_QUAT, stream_index=IMU_INDEX,
-            payload=_imu_quat(2 * math.pi * k / total), device=GLOVE, seq=k,
-        )
+        msg = Message(stream_id=CH_IMU_QUAT.id, seq=k,
+                      payload=_imu_quat(2 * math.pi * k / total))
         msg.timestamp.FromNanoseconds(t)
-        sink.write(msg)
+        sink.write(msg, CH_IMU_QUAT)
         n += 1
     return n
 
@@ -135,7 +161,7 @@ def _encode_h264(seconds: float):
 
 
 def _video_payload(data: bytes, ts_ns: int) -> bytes:
-    msg = message_class("foxglove.CompressedVideo")()
+    msg = message_class(_VIDEO)()
     msg.timestamp.FromNanoseconds(ts_ns)
     msg.frame_id = "ego_cam"
     msg.format = "h264"
@@ -148,12 +174,10 @@ def _gen_video(sink, seconds: float) -> int:
     n = 0
     for idx, annexb in _encode_h264(seconds):
         t = START_NS + idx * frame_dt
-        msg = Message(
-            stream=StreamKind.STREAM_VIDEO_COMPRESSED, stream_index=CAM_INDEX,
-            payload=_video_payload(annexb, t), device=EGO, seq=idx,
-        )
+        msg = Message(stream_id=CH_VIDEO.id, seq=idx,
+                      payload=_video_payload(annexb, t))
         msg.timestamp.FromNanoseconds(t)
-        sink.write(msg)
+        sink.write(msg, CH_VIDEO)
         n += 1
     return n
 

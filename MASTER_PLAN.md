@@ -8,6 +8,16 @@ third-party consumer depend on this repo.
 This document is the canonical statement of intent for the repo. If
 something here contradicts code, the document wins until updated.
 
+> **⚠️ Superseded in part by the dynamic-stream redesign.** The wire `Header` is
+> now `{uint32 stream_id, uint32 seq, Timestamp timestamp}` — no
+> `device`/`routed_from`/`stream`/`stream_index`, no `DeviceClass`/`StreamKind`
+> enums. Streams are string-named topics; a `stream_id` is a per-link label
+> (control ids `[1,16)` hop-local, data ids `≥16` hub-remapped). Discovery is a
+> periodic `DeviceInfo` announce of Foxglove-mirrored `Channel`s. The canonical
+> wire spec is `docs/framing.md` + `docs/stream_type_map.md`; timesync is folded
+> into the heartbeat beacon (`docs/timesync.md`). Sections below describing the
+> enum model are **design history**, kept for rationale.
+
 ---
 
 ## 1. Purpose

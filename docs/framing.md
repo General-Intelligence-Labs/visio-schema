@@ -168,9 +168,9 @@ Reference implementations:
 | CRC mismatch | computed CRC ≠ trailing CRC | Drop the frame; log at debug-level; resume scanning. No retransmit at this layer. |
 | `HEADER_LEN` larger than available bytes | TCP/UDP: length math; Serial: decoded length > buffer | Drop the frame; log at warn-level. |
 | Header protobuf parse error | protobuf decode failure | Drop the frame; log at warn-level. |
-| Payload protobuf parse error | inner decode failure | Drop the message but do not drop the connection. Log at warn-level with `Header.stream` for triage. |
-| Unknown `Header.stream` value | enum lookup in StreamKind table miss | Drop the message. Log at info-level (a peer may publish a stream we don't know yet — that's not an error, just no consumer). |
-| `Header.device == DEVICE_UNKNOWN` or `Header.stream == STREAM_UNKNOWN` | obvious | Drop the frame; log at warn-level. Producers MUST set both fields. |
+| Payload protobuf parse error | inner decode failure | Drop the message but do not drop the connection. Log at warn-level with `Header.stream_id` for triage. |
+| Unmapped data `stream_id` | no `(source, id)` mapping yet (DeviceInfo announce not processed) | Drop the message (drop-until-mapped); count it (`dropped_unmapped`). The next announce (≤ `announce_interval_s`) resolves it. Not an error. |
+| `Header.stream_id == 0` | `CONTROL_STREAM_INVALID` | Drop the frame; log at warn-level. Producers MUST set a valid control id or a declared data id. |
 
 Endpoints MUST NOT silently swallow CRC failures or shape errors —
 they must log them. The default log level for "frame dropped" is

@@ -96,9 +96,6 @@ gen: lint
 	  $(shell cd $(FOXGLOVE_PROTO) && find . -name '*.proto' | sed 's|^\./||') \
 	  google/protobuf/timestamp.proto \
 	  google/protobuf/duration.proto
-	# ---- C++ static StreamKind table (host-side; replaces nanopb-impossible
-	# descriptor reflection). Proto annotations are the source of truth.
-	@$(PYTHON) scripts/gen_stream_map.py $(NANOPB_GEN)
 
 test: gen
 	@$(PYTHON) tests/test_imports.py

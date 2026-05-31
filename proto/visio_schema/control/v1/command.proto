@@ -1,23 +1,21 @@
 // visio/control/v1/command.proto
 //
-// Host-to-device control surface on STREAM_COMMAND. Visio addition;
-// UMI v3 did not have a first-class command type (control flow lived
-// in config files and out-of-band sockets).
+// Host-to-device control surface on the CONTROL_STREAM_COMMAND control
+// stream. Visio addition; UMI v3 did not have a first-class command type
+// (control flow lived in config files and out-of-band sockets).
 //
-// Sender identity is implicit in the wire Header's `device` field.
-// Target is explicit so peers can filter quickly.
+// Target is addressed by device name (the DeviceInfo.device_name a device
+// announces). Empty target = broadcast to every device.
 
 syntax = "proto3";
 
 package visio_schema.control.v1;
 
-import "visio_schema/wire/v1/header.proto";
-
 message Command {
-  // Intended recipient. A receiving peer MUST ignore Commands whose
-  // target_device != self. Subscribers should filter at the
-  // subscribe level when possible.
-  visio_schema.wire.v1.DeviceClass target_device = 1;
+  // Intended recipient, by device name. A receiving peer MUST ignore
+  // Commands whose target_device is neither empty (broadcast) nor its own
+  // device name.
+  string target_device = 1;
 
   // Per-sender monotonic counter; useful for matching to acks if a
   // future ack mechanism is added.
