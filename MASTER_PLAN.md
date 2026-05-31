@@ -405,5 +405,5 @@ static array in each language binding.
   `visio/tools/v3_bridge/` if and when needed.
 - ROS / DDS bridges.
 - A schema registry server. (Descriptors ride inline in
-  `STREAM_DEVICE_INFO` Responses — `file_descriptor_sets` map keyed by
-  proto FQN; every peer's set self-describes.)
+  `STREAM_DEVICE_INFO` Responses — on each `OutputStream` (`proto_type` +
+  `file_descriptor_set`); every DeviceInfo self-describes.)

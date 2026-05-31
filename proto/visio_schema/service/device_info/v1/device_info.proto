@@ -13,10 +13,10 @@
 // `on_message` handler) so the root sees exactly one Response per
 // subtree.
 //
-// Schema descriptors ride inline in `Response.file_descriptor_sets`,
-// covering every payload-FQN referenced by `devices[*].streams[*]` —
-// no separate SchemaQuery service is needed (STREAM_SCHEMA_QUERY is
-// reserved in header.proto).
+// Schema descriptors ride inline on each OutputStream
+// (`devices[*].streams[*].file_descriptor_set`), so a DeviceInfo is
+// self-describing and no separate SchemaQuery service is needed
+// (STREAM_SCHEMA_QUERY is reserved in header.proto).
 //
 // Calibration is NOT in DeviceInfo. Devices publish calibration as
 // ordinary stream messages (foxglove.CameraCalibration on
@@ -78,11 +78,28 @@ message DeviceInfo {
 
 // One stream this device produces. The (stream, stream_index) pair is
 // unique within a device. `label` is optional, presentation-only.
+//
+// The stream carries its OWN schema inline: `proto_type` (the payload's
+// protobuf full name) + `file_descriptor_set` (the serialized
+// FileDescriptorSet a recorder/Foxglove needs to decode it). This makes each
+// stream self-describing — a recorder needs no compiled-in registry to map the
+// StreamKind enum to a type, and a device built from a newer schema can
+// advertise a StreamKind the consumer doesn't know. The producer fills both
+// from the value it would record (on-device: the baked-in FileDescriptorSetFor
+// blob). Both empty for unannotated/dual-payload streams.
 message OutputStream {
   visio_schema.wire.v1.StreamKind stream = 1;
   uint32 stream_index = 2;
   // Optional human-readable label (free-form, presentation-only).
   string label = 3;
+  // Protobuf full name of this stream's payload, e.g.
+  // "visio_schema.sensor.v1.ImuRaw". Empty for unannotated streams.
+  string proto_type = 4;
+  // Serialized google.protobuf.FileDescriptorSet (payload type + transitive
+  // deps) — exactly the bytes an MCAP Schema record's `data` field expects.
+  // Repeated verbatim across streams of the same type (descriptors are small
+  // and DeviceInfo is low-rate); the consumer dedupes by proto_type.
+  bytes file_descriptor_set = 5;
 }
 
 // Subtree snapshot from the responder. Hubs aggregate children's
@@ -108,11 +125,9 @@ message Response {
   // without duplication.
   repeated DeviceInfo devices = 4;
 
-  // Descriptors for every payload-FQN referenced by
-  // devices[*].streams[*]. Key = protobuf full name
-  // (e.g. "visio_schema.sensor.v1.ImuRaw"); value = serialized
-  // google.protobuf.FileDescriptorSet (file + transitive deps) —
-  // exactly the bytes an MCAP Schema record's `data` field expects.
-  // Hubs merge children's maps with their own (dedupe by key).
-  map<string, bytes> file_descriptor_sets = 5;
+  // Schema descriptors now ride inline on each OutputStream
+  // (DeviceInfo.streams[*].file_descriptor_set) so a DeviceInfo is
+  // self-describing and hubs need only forward `devices` verbatim.
+  reserved 5;
+  reserved "file_descriptor_sets";
 }

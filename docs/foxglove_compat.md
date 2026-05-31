@@ -53,7 +53,7 @@ proto-name distinction.
 | `visio_schema.control.v1.Command` | `STREAM_COMMAND` | Host→device intents (StartRecording, StopRecording, Identify). Application-specific. |
 | `visio_schema.geometry.v1.Twist` | `STREAM_TWIST` | 6-DoF velocity. Foxglove only has linear `Velocity3`; no Twist. We use `foxglove.Vector3` primitives so it composes. |
 | `visio_schema.service.timesync.v1.{Request,Response}` | `STREAM_TIMESYNC` | NTP-style exchange; bus-layer concern, no analogue. |
-| `visio_schema.service.device_info.v1.{Request,Response}` | `STREAM_DEVICE_INFO` | Discovery + identity + stream-capability declaration + inline `file_descriptor_sets` (descriptors ride with the Response — no separate schema-query service). |
+| `visio_schema.service.device_info.v1.{Request,Response}` | `STREAM_DEVICE_INFO` | Discovery + identity + stream-capability declaration; each `OutputStream` carries its schema inline (`proto_type` + `file_descriptor_set`) — descriptors ride with the Response, no separate schema-query service. |
 | `visio_schema.service.heartbeat.v1.Heartbeat` | `STREAM_HEARTBEAT` | Liveness + backpressure hint. |
 | `visio_schema.calibration.v1.ImuCalibration` | `STREAM_IMU_CALIBRATION` | Per-IMU bias / scale / mounting pose. Published as a regular stream message (Foxglove convention — same shape as `foxglove.CameraCalibration` on `STREAM_CAMERA_CALIB`). |
 

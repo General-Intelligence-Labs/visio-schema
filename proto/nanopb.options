@@ -32,17 +32,15 @@ visio_schema.geometry.v1.Twist.frame_id   max_size:32
 
 # ---- DeviceInfo discovery: built once per run, so favor pointer/bounded over
 #      callbacks. Strings + the repeated lists are FT_POINTER (allocate only
-#      what is sent, free after). The map<string,bytes> is special: nanopb
-#      silently keeps a `map` field as a callback if you ask for FT_POINTER, so
-#      instead bound the entry COUNT inline and make the (KB-scale) value a
-#      pointer — char key[128] + pb_bytes_array_t *value, no callback.
+#      what is sent, free after). Each OutputStream's KB-scale descriptor bytes
+#      are also FT_POINTER, so a device with N streams allocates exactly its N
+#      descriptors and frees them when the Response is freed.
 visio_schema.service.device_info.v1.DeviceInfo.firmware_version    type:FT_POINTER
 visio_schema.service.device_info.v1.DeviceInfo.hardware_revision   type:FT_POINTER
 visio_schema.service.device_info.v1.DeviceInfo.model               type:FT_POINTER
 visio_schema.service.device_info.v1.DeviceInfo.serial              type:FT_POINTER
 visio_schema.service.device_info.v1.DeviceInfo.streams             type:FT_POINTER
-visio_schema.service.device_info.v1.OutputStream.label             type:FT_POINTER
-visio_schema.service.device_info.v1.Response.devices                        type:FT_POINTER
-visio_schema.service.device_info.v1.Response.file_descriptor_sets           max_count:32
-visio_schema.service.device_info.v1.Response.FileDescriptorSetsEntry.key    max_size:128
-visio_schema.service.device_info.v1.Response.FileDescriptorSetsEntry.value  type:FT_POINTER
+visio_schema.service.device_info.v1.OutputStream.label                type:FT_POINTER
+visio_schema.service.device_info.v1.OutputStream.proto_type           type:FT_POINTER
+visio_schema.service.device_info.v1.OutputStream.file_descriptor_set  type:FT_POINTER
+visio_schema.service.device_info.v1.Response.devices                  type:FT_POINTER
