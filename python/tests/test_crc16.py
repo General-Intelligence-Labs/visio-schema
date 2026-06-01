@@ -21,7 +21,11 @@ def test_empty() -> None:
         (b"A", 0xB915),
         (b"AB", 0x4B74),
         (b"\x00", 0xE1F0),
+        (b"\x00\x00\x00\x00", 0x84C0),
         (b"\xff" * 16, 0x6A4B),
+        # All 256 byte values once — exercises every distinct input byte so a
+        # seed/poll regression can't slip through on a narrow alphabet.
+        (bytes(range(256)), 0x3FBD),
     ],
 )
 def test_known_values(data: bytes, expected: int) -> None:
