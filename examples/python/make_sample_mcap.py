@@ -16,7 +16,7 @@ to the sink alongside each message, mirroring the live reader's resolve step.
 
 Then just open the file in Foxglove Studio — **File ▸ Open local file** — and
 add panels: a Plot for the IMU fields, an Image panel for the video. (The live
-visio_foxglove.py script is for real serial streams, not file playback.)
+visio_display.py script is for real serial streams, not file playback.)
 
     make gen && pip install -e python         # make the package importable
     pip install -r examples/python/requirements.txt
@@ -36,8 +36,8 @@ from visio_schema.wire.streams import file_descriptor_set, message_class
 from visio_schema.wire.v1.header_pb2 import ControlStream
 
 # Reuse the McapSink shipped with the live example (sibling file, not a package).
-_EXAMPLE = Path(__file__).resolve().parent / "visio_foxglove.py"
-_spec = importlib.util.spec_from_file_location("visio_foxglove", _EXAMPLE)
+_EXAMPLE = Path(__file__).resolve().parent / "visio_display.py"
+_spec = importlib.util.spec_from_file_location("visio_display", _EXAMPLE)
 _ex = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_ex)
 

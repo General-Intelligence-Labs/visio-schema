@@ -96,6 +96,11 @@ gen: lint
 	  $(shell cd $(FOXGLOVE_PROTO) && find . -name '*.proto' | sed 's|^\./||') \
 	  google/protobuf/timestamp.proto \
 	  google/protobuf/duration.proto
+	# ---- C++ (embeddable/nanopb): per-payload-type serialized FileDescriptorSet
+	# blobs (schema_blobs.gen.hpp). nanopb can't reflect, so the on-device MCAP
+	# writer / DeviceInfo announce reads these precomputed bytes. Built host-side
+	# where full libprotobuf exists.
+	$(PYTHON) scripts/gen_schema_blobs.py $(NANOPB_GEN)
 
 test: gen
 	@$(PYTHON) tests/test_imports.py

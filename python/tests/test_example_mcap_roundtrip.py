@@ -1,7 +1,7 @@
 """Round-trip the example MCAP writer: generate a sample, read it back, and
 verify topics, schemas, and message payloads survive.
 
-This guards the example sink (visio_foxglove.McapSink) + the sample generator
+This guards the example sink (visio_display.McapSink) + the sample generator
 (make_sample_mcap.py) that users actually run, and the Foxglove schema-name
 invariant (protobuf full name, resolvable inside the embedded FileDescriptorSet)
 end-to-end through a real MCAP reader — now on the dynamic stream_id / Channel
@@ -62,7 +62,7 @@ def test_sample_mcap_roundtrips(tmp_path) -> None:
 def test_mcap_sink_drops_then_records_by_channel(tmp_path) -> None:
     """The sink keys MCAP channels on stream_id and pulls topic/schema from the
     Channel handed in — the resolve step the live reader performs."""
-    fox = _load("visio_foxglove", _EXAMPLES / "visio_foxglove.py")
+    fox = _load("visio_display", _EXAMPLES / "visio_display.py")
     from visio_schema.service.device_info.v1.device_info_pb2 import Channel
     from visio_schema.wire.message import Message
     from visio_schema.wire.streams import file_descriptor_set

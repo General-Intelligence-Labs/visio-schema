@@ -12,27 +12,38 @@ make gen                       # generate bindings into gen/
 pip install -e python          # or: make wheel && pip install dist/visio_schema-*.whl
 ```
 
-## Python — live serial → Foxglove Studio and/or MCAP
+## Python — live serial → Foxglove Studio, Rerun, and/or MCAP
 
-`python/visio_foxglove.py` reads Visio messages from a **live serial port** and
-fans them out to a live Foxglove Studio WebSocket server and/or an MCAP
-recording. (It only handles live streams — to view an MCAP *file*, open it in
-Studio directly; see below.)
+`python/visio_display.py` reads Visio messages from a **live serial port** and
+fans them out to any combination of a live Foxglove Studio WebSocket server, a
+live **Rerun** viewer, and an MCAP recording. (It only handles live streams — to
+view an MCAP *file*, open it in Studio directly; see below.)
 
 ```bash
 pip install -r python/requirements.txt
 
+# live serial -> Rerun (spawns the viewer; auto-lays-out views)
+python python/visio_display.py --serial /dev/ttyACM0 --rerun
+
 # live serial -> Foxglove Studio (the script prints a URL to open)
-python python/visio_foxglove.py --serial /dev/ttyUSB0 --foxglove
+python python/visio_display.py --serial /dev/ttyACM0 --foxglove
 
 # live serial -> record an MCAP while watching live
-python python/visio_foxglove.py --serial /dev/ttyUSB0 --out run.mcap --foxglove
+python python/visio_display.py --serial /dev/ttyACM0 --out run.mcap --rerun
 ```
+
+`--rerun` spawns the **Rerun viewer** and logs each stream under its topic path.
+Rerun auto-creates views, so there is **no manual panel setup**: IMU orientation
+shows as a box rotated by the quaternion in a 3D view, and accel/gyro/quat appear
+as scalar plots. (Needs `rerun-sdk`; `av` decodes the H.265 camera streams.)
 
 `--foxglove` starts a **WebSocket data-source server** (not itself a viewer)
 and prints a URL. Open it, or in **Foxglove Studio** choose **Open connection →
-Foxglove WebSocket → `ws://localhost:8765`**. Then add a **Plot** panel for IMU
-fields, an **Image** panel for video, etc.
+Foxglove WebSocket → `ws://localhost:8765`**. Import `python/visio_layout.json`
+(**Layouts ▸ Import from file**) for a ready-made panel set, or add panels by
+hand. Note: a bare IMU quaternion has no built-in Foxglove renderer — the script
+also publishes a `/tf` `FrameTransform` derived from it, so the **3D panel**
+(display frame `world`) shows the orientation.
 
 ### No hardware? Generate a sample MCAP and open it
 
