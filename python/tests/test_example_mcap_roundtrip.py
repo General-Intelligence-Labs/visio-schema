@@ -1,8 +1,9 @@
 """Round-trip the example MCAP writer: generate a sample, read it back, and
 verify topics, schemas, and message payloads survive.
 
-This guards the example sink (visio_display.McapSink) + the sample generator
-(make_sample_mcap.py) that users actually run, and the Foxglove schema-name
+This guards the canonical writer (visio_schema.mcap.McapWriter) the example
+now uses + the sample generator (make_sample_mcap.py) that users actually run, and
+the Foxglove schema-name
 invariant (protobuf full name, resolvable inside the embedded FileDescriptorSet)
 end-to-end through a real MCAP reader — now on the dynamic stream_id / Channel
 model.
@@ -59,13 +60,14 @@ def test_sample_mcap_roundtrips(tmp_path) -> None:
     assert "visio_schema.ros.geometry_msgs.v1.Quaternion" in schema_names
 
 
-def test_mcap_sink_drops_then_records_by_channel(tmp_path) -> None:
-    """The sink keys MCAP channels on stream_id and pulls topic/schema from the
-    Channel handed in — the resolve step the live reader performs."""
-    fox = _load("visio_display", _EXAMPLES / "visio_display.py")
+def test_writer_records_by_channel(tmp_path) -> None:
+    """McapWriter pulls topic/schema from the Channel handed in (the resolve step
+    the live reader performs) and writes the payload verbatim — what the example
+    relies on for the --out sink."""
+    from visio_schema.mcap import McapWriter, read_mcap
     from visio_schema.service.device_info.v1.device_info_pb2 import Channel
     from visio_schema.wire.message import Message
-    from visio_schema.wire.streams import file_descriptor_set
+    from visio_schema.wire.schema import file_descriptor_set
     from visio_schema.wire.v1.header_pb2 import ControlStream
 
     sid = ControlStream.CONTROL_STREAM_FIRST_DYNAMIC
@@ -78,18 +80,14 @@ def test_mcap_sink_drops_then_records_by_channel(tmp_path) -> None:
         schema_encoding="protobuf",
     )
     out = tmp_path / "sink.mcap"
-    sink = fox.McapSink(str(out))
     msg = Message(stream_id=sid, seq=1, payload=b"raw-bytes")
     msg.timestamp.FromNanoseconds(1_700_000_000_000_000_000)
-    sink.write(msg, ch)
-    sink.close()
+    with McapWriter(str(out)) as w:
+        w.write(ch, msg)
 
-    from mcap.reader import make_reader
-
-    with open(out, "rb") as f:
-        rows = list(make_reader(f).iter_messages())
+    rows = list(read_mcap(out))
     assert len(rows) == 1
-    schema, channel, message = rows[0]
-    assert channel.topic == "/glove_left/imus/0/raw"
-    assert schema.name == "visio_schema.sensor.v1.ImuRaw"
-    assert message.data == b"raw-bytes"
+    rmsg, rch = rows[0]
+    assert rch.topic == "/glove_left/imus/0/raw"
+    assert rch.schema_name == "visio_schema.sensor.v1.ImuRaw"
+    assert rmsg.payload == b"raw-bytes" and rmsg.seq == 1

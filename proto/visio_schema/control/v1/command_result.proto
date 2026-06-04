@@ -1,0 +1,108 @@
+// visio_schema/control/v1/command_result.proto
+//
+// Acknowledgement for a Command (command.proto). A target replies with exactly
+// one CommandResult on its own /<device>/command_result channel, correlated to
+// the request by command_id. This is the ACK-ONLY status model: there is no
+// periodic operational-state stream — a host pulls DeviceState on demand via the
+// GetState command (or reads it back from any setter's ack). SystemHealth keeps
+// carrying live health (cpu/mem/disk/recording) on its own cadence.
+//
+// Parity note: folds the old HTTP setup API's responses. GET /info -> DeviceState;
+// GET /wifi/scan -> WifiScanResults; GET /recordings -> RecordingsList; the
+// POST setters -> ok/error (+ a fresh DeviceState).
+
+syntax = "proto3";
+
+package visio_schema.control.v1;
+
+// One Wi-Fi access point seen in a scan.
+message WifiScanResult {
+  string ssid     = 1;
+  sint32 rssi     = 2;  // dBm
+  string security = 3;  // e.g. "WPA2", "OPEN"
+}
+
+message WifiScanResults {
+  repeated WifiScanResult results = 1;
+}
+
+// One recorded session on local storage, with its upload state.
+message RecordingEntry {
+  string name            = 1;
+  uint64 size_bytes      = 2;
+  uint64 started_at_us   = 3;
+  double duration_s      = 4;
+
+  enum UploadState {
+    UPLOAD_STATE_NONE      = 0;
+    UPLOAD_STATE_PENDING   = 1;
+    UPLOAD_STATE_IN_FLIGHT = 2;
+    UPLOAD_STATE_COMPLETED = 3;
+    UPLOAD_STATE_FAILED    = 4;
+  }
+  UploadState upload_state   = 5;
+  uint32      attempts       = 6;
+  uint64      bytes_uploaded = 7;
+  uint64      bytes_total    = 8;
+  string      last_error     = 9;
+}
+
+message RecordingsList {
+  repeated RecordingEntry recordings = 1;
+}
+
+// The device's operational-state snapshot — the GET /info payload. Fields that
+// DeviceInfo (device_name/serial/firmware + channels) and SystemHealth
+// (recording, disk_free_bytes) already report are intentionally NOT duplicated
+// here. Carried only inside CommandResult; it has no own stream.
+message DeviceState {
+  // ── recording ──
+  bool   recording_auto_start    = 1;
+  string recording_session_name  = 2;  // empty when not recording
+  uint64 recording_started_at_us = 3;  // 0 when not recording
+
+  // ── disk ──
+  sint32 disk_free_pct = 4;   // 0..100, or -1 = unknown
+  bool   disk_no_sdcard = 5;
+
+  // ── wifi ──
+  enum WifiState {
+    WIFI_STATE_DISABLED    = 0;
+    WIFI_STATE_STA         = 1;
+    WIFI_STATE_AP_FALLBACK = 2;
+  }
+  WifiState wifi_state      = 6;
+  string    wifi_ssid       = 7;
+  string    wifi_ip         = 8;
+  string    wifi_last_error = 9;
+
+  // ── storage (config only; never secret keys) ──
+  bool   storage_configured = 10;
+  string storage_endpoint   = 11;
+  string storage_bucket     = 12;
+  string storage_prefix     = 13;
+
+  // ── upload queue ──
+  uint32 upload_pending             = 14;
+  uint32 upload_in_flight           = 15;
+  uint32 upload_failed              = 16;
+  string upload_last_error          = 17;
+  uint64 upload_last_completed_at_us = 18;
+}
+
+// The single ack a device emits per Command on /<device>/command_result.
+message CommandResult {
+  uint64 command_id    = 1;  // echoes Command.command_id
+  bool   ok            = 2;
+  string error_code    = 3;  // machine-readable; empty when ok
+  string error_message = 4;  // human-readable; empty when ok
+
+  // Command-specific return data. Setters + GetState return `state`; ScanWifi
+  // returns `scan`; ListRecordings returns `recordings`; start/stop/identify
+  // leave payload unset.
+  oneof payload {
+    DeviceState     state      = 10;
+    WifiScanResults scan       = 11;
+    RecordingsList  recordings = 12;
+  }
+}

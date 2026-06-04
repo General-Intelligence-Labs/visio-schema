@@ -32,6 +32,17 @@ if(NOT EXISTS "${NANOPB_DIR}/pb_encode.c")
     "Run `git submodule update --init third_party/nanopb`.")
 endif()
 
+# ---- vendored mcap (header-only) -------------------------------------------
+# The MCAP C++ writer, lz4/zstd compiled out (we only ever use Compression::None)
+# so the recording layer cross-compiles for the RV1106 with no extra deps. The
+# .inl implementation is pulled into mcap_writer.cc alone, and mcap_writer.hpp
+# does NOT expose any mcap type, so this include stays PRIVATE to the library.
+# Vendored sources (not a submodule) — see third_party/mcap/VENDOR.md.
+set(MCAP_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/mcap/cpp/mcap/include")
+if(NOT EXISTS "${MCAP_INCLUDE_DIR}/mcap/writer.hpp")
+  message(FATAL_ERROR "vendored mcap not found at ${MCAP_INCLUDE_DIR}")
+endif()
+
 # Every generated payload type, not just the Header. CONFIGURE_DEPENDS re-globs
 # when the set changes (e.g. a new proto added to the schema).
 file(GLOB_RECURSE NANOPB_GEN_SRCS CONFIGURE_DEPENDS "${NANOPB_GEN}/*.pb.c")
@@ -47,12 +58,23 @@ add_library(visio_schema STATIC
   src/codec/crc16.cc
   src/codec/cobs.cc
   src/codec/frame.cc
+  # routing (id<->Channel table) + the MCAP container codec
+  src/routing/registry.cc
+  src/mcap/writer.cc
+  # transport: links + endpoints + framing (every Endpoint, incl. the MCAP sink)
+  src/transport/link.cc
+  src/transport/framing.cc
+  src/transport/framed_fd.cc
+  src/transport/tcp.cc
+  src/transport/mcap_endpoint.cc
 )
 target_include_directories(visio_schema PUBLIC
   "${NANOPB_DIR}"
   "${NANOPB_GEN}"
   "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
+# mcap is an implementation detail of mcap_writer.cc (the header hides it).
+target_include_directories(visio_schema PRIVATE "${MCAP_INCLUDE_DIR}")
 # DeviceInfo (its repeated Channel list + each Channel's strings/bytes) uses
 # nanopb FT_POINTER fields, which require malloc support to encode/decode.
 # PUBLIC so pb_decode.c, the generated *.pb.c, and every consumer (the
@@ -79,6 +101,10 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT CMAKE_CROSSCOMPILI
     tests/test_crc16.cc
     tests/test_cobs.cc
     tests/test_frame_roundtrip.cc
+    tests/test_channel_registry.cc
+    tests/test_mcap_writer.cc
+    tests/test_mcap_endpoint.cc
+    tests/test_io.cc
   )
   target_link_libraries(visio_schema_tests
     PRIVATE visio_schema GTest::gtest GTest::gtest_main)

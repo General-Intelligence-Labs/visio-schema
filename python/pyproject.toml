@@ -17,10 +17,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# MCAP recording/replay (visio_schema.mcap) — the base stays protobuf+cobs.
+recording = [
+    "mcap>=1.1",
+]
 dev = [
     "pytest>=8.0",
     "mypy>=1.10",
     "ruff>=0.5",
+    "mcap>=1.1",
 ]
 
 # The wheel ships ONE `visio_schema` import root combining the hand-written

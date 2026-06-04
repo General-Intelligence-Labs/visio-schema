@@ -44,13 +44,13 @@ def test_each_payload_blob_roundtrips() -> None:
     sys.path.insert(0, str(_PYPKG))
     from google.protobuf import descriptor_pb2
 
-    from visio_schema.wire import streams
+    from visio_schema.wire import schema
 
     n = 0
-    for mod_name in streams._PAYLOAD_MODULES:
+    for mod_name in schema._PAYLOAD_MODULES:
         mod = __import__(mod_name, fromlist=["DESCRIPTOR"])
         for desc in mod.DESCRIPTOR.message_types_by_name.values():
-            data = streams.file_descriptor_set(desc.full_name)
+            data = schema.file_descriptor_set(desc.full_name)
             assert data, desc.full_name
             fds = descriptor_pb2.FileDescriptorSet()
             fds.ParseFromString(data)  # raises on malformed bytes

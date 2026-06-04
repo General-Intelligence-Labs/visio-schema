@@ -25,6 +25,13 @@ message Command {
     StartRecording start_recording = 10;
     StopRecording  stop_recording  = 11;
     Identify       identify        = 12;
+    SetAutoStart   set_auto_start  = 13;
+    ConnectWifi    connect_wifi    = 14;
+    ScanWifi       scan_wifi       = 15;
+    SetStorage     set_storage     = 16;
+    TestStorage    test_storage    = 17;
+    ListRecordings list_recordings = 18;
+    GetState       get_state       = 19;
   }
 }
 
@@ -41,4 +48,61 @@ message StopRecording {
 // Ask the target to publish its DeviceInfo immediately, out of the
 // normal cadence. Replaces UMI v3's T_DEVICE_INFO_REQ query.
 message Identify {
+}
+
+// ── Provisioning / control surface folded from the old HTTP setup API ───────
+// Each of these is answered by a CommandResult on the target's
+// /<device>/command_result channel (see command_result.proto), correlated by
+// Command.command_id. SECURITY: ConnectWifi.passphrase and SetStorage secret
+// keys traverse the (unauthenticated) bus — acceptable on USB, but widens
+// exposure on the TCP leg; bus auth is tracked separately.
+
+// Set the auto-start-at-boot recording policy (persisted; next-boot effect,
+// does not toggle the current session). Replaces POST /recording/auto_start.
+message SetAutoStart {
+  bool auto_start = 1;
+}
+
+// Provision Wi-Fi STA credentials and (re)associate. Replaces POST /wifi.
+message ConnectWifi {
+  string ssid       = 1;
+  string passphrase = 2;
+}
+
+// Trigger a Wi-Fi scan; the CommandResult carries WifiScanResults. Replaces
+// GET /wifi/scan.
+message ScanWifi {
+}
+
+// Persist S3 storage credentials. Replaces POST /storage.
+message SetStorage {
+  string endpoint_url      = 1;
+  string region            = 2;
+  string bucket            = 3;
+  string access_key_id     = 4;
+  string secret_access_key = 5;
+  string prefix            = 6;
+}
+
+// Validate S3 credentials WITHOUT persisting (HEAD bucket). Replaces
+// POST /storage/test. Same fields as SetStorage.
+message TestStorage {
+  string endpoint_url      = 1;
+  string region            = 2;
+  string bucket            = 3;
+  string access_key_id     = 4;
+  string secret_access_key = 5;
+  string prefix            = 6;
+}
+
+// List recorded sessions + their upload state; the CommandResult carries
+// RecordingsList. Replaces GET /recordings.
+message ListRecordings {
+  // Max entries to return (newest first). 0 = a device-chosen default.
+  uint32 limit = 1;
+}
+
+// Pull the device's operational-state snapshot; the CommandResult carries
+// DeviceState. Replaces GET /info.
+message GetState {
 }

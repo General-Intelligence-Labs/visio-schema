@@ -1,17 +1,17 @@
 // serial_consumer — minimal embedded-style consumer of live Visio serial.
 //
 // Reads COBS-delimited core frames (visio-schema/docs/framing.md §3.2) from a
-// serial port, decodes each Header, and prints it. This is the shape a
+// serial port, decodes each, and resolves it to a topic. This is the shape a
 // Linux-class embedded board (e.g. an RV1106 gripper) would use: a blocking
 // read loop, no bus, no threads, depending only on the single `visio_schema`
-// target (nanopb bindings + framing codec) — no libprotobuf, no abseil, the
-// same code path that cross-compiles for the RV1106 / HDK.
+// target (nanopb bindings + framing codec + routing) — no libprotobuf, no
+// abseil, the same code path that cross-compiles for the RV1106 / HDK.
 //
-// The wire Header now addresses every message by a compact `stream_id` (control
-// ids < CONTROL_STREAM_FIRST_DYNAMIC are hop-local; data ids are negotiated and
-// hub-remapped). Mapping a stream_id to a topic/type needs the DeviceInfo
-// announce stream — out of scope for this minimal demo, which just prints the
-// id + payload size.
+// The wire Header addresses every message by a compact `stream_id` (control ids
+// < CONTROL_STREAM_FIRST_DYNAMIC are hop-local; data ids are negotiated and
+// hub-remapped). A `ChannelRegistry` learns the periodic DeviceInfo announce and
+// resolves each data frame to its topic + schema — exactly what a customer needs
+// to consume a Visio device, with nothing from the runtime layer.
 //
 //   build:  cmake -S examples/cpp -B examples/cpp/build && cmake --build examples/cpp/build
 //   run:    ./examples/cpp/build/serial_consumer /dev/ttyUSB0
@@ -31,9 +31,9 @@
 #include <string_view>
 #include <vector>
 
-#include "visio_schema/wire/codec/cobs.hpp"
-#include "visio_schema/wire/codec/frame.hpp"
-#include "visio_schema/wire/message.hpp"
+#include "visio_schema/routing/registry.hpp"
+#include "visio_schema/transport/framing.hpp"
+#include "visio_schema/wire/v1/header.pb.h"
 
 namespace {
 
@@ -71,7 +71,13 @@ int main(int argc, char** argv) {
   }
   std::cerr << "reading visio frames from " << path << " (Ctrl-C to stop)\n";
 
-  std::string rx;  // byte accumulator across reads
+  // Learns DeviceInfo announces and resolves each data frame's stream_id to its
+  // topic + schema — the whole self-contained consume path, no bus.
+  visio_schema::routing::ChannelRegistry registry;
+  constexpr std::uint32_t kDeviceInfo =
+      visio_schema_wire_v1_ControlStream_CONTROL_STREAM_DEVICE_INFO;
+
+  std::vector<std::uint8_t> rx;  // byte accumulator across reads
   std::uint8_t chunk[4096];
   while (true) {
     const ssize_t n = ::read(fd, chunk, sizeof(chunk));
@@ -80,32 +86,28 @@ int main(int argc, char** argv) {
       break;
     }
     if (n == 0) break;  // EOF (peer closed)
-    rx.append(reinterpret_cast<const char*>(chunk), static_cast<std::size_t>(n));
+    rx.insert(rx.end(), chunk, chunk + n);
 
-    // Each frame ends at a 0x00 delimiter; COBS guarantees no other 0x00 in
-    // the encoded run, so we can split on it.
-    std::size_t delim;
-    while ((delim = rx.find('\0')) != std::string::npos) {
-      const std::string encoded = rx.substr(0, delim);
-      rx.erase(0, delim + 1);
-      if (encoded.empty()) continue;  // bare delimiter / empty frame
-
-      std::vector<std::uint8_t> decoded;
-      if (!visio_schema::wire::CobsDecode(encoded, &decoded)) {
-        std::cerr << "drop: COBS decode failed (" << encoded.size() << " B)\n";
-        continue;
+    // The shared de/framer pulls every complete 0x00-delimited frame out of the
+    // accumulator, COBS+frame-decodes each (malformed frames skipped), and
+    // leaves a partial trailing frame for the next read.
+    for (auto& msg : visio_schema::transport::ExtractFrames(rx)) {
+      const std::uint32_t sid = msg.stream_id;
+      auto routed = registry.Accept(std::move(msg));
+      if (routed.channel != nullptr) {
+        // Resolved data frame: stream_id -> topic + payload type.
+        std::cout << "data  " << routed.channel->topic << "  ["
+                  << routed.channel->schema_name << "]  seq="
+                  << routed.message->seq << "  payload="
+                  << routed.message->payload.size() << "B\n";
+      } else if (routed.message.has_value()) {
+        std::cout << "ctrl  stream_id=" << sid << "  payload="
+                  << routed.message->payload.size() << "B\n";
+      } else if (sid == kDeviceInfo) {
+        std::cout << "learned announce (" << registry.Channels().size()
+                  << " channels known)\n";
       }
-      visio_schema::wire::Message msg;
-      const std::string_view frame(
-          reinterpret_cast<const char*>(decoded.data()), decoded.size());
-      const auto status = visio_schema::wire::DecodeFrame(frame, &msg);
-      if (status != visio_schema::wire::FrameStatus::kOk) {
-        std::cerr << "drop: " << visio_schema::wire::FrameStatusName(status) << "\n";
-        continue;
-      }
-
-      std::cout << "stream_id=" << msg.stream_id << " seq=" << msg.seq
-                << " payload=" << msg.payload.size() << "B\n";
+      // else: data frame dropped-until-mapped (announce not seen yet).
     }
   }
 

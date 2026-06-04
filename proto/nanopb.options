@@ -27,6 +27,45 @@ foxglove.CompressedImage.format     max_size:8
 # ---- Sensors: short button id (samples stay callback — see strategy above) -
 visio_schema.sensor.v1.ButtonEvent.button_id   max_size:32
 
+# ---- Control: command payload strings (bounded inline — small, fixed shape) -
+visio_schema.control.v1.ConnectWifi.ssid              max_size:33
+visio_schema.control.v1.ConnectWifi.passphrase        max_size:64
+visio_schema.control.v1.SetStorage.endpoint_url       max_size:128
+visio_schema.control.v1.SetStorage.region             max_size:32
+visio_schema.control.v1.SetStorage.bucket             max_size:64
+visio_schema.control.v1.SetStorage.access_key_id      max_size:32
+visio_schema.control.v1.SetStorage.secret_access_key  max_size:64
+visio_schema.control.v1.SetStorage.prefix             max_size:128
+visio_schema.control.v1.TestStorage.endpoint_url      max_size:128
+visio_schema.control.v1.TestStorage.region            max_size:32
+visio_schema.control.v1.TestStorage.bucket            max_size:64
+visio_schema.control.v1.TestStorage.access_key_id     max_size:32
+visio_schema.control.v1.TestStorage.secret_access_key max_size:64
+visio_schema.control.v1.TestStorage.prefix            max_size:128
+
+# ---- Control: CommandResult ack + DeviceState snapshot (bounded inline so the
+#      ack is a static struct; the two list payloads below are FT_POINTER) -----
+visio_schema.control.v1.CommandResult.error_code               max_size:32
+visio_schema.control.v1.CommandResult.error_message            max_size:128
+visio_schema.control.v1.DeviceState.recording_session_name     max_size:64
+visio_schema.control.v1.DeviceState.wifi_ssid                  max_size:33
+visio_schema.control.v1.DeviceState.wifi_ip                    max_size:46
+visio_schema.control.v1.DeviceState.wifi_last_error            max_size:128
+visio_schema.control.v1.DeviceState.storage_endpoint           max_size:128
+visio_schema.control.v1.DeviceState.storage_bucket             max_size:64
+visio_schema.control.v1.DeviceState.storage_prefix             max_size:128
+visio_schema.control.v1.DeviceState.upload_last_error          max_size:128
+
+# ---- Control: variable-length result lists — FT_POINTER (mirror DeviceInfo):
+#      malloc only what's sent, freed with the message; keeps CommandResult's
+#      union small (a fixed array[N] would bloat every ack). -------------------
+visio_schema.control.v1.WifiScanResults.results   type:FT_POINTER
+visio_schema.control.v1.WifiScanResult.ssid       type:FT_POINTER
+visio_schema.control.v1.WifiScanResult.security   type:FT_POINTER
+visio_schema.control.v1.RecordingsList.recordings type:FT_POINTER
+visio_schema.control.v1.RecordingEntry.name       type:FT_POINTER
+visio_schema.control.v1.RecordingEntry.last_error type:FT_POINTER
+
 # ---- Geometry: short frame id ---------------------------------------------
 visio_schema.geometry.v1.Twist.frame_id   max_size:32
 

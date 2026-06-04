@@ -36,25 +36,30 @@ core frame (always the same):
 ## 2. The Header
 
 `visio_schema.wire.v1.Header` is a protobuf message — see
-[`proto/visio/wire/v1/header.proto`](../proto/visio/wire/v1/header.proto):
+[`proto/visio_schema/wire/v1/header.proto`](../proto/visio_schema/wire/v1/header.proto):
 
 ```proto
 message Header {
-  DeviceClass               device       = 1;
-  DeviceClass               routed_from  = 2;
-  StreamKind                stream       = 3;
-  uint32                    stream_index = 4;
-  uint32                    seq          = 5;
-  google.protobuf.Timestamp timestamp    = 6;
+  uint32                    stream_id = 1;  // per-link stream label
+  uint32                    seq       = 2;  // per-stream_id sequence
+  google.protobuf.Timestamp timestamp = 3;  // see timesync.md
 }
 ```
 
-All enum values are constrained to `[0, 127]` so each enum field
-encodes to exactly 2 bytes (1 tag + 1 varint value). `stream_index`
-is semantically `uint8` (`[0, 255]`); values `0..127` encode as
-1-byte varint, `128..255` as 2-byte varint.
+A stream is named globally by its **topic** (e.g. `/glove_left/imus/3/raw`); the
+wire carries only a compact per-link `stream_id`. A `ControlStream` enum splits
+the id space: ids `[1, FIRST_DYNAMIC=16)` are hop-local control streams
+(DEVICE_INFO=1, TIMESYNC=2, HEARTBEAT=3, COMMAND=4), ids `≥16` are negotiated
+data streams that hubs remap. The `stream_id → (topic, payload type, schema)`
+binding is learned at runtime from the periodic `DeviceInfo` announce — each
+announced `Channel` carries its `schema_name` (protobuf full name) and `schema`
+(serialized `FileDescriptorSet`) inline (see
+[`stream_type_map.md`](stream_type_map.md)). `seq` is producer-owned, per
+`stream_id`, and `timestamp` is rewritten on receive by the timesync offset (see
+[`timesync.md`](timesync.md)).
 
-Typical serialized Header size: **~21-25 bytes**.
+Typical serialized Header size: **~10-14 bytes** (one 1-byte stream_id varint,
+one seq varint, and the ~8-byte Timestamp submessage).
 
 `HEADER_LEN` is a single byte: the ~21-25 byte Header never approaches
 255 bytes, and it grows *compatibly* via optional protobuf fields, so a

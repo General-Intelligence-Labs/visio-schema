@@ -38,6 +38,7 @@ _PAYLOAD_MODULES = (
     "visio_schema.input.v1.quest_controller_state_pb2",
     "visio_schema.geometry.v1.twist_pb2",
     "visio_schema.control.v1.command_pb2",
+    "visio_schema.control.v1.command_result_pb2",
     "visio_schema.service.device_info.v1.device_info_pb2",
     "visio_schema.service.heartbeat.v1.heartbeat_pb2",
     "visio_schema.foxglove.CompressedVideo_pb2",

@@ -61,17 +61,16 @@ from pathlib import Path
 from google.protobuf.timestamp_pb2 import Timestamp
 from visio_schema.foxglove.CompressedVideo_pb2 import CompressedVideo
 from visio_schema.foxglove.FrameTransform_pb2 import FrameTransform
+from visio_schema.mcap import McapWriter, read_mcap
 from visio_schema.ros.geometry_msgs.v1.quaternion_pb2 import Quaternion
+from visio_schema.routing import ChannelRegistry
 from visio_schema.sensor.v1.imu_raw_pb2 import ImuRaw
 from visio_schema.sensor.v1.system_health_pb2 import SystemHealth
-from visio_schema.service.device_info.v1.device_info_pb2 import Channel, DeviceInfo
-
-from visio_schema.wire.codec import cobs_decode, decode_frame
+from visio_schema.service.device_info.v1.device_info_pb2 import Channel
+from visio_schema.transport import read_frames
 from visio_schema.wire.message import Message
-from visio_schema.wire.streams import file_descriptor_set
-from visio_schema.wire.v1.header_pb2 import ControlStream
+from visio_schema.wire.schema import file_descriptor_set
 
-_DEVICE_INFO = ControlStream.CONTROL_STREAM_DEVICE_INFO
 # Payload schema names dispatched on (== the protobuf full names on the wire).
 _QUAT_SCHEMA = "visio_schema.ros.geometry_msgs.v1.Quaternion"
 _VIDEO_SCHEMA = "foxglove.CompressedVideo"
@@ -87,25 +86,6 @@ _TF_STREAM_ID = 0x7F000001
 # MCAP. Handling SIGTERM (not just Ctrl-C) matters when this runs under a
 # service manager or `timeout`/`kill` — otherwise the MCAP is left unfinalized.
 _STOP = threading.Event()
-
-
-# --------------------------------------------------------------------------- #
-# Channel table: learn stream_id -> Channel from DeviceInfo announces          #
-# --------------------------------------------------------------------------- #
-class ChannelTable:
-    """Maps a data-frame ``stream_id`` to the announced :class:`Channel`
-    describing it (topic + schema). Fed by DeviceInfo announces; over a direct
-    link the announced ``Channel.id`` equals the data-frame ``stream_id``."""
-
-    def __init__(self) -> None:
-        self._by_id: dict[int, Channel] = {}
-
-    def learn(self, di: DeviceInfo) -> None:
-        for ch in di.channels:
-            self._by_id[ch.id] = ch
-
-    def resolve(self, stream_id: int) -> Channel | None:
-        return self._by_id.get(stream_id)
 
 
 # --------------------------------------------------------------------------- #
@@ -148,78 +128,36 @@ class TfDeriver:
 # --------------------------------------------------------------------------- #
 def read_serial(port: str, baud: int) -> Iterator[Message]:
     """Yield Messages from a live serial port (COBS-delimited core frames,
-    framing.md §3.2). Malformed frames are logged and skipped."""
+    framing.md §3.2), decoded by the canonical ``read_frames``."""
     import serial  # pyserial
 
-    # The 0.2 s read timeout doubles as the shutdown latency: ser.read returns
-    # at least that often, so the loop re-checks _STOP even on an idle link.
+    # The 0.2 s read timeout doubles as shutdown latency: ser.read returns at
+    # least that often, so the loop re-checks _STOP even on an idle link.
     ser = serial.Serial(port, baud, timeout=0.2)
-    buf = bytearray()
-    try:
-        while not _STOP.is_set():
-            chunk = ser.read(4096)
-            if chunk:
-                buf.extend(chunk)
-            while True:
-                delim = buf.find(b"\x00")
-                if delim < 0:
-                    break
-                encoded = bytes(buf[:delim])
-                del buf[: delim + 1]
-                if not encoded:
-                    continue
-                try:
-                    header, payload = decode_frame(cobs_decode(encoded))
-                except Exception as exc:  # noqa: BLE001 drop malformed frame, framing.md §5
-                    print(f"drop: {exc}", file=sys.stderr)
-                    continue
-                yield Message.from_header(header, payload)
-    finally:
-        ser.close()
+
+    def _chunks() -> Iterator[bytes]:
+        try:
+            while not _STOP.is_set():
+                yield ser.read(4096)
+        finally:
+            ser.close()
+
+    yield from read_frames(_chunks())
 
 
 def read_serial_resolved(port: str, baud: int) -> Iterator[tuple[Message, Channel]]:
-    """Live serial source as (Message, Channel) pairs: learn the stream_id ->
-    Channel map from DeviceInfo announces and resolve each data frame against it
-    (drop-until-mapped)."""
-    table = ChannelTable()
-    for msg in read_serial(port, baud):
-        if msg.stream_id == _DEVICE_INFO:
-            di = DeviceInfo()
-            di.ParseFromString(msg.payload)
-            table.learn(di)
-            continue
-        ch = table.resolve(msg.stream_id)
-        if ch is not None:  # else drop-until-mapped: announce not seen yet
-            yield msg, ch
+    """Live serial source as resolved (Message, Channel) pairs: a
+    :class:`ChannelRegistry` learns DeviceInfo announces and resolves each data
+    frame (drop-until-mapped) — the same routing the bus uses."""
+    yield from ChannelRegistry().resolved(read_serial(port, baud))
 
 
-def read_mcap(path: str) -> Iterator[tuple[Message, Channel]]:
-    """Replay an MCAP recording as (Message, Channel) pairs. Each MCAP channel is
-    self-describing (topic + schema record), so no DeviceInfo is needed — the
-    Channel is rebuilt straight from the file. Timestamps come from the MCAP
-    log_time, so a downstream Rerun sink replays them on the right timeline."""
-    from mcap.reader import make_reader
-
-    with open(path, "rb") as f:
-        for schema, channel, message in make_reader(f).iter_messages():
-            if _STOP.is_set():
-                break
-            if schema is None:
-                # No schema record -> the payload type is unresolvable; a sink
-                # would silently fail to render it. Surface it instead.
-                print(f"skip: MCAP channel {channel.topic!r} has no schema",
-                      file=sys.stderr)
-                continue
-            ch = Channel(
-                id=channel.id, topic=channel.topic,
-                encoding=channel.message_encoding or "protobuf",
-                schema_name=schema.name, schema=schema.data,
-                schema_encoding=schema.encoding or "protobuf",
-            )
-            msg = Message(stream_id=channel.id, payload=message.data, seq=message.sequence)
-            msg.timestamp.FromNanoseconds(message.log_time)
-            yield msg, ch
+def _replay(path: str) -> Iterator[tuple[Message, Channel]]:
+    """Replay an MCAP via the canonical ``read_mcap``, stopping on SIGINT/SIGTERM."""
+    for pair in read_mcap(path):
+        if _STOP.is_set():
+            break
+        yield pair
 
 
 # --------------------------------------------------------------------------- #
@@ -227,58 +165,6 @@ def read_mcap(path: str) -> Iterator[tuple[Message, Channel]]:
 # --------------------------------------------------------------------------- #
 def _ns(ts: Timestamp) -> int:
     return ts.seconds * 1_000_000_000 + ts.nanos
-
-
-class McapSink:
-    """Write Messages to a spec-conformant MCAP: payload bytes verbatim, schema
-    and topic taken from the resolved :class:`Channel` (the DeviceInfo announce).
-
-    The schema NAME is the protobuf full name (Channel.schema_name) and the
-    schema DATA is the FileDescriptorSet (Channel.schema): for a protobuf
-    channel Foxglove resolves the type by looking the schema name up inside the
-    embedded set, so they must match. A message whose stream_id has not been
-    announced yet is dropped (drop-until-mapped)."""
-
-    def __init__(self, path: str) -> None:
-        from mcap.writer import Writer
-
-        self._f = open(path, "wb")
-        self._w = Writer(self._f)
-        self._w.start()
-        self._schema_ids: dict[str, int] = {}
-        self._channel_ids: dict[int, int] = {}
-
-    def write(self, msg: Message, ch: Channel) -> None:
-        schema_id = self._schema_ids.get(ch.schema_name)
-        if schema_id is None:
-            schema_id = self._w.register_schema(
-                name=ch.schema_name,
-                encoding=ch.schema_encoding or "protobuf",
-                data=ch.schema,
-            )
-            self._schema_ids[ch.schema_name] = schema_id
-
-        channel_id = self._channel_ids.get(msg.stream_id)
-        if channel_id is None:
-            channel_id = self._w.register_channel(
-                topic=ch.topic,
-                message_encoding=ch.encoding or "protobuf",
-                schema_id=schema_id,
-            )
-            self._channel_ids[msg.stream_id] = channel_id
-
-        ts = _ns(msg.timestamp)
-        self._w.add_message(
-            channel_id=channel_id,
-            log_time=ts,
-            data=msg.payload,
-            publish_time=ts,
-            sequence=msg.seq,
-        )
-
-    def close(self) -> None:
-        self._w.finish()
-        self._f.close()
 
 
 class FoxgloveSink:
@@ -532,31 +418,37 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGINT, lambda *_: _STOP.set())
     signal.signal(signal.SIGTERM, lambda *_: _STOP.set())
 
-    sinks: list[McapSink | FoxgloveSink | RerunSink] = []
-    if args.out:
-        sinks.append(McapSink(args.out))
+    recorder = McapWriter(args.out) if args.out else None
+    sinks: list[FoxgloveSink | RerunSink] = []    # display sinks: write(msg, ch)
     if args.foxglove:
         sinks.append(FoxgloveSink(args.port))
     if args.rerun:
         sinks.append(RerunSink(memory_limit=args.rerun_memory))
 
-    source = read_mcap(args.mcap_in) if args.mcap_in \
+    source = _replay(args.mcap_in) if args.mcap_in \
         else read_serial_resolved(args.serial, args.baud)
     # The /tf transform exists so Foxglove's 3D panel can render IMU orientation;
     # Rerun renders it directly (rr.Transform3D), so only derive it when a
     # Foxglove or MCAP sink will use it — keeps the rerun-only path lean.
     tf = TfDeriver() if (args.foxglove or args.out) else None
     n = 0
+
+    def _fan_out(msg: Message, ch: Channel) -> None:
+        if recorder is not None:
+            recorder.write(ch, msg)           # McapWriter is write(channel, msg)
+        for sink in sinks:
+            sink.write(msg, ch)
+
     try:
         for msg, ch in source:
-            for sink in sinks:
-                sink.write(msg, ch)
+            _fan_out(msg, ch)
             derived = tf.derive(msg, ch) if tf else None
             if derived is not None:
-                for sink in sinks:
-                    sink.write(*derived)
+                _fan_out(*derived)
             n += 1
     finally:
+        if recorder is not None:
+            recorder.close()
         for sink in sinks:
             sink.close()
     print(f"done ({n} messages)", file=sys.stderr)

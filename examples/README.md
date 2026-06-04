@@ -49,7 +49,7 @@ also publishes a `/tf` `FrameTransform` derived from it, so the **3D panel**
 
 `python/make_sample_mcap.py` writes one multi-topic synthetic recording —
 bundled raw IMU, a rotating fused orientation, and (if `av` is installed) an
-H.264 video stream — using the same `McapSink`:
+H.264 video stream — using the canonical `visio_schema.recording.McapWriter`:
 
 ```bash
 python python/make_sample_mcap.py sample.mcap        # 5s clip (--seconds N to change)
@@ -60,11 +60,12 @@ No server, no `--foxglove` — file playback is Studio's job, not this script's.
 Add a **Plot** panel for `/glove_left/imu_raw/3`, a **3D**/orientation panel for
 `/glove_left/imu_quat/3`, and an **Image** panel for `/ego/video_compressed/0`.
 
-> These scripts use a small standalone `McapSink` so they depend only on
-> `visio-schema`. The bus-integrated, embeddable recorder is `McapEndpoint` in
-> the **visio** package (`visio.mq.endpoints.mcap` / the C++
-> `visio::mq::McapEndpoint`) — attach it to a `Bus` as a sink. See
-> `visio/README.md`.
+> These scripts use the canonical `visio_schema.recording.McapWriter` (+
+> `ChannelRegistry` for live serial), so they depend only on `visio-schema`. The
+> bus-integrated recorder is `McapEndpoint` in the **visio** package
+> (`visio.mq.endpoints.mcap` / the C++ `visio::mq::McapEndpoint`) — a thin
+> Endpoint adapter over the same `McapWriter`; attach it to a `Bus` as a sink.
+> See `visio/README.md`.
 
 > H.264 video needs the `av` package (`pip install av`); without it the sample
 > is written IMU-only.

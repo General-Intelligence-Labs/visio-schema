@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Generate a sample multi-topic visio MCAP so you can try things without hardware.
 
-Writes one MCAP containing several synthetic streams at once, using the same
-`McapSink` the live example ships:
+Writes one MCAP containing several synthetic streams at once, using the canonical
+`visio_schema.mcap.McapWriter`:
 
   - ImuRaw          bundled raw gyro/accel        -> /glove_left/imus/3/raw
   - Quaternion      slowly rotating orientation   -> /glove_left/imus/3/quat
@@ -12,7 +12,7 @@ Writes one MCAP containing several synthetic streams at once, using the same
 Dynamic streams: each output is a `Channel` (topic + schema_name +
 FileDescriptorSet) with a per-stream numeric id from CONTROL_STREAM_FIRST_DYNAMIC
 up — exactly what a device would announce over DeviceInfo. We hand the channel
-to the sink alongside each message, mirroring the live reader's resolve step.
+to the writer alongside each message, mirroring the live reader's resolve step.
 
 Then just open the file in Foxglove Studio — **File ▸ Open local file** — and
 add panels: a Plot for the IMU fields, an Image panel for the video. (The live
@@ -25,21 +25,14 @@ visio_display.py script is for real serial streams, not file playback.)
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import math
 import sys
-from pathlib import Path
 
+from visio_schema.mcap import McapWriter
 from visio_schema.service.device_info.v1.device_info_pb2 import Channel
 from visio_schema.wire.message import Message
-from visio_schema.wire.streams import file_descriptor_set, message_class
+from visio_schema.wire.schema import file_descriptor_set, message_class
 from visio_schema.wire.v1.header_pb2 import ControlStream
-
-# Reuse the McapSink shipped with the live example (sibling file, not a package).
-_EXAMPLE = Path(__file__).resolve().parent / "visio_display.py"
-_spec = importlib.util.spec_from_file_location("visio_display", _EXAMPLE)
-_ex = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_ex)
 
 START_NS = 1_700_000_000 * 1_000_000_000      # fixed epoch -> reproducible file
 
@@ -100,7 +93,7 @@ def _imu_quat(angle_rad: float) -> bytes:
     return q.SerializeToString()
 
 
-def _gen_imu(sink, seconds: float) -> int:
+def _gen_imu(writer: McapWriter, seconds: float) -> int:
     n = 0
     bundle_dt = 1_000_000_000 // BUNDLE_HZ
     samples_per_bundle = RAW_HZ // BUNDLE_HZ
@@ -110,7 +103,7 @@ def _gen_imu(sink, seconds: float) -> int:
         msg = Message(stream_id=CH_IMU_RAW.id, seq=k,
                       payload=_imu_raw_bundle(t, samples_per_bundle, spin))
         msg.timestamp.FromNanoseconds(t)
-        sink.write(msg, CH_IMU_RAW)
+        writer.write(CH_IMU_RAW, msg)
         n += 1
 
     quat_dt = 1_000_000_000 // QUAT_HZ
@@ -120,7 +113,7 @@ def _gen_imu(sink, seconds: float) -> int:
         msg = Message(stream_id=CH_IMU_QUAT.id, seq=k,
                       payload=_imu_quat(2 * math.pi * k / total))
         msg.timestamp.FromNanoseconds(t)
-        sink.write(msg, CH_IMU_QUAT)
+        writer.write(CH_IMU_QUAT, msg)
         n += 1
     return n
 
@@ -169,7 +162,7 @@ def _video_payload(data: bytes, ts_ns: int) -> bytes:
     return msg.SerializeToString()
 
 
-def _gen_video(sink, seconds: float) -> int:
+def _gen_video(writer: McapWriter, seconds: float) -> int:
     frame_dt = 1_000_000_000 // VID_FPS
     n = 0
     for idx, annexb in _encode_h264(seconds):
@@ -177,20 +170,19 @@ def _gen_video(sink, seconds: float) -> int:
         msg = Message(stream_id=CH_VIDEO.id, seq=idx,
                       payload=_video_payload(annexb, t))
         msg.timestamp.FromNanoseconds(t)
-        sink.write(msg, CH_VIDEO)
+        writer.write(CH_VIDEO, msg)
         n += 1
     return n
 
 
 # --------------------------------------------------------------------------- #
 def generate(path: str, seconds: float) -> dict[str, int]:
-    sink = _ex.McapSink(path)
-    counts = {"imu": _gen_imu(sink, seconds)}
-    try:
-        counts["video"] = _gen_video(sink, seconds)
-    except ImportError:
-        counts["video"] = 0  # PyAV not installed; IMU-only file
-    sink.close()
+    with McapWriter(path) as writer:
+        counts = {"imu": _gen_imu(writer, seconds)}
+        try:
+            counts["video"] = _gen_video(writer, seconds)
+        except ImportError:
+            counts["video"] = 0  # PyAV not installed; IMU-only file
     return counts
 
 
