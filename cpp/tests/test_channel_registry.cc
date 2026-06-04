@@ -120,16 +120,49 @@ TEST(ChannelRegistry, EncodeDecodeRoundTrip) {
   ChannelRegistry::DeviceView view;
   ASSERT_TRUE(ChannelRegistry::Decode(payload, &view));
   EXPECT_EQ(view.device_name, "dev");
+  EXPECT_EQ(view.firmware_version, "fw");        // identity round-trips (Decode)
+  EXPECT_EQ(view.hardware_revision, "hw");
+  EXPECT_EQ(view.serial, "sn");
+  EXPECT_EQ(view.boot_unix_seconds, 42u);
   ASSERT_EQ(view.channels.size(), 1u);
   EXPECT_EQ(view.channels[0].topic, "/g/imus/0/raw");
   EXPECT_EQ(view.channels[0].schema, std::string(8, '\x01'));
 }
 
-TEST(ChannelRegistry, SelfInfoCarriesOwnAndLearned) {
+TEST(ChannelRegistry, SelfInfoIsOwnOnly) {
+  // SelfInfo announces OWN outputs only; learned channels propagate by the bus
+  // forwarding each leaf's announce, not by recombining them here. The learned
+  // channel stays resolvable, just not re-announced.
   ChannelRegistry r("hub");
   r.Declare("/hub/imus/0/raw", "S");
-  r.Learn(MakeChannel(r.Alloc(), "/child/imus/0/quat"));   // global id, no collision
+  const std::uint32_t learned = r.Alloc();
+  r.Learn(MakeChannel(learned, "/child/imus/0/quat"));   // global id, no collision
   ChannelRegistry::DeviceView view;
   ASSERT_TRUE(ChannelRegistry::Decode(r.SelfInfo(), &view));
-  EXPECT_EQ(view.channels.size(), 2u);
+  ASSERT_EQ(view.channels.size(), 1u);
+  EXPECT_EQ(view.channels[0].topic, "/hub/imus/0/raw");
+  ASSERT_NE(r.Resolve(learned), nullptr);                // still resolvable
+  EXPECT_EQ(r.Resolve(learned)->topic, "/child/imus/0/quat");
+}
+
+TEST(ChannelRegistry, WellKnownDeviceInfoChannelResolves) {
+  // The DeviceInfo control stream resolves to a built-in well-known channel so a
+  // recorder can write forwarded announces on "/device_info" — without it being
+  // an own output or appearing in Channels().
+  ChannelRegistry r("hub");
+  const Channel* ch = r.Resolve(kDeviceInfo);
+  ASSERT_NE(ch, nullptr);
+  EXPECT_EQ(ch->topic, "/device_info");
+  EXPECT_EQ(ch->schema_name, "visio_schema.service.device_info.v1.DeviceInfo");
+  EXPECT_FALSE(ch->schema.empty());        // carries the FileDescriptorSet
+  EXPECT_TRUE(r.Channels().empty());       // not an own/learned data channel
+  EXPECT_FALSE(r.HasOwnOutputs());
+}
+
+TEST(ChannelRegistry, LinkLocalControlMembership) {
+  // Disposition is structural: heartbeat is link-scoped; device_info and command
+  // are end-to-end (forwarded).
+  EXPECT_TRUE(visio_schema::IsLinkLocalControl(visio_schema::kHeartbeat));
+  EXPECT_FALSE(visio_schema::IsLinkLocalControl(visio_schema::kDeviceInfo));
+  EXPECT_FALSE(visio_schema::IsLinkLocalControl(visio_schema::kCommand));
 }

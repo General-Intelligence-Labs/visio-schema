@@ -1,7 +1,15 @@
 // Control-stream id boundary — the one source for the control/data split.
-// Stream ids below kFirstDynamic are the reserved control-plane block (hop-local,
-// never relayed); ids at/above it are dynamic data streams. Sourced from the
-// generated ControlStream proto enum.
+// Stream ids below kFirstDynamic are the reserved control-plane block; ids
+// at/above it are dynamic data streams. Sourced from the generated ControlStream
+// proto enum.
+//
+// Control streams split by scope (a control id is a shared constant, NEVER
+// remapped, so it can't disambiguate devices once forwarded):
+//   * link-scoped (IsLinkLocalControl — heartbeat): per-hop, carries no device
+//     identity, dropped at the hop.
+//   * end-to-end (device_info, command): forwarded across hops, so each MUST
+//     carry a device-identity field in its payload (source for announce, target
+//     for directed control).
 #pragma once
 
 #include <cstdint>
@@ -12,5 +20,19 @@ namespace visio_schema {
 
 inline constexpr std::uint32_t kFirstDynamic = static_cast<std::uint32_t>(
     visio_schema_wire_v1_ControlStream_CONTROL_STREAM_FIRST_DYNAMIC);
+inline constexpr std::uint32_t kDeviceInfo = static_cast<std::uint32_t>(
+    visio_schema_wire_v1_ControlStream_CONTROL_STREAM_DEVICE_INFO);
+inline constexpr std::uint32_t kHeartbeat = static_cast<std::uint32_t>(
+    visio_schema_wire_v1_ControlStream_CONTROL_STREAM_HEARTBEAT);
+inline constexpr std::uint32_t kCommand = static_cast<std::uint32_t>(
+    visio_schema_wire_v1_ControlStream_CONTROL_STREAM_COMMAND);
+
+// True for control streams that never cross a hop (the bus drops them rather than
+// relaying). The single source of truth for "link-scoped"; mirrors Python's
+// LINK_LOCAL_CONTROL. A new control stream belongs here iff it is link-scoped and
+// carries no device identity.
+inline constexpr bool IsLinkLocalControl(std::uint32_t id) {
+  return id == kHeartbeat;
+}
 
 }  // namespace visio_schema

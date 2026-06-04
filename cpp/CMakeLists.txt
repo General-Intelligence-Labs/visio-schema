@@ -64,7 +64,9 @@ add_library(visio_schema STATIC
   # transport: links + endpoints + framing (every Endpoint, incl. the MCAP sink)
   src/transport/link.cc
   src/transport/framing.cc
+  src/transport/framed_outbox.cc
   src/transport/framed_fd.cc
+  src/transport/serial.cc
   src/transport/tcp.cc
   src/transport/mcap_endpoint.cc
 )
@@ -105,8 +107,18 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT CMAKE_CROSSCOMPILI
     tests/test_mcap_writer.cc
     tests/test_mcap_endpoint.cc
     tests/test_io.cc
+    tests/test_framed_outbox.cc
+    tests/test_golden_vectors.cc
+    tests/test_tcp_io.cc
+    tests/test_backpressure.cc
+    tests/test_serial_watchdog.cc
+    tests/test_endpoint_reconnect.cc
   )
   target_link_libraries(visio_schema_tests
     PRIVATE visio_schema GTest::gtest GTest::gtest_main)
+  # Path to the committed cross-language byte fixtures (shared with the Python
+  # golden-vector test) so the test loads them at runtime.
+  target_compile_definitions(visio_schema_tests PRIVATE
+    VISIO_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../tests/golden")
   gtest_discover_tests(visio_schema_tests)
 endif()

@@ -5,17 +5,21 @@
 
 #include <cstring>
 #include <iostream>
+#include <stdexcept>
 #include <utility>
 
 #include "visio_schema/service/device_info/v1/device_info.pb.h"
+#include "visio_schema/wire/schema_blobs.gen.hpp"
 #include "visio_schema/wire/v1/header.pb.h"
 
 namespace visio_schema::routing {
 
 namespace {
 
-constexpr std::uint32_t kDeviceInfoId =
-    visio_schema_wire_v1_ControlStream_CONTROL_STREAM_DEVICE_INFO;
+// Well-known channel for the DeviceInfo control stream (see device_info_channel_).
+constexpr const char* kDeviceInfoTopic = "/device_info";
+constexpr const char* kDeviceInfoSchema =
+    "visio_schema.service.device_info.v1.DeviceInfo";
 
 // nanopb POINTER string: NULL omits the field; non-NULL (even empty) encodes it.
 char* OrNull(const std::string& s) {
@@ -44,14 +48,19 @@ std::string ChannelRegistry::Encode(const std::string& device_name,
     cs.encoding = const_cast<char*>(c.encoding.c_str());
     cs.schema_name = const_cast<char*>(c.schema_name.c_str());
     cs.schema_encoding = const_cast<char*>(c.schema_encoding.c_str());
-    auto& blob = schema_blobs[i];
-    blob.resize(PB_BYTES_ARRAY_T_ALLOCSIZE(c.schema.size()));
-    auto* arr = reinterpret_cast<pb_bytes_array_t*>(blob.data());
-    arr->size = static_cast<pb_size_t>(c.schema.size());
+    // Leave the schema pointer null for an empty schema: nanopb encodes a
+    // non-null FT_POINTER bytes field even when empty (emitting a 0-length
+    // `schema` field), but proto3/libprotobuf omits an empty bytes field. Only
+    // attaching the blob when non-empty keeps the announce byte-identical across
+    // the two backends (see tests/golden/wire_vectors.txt).
     if (!c.schema.empty()) {
+      auto& blob = schema_blobs[i];
+      blob.resize(PB_BYTES_ARRAY_T_ALLOCSIZE(c.schema.size()));
+      auto* arr = reinterpret_cast<pb_bytes_array_t*>(blob.data());
+      arr->size = static_cast<pb_size_t>(c.schema.size());
       std::memcpy(arr->bytes, c.schema.data(), c.schema.size());
+      cs.schema = arr;
     }
-    cs.schema = arr;
   }
 
   visio_schema_service_device_info_v1_DeviceInfo di =
@@ -84,6 +93,10 @@ bool ChannelRegistry::Decode(const std::string& payload, DeviceView* out) {
       &is, visio_schema_service_device_info_v1_DeviceInfo_fields, &di);
   if (ok) {
     if (di.device_name) out->device_name = di.device_name;
+    if (di.firmware_version) out->firmware_version = di.firmware_version;
+    if (di.hardware_revision) out->hardware_revision = di.hardware_revision;
+    if (di.serial) out->serial = di.serial;
+    out->boot_unix_seconds = di.boot_unix_seconds;
     out->channels.clear();
     out->channels.reserve(di.channels_count);
     for (pb_size_t i = 0; i < di.channels_count; ++i) {
@@ -116,7 +129,23 @@ ChannelRegistry::ChannelRegistry(std::string device_name,
       firmware_version_(std::move(firmware_version)),
       hardware_revision_(std::move(hardware_revision)),
       serial_(std::move(serial)),
-      boot_unix_seconds_(boot_unix_seconds) {}
+      boot_unix_seconds_(boot_unix_seconds) {
+  device_info_channel_.id = kDeviceInfo;
+  device_info_channel_.topic = kDeviceInfoTopic;
+  device_info_channel_.encoding = kDefaultEncoding;
+  device_info_channel_.schema_name = kDeviceInfoSchema;
+  const std::string_view fds = visio_schema::wire::FileDescriptorSetFor(
+      kDeviceInfoSchema);
+  // Build-time invariant: the DeviceInfo descriptor must be in the schema-blob
+  // table, else a recorder would write an undecodable /device_info. Fail loudly
+  // (mirrors Python's KeyError) rather than silently recording an empty schema.
+  if (fds.empty()) {
+    throw std::logic_error(
+        "DeviceInfo schema blob missing — regen schema_blobs (make gen)");
+  }
+  device_info_channel_.schema.assign(fds.data(), fds.size());
+  device_info_channel_.schema_encoding = kDefaultEncoding;
+}
 
 // ── Own outputs ─────────────────────────────────────────────────────────────
 
@@ -186,6 +215,7 @@ void ChannelRegistry::Forget(const std::vector<std::uint32_t>& ids) {
 }
 
 const Channel* ChannelRegistry::Resolve(std::uint32_t stream_id) const {
+  if (stream_id == kDeviceInfo) return &device_info_channel_;
   auto it = by_id_.find(stream_id);
   return it == by_id_.end() ? nullptr : &it->second;
 }
@@ -201,7 +231,7 @@ std::vector<Channel> ChannelRegistry::Channels() const {
 
 Routed ChannelRegistry::Accept(Message msg) {
   const std::uint32_t sid = msg.stream_id;
-  if (sid == kDeviceInfoId) {
+  if (sid == kDeviceInfo) {
     OnAnnounce(msg.payload);
     return {};
   }
@@ -219,8 +249,10 @@ Routed ChannelRegistry::Accept(Message msg) {
 // ── Discovery ───────────────────────────────────────────────────────────────
 
 std::string ChannelRegistry::SelfInfo() const {
+  // Own outputs only; learned channels propagate by the bus forwarding each
+  // leaf's announce (with the ids remapped), not by recombining them here.
   return Encode(device_name_, firmware_version_, hardware_revision_, serial_,
-                boot_unix_seconds_, Channels());
+                boot_unix_seconds_, OwnChannels());
 }
 
 void ChannelRegistry::OnAnnounce(const std::string& payload) {

@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "visio_schema/transport/link.hpp"
@@ -18,6 +19,11 @@ using visio_schema::wire::Message;
 // each to a Message, and return them. Consumed bytes are erased from the front;
 // a partial trailing frame is left for the next call. Malformed frames skipped.
 std::vector<Message> ExtractFrames(std::vector<std::uint8_t>& rx_buf);
+
+// Frame + COBS-encode `msg` into the on-wire byte sequence (with the trailing
+// 0x00 delimiter). The reactor sinks enqueue this into their outbox; WriteFramed
+// is the synchronous convenience wrapper around it.
+std::vector<std::uint8_t> EncodeFramed(const Message& msg);
 
 // Frame + COBS-encode `msg` (with the trailing 0x00) and write it to `link`.
 // Returns Link::Write()'s result (false = broken/stalled link).

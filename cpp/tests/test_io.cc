@@ -33,12 +33,17 @@ TEST(Io, EofRaisesEndpointClosed) {
   EXPECT_THROW({ (void)rx.TryRead(); }, EndpointClosed);
 }
 
-TEST(Io, BrokenWriteRaisesEndpointClosed) {
+// A reactor sink never blocks or throws on a broken link: Write() enqueues into
+// the bounded outbox and the best-effort drain finds the link dead, dropping it.
+// (For a fixed link the break also surfaces on the read path, where the bus
+// detaches it; here we assert the write side neither throws nor hangs.)
+TEST(Io, BrokenWriteSheddsWithoutThrowing) {
   auto [a, b] = MakeFdLinkPair();
   SerialEndpoint tx(a);
   a->Close();   // local link gone
   Message m;
   m.stream_id = 16;
   m.payload = "x";
-  EXPECT_THROW(tx.Write(m), EndpointClosed);
+  EXPECT_NO_THROW(tx.Write(m));
+  EXPECT_FALSE(tx.link_up());  // dead fixed link is dropped, not reopened
 }

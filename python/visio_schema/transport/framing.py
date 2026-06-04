@@ -27,12 +27,15 @@ def extract_frames(rx_buf: bytearray) -> list[Message]:
     bytes it processes, leaving any partial trailing frame) and return the
     decoded Messages. Malformed frames are logged and skipped (framing.md §5)."""
     msgs: list[Message] = []
+    # Advance a cursor and delete consumed bytes ONCE at the end, rather than an
+    # O(remaining) ``del rx_buf[:n]`` shift per frame.
+    pos = 0
     while True:
-        delim = rx_buf.find(b"\x00")
+        delim = rx_buf.find(b"\x00", pos)
         if delim < 0:
             break
-        encoded = bytes(rx_buf[:delim])
-        del rx_buf[: delim + 1]
+        encoded = bytes(rx_buf[pos:delim])
+        pos = delim + 1
         if not encoded:
             continue
         try:
@@ -41,6 +44,8 @@ def extract_frames(rx_buf: bytearray) -> list[Message]:
             log.warning("dropping malformed frame: %s", exc)
             continue
         msgs.append(Message.from_header(header, payload))
+    if pos:
+        del rx_buf[:pos]
     return msgs
 
 

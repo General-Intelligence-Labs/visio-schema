@@ -30,6 +30,10 @@ class ChannelRegistry {
  public:
   struct DeviceView {
     std::string device_name;
+    std::string firmware_version;
+    std::string hardware_revision;
+    std::string serial;
+    std::uint64_t boot_unix_seconds = 0;
     std::vector<Channel> channels;
   };
 
@@ -59,7 +63,9 @@ class ChannelRegistry {
   // ── Resolution ───────────────────────────────────────────────────────
   const Channel* Resolve(std::uint32_t stream_id) const;
   std::vector<Channel> Channels() const;
-  bool Empty() const { return by_id_.empty(); }  // O(1); no Channels() copy
+  // True iff this peer has declared outputs to announce (the announce is
+  // own-only; learned channels propagate by the bus forwarding leaf announces).
+  bool HasOwnOutputs() const { return !own_ids_.empty(); }
   std::uint64_t dropped_unmapped() const { return dropped_unmapped_; }
 
   // ── Inbound (no-bus single-source consumer) ──────────────────────────
@@ -98,6 +104,10 @@ class ChannelRegistry {
   std::unordered_map<std::uint32_t, Channel> by_id_;      // id -> Channel (own + learned)
   std::unordered_map<std::string, std::uint32_t> topic_to_id_;  // topic -> id (unique)
   std::unordered_set<std::uint32_t> own_ids_;             // ids that are our outputs
+  // Resolution-only well-known channel for the DeviceInfo control stream, so a
+  // recorder can write forwarded announces on one "/device_info" topic. Kept out
+  // of by_id_ so it never appears in Channels()/own outputs/announces.
+  Channel device_info_channel_;
   std::uint32_t next_id_ = kFirstDynamic;
   std::uint64_t dropped_unmapped_ = 0;
 };

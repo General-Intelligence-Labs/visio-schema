@@ -52,6 +52,8 @@ bus-integrated transport lives in visio-mq.
 from __future__ import annotations
 
 import argparse
+import os
+import selectors
 import signal
 import sys
 import threading
@@ -67,7 +69,7 @@ from visio_schema.routing import ChannelRegistry
 from visio_schema.sensor.v1.imu_raw_pb2 import ImuRaw
 from visio_schema.sensor.v1.system_health_pb2 import SystemHealth
 from visio_schema.service.device_info.v1.device_info_pb2 import Channel
-from visio_schema.transport import read_frames
+from visio_schema.transport import EndpointClosed, FdLink, SerialEndpoint
 from visio_schema.wire.message import Message
 from visio_schema.wire.schema import file_descriptor_set
 
@@ -127,22 +129,34 @@ class TfDeriver:
 # Source                                                                       #
 # --------------------------------------------------------------------------- #
 def read_serial(port: str, baud: int) -> Iterator[Message]:
-    """Yield Messages from a live serial port (COBS-delimited core frames,
-    framing.md §3.2), decoded by the canonical ``read_frames``."""
-    import serial  # pyserial
+    """Yield Messages from a live serial port via the schema transport: wrap the
+    configured tty fd in an :class:`FdLink`, then drive a :class:`SerialEndpoint`'s
+    ``try_read()`` under a selector — the same Link → Endpoint → try_read pattern
+    the bus and tests use (so framing, the rx accumulator, and the
+    :class:`EndpointClosed`-on-EOF contract all come from the transport, not from
+    this script). The 0.2 s selector timeout bounds shutdown latency: an idle link
+    re-checks ``_STOP`` at least that often."""
+    import serial  # pyserial: opens + configures the tty (baud, raw)
 
-    # The 0.2 s read timeout doubles as shutdown latency: ser.read returns at
-    # least that often, so the loop re-checks _STOP even on an idle link.
-    ser = serial.Serial(port, baud, timeout=0.2)
-
-    def _chunks() -> Iterator[bytes]:
-        try:
-            while not _STOP.is_set():
-                yield ser.read(4096)
-        finally:
-            ser.close()
-
-    yield from read_frames(_chunks())
+    ser = serial.Serial(port, baud)
+    # Hand the configured tty to FdLink, which owns + closes the fd. dup so
+    # FdLink's close() and pyserial's don't both target one fd; termios settings
+    # live on the tty, so they persist on the dup after ser.close().
+    ep = SerialEndpoint(FdLink(os.dup(ser.fileno())))
+    ser.close()
+    sel = selectors.DefaultSelector()
+    sel.register(ep.fileno(), selectors.EVENT_READ)
+    try:
+        while not _STOP.is_set():
+            if not sel.select(timeout=0.2):
+                continue  # idle tick: re-check _STOP
+            try:
+                yield from ep.try_read()
+            except EndpointClosed:
+                return  # link broke / device unplugged
+    finally:
+        sel.close()
+        ep.close()
 
 
 def read_serial_resolved(port: str, baud: int) -> Iterator[tuple[Message, Channel]]:
@@ -231,8 +245,6 @@ class RerunSink:
     _AV_CODEC = {"h265": "hevc", "hevc": "hevc", "h264": "h264", "avc": "h264", "av1": "av1"}
 
     def __init__(self, memory_limit: str = "2GB") -> None:
-        import os
-
         import av
         import rerun as rr
         import rerun.blueprint as rrb

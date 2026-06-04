@@ -37,6 +37,13 @@ log = logging.getLogger(__name__)
 
 _PROTOBUF = "protobuf"
 
+# Well-known channel for the DeviceInfo control stream, so a recorder can resolve
+# and write forwarded announces on one "/device_info" topic (devices are told
+# apart by the device_name field inside each message). It lives at the control id
+# DEVICE_INFO and is resolution-only — never an own output, never announced.
+DEVICE_INFO_TOPIC = "/device_info"
+DEVICE_INFO_SCHEMA = "visio_schema.service.device_info.v1.DeviceInfo"
+
 
 class ChannelRegistry:
     """Single-source ``stream_id -> Channel`` table + own outputs + discovery."""
@@ -65,6 +72,15 @@ class ChannelRegistry:
         # own and learned ids can never collide. Never reused.
         self._next_id = FIRST_DYNAMIC
         self._dropped_unmapped = 0
+
+        # Resolution-only well-known channel (see DEVICE_INFO_TOPIC). Kept out of
+        # _by_id so it never appears in channels()/own outputs/announces.
+        self._device_info_channel = Channel(
+            id=_DEVICE_INFO, topic=DEVICE_INFO_TOPIC, encoding=_PROTOBUF,
+            schema_name=DEVICE_INFO_SCHEMA,
+            schema=file_descriptor_set(DEVICE_INFO_SCHEMA),
+            schema_encoding=_PROTOBUF,
+        )
 
         for entry in channels:
             self._declare_entry(entry)
@@ -143,17 +159,20 @@ class ChannelRegistry:
     # ── Resolution ──────────────────────────────────────────────────────
 
     def resolve(self, stream_id: int) -> Channel | None:
-        """Channel for a stream id (own or learned), or None."""
+        """Channel for a stream id (own or learned data, or the well-known
+        DeviceInfo control stream), or None."""
+        if stream_id == _DEVICE_INFO:
+            return self._device_info_channel
         return self._by_id.get(stream_id)
 
     def channels(self) -> list[Channel]:
-        """All channels this peer knows — own outputs + learned."""
+        """All data channels this peer knows — own outputs + learned."""
         return list(self._by_id.values())
 
-    def __bool__(self) -> bool:
-        """True when this peer knows any channel (own or learned). Lets the bus
-        gate its announce without materializing :meth:`channels`."""
-        return bool(self._by_id)
+    @property
+    def has_own_outputs(self) -> bool:
+        """True if this peer has declared outputs to announce (own-only)."""
+        return bool(self._own_ids)
 
     @property
     def dropped_unmapped(self) -> int:
@@ -191,10 +210,12 @@ class ChannelRegistry:
     # ── Discovery ────────────────────────────────────────────────────────
 
     def self_info(self) -> DeviceInfo:
-        """This peer's DeviceInfo announcement (own outputs + everything learned)."""
+        """This peer's DeviceInfo announcement — **own outputs only**. Learned
+        channels propagate by the bus forwarding each leaf's announce (with the
+        ids remapped), not by recombining them here."""
         return DeviceInfo(
             device_name=self._device_name,
-            channels=self.channels(),
+            channels=self.own_channels(),
             firmware_version=self._firmware_version,
             hardware_revision=self._hardware_revision,
             serial=self._serial,

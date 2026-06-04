@@ -11,11 +11,14 @@
 #include <unordered_map>
 
 #include "visio_schema/routing/channel.hpp"
+#include "visio_schema/routing/registry.hpp"
 #include "visio_schema/wire/control.hpp"
 
 using namespace visio_schema::transport;
 using visio_schema::Channel;
+using visio_schema::kDeviceInfo;
 using visio_schema::kFirstDynamic;
+using visio_schema::routing::ChannelRegistry;
 using visio_schema::wire::Message;
 namespace fs = std::filesystem;
 
@@ -56,6 +59,51 @@ TEST(McapEndpoint, RecordsResolvedChannel) {
     McapEndpoint ep(path, resolve);
     ep.Write(Data(kFirstDynamic, "frame-0"));
     ep.Write(Data(kFirstDynamic, "frame-1"));
+    ep.Close();
+  }
+  ASSERT_TRUE(fs::exists(path));
+  EXPECT_GT(fs::file_size(path), 0u);
+  std::remove(path.c_str());
+}
+
+TEST(McapEndpoint, BoundedQueueDropsOldestUntilDrained) {
+  const std::string path = TempPath("visio_mcap_test_bounded.mcap");
+  std::remove(path.c_str());
+  std::unordered_map<std::uint32_t, Channel> table{
+      {kFirstDynamic, MakeChannel(kFirstDynamic, "/dev/imu/0/raw")}};
+  auto resolve = [&](std::uint32_t id) -> const Channel* {
+    auto it = table.find(id);
+    return it == table.end() ? nullptr : &it->second;
+  };
+  {
+    // drop-oldest, depth 4: writes accumulate in RAM (no OnTick yet) and the
+    // queue never exceeds the bound, regardless of how many were offered.
+    McapEndpoint ep(path, resolve, /*max_bytes=*/0, /*max_duration_s=*/0.0,
+                    visio_schema::transport::WritePolicy::drop_oldest(4));
+    for (int i = 0; i < 100; ++i) ep.Write(Data(kFirstDynamic, "f"));
+    EXPECT_EQ(ep.pending_frames(), 4u);  // bounded by the policy
+    ep.OnTick(0);                         // flush to disk
+    EXPECT_EQ(ep.pending_frames(), 0u);
+    ep.Close();
+  }
+  ASSERT_TRUE(fs::exists(path));
+  EXPECT_GT(fs::file_size(path), 0u);
+  std::remove(path.c_str());
+}
+
+TEST(McapEndpoint, RecordsDeviceInfoViaWellKnownChannel) {
+  // A DeviceInfo message resolves (via a real ChannelRegistry) to the well-known
+  // /device_info channel and is recorded. No C++ MCAP reader exists, so this
+  // checks the registry-resolve → writer-accepts path produces a non-empty file;
+  // full content round-trip lives in the Python suite.
+  const std::string path = TempPath("visio_mcap_test_devinfo.mcap");
+  std::remove(path.c_str());
+  ChannelRegistry reg("ego");
+  auto resolve = [&](std::uint32_t id) { return reg.Resolve(id); };
+  {
+    McapEndpoint ep(path, resolve);
+    Message m = Data(kDeviceInfo, "announce-bytes");  // resolves to /device_info
+    ep.Write(m);
     ep.Close();
   }
   ASSERT_TRUE(fs::exists(path));

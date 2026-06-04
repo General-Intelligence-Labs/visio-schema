@@ -12,23 +12,27 @@ namespace visio_schema::transport {
 
 std::vector<Message> ExtractFrames(std::vector<std::uint8_t>& rx_buf) {
   std::vector<Message> out;
-  while (true) {
-    auto it = std::find(rx_buf.begin(), rx_buf.end(), std::uint8_t{0});
-    if (it == rx_buf.end()) break;
-    std::size_t delim = static_cast<std::size_t>(it - rx_buf.begin());
-    if (delim == 0) {
-      rx_buf.erase(rx_buf.begin());  // bare 0x00; skip empty frame
+  std::vector<std::uint8_t> decoded;  // reused scratch across frames
+  // Advance a cursor and decode each COBS run straight from rx_buf (no per-frame
+  // copy), then erase all consumed bytes ONCE — O(n) instead of an O(remaining)
+  // shift per frame.
+  std::size_t pos = 0;
+  while (pos < rx_buf.size()) {
+    auto begin = rx_buf.begin() + pos;
+    auto it = std::find(begin, rx_buf.end(), std::uint8_t{0});
+    if (it == rx_buf.end()) break;  // partial trailing frame: keep it for next read
+    const std::size_t delim = static_cast<std::size_t>(it - rx_buf.begin());
+    const std::size_t len = delim - pos;
+    if (len == 0) {  // bare 0x00; skip empty frame
+      pos = delim + 1;
       continue;
     }
-    std::vector<std::uint8_t> encoded(rx_buf.begin(), rx_buf.begin() + delim);
-    rx_buf.erase(rx_buf.begin(), rx_buf.begin() + delim + 1);
-    std::vector<std::uint8_t> decoded;
-    decoded.reserve(encoded.size());
-    std::string_view enc_view{reinterpret_cast<const char*>(encoded.data()),
-                              encoded.size()};
+    std::string_view enc_view{
+        reinterpret_cast<const char*>(rx_buf.data() + pos), len};
+    pos = delim + 1;
+    decoded.clear();
     if (!visio_schema::wire::CobsDecode(enc_view, &decoded)) {
-      std::cerr << "visio-schema: COBS decode failed (" << encoded.size()
-                << " bytes)\n";
+      std::cerr << "visio-schema: COBS decode failed (" << len << " bytes)\n";
       continue;
     }
     Message msg;
@@ -42,15 +46,20 @@ std::vector<Message> ExtractFrames(std::vector<std::uint8_t>& rx_buf) {
     }
     out.push_back(std::move(msg));
   }
+  rx_buf.erase(rx_buf.begin(), rx_buf.begin() + pos);
   return out;
 }
 
-bool WriteFramed(Link& link, const Message& msg) {
+std::vector<std::uint8_t> EncodeFramed(const Message& msg) {
   const std::string frame = visio_schema::wire::EncodeFrame(msg);
   auto encoded = visio_schema::wire::CobsEncode(std::string_view{frame});
   encoded.push_back(0);
-  return link.Write(
-      {reinterpret_cast<const char*>(encoded.data()), encoded.size()});
+  return encoded;
+}
+
+bool WriteFramed(Link& link, const Message& msg) {
+  const auto out = EncodeFramed(msg);
+  return link.Write({reinterpret_cast<const char*>(out.data()), out.size()});
 }
 
 }  // namespace visio_schema::transport

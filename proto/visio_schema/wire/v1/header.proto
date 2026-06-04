@@ -21,13 +21,27 @@ import "google/protobuf/timestamp.proto";
 // identical on every link and are NEVER remapped, so the discovery handshake
 // runs hop-to-hop with zero prior state. Dynamic data-stream ids start at
 // FIRST_DYNAMIC.
+//
+// Because a control id is a shared constant that is never remapped, it cannot
+// disambiguate devices once a hub forwards it. Every control stream therefore
+// declares a SCOPE:
+//   * link-scoped (heartbeat): describes the hop between two directly connected
+//     peers (RTT, clock offset). Carries no device identity and is DROPPED at the
+//     hop — never forwarded. Listed in LINK_LOCAL_CONTROL (wire/control).
+//   * end-to-end (device_info, command): forwarded across hops, so it MUST carry
+//     a device-identity field in its payload — the source device for
+//     announce/telemetry (DeviceInfo.device_name), the target device for
+//     directed control (Command.target_device).
+// When adding a control stream, pick a scope: link-scoped → add it to
+// LINK_LOCAL_CONTROL; end-to-end → give it a device-identity field.
 
 enum ControlStream {
   CONTROL_STREAM_INVALID = 0;
-  CONTROL_STREAM_DEVICE_INFO = 1;
-  CONTROL_STREAM_TIMESYNC = 2;
-  CONTROL_STREAM_HEARTBEAT = 3;
-  CONTROL_STREAM_COMMAND = 4;
+  CONTROL_STREAM_DEVICE_INFO = 1;  // end-to-end (source: device_name)
+  CONTROL_STREAM_HEARTBEAT = 3;    // link-scoped
+  CONTROL_STREAM_COMMAND = 4;      // end-to-end (target: target_device)
+  reserved 2;                      // was CONTROL_STREAM_TIMESYNC — folded into heartbeat
+  reserved "CONTROL_STREAM_TIMESYNC";
   // 5..15 reserved for future control streams.
   // Data-stream ids begin here; this value is the reserved/dynamic boundary,
   // not itself a control stream.

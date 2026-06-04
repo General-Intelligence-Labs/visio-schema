@@ -1,0 +1,20 @@
+# Cross-language golden wire vectors (one `key=hexbytes` per line).
+#
+# Generated from the Python (reference) codec. Both
+# python/tests/test_golden_vectors.py and cpp/tests/test_golden_vectors.cc load
+# this file and assert that THEIR encoder reproduces these exact bytes and THEIR
+# decoder parses them back to the mirrored input values. Because both languages
+# pin against the same committed bytes, passing in both proves the nanopb (C++)
+# and libprotobuf (Python) wire encodings are byte-identical.
+#
+# Inputs are mirrored as constants in both test files; if you change an input,
+# regenerate this file (see the generator note in either test) and update both.
+#
+#   header       wire Header{stream_id=16, seq=7, timestamp=(1234s, 5678ns)}
+#   frame        EncodeFrame of that header + payload b"golden-payload"
+#   device_info  announce: device_name="gripper_left", firmware_version="1.2.3",
+#                one channel id=16 topic="/gripper_left/imus/2/raw"
+#                schema_name="visio_schema.sensor.v1.ImuRaw" (no inline schema)
+header=081010071a0608d20910ae2c
+frame=0c081010071a0608d20910ae2c676f6c64656e2d7061796c6f61642229
+device_info=0a0c677269707065725f6c656674124f081012182f677269707065725f6c6566742f696d75732f322f7261771a0870726f746f627566221d766973696f5f736368656d612e73656e736f722e76312e496d75526177320870726f746f6275661a05312e322e33

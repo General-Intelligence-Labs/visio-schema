@@ -16,6 +16,12 @@ from visio_schema.routing import (
     Routed,
 )
 from visio_schema.service.device_info.v1.device_info_pb2 import Channel
+from visio_schema.wire.control import (
+    COMMAND,
+    DEVICE_INFO,
+    HEARTBEAT,
+    LINK_LOCAL_CONTROL,
+)
 from visio_schema.wire.message import Message
 
 _IMU = "visio_schema.sensor.v1.ImuRaw"
@@ -125,10 +131,37 @@ def test_resolved_yields_only_data_rows() -> None:
 
 # ── Discovery ────────────────────────────────────────────────────────────────
 
-def test_self_info_carries_own_and_learned() -> None:
+def test_self_info_is_own_only() -> None:
+    # self_info announces OWN outputs only; learned channels propagate by the bus
+    # forwarding each leaf's announce, not by recombining them here. The learned
+    # channel stays resolvable (it is in by_id), just not re-announced.
     reg = ChannelRegistry("hub")
     reg.declare_output("/hub/imus/0/raw", _IMU)
-    reg.learn(_channel(reg.alloc(), "/child/imus/0/quat", _QUAT))  # global id, no collision
+    learned_id = reg.alloc()
+    reg.learn(_channel(learned_id, "/child/imus/0/quat", _QUAT))  # global id, no collision
     di = reg.self_info()
     assert di.device_name == "hub"
-    assert {c.topic for c in di.channels} == {"/hub/imus/0/raw", "/child/imus/0/quat"}
+    assert {c.topic for c in di.channels} == {"/hub/imus/0/raw"}   # own only
+    assert reg.resolve(learned_id).topic == "/child/imus/0/quat"  # still resolvable
+
+
+def test_well_known_device_info_channel_resolves() -> None:
+    # The DeviceInfo control stream resolves to a built-in well-known channel so a
+    # recorder can write forwarded announces on "/device_info" — without it being
+    # an own output or appearing in channels().
+    reg = ChannelRegistry("hub")
+    ch = reg.resolve(DEVICE_INFO)
+    assert ch is not None
+    assert ch.topic == "/device_info"
+    assert ch.schema_name == "visio_schema.service.device_info.v1.DeviceInfo"
+    assert ch.schema                       # carries the FileDescriptorSet
+    assert reg.channels() == []            # not an own/learned data channel
+    assert reg.has_own_outputs is False
+
+
+def test_link_local_control_membership() -> None:
+    # Disposition is structural: heartbeat is link-scoped (dropped at a hop);
+    # device_info/command are end-to-end (forwarded).
+    assert LINK_LOCAL_CONTROL == {HEARTBEAT}
+    assert DEVICE_INFO not in LINK_LOCAL_CONTROL
+    assert COMMAND not in LINK_LOCAL_CONTROL

@@ -8,6 +8,12 @@ std::vector<std::uint8_t> CobsEncode(std::string_view data) {
   out.push_back(0);   // placeholder for first code byte
   std::size_t code_idx = 0;
   std::uint8_t code = 1;
+  // Whether the block at `code_idx` still needs to be finalized. A full 0xFF
+  // block opens a fresh block speculatively; if the input ends right there the
+  // block stays empty and must be dropped, not emitted as a phantom 0x01. This
+  // keeps the encoding canonical (byte-identical to the reference COBS used by
+  // the Python side) — see docs/framing.md §3.2.
+  bool block_open = true;
   for (char ch : data) {
     auto b = static_cast<std::uint8_t>(ch);
     if (b == 0) {
@@ -15,18 +21,25 @@ std::vector<std::uint8_t> CobsEncode(std::string_view data) {
       out.push_back(0);
       code_idx = out.size() - 1;
       code = 1;
+      block_open = true;
     } else {
       out.push_back(b);
       ++code;
+      block_open = true;
       if (code == 0xFF) {
         out[code_idx] = code;
         out.push_back(0);
         code_idx = out.size() - 1;
         code = 1;
+        block_open = false;
       }
     }
   }
-  out[code_idx] = code;
+  if (block_open) {
+    out[code_idx] = code;
+  } else {
+    out.pop_back();  // drop the speculative empty block left by a trailing 0xFF flush
+  }
   return out;
 }
 

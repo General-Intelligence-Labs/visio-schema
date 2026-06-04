@@ -15,8 +15,9 @@ namespace visio_schema::wire {
 // Return the COBS encoding of `data` (no trailing 0x00 delimiter).
 std::vector<std::uint8_t> CobsEncode(std::string_view data);
 
-// COBS-decode `encoded`. Returns false on malformed input (zero byte
-// before the end, zero-length input). `out` is appended to on success.
+// COBS-decode `encoded`. Returns false on malformed input (a 0x00 byte in the
+// run, or a code byte pointing past the end). Empty input decodes to empty
+// output and returns true. `out` is appended to on success.
 bool CobsDecode(std::string_view encoded, std::vector<std::uint8_t>* out);
 
 }  // namespace visio_schema::wire

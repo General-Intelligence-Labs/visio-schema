@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <iostream>
 #include <stdexcept>
 
 namespace visio_schema::transport {
@@ -19,7 +20,7 @@ namespace {
 
 class FdLink : public Link {
  public:
-  FdLink(int fd, bool set_raw, int write_timeout_ms)
+  FdLink(int fd, bool set_raw, int write_timeout_ms, bool nonblocking = false)
       : fd_(fd), write_timeout_ms_(write_timeout_ms) {
     if (set_raw) {
       termios tio{};
@@ -27,6 +28,9 @@ class FdLink : public Link {
         cfmakeraw(&tio);
         tcsetattr(fd_, TCSANOW, &tio);
       }
+    }
+    if (nonblocking && !SetNonblocking(fd_)) {
+      std::cerr << "FdLink: failed to set O_NONBLOCK on fd " << fd_ << "\n";
     }
   }
 
@@ -41,6 +45,27 @@ class FdLink : public Link {
       if (n == 0) return 0;
       if (errno == EINTR) continue;
       return 0;
+    }
+  }
+
+  long ReadSome(std::uint8_t* buf, std::size_t max_bytes) override {
+    while (true) {
+      ssize_t n = ::read(fd_, buf, max_bytes);
+      if (n > 0) return static_cast<long>(n);
+      if (n == 0) return -1;  // EOF
+      if (errno == EINTR) continue;
+      if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;  // no data yet
+      return -1;              // dead link
+    }
+  }
+
+  long WriteSome(const std::uint8_t* data, std::size_t len) override {
+    while (true) {
+      ssize_t n = ::write(fd_, data, len);
+      if (n >= 0) return static_cast<long>(n);
+      if (errno == EINTR) continue;
+      if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;  // send buf full
+      return -1;              // EPIPE / EIO / ENODEV / ECONNRESET ...
     }
   }
 
@@ -82,6 +107,12 @@ class FdLink : public Link {
 
 }  // namespace
 
+bool SetNonblocking(int fd) {
+  const int fl = ::fcntl(fd, F_GETFL, 0);
+  if (fl < 0) return false;
+  return ::fcntl(fd, F_SETFL, fl | O_NONBLOCK) == 0;
+}
+
 std::pair<std::shared_ptr<Link>, std::shared_ptr<Link>> MakeFdLinkPair() {
   int master = -1, slave = -1;
   if (openpty(&master, &slave, nullptr, nullptr, nullptr) != 0) {
@@ -91,19 +122,20 @@ std::pair<std::shared_ptr<Link>, std::shared_ptr<Link>> MakeFdLinkPair() {
           std::make_shared<FdLink>(slave, /*set_raw=*/true, /*write_timeout_ms=*/0)};
 }
 
-std::shared_ptr<Link> MakeFdLink(int fd, bool set_raw, int write_timeout_ms) {
-  return std::make_shared<FdLink>(fd, set_raw, write_timeout_ms);
+std::shared_ptr<Link> MakeFdLink(int fd, bool set_raw, int write_timeout_ms,
+                                 bool nonblocking) {
+  return std::make_shared<FdLink>(fd, set_raw, write_timeout_ms, nonblocking);
 }
 
 std::shared_ptr<Link> OpenFdLink(const char* path, bool set_raw,
-                                 int write_timeout_ms) {
+                                 int write_timeout_ms, bool nonblocking) {
   int fd = ::open(path, O_RDWR | O_NOCTTY | O_CLOEXEC);
   if (fd < 0) return nullptr;
-  return std::make_shared<FdLink>(fd, set_raw, write_timeout_ms);
+  return std::make_shared<FdLink>(fd, set_raw, write_timeout_ms, nonblocking);
 }
 
 std::shared_ptr<Link> OpenTcpClientLink(const char* host, std::uint16_t port,
-                                        int write_timeout_ms) {
+                                        int write_timeout_ms, bool nonblocking) {
   sockaddr_in addr{};
   addr.sin_family = AF_INET;
   addr.sin_port = htons(port);
@@ -117,7 +149,9 @@ std::shared_ptr<Link> OpenTcpClientLink(const char* host, std::uint16_t port,
   }
   int one = 1;
   ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
-  return std::make_shared<FdLink>(fd, /*set_raw=*/false, write_timeout_ms);
+  ::setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &one, sizeof(one));
+  return std::make_shared<FdLink>(fd, /*set_raw=*/false, write_timeout_ms,
+                                  nonblocking);
 }
 
 int OpenTcpListenSocket(std::uint16_t port) {
