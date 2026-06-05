@@ -1,6 +1,5 @@
-// QueueEndpoint — in-process consumer sink. Attach as a sink to capture
-// messages for local consumption; thread-safe pop so a non-bus thread can drain
-// what the bus thread enqueued.
+// QueueEndpoint — in-process consumer sink (active object, but synchronous: no
+// thread). Send() appends under a lock so a non-bus thread can drain via PopAll.
 #pragma once
 
 #include <cstdint>
@@ -18,16 +17,14 @@ class QueueEndpoint : public Endpoint {
   explicit QueueEndpoint(std::optional<std::uint32_t> stream_filter = std::nullopt)
       : filter_(stream_filter) {}
 
-  int Fileno() const override { return -1; }
-  std::vector<Message> TryRead() override { return {}; }
+  void Start(InboundFn /*on_inbound*/, ClosedFn /*on_closed*/) override {}
+  void Stop() override {}
 
-  void Write(const Message& msg) override {
+  void Send(const Message& msg) override {
     if (filter_ && msg.stream_id != *filter_) return;
     std::lock_guard<std::mutex> lock(mu_);
     queue_.push_back(msg);
   }
-
-  void Close() override {}
 
   std::vector<Message> PopAll() {
     std::lock_guard<std::mutex> lock(mu_);

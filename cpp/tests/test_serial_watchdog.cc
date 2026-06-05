@@ -39,10 +39,23 @@ TEST(SerialWatchdog, ReopensOnConfiguredEdge) {
 
 TEST(SerialWatchdog, ReopensOnDrainStall) {
   SerialWatchdog wd;
-  // Pending bytes stuck (non-decreasing) for kStallTicks while CONFIGURED.
+  // A reader must first be observed draining us (pending falls) so the later
+  // stall is a stale-fd signal, not just "nobody ever read".
   EXPECT_EQ(wd.tick("CONFIGURED", 100, true, 0), Action::None);
-  EXPECT_EQ(wd.tick("CONFIGURED", 100, true, 1000), Action::None);
-  EXPECT_EQ(wd.tick("CONFIGURED", 100, true, 2000), Action::ReopenStalled);
+  EXPECT_EQ(wd.tick("CONFIGURED", 20, true, 1000), Action::None);   // drained → had_reader
+  // Now pending sticks (non-decreasing) for kStallTicks while CONFIGURED.
+  EXPECT_EQ(wd.tick("CONFIGURED", 100, true, 2000), Action::None);
+  EXPECT_EQ(wd.tick("CONFIGURED", 100, true, 3000), Action::None);
+  EXPECT_EQ(wd.tick("CONFIGURED", 100, true, 4000), Action::ReopenStalled);
+}
+
+TEST(SerialWatchdog, NoReaderDoesNotReopenOnStall) {
+  SerialWatchdog wd;
+  // Pending stuck high but NEVER drained (no host reading /dev/ttyGS0) — must
+  // NOT reopen (that churn + blocking gs_close was the original bug).
+  for (int i = 0; i < 10; ++i) {
+    EXPECT_EQ(wd.tick("CONFIGURED", 100, true, i * 1000), Action::None);
+  }
 }
 
 TEST(SerialWatchdog, DrainingResetsStallCounter) {

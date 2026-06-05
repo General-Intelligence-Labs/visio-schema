@@ -1,5 +1,8 @@
 // McapEndpoint tests — resolver-based channel naming, drop-until-mapped,
-// rotation. Mirrors python/visio/tests/test_mcap_endpoint.py at the
+// rotation. McapEndpoint is an active object: Start() spawns the writer thread,
+// Send() resolves+enqueues, Stop() drains+joins+finalizes the file. The file is
+// only readable after Stop(), so every test records via Start→Send→Stop, then
+// asserts on disk. Mirrors python/visio/tests/test_mcap_endpoint.py at the
 // behavioural level (full MCAP content checks live in the Python suite).
 #include "visio_schema/transport/mcap_endpoint.hpp"
 
@@ -57,16 +60,17 @@ TEST(McapEndpoint, RecordsResolvedChannel) {
   };
   {
     McapEndpoint ep(path, resolve);
-    ep.Write(Data(kFirstDynamic, "frame-0"));
-    ep.Write(Data(kFirstDynamic, "frame-1"));
-    ep.Close();
+    ep.Start(nullptr, nullptr);
+    ep.Send(Data(kFirstDynamic, "frame-0"));
+    ep.Send(Data(kFirstDynamic, "frame-1"));
+    ep.Stop();  // drains the queue, joins the writer, finalizes the file
   }
   ASSERT_TRUE(fs::exists(path));
   EXPECT_GT(fs::file_size(path), 0u);
   std::remove(path.c_str());
 }
 
-TEST(McapEndpoint, BoundedQueueDropsOldestUntilDrained) {
+TEST(McapEndpoint, BoundedQueueShedsWhenOverBounded) {
   const std::string path = TempPath("visio_mcap_test_bounded.mcap");
   std::remove(path.c_str());
   std::unordered_map<std::uint32_t, Channel> table{
@@ -75,17 +79,20 @@ TEST(McapEndpoint, BoundedQueueDropsOldestUntilDrained) {
     auto it = table.find(id);
     return it == table.end() ? nullptr : &it->second;
   };
+  std::uint64_t dropped = 0;
   {
-    // drop-oldest, depth 4: writes accumulate in RAM (no OnTick yet) and the
-    // queue never exceeds the bound, regardless of how many were offered.
+    // drop-oldest, tiny depth: a large burst is offered faster than the writer
+    // thread can drain it, so the bounded queue sheds the oldest frames. We
+    // assert that drops happened (robust inequality, not an exact count — the
+    // writer drains concurrently so the precise number is timing-dependent).
     McapEndpoint ep(path, resolve, /*max_bytes=*/0, /*max_duration_s=*/0.0,
                     visio_schema::transport::WritePolicy::drop_oldest(4));
-    for (int i = 0; i < 100; ++i) ep.Write(Data(kFirstDynamic, "f"));
-    EXPECT_EQ(ep.pending_frames(), 4u);  // bounded by the policy
-    ep.OnTick(0);                         // flush to disk
-    EXPECT_EQ(ep.pending_frames(), 0u);
-    ep.Close();
+    ep.Start(nullptr, nullptr);
+    for (int i = 0; i < 100000; ++i) ep.Send(Data(kFirstDynamic, "f"));
+    dropped = ep.dropped_frames();
+    ep.Stop();  // flush whatever survived + finalize
   }
+  EXPECT_GT(dropped, 0u);  // the tiny bound shed frames under the burst
   ASSERT_TRUE(fs::exists(path));
   EXPECT_GT(fs::file_size(path), 0u);
   std::remove(path.c_str());
@@ -102,9 +109,9 @@ TEST(McapEndpoint, RecordsDeviceInfoViaWellKnownChannel) {
   auto resolve = [&](std::uint32_t id) { return reg.Resolve(id); };
   {
     McapEndpoint ep(path, resolve);
-    Message m = Data(kDeviceInfo, "announce-bytes");  // resolves to /device_info
-    ep.Write(m);
-    ep.Close();
+    ep.Start(nullptr, nullptr);
+    ep.Send(Data(kDeviceInfo, "announce-bytes"));  // resolves to /device_info
+    ep.Stop();
   }
   ASSERT_TRUE(fs::exists(path));
   EXPECT_GT(fs::file_size(path), 0u);
@@ -117,8 +124,9 @@ TEST(McapEndpoint, DropsUntilMapped) {
   auto resolve = [](std::uint32_t) -> const Channel* { return nullptr; };
   {
     McapEndpoint ep(path, resolve);
-    ep.Write(Data(kFirstDynamic + 5, "x"));  // unmapped -> dropped, no crash
-    ep.Close();
+    ep.Start(nullptr, nullptr);
+    ep.Send(Data(kFirstDynamic + 5, "x"));  // unmapped -> dropped, no crash
+    ep.Stop();
   }
   EXPECT_TRUE(fs::exists(path));  // a valid (empty) MCAP is still written
   std::remove(path.c_str());
@@ -138,8 +146,9 @@ TEST(McapEndpoint, RotatesByBytes) {
   std::remove(p1.c_str());
   {
     McapEndpoint ep(path, resolve, /*max_bytes=*/16);
-    for (int i = 0; i < 4; ++i) ep.Write(Data(kFirstDynamic, std::string(10, 'a')));
-    ep.Close();
+    ep.Start(nullptr, nullptr);
+    for (int i = 0; i < 4; ++i) ep.Send(Data(kFirstDynamic, std::string(10, 'a')));
+    ep.Stop();
   }
   EXPECT_TRUE(fs::exists(p0));
   EXPECT_TRUE(fs::exists(p1));  // rolled into a second part

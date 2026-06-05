@@ -120,5 +120,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT CMAKE_CROSSCOMPILI
   # golden-vector test) so the test loads them at runtime.
   target_compile_definitions(visio_schema_tests PRIVATE
     VISIO_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../tests/golden")
-  gtest_discover_tests(visio_schema_tests)
+  # Bound each test so a hung endpoint/thread join fails the test instead of
+  # wedging CI (these tests spawn I/O threads + ptys/sockets).
+  gtest_discover_tests(visio_schema_tests PROPERTIES TIMEOUT 60)
 endif()

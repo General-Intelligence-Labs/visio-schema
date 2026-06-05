@@ -1,72 +1,76 @@
-// FramedFdEndpoint — COBS-delimited core-frames over a byte Link, as a passive
-// reactor sink. Transport-neutral: SerialEndpoint (CDC-ACM) and TcpEndpoint (TCP
-// client) are thin subclasses.
+// FramedFdEndpoint — COBS-delimited core-frames over a raw fd, as a self-threaded
+// ACTIVE OBJECT. Start() spawns one I/O thread that polls the fd, drains the
+// bounded outbox (non-blocking writes), reads + decodes inbound frames (delivered
+// via on_inbound), and reopens the fd (Tick). Send() is a thread-safe, non-
+// blocking enqueue. Transport-neutral: SerialEndpoint and TcpEndpoint are thin
+// subclasses (SerialEndpoint overrides Tick() to run the watchdog).
 //
-// Write() never blocks and never throws on a full/stalled link: it frames the
-// message and enqueues it into a bounded FramedOutbox (which sheds per its
-// WritePolicy). The bus drains the outbox via OnWritable() when the fd is
-// writable, so a slow consumer applies backpressure (oldest frames drop) instead
-// of stalling the bus thread.
-//
-// Reconnect is opt-in via a LinkFactory:
-//   - fixed link (factory null): a read EOF / dead link throws EndpointClosed,
-//     so the bus detaches the endpoint (sources behave as before).
-//   - reopenable (factory set): a dead link is dropped silently; OnTick() reopens
-//     it with backoff. The endpoint self-heals and is never detached.
+//   - fixed fd (factory null): a read EOF/dead fd reports on_closed(this) once and
+//     the I/O thread exits; the owner detaches it.
+//   - reopenable (factory set): a dead fd is dropped and Tick() reopens it with
+//     backoff. Self-heals; never calls on_closed.
 #pragma once
 
+#include <atomic>
 #include <cstdint>
-#include <functional>
-#include <memory>
+#include <thread>
 #include <vector>
 
 #include "visio_schema/transport/endpoint.hpp"
 #include "visio_schema/transport/framed_outbox.hpp"
-#include "visio_schema/transport/link.hpp"
+#include "visio_schema/transport/link.hpp"   // fd I/O helpers + FdFactory
 #include "visio_schema/transport/write_policy.hpp"
 
 namespace visio_schema::transport {
 
 class FramedFdEndpoint : public Endpoint {
  public:
-  // Returns a freshly opened link, or nullptr if (re)connect failed this tick.
-  using LinkFactory = std::function<std::shared_ptr<Link>()>;
-
-  // Fixed link — no reconnect. A broken link throws EndpointClosed on read.
-  explicit FramedFdEndpoint(std::shared_ptr<Link> link,
+  // Fixed fd — no reconnect. Takes ownership of `fd` (-1 = already down).
+  explicit FramedFdEndpoint(int fd,
                             WritePolicy policy = WritePolicy::drop_oldest());
-
-  // Reopenable — `factory` is called now (best-effort; may return nullptr) and
-  // again on each reconnect from OnTick(), no sooner than reopen_backoff_ns
-  // after a failed attempt.
-  explicit FramedFdEndpoint(LinkFactory factory,
+  // Reopenable — `factory` is called now and on each reconnect (Tick).
+  explicit FramedFdEndpoint(FdFactory factory,
                             WritePolicy policy = WritePolicy::drop_oldest(),
                             std::int64_t reopen_backoff_ns = 500'000'000);
+  ~FramedFdEndpoint() override;
 
-  int Fileno() const override { return link_ ? link_->Fileno() : -1; }
-  short PollEvents() const override;
-  std::vector<Message> TryRead() override;
-  void Write(const Message& msg) override;   // enqueue; never blocks/throws-on-full
-  void OnWritable() override;
-  void OnTick(std::int64_t now_ns) override;
-  void Close() override;
+  void Start(InboundFn on_inbound, ClosedFn on_closed) override;
+  void Send(const Message& msg) override;
+  void Stop() override;
 
-  // Bytes the outbox is holding — the serial watchdog's "is the host draining
-  // us" signal. Zero while the link keeps up.
+  // Diagnostics (thread-safe).
   std::size_t pending_bytes() const { return outbox_.PendingBytes(); }
-  bool link_up() const { return static_cast<bool>(link_); }
+  std::uint64_t dropped() const { return outbox_.Dropped(); }
+  bool link_up() const { return fd_ >= 0; }
 
  protected:
-  void Pump();          // best-effort non-blocking drain of the outbox
-  void MarkLinkDead();  // drop the link; reopenable endpoints retry in OnTick
-  bool Reopen();        // force a fresh open via the factory; returns link_up()
+  // Called from the I/O thread each loop iteration (~kTickMs). Base: reopen a
+  // down fd with backoff. SerialEndpoint overrides to drive the watchdog.
+  virtual void Tick(std::int64_t now_ns);
 
-  std::shared_ptr<Link> link_;
-  LinkFactory factory_;            // null = fixed link (no reconnect)
-  FramedOutbox outbox_;
+  bool link_up_unlocked() const { return fd_ >= 0; }
+  std::size_t outbox_pending() const { return outbox_.PendingBytes(); }
+  void MarkLinkDead();   // I/O thread: close fd + clear outbox; Tick reopens
+  bool Reopen();         // I/O thread: fresh fd via factory; returns link_up
+  FdFactory factory_;    // null = fixed fd
+
+ private:
+  void Loop();           // the I/O thread body
+  void Pump();           // drain outbox to the fd (I/O thread)
+  bool ReadInbound(int fd);  // read+decode; returns true if the thread should exit
+  void Wake();           // poke the I/O thread (from Send/Stop)
+  void AdoptFd(int fd);  // O_NONBLOCK-or-close a freshly opened fd into fd_
+
+  int fd_ = -1;                    // I/O-thread-owned after Start
+  FramedOutbox outbox_;            // thread-safe (Send enqueues, I/O thread drains)
   std::int64_t reopen_backoff_ns_ = 0;
   std::int64_t next_reopen_ns_ = 0;
   std::vector<std::uint8_t> rx_buf_;
+  int wake_fd_ = -1;
+  std::thread thread_;
+  std::atomic<bool> stop_{false};
+  InboundFn on_inbound_;
+  ClosedFn on_closed_;
 };
 
 }  // namespace visio_schema::transport

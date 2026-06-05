@@ -1,14 +1,13 @@
-"""QueueEndpoint — in-process consumer sink. Attach as a sink to capture
-messages for local consumption; thread-safe pop so a non-bus thread can drain
-what the bus thread enqueued.
+"""QueueEndpoint — in-process consumer sink (active object, but synchronous: no
+thread). ``send()`` appends under a lock so a non-bus thread can drain via
+``pop_all()``. Mirrors the C++ ``QueueEndpoint``.
 """
 from __future__ import annotations
 
 import threading
 from collections import deque
-from collections.abc import Iterable
 
-from visio_schema.transport.endpoint import Endpoint
+from visio_schema.transport.endpoint import ClosedFn, Endpoint, InboundFn
 from visio_schema.wire.message import Message
 
 __all__ = ["QueueEndpoint"]
@@ -26,19 +25,17 @@ class QueueEndpoint(Endpoint):
         self._queue: deque[Message] = deque()
         self._lock = threading.Lock()
 
-    def fileno(self) -> int | None:
-        return None     # not fd-driven; never read by the bus selector
+    def start(self, on_inbound: InboundFn | None = None,
+              on_closed: ClosedFn | None = None) -> None:
+        pass  # synchronous: no thread
 
-    def try_read(self) -> Iterable[Message]:
-        return ()       # bus never reads us as a source
-
-    def write(self, msg: Message) -> None:
+    def send(self, msg: Message) -> None:
         if self._filter is not None and msg.stream_id != self._filter:
             return
         with self._lock:
             self._queue.append(msg)
 
-    def close(self) -> None:
+    def stop(self) -> None:
         pass
 
     def pop_all(self) -> list[Message]:

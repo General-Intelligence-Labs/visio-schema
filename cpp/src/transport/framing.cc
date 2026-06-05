@@ -57,9 +57,4 @@ std::vector<std::uint8_t> EncodeFramed(const Message& msg) {
   return encoded;
 }
 
-bool WriteFramed(Link& link, const Message& msg) {
-  const auto out = EncodeFramed(msg);
-  return link.Write({reinterpret_cast<const char*>(out.data()), out.size()});
-}
-
 }  // namespace visio_schema::transport

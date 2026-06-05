@@ -45,9 +45,16 @@ class SerialWatchdog {
                 usb_state == "CONFIGURED";
     if (!usb_state.empty()) prev_usb_state_ = usb_state;
 
+    // A drop in pending means a reader actually drained us — only THEN is a
+    // later stall evidence of a stale fd (host closed its TTY). Without this gate
+    // "nobody ever read" looks identical to "reader went away" and we'd reopen
+    // (blocking gs_close) every few ticks for no reason.
+    if (client_open && pending < last_pending_bytes_) had_reader_ = true;
+
     bool stalled = false;
     if (client_open && pending > 0 && pending >= last_pending_bytes_) {
-      if (++no_drain_ticks_ >= kStallTicks && usb_state == "CONFIGURED") {
+      if (had_reader_ && ++no_drain_ticks_ >= kStallTicks &&
+          usb_state == "CONFIGURED") {
         stalled = true;
       }
     } else {
@@ -74,6 +81,7 @@ class SerialWatchdog {
     last_reopen_ms_ = now_ms;
     no_drain_ticks_ = 0;
     last_pending_bytes_ = 0;
+    had_reader_ = false;  // fresh link — no reader observed yet
     return edge      ? Action::ReopenEdge
            : stalled ? Action::ReopenStalled
                      : Action::ReopenRetry;
@@ -91,6 +99,7 @@ class SerialWatchdog {
  private:
   std::string prev_usb_state_;
   std::size_t last_pending_bytes_ = 0;
+  bool had_reader_ = false;     // outbox observed draining since last (re)open
   int no_drain_ticks_ = 0;
   std::int64_t last_reopen_ms_ = std::numeric_limits<std::int64_t>::min() / 2;
   int consec_retry_failures_ = 0;

@@ -1,79 +1,81 @@
 // TCP transports for the Visio stack.
 //
-//   TcpEndpoint        — connect-mode: dials host:port once and reframes over it
-//                        (e.g. a hub dialing a leaf). A FramedFdEndpoint over a
-//                        freshly dialed link; no self-reconnect — a broken link
-//                        throws EndpointClosed and the app re-dials.
-//   TcpServerEndpoint  — listen-mode: owns a listening socket and serves one
-//                        client at a time. A client disconnect throws
-//                        EndpointClosed (the caller detaches + re-attaches a
-//                        fresh server for the next client).
+//   TcpEndpoint  — connect-mode client (an Endpoint): dials host:port once and
+//                  reframes over it (e.g. a hub dialing a leaf). A
+//                  FramedFdEndpoint over a freshly dialed link.
 //
-// Both speak the same COBS-delimited core-frame format as SerialEndpoint.
+//   TcpAcceptor  — listen-mode DISCOVERY, NOT an Endpoint. Owns a listen socket
+//                  + its own accept thread. On each accepted connection it builds
+//                  a fresh FramedFdEndpoint over the client fd and hands it to
+//                  on_accept(); the owner (hub) attaches it to the bus as a peer.
+//                  When that client disconnects the endpoint fires on_closed and
+//                  the bus forgets it; the acceptor keeps listening. Multiple
+//                  clients => multiple endpoints, each with its own identity and
+//                  lifecycle — the accept loop never owns "the connection".
+//
+// Accepted connections speak the same COBS-delimited core-frame format as
+// SerialEndpoint and TcpEndpoint (they ARE FramedFdEndpoints).
 #pragma once
 
+#include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
-#include <vector>
+#include <thread>
 
 #include "visio_schema/transport/endpoint.hpp"
 #include "visio_schema/transport/framed_fd.hpp"
-#include "visio_schema/transport/framed_outbox.hpp"
-#include "visio_schema/transport/link.hpp"
+#include "visio_schema/transport/link.hpp"  // DialTcpFd, OpenTcpListenSocket, FdFactory
 #include "visio_schema/transport/write_policy.hpp"
 
 namespace visio_schema::transport {
 
 // Connect-mode TCP client. Dials at construction; throws EndpointClosed if the
-// peer isn't up. Attach as a sink; it also serves inbound on the same socket.
+// peer isn't up. A fixed-fd endpoint (a drop surfaces via on_closed; the owner
+// re-dials).
 class TcpEndpoint : public FramedFdEndpoint {
  public:
-  TcpEndpoint(const std::string& host, std::uint16_t port,
-              int write_timeout_ms = 200)
-      : FramedFdEndpoint(Dial(host, port, write_timeout_ms)) {}
+  TcpEndpoint(const std::string& host, std::uint16_t port)
+      : FramedFdEndpoint(Dial(host, port)) {}
 
  private:
-  static std::shared_ptr<Link> Dial(const std::string& host, std::uint16_t port,
-                                    int write_timeout_ms) {
-    auto link = OpenTcpClientLink(host.c_str(), port, write_timeout_ms,
-                                  /*nonblocking=*/true);
-    if (!link) throw EndpointClosed("TcpEndpoint: connect to " + host + " failed");
-    return link;
+  static int Dial(const std::string& host, std::uint16_t port) {
+    const int fd = DialTcpFd(host.c_str(), port);
+    if (fd < 0) throw EndpointClosed("TcpEndpoint: connect to " + host + " failed");
+    return fd;
   }
 };
 
-// Listen-mode TCP server, single client at a time, as a self-healing reactor
-// sink. With no client, Fileno() returns the listen fd so poll() wakes on an
-// incoming connection; once a client is accepted Fileno() returns its fd. A
-// client that drops is dropped silently (NOT thrown) and the server returns to
-// listening for the next one — so a long-lived sink is never detached by the bus.
-// Writes go through a bounded outbox (write_policy): the accepted client's fd is
-// non-blocking and a slow/stalled client sheds frames instead of blocking the bus.
-class TcpServerEndpoint : public Endpoint {
+// Listen-mode acceptor. Produces one FramedFdEndpoint per accepted connection.
+class TcpAcceptor {
  public:
-  // Binds + listens immediately; throws std::runtime_error on bind/listen fail.
-  explicit TcpServerEndpoint(std::uint16_t port,
-                             WritePolicy policy = WritePolicy::drop_oldest());
-  ~TcpServerEndpoint() override;
+  // on_accept(endpoint) is called from the accept thread for each new client; it
+  // must attach the endpoint somewhere (e.g. bus.AttachPeer) — the acceptor keeps
+  // no reference to it.
+  using OnAccept = std::function<void(std::shared_ptr<Endpoint>)>;
 
-  int Fileno() const override;
-  short PollEvents() const override;
-  std::vector<Message> TryRead() override;   // accepts a client / reads frames; never throws on drop
-  void Write(const Message& msg) override;    // enqueue; never blocks/throws
-  void OnWritable() override;
-  void Close() override;
+  explicit TcpAcceptor(std::uint16_t port,
+                       WritePolicy policy = WritePolicy::drop_oldest());
+  ~TcpAcceptor();
 
-  bool has_client() const { return static_cast<bool>(client_); }
+  TcpAcceptor(const TcpAcceptor&) = delete;
+  TcpAcceptor& operator=(const TcpAcceptor&) = delete;
+
+  void Start(OnAccept on_accept);  // spawn the accept thread
+  void Stop();                     // stop + join
 
  private:
-  void DropClient();
-  void Pump();  // best-effort non-blocking drain of the outbox to the client
+  void Loop();
+  void Wake();
 
+  std::uint16_t port_;
+  WritePolicy policy_;
   int listen_fd_ = -1;
-  std::shared_ptr<Link> client_;
-  FramedOutbox outbox_;
-  std::vector<std::uint8_t> rx_buf_;
+  int wake_fd_ = -1;
+  OnAccept on_accept_;
+  std::thread thread_;
+  std::atomic<bool> stop_{false};
 };
 
 }  // namespace visio_schema::transport

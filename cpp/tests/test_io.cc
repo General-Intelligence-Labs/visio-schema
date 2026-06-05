@@ -1,49 +1,71 @@
-// io tests — SerialEndpoint over a pty pair round-trips a framed message, and a
-// broken link surfaces as EndpointClosed (endpoints never self-reconnect).
+// io tests — SerialEndpoint over an fd pair round-trips a framed message, and a
+// broken link surfaces via callbacks (endpoints are active objects that own their
+// own I/O thread; they never self-reconnect on a fixed fd). Tests close the PEER
+// fd (the endpoint owns + closes its own) to simulate a hangup.
 #include <gtest/gtest.h>
 
+#include <chrono>
+#include <thread>
+
+#include "active_object_test_util.hpp"
 #include "visio_schema/transport/endpoint.hpp"
 #include "visio_schema/transport/link.hpp"
 #include "visio_schema/transport/serial.hpp"
 
-using visio_schema::transport::EndpointClosed;
-using visio_schema::transport::MakeFdLinkPair;
+using visio_schema::transport::CloseFd;
+using visio_schema::transport::MakeFdPair;
 using visio_schema::transport::SerialEndpoint;
+using visio_schema::transport::test::InboundCollector;
 using visio_schema::wire::Message;
 
 TEST(Io, SerialRoundTripsAFrame) {
-  auto [a, b] = MakeFdLinkPair();
+  auto [a, b] = MakeFdPair();
   SerialEndpoint tx(a), rx(b);
+  InboundCollector rxc;
+  rx.Start(rxc.fn(), rxc.on_closed());
+  tx.Start(nullptr, nullptr);
+
   Message m;
   m.stream_id = 16;
   m.payload = "hello";
-  tx.Write(m);
+  tx.Send(m);
 
-  std::vector<Message> got;
-  for (int i = 0; i < 100 && got.empty(); ++i) got = rx.TryRead();
-  ASSERT_EQ(got.size(), 1u);
+  ASSERT_GE(rxc.wait_for(1), 1u);
+  auto got = rxc.messages();
   EXPECT_EQ(got[0].stream_id, 16u);
   EXPECT_EQ(got[0].payload, "hello");
+
+  tx.Stop();
+  rx.Stop();
 }
 
-TEST(Io, EofRaisesEndpointClosed) {
-  auto [a, b] = MakeFdLinkPair();
+// A fixed fd (no reconnect) reports peer EOF through the on_closed callback — it
+// does not throw. The endpoint's I/O thread sees the hangup, fires the callback
+// once, and exits.
+TEST(Io, EofReportsClosed) {
+  auto [a, b] = MakeFdPair();
   SerialEndpoint rx(b);
-  a->Close();   // peer hangs up
-  EXPECT_THROW({ (void)rx.TryRead(); }, EndpointClosed);
+  InboundCollector collector;
+  rx.Start(collector.fn(), collector.on_closed());
+  CloseFd(a);  // peer hangs up
+  EXPECT_TRUE(collector.wait_closed());
+  rx.Stop();
 }
 
-// A reactor sink never blocks or throws on a broken link: Write() enqueues into
-// the bounded outbox and the best-effort drain finds the link dead, dropping it.
-// (For a fixed link the break also surfaces on the read path, where the bus
-// detaches it; here we assert the write side neither throws nor hangs.)
+// A Send onto a broken link must never block or throw: the I/O thread drains the
+// outbox best-effort, finds the fd dead, and sheds the frame. The caller's Send()
+// is a thread-safe non-blocking enqueue regardless of link state.
 TEST(Io, BrokenWriteSheddsWithoutThrowing) {
-  auto [a, b] = MakeFdLinkPair();
+  auto [a, b] = MakeFdPair();
   SerialEndpoint tx(a);
-  a->Close();   // local link gone
+  CloseFd(b);  // peer gone -> writes to `a` will EPIPE
+  tx.Start(nullptr, nullptr);
+
   Message m;
   m.stream_id = 16;
   m.payload = "x";
-  EXPECT_NO_THROW(tx.Write(m));
-  EXPECT_FALSE(tx.link_up());  // dead fixed link is dropped, not reopened
+  EXPECT_NO_THROW(tx.Send(m));
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  tx.Stop();
 }

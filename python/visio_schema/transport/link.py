@@ -1,105 +1,94 @@
-"""Link — the raw byte interface beneath Endpoints.
+"""fd byte I/O — the raw file-descriptor layer beneath endpoints.
 
-A Link is a byte channel that exposes an fd a selector can monitor, plus a
-non-blocking read. Endpoints layer framing on top. Lives in visio-schema so a
-schema-only user can read/write one stream with no bus.
+There is no Link object: the fd IS the link. An endpoint owns one fd and does its
+own non-blocking poll/read/write through these helpers; a reopenable endpoint gets
+a fresh fd from an ``FdFactory`` (``Callable[[], int]``, -1 on failure) on each
+reconnect. Mirrors the C++ ``link.hpp`` fd helpers.
 
-`FdLink` works equally well for `os.openpty()` pairs (tests + the interop
-harness) and for real serial fds opened against `/dev/ttyUSB*` / `/dev/ttyGS0` —
-the same blocking-write + selector-gated-read pattern applies.
+Works for ``os.openpty()`` pairs (tests + the interop harness) and real serial
+fds (``/dev/ttyUSB*`` / ``/dev/ttyGS0``) alike.
 """
 from __future__ import annotations
 
 import os
 import termios
 import tty
-from abc import ABC, abstractmethod
+from collections.abc import Callable
+
+# A source of fresh, connected fds for a reopenable endpoint (-1 on failure).
+FdFactory = Callable[[], int]
 
 
-class Link(ABC):
-    """Abstract byte channel exposed to a fd-driven Endpoint."""
-
-    @abstractmethod
-    def fileno(self) -> int:
-        """Return the fd the bus selector should monitor."""
-
-    @abstractmethod
-    def read_nonblocking(self, max_bytes: int) -> bytes:
-        """Read up to `max_bytes`. Returns b"" on EOF. Raises BlockingIOError
-        when no data is ready (fd is non-blocking)."""
-
-    @abstractmethod
-    def write(self, data: bytes) -> None:
-        """Write all bytes. Blocks if the kernel buffer is full. Raises
-        BrokenPipeError if the link is closed/broken."""
-
-    @abstractmethod
-    def close(self) -> None:
-        """Idempotent close."""
+def set_nonblocking(fd: int) -> None:
+    """Set the fd non-blocking (so read_some/write_some never block)."""
+    os.set_blocking(fd, False)
 
 
-class FdLink(Link):
-    """Raw-fd-backed Link. Works for pty pairs (tests), real serial ports
-    (`/dev/ttyUSB*`), and anything else that gives you an fd with the standard
-    POSIX read/write semantics. Reads are selector-gated; writes block on
-    backpressure."""
-
-    def __init__(self, fd: int) -> None:
-        self._fd = fd
-        # Leave the fd in blocking mode. Reads are gated by the bus selector
-        # (we only call os.read when the selector reports readable, so it
-        # returns immediately). Writes block when the kernel buffer is full —
-        # the right backpressure: the bus loop pauses, the consumer drains, the
-        # write resumes. Non-blocking writes busy-spin on BlockingIOError under
-        # GIL pressure and corrupt frames at high throughput.
-        _try_set_raw(fd)
-        self._closed = False
-
-    @staticmethod
-    def pair() -> tuple[FdLink, FdLink]:
-        """Return two FdLinks connected via os.openpty(). For tests + the
-        cross-language interop harness. Real-fd users construct FdLink(fd)
-        directly with their already-opened serial / socket / etc. fd."""
-        master, slave = os.openpty()
-        return FdLink(master), FdLink(slave)
-
-    def fileno(self) -> int:
-        return self._fd
-
-    def read_nonblocking(self, max_bytes: int) -> bytes:
-        if self._closed:
-            return b""
-        # fd is blocking, but the bus only calls this after the selector
-        # reports readable, so it returns immediately with up to max_bytes.
-        return os.read(self._fd, max_bytes)
-
-    def write(self, data: bytes) -> None:
-        if self._closed:
-            raise BrokenPipeError("FdLink closed")
-        # os.write may return a short count on signal interruption or partial
-        # kernel write. Loop until everything is accepted — silently dropping
-        # the tail would corrupt frames.
-        view = memoryview(data)
-        while view:
-            n = os.write(self._fd, view)
-            if n <= 0:
-                raise BrokenPipeError("FdLink: os.write returned 0")
-            view = view[n:]
-
-    def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        try:
-            os.close(self._fd)
-        except OSError:
-            pass
-
-
-def _try_set_raw(fd: int) -> None:
-    """Put a tty/pty fd in raw mode. Best-effort on non-tty fds (which
-    `termios` refuses with ENOTTY); other fd types are left untouched."""
+def set_raw_mode(fd: int) -> None:
+    """Best-effort raw tty mode. No-op on non-ttys (termios refuses with ENOTTY)."""
     try:
         tty.setraw(fd, termios.TCSANOW)
     except termios.error:
         pass
+
+
+def read_some(fd: int, max_bytes: int) -> bytes | None:
+    """One non-blocking read. Returns the bytes read (len>0), ``b""`` on
+    would-block (EAGAIN — no data yet, NOT EOF), or ``None`` on EOF / a dead fd."""
+    try:
+        chunk = os.read(fd, max_bytes)
+    except BlockingIOError:
+        return b""
+    except OSError:
+        return None
+    if not chunk:
+        return None  # EOF
+    return chunk
+
+
+def write_some(fd: int, data: bytes) -> int:
+    """One non-blocking write. Returns bytes accepted (0..len), 0 on would-block
+    (EAGAIN), or -1 on a broken fd. Mirrors ::write."""
+    try:
+        return os.write(fd, data)
+    except BlockingIOError:
+        return 0
+    except (BrokenPipeError, OSError):
+        return -1
+
+
+def close_fd(fd: int) -> None:
+    """Close ``fd`` (no-op on < 0). Flushes any queued TX first so a CDC-ACM gadget
+    close doesn't block when no host is reading; no-op (ENOTTY) on non-ttys."""
+    if fd < 0:
+        return
+    try:
+        termios.tcflush(fd, termios.TCOFLUSH)
+    except (termios.error, OSError):
+        pass
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+
+
+def open_serial_fd(path: str) -> int:
+    """Open a device path raw + non-blocking. Returns the fd or -1 on failure."""
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_NOCTTY | os.O_CLOEXEC)
+    except OSError:
+        return -1
+    set_raw_mode(fd)
+    set_nonblocking(fd)
+    return fd
+
+
+def make_fd_pair() -> tuple[int, int]:
+    """A connected pair of raw, non-blocking pty fds (master, slave). For tests
+    and the cross-language interop harness: one end drives an endpoint, the other
+    is read/written directly (or handed to the C++ peer by slave path)."""
+    master, slave = os.openpty()
+    for fd in (master, slave):
+        set_raw_mode(fd)
+        set_nonblocking(fd)
+    return master, slave

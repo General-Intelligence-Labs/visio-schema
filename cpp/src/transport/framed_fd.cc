@@ -1,114 +1,163 @@
 #include "visio_schema/transport/framed_fd.hpp"
 
-#include <iostream>
+#include <poll.h>
+#include <sys/eventfd.h>
+#include <unistd.h>
 
 #include "visio_schema/transport/framing.hpp"
+#include "visio_schema/wire/time.hpp"  // MonotonicNs
 
 namespace visio_schema::transport {
 
 namespace {
-// A reactor endpoint MUST drive its fd non-blocking: WriteSome/ReadSome run on
-// the bus thread, and a blocking ::write against a full send buffer (a stalled
-// peer) would freeze the whole reactor. Returns false (and the caller drops the
-// link) if O_NONBLOCK could not be set — proceeding with a blocking fd is worse
-// than no link, since it could wedge the bus.
-bool ForceNonblocking(Link* link) {
-  if (!link) return true;
-  const int fd = link->Fileno();
-  if (fd < 0) return true;
-  if (SetNonblocking(fd)) return true;
-  std::cerr << "FramedFdEndpoint: O_NONBLOCK failed on fd " << fd
-            << " — refusing the link (a blocking fd would freeze the bus)\n";
-  return false;
-}
+constexpr int kTickMs = 200;  // reopen / watchdog cadence
 }  // namespace
 
-FramedFdEndpoint::FramedFdEndpoint(std::shared_ptr<Link> link, WritePolicy policy)
-    : link_(std::move(link)), outbox_(policy) {
-  if (link_ && !ForceNonblocking(link_.get())) link_.reset();
+void FramedFdEndpoint::AdoptFd(int fd) {
+  // A reactor endpoint MUST drive its fd non-blocking: WriteSome/ReadSome run on
+  // the I/O thread and a blocking ::write against a stalled peer would freeze it.
+  // Refuse an fd whose O_NONBLOCK can't be set.
+  if (fd < 0) {
+    fd_ = -1;
+    return;
+  }
+  if (!SetNonblocking(fd)) {
+    CloseFd(fd);
+    fd_ = -1;
+    return;
+  }
+  fd_ = fd;
 }
 
-FramedFdEndpoint::FramedFdEndpoint(LinkFactory factory, WritePolicy policy,
+FramedFdEndpoint::FramedFdEndpoint(int fd, WritePolicy policy) : outbox_(policy) {
+  AdoptFd(fd);
+}
+
+FramedFdEndpoint::FramedFdEndpoint(FdFactory factory, WritePolicy policy,
                                    std::int64_t reopen_backoff_ns)
     : factory_(std::move(factory)),
       outbox_(policy),
       reopen_backoff_ns_(reopen_backoff_ns) {
-  if (factory_) link_ = factory_();  // best-effort initial connect
-  if (link_ && !ForceNonblocking(link_.get())) link_.reset();
+  if (factory_) AdoptFd(factory_());
 }
 
-short FramedFdEndpoint::PollEvents() const {
-  if (!link_) return 0;  // down — OnTick (timer-driven) handles reconnect
-  short ev = POLLIN;
-  if (outbox_.HasPending()) ev |= POLLOUT;
-  return ev;
+FramedFdEndpoint::~FramedFdEndpoint() { Stop(); }
+
+void FramedFdEndpoint::Start(InboundFn on_inbound, ClosedFn on_closed) {
+  on_inbound_ = std::move(on_inbound);
+  on_closed_ = std::move(on_closed);
+  if (wake_fd_ < 0) wake_fd_ = ::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+  stop_.store(false);
+  thread_ = std::thread([this] { Loop(); });
 }
 
-std::vector<Message> FramedFdEndpoint::TryRead() {
-  if (!link_) return {};
-  std::uint8_t chunk[4096];
-  const long n = link_->ReadSome(chunk, sizeof(chunk));
-  if (n == 0) return {};  // EAGAIN — nothing ready (NOT EOF)
-  if (n < 0) {            // EOF / dead link
-    if (factory_) {       // reopenable: self-heal, don't let the bus detach us
-      MarkLinkDead();
-      return {};
-    }
-    throw EndpointClosed("EOF on read");  // fixed link: caller detaches
+void FramedFdEndpoint::Stop() {
+  stop_.store(true);
+  Wake();
+  if (thread_.joinable()) thread_.join();
+  if (fd_ >= 0) {
+    CloseFd(fd_);
+    fd_ = -1;
   }
-  rx_buf_.insert(rx_buf_.end(), chunk, chunk + n);
-  return ExtractFrames(rx_buf_);
+  if (wake_fd_ >= 0) {
+    ::close(wake_fd_);
+    wake_fd_ = -1;
+  }
 }
 
-void FramedFdEndpoint::Write(const Message& msg) {
+void FramedFdEndpoint::Send(const Message& msg) {
   const auto framed = EncodeFramed(msg);
-  outbox_.Enqueue(framed.data(), framed.size());
-  Pump();  // best-effort immediate drain — low latency on a healthy link
+  outbox_.Enqueue(framed.data(), framed.size());  // thread-safe; no I/O
+  Wake();
 }
 
-void FramedFdEndpoint::OnWritable() { Pump(); }
+void FramedFdEndpoint::Wake() {
+  if (wake_fd_ < 0) return;
+  const std::uint64_t one = 1;
+  (void)::write(wake_fd_, &one, sizeof(one));
+}
 
 void FramedFdEndpoint::Pump() {
-  if (!link_) return;
-  // `lk` outlives this Drain: link_ is only reset by MarkLinkDead() below, after
-  // Drain() returns synchronously.
-  Link* lk = link_.get();
+  if (fd_ < 0) return;
+  const int fd = fd_;
   const bool alive = outbox_.Drain(
-      [lk](const std::uint8_t* p, std::size_t n) { return lk->WriteSome(p, n); });
+      [fd](const std::uint8_t* p, std::size_t n) { return WriteSome(fd, p, n); });
   if (!alive) MarkLinkDead();
 }
 
 void FramedFdEndpoint::MarkLinkDead() {
-  if (link_) {
-    link_->Close();
-    link_.reset();
+  if (fd_ >= 0) {
+    CloseFd(fd_);
+    fd_ = -1;
   }
-  // Drop queued bytes: after a reopen the peer is a fresh reader, and a
-  // half-written frame would desync its COBS framer.
-  outbox_.Clear();
+  outbox_.Clear();  // a fresh reader after reopen would desync on a half-frame
   rx_buf_.clear();
-  next_reopen_ns_ = 0;  // attempt reopen on the very next tick
-}
-
-void FramedFdEndpoint::OnTick(std::int64_t now_ns) {
-  if (link_ || !factory_) return;        // up, or fixed link (no reconnect)
-  if (now_ns < next_reopen_ns_) return;  // backoff after a failed attempt
-  if (!Reopen()) next_reopen_ns_ = now_ns + reopen_backoff_ns_;
+  next_reopen_ns_ = 0;  // reopen ASAP on the next Tick
 }
 
 bool FramedFdEndpoint::Reopen() {
   if (!factory_) return false;
-  if (auto fresh = factory_(); fresh && ForceNonblocking(fresh.get())) {
-    link_ = std::move(fresh);
+  if (const int fresh = factory_(); fresh >= 0) {
+    AdoptFd(fresh);
     rx_buf_.clear();
-  }  // a failed open / un-settable fd leaves link_ down → retry next tick
-  return link_up();
+  }
+  return link_up_unlocked();
 }
 
-void FramedFdEndpoint::Close() {
-  if (link_) link_->Close();
-  link_.reset();
-  factory_ = nullptr;  // explicit close: no more reconnect attempts
+void FramedFdEndpoint::Tick(std::int64_t now_ns) {
+  if (fd_ >= 0 || !factory_) return;
+  if (now_ns < next_reopen_ns_) return;
+  if (!Reopen()) next_reopen_ns_ = now_ns + reopen_backoff_ns_;
+}
+
+void FramedFdEndpoint::Loop() {
+  while (!stop_.load()) {
+    const int fd = fd_;
+    pollfd pfds[2];
+    int n = 0;
+    pfds[n++] = {wake_fd_, POLLIN, 0};
+    int fd_idx = -1;
+    if (fd >= 0) {
+      short ev = POLLIN;
+      if (outbox_.HasPending()) ev |= POLLOUT;
+      fd_idx = n;
+      pfds[n++] = {fd, ev, 0};
+    }
+    ::poll(pfds, n, kTickMs);
+    if (pfds[0].revents & POLLIN) {
+      std::uint64_t drain;
+      while (::read(wake_fd_, &drain, sizeof(drain)) > 0) { /* drain */ }
+    }
+    if (stop_.load()) break;
+
+    Pump();  // drain outbox (no-op if fd down / nothing pending)
+
+    if (fd >= 0 && fd_idx >= 0 &&
+        (pfds[fd_idx].revents & (POLLIN | POLLHUP | POLLERR))) {
+      if (ReadInbound(fd)) return;  // fixed-fd EOF: on_closed fired, thread exits
+    }
+
+    Tick(MonotonicNs());  // reopen / watchdog
+  }
+}
+
+bool FramedFdEndpoint::ReadInbound(int fd) {
+  std::uint8_t chunk[4096];
+  const long r = ReadSome(fd, chunk, sizeof(chunk));
+  if (r == 0) return false;  // EAGAIN: nothing ready
+  if (r < 0) {               // EOF / dead fd
+    if (factory_) {
+      MarkLinkDead();         // reopenable: self-heal on the next Tick
+      return false;
+    }
+    if (on_closed_) on_closed_(this);  // fixed fd: owner detaches us
+    return true;                       // thread exits
+  }
+  rx_buf_.insert(rx_buf_.end(), chunk, chunk + r);
+  for (auto& m : ExtractFrames(rx_buf_)) {
+    if (on_inbound_) on_inbound_(std::move(m), this);
+  }
+  return false;
 }
 
 }  // namespace visio_schema::transport

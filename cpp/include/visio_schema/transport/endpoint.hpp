@@ -1,24 +1,27 @@
-// Endpoint — sync read+write interface to one connection.
+// Endpoint — an ACTIVE OBJECT: one self-contained, self-threaded connection.
 //
-// One ABC; the bus's slot determines whether reads or writes are used:
-//   - bus.AttachSource(ep): bus reads via TryRead().
-//   - bus.AttachSink(ep):   bus writes via Write(); also polls for control reads.
+// Each endpoint owns its concurrency. Start() spawns the endpoint's own I/O
+// thread; the endpoint does its own fd polling, outbound queueing (bounded, per
+// WritePolicy), blocking writes, blocking reads, and reconnect — none of it on
+// the caller's thread. The bus is therefore a thin router with no I/O threads of
+// its own: it Send()s to sinks (a thread-safe, non-blocking enqueue) and receives
+// inbound via the on_inbound callback the endpoint invokes from its OWN thread.
 //
-// Endpoints have NO threads. A fixed-link endpoint does not reconnect: on a
-// broken link it throws EndpointClosed and the caller (the bus, or an app loop)
-// decides what to do. A reactor endpoint (FramedFdEndpoint with a LinkFactory)
-// instead self-heals — it buffers writes in a bounded outbox, drains them when
-// the bus reports the fd writable (OnWritable), and reopens the link on a timer
-// tick (OnTick) — so it never blocks the bus thread and never throws on a
-// transient stall. Lives in visio-schema so a schema-only user can read/write
-// one stream.
+//   Start(on_inbound, on_closed): spawn the I/O thread. on_inbound(msg, this) is
+//     called from that thread for each decoded inbound message; on_closed(this)
+//     is called once if a FIXED link hits EOF (the owner then detaches it).
+//     Reopenable endpoints self-heal and never call on_closed. A write-only sink
+//     (e.g. the recorder) ignores both callbacks.
+//   Send(msg): thread-safe, non-blocking — enqueue for sending; the endpoint's
+//     own thread performs the actual (possibly blocking) write. Sheds per its
+//     WritePolicy on a full/stalled link; never blocks the caller.
+//   Stop(): stop + join the I/O thread, close the link. Idempotent.
+//
+// Lives in visio-schema so a schema-only user can run one stream with no bus.
 #pragma once
 
-#include <poll.h>
-
-#include <cstdint>
+#include <functional>
 #include <stdexcept>
-#include <vector>
 
 #include "visio_schema/wire/message.hpp"
 
@@ -26,9 +29,9 @@ namespace visio_schema::transport {
 
 using visio_schema::wire::Message;
 
-// Thrown by an Endpoint/Link when its connection breaks (EOF, broken pipe).
-// Endpoints never reconnect themselves — they throw this so the caller decides
-// (the bus detaches + deregisters the endpoint; an app may dial a fresh link).
+// Thrown by the byte/link layer when a connection breaks (EOF, broken pipe).
+// Surfaced to the endpoint's own thread, which either self-heals (reopenable) or
+// reports it via on_closed (fixed link).
 class EndpointClosed : public std::runtime_error {
  public:
   using std::runtime_error::runtime_error;
@@ -36,36 +39,21 @@ class EndpointClosed : public std::runtime_error {
 
 class Endpoint {
  public:
+  // Invoked from the endpoint's OWN thread for each decoded inbound message.
+  using InboundFn = std::function<void(Message, Endpoint*)>;
+  // Invoked from the endpoint's OWN thread once a fixed link hits EOF.
+  using ClosedFn = std::function<void(Endpoint*)>;
+
   virtual ~Endpoint() = default;
 
-  // Return the fd the bus's poll() should monitor for readable events, or -1 if
-  // this endpoint isn't fd-driven.
-  virtual int Fileno() const = 0;
+  // Spawn the endpoint's I/O thread. Either callback may be empty.
+  virtual void Start(InboundFn on_inbound, ClosedFn on_closed) = 0;
 
-  // Called when Fileno() is readable. Returns zero or more decoded Messages.
-  // Throws EndpointClosed on EOF / a broken link.
-  virtual std::vector<Message> TryRead() = 0;
+  // Thread-safe, non-blocking enqueue for sending (drains on the endpoint's thread).
+  virtual void Send(const Message& msg) = 0;
 
-  // Send `msg` to the peer. A reactor sink enqueues into its outbox and never
-  // blocks/throws on a full or stalled link (it sheds per its WritePolicy); a
-  // fixed-link endpoint may throw EndpointClosed on a broken link.
-  virtual void Write(const Message& msg) = 0;
-
-  // Idempotent shutdown.
-  virtual void Close() = 0;
-
-  // ── Reactor hooks (default no-op; only fd reactor sinks override) ──────
-  // The poll() event mask the bus should request for Fileno(). Default: POLLIN
-  // when fd-driven. A sink with queued outbound bytes also requests POLLOUT so
-  // the loop calls OnWritable() once the kernel send buffer drains.
-  virtual short PollEvents() const { return Fileno() >= 0 ? POLLIN : 0; }
-
-  // Called when Fileno() reports POLLOUT — drain the outbox (non-blocking).
-  virtual void OnWritable() {}
-
-  // Called periodically on the bus thread (~2 Hz). Drives link reopen + the
-  // serial liveness watchdog. `now_ns` is MonotonicNs().
-  virtual void OnTick(std::int64_t now_ns) { (void)now_ns; }
+  // Stop + join the I/O thread and close the link. Idempotent.
+  virtual void Stop() = 0;
 };
 
 }  // namespace visio_schema::transport

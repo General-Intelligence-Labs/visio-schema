@@ -5,7 +5,7 @@
 
 namespace visio_schema::transport {
 
-SerialEndpoint::SerialEndpoint(LinkFactory factory, WritePolicy policy,
+SerialEndpoint::SerialEndpoint(FdFactory factory, WritePolicy policy,
                                UsbStateFn usb_state)
     : FramedFdEndpoint(std::move(factory), policy),
       watchdog_enabled_(true),
@@ -15,21 +15,21 @@ SerialEndpoint::SerialEndpoint(std::string path, WritePolicy policy,
                                UsbStateFn usb_state)
     : SerialEndpoint(MakeFactory(std::move(path)), policy, std::move(usb_state)) {}
 
-void SerialEndpoint::OnTick(std::int64_t now_ns) {
-  if (!watchdog_enabled_) {  // a non-path ctor: fall back to base reconnect
-    FramedFdEndpoint::OnTick(now_ns);
+// Runs on the endpoint's own I/O thread (FramedFdEndpoint::Loop -> Tick).
+void SerialEndpoint::Tick(std::int64_t now_ns) {
+  if (!watchdog_enabled_) {
+    FramedFdEndpoint::Tick(now_ns);  // plain reopen-with-backoff
     return;
   }
   const std::string usb = usb_state_fn_ ? usb_state_fn_() : std::string();
-  const auto action = watchdog_.tick(usb, pending_bytes(), link_up(),
+  const auto action = watchdog_.tick(usb, outbox_pending(), link_up_unlocked(),
                                      now_ns / 1'000'000);
   if (action == SerialWatchdog::Action::None) return;
-  // The host re-enumerated / closed its TTY / never opened: drop the (possibly
-  // stale) link + outbox and open a fresh one. A reopen on a CONFIGURED edge or
-  // drain stall is exactly the case the fd looks valid but writes go nowhere.
+  // CONFIGURED edge / drain-stall / retry: drop the (possibly stale) link + outbox
+  // and open a fresh one. The blocking close/open is on THIS leg's thread only.
   MarkLinkDead();
   Reopen();
-  watchdog_.on_reopen_result(link_up());
+  watchdog_.on_reopen_result(link_up_unlocked());
 }
 
 // Mirrors umi_embedded/src/collector.cpp::read_usb_state.

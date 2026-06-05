@@ -69,7 +69,7 @@ from visio_schema.routing import ChannelRegistry
 from visio_schema.sensor.v1.imu_raw_pb2 import ImuRaw
 from visio_schema.sensor.v1.system_health_pb2 import SystemHealth
 from visio_schema.service.device_info.v1.device_info_pb2 import Channel
-from visio_schema.transport import EndpointClosed, FdLink, SerialEndpoint
+from visio_schema.transport import close_fd, extract_frames, read_some, set_nonblocking
 from visio_schema.wire.message import Message
 from visio_schema.wire.schema import file_descriptor_set
 
@@ -129,34 +129,36 @@ class TfDeriver:
 # Source                                                                       #
 # --------------------------------------------------------------------------- #
 def read_serial(port: str, baud: int) -> Iterator[Message]:
-    """Yield Messages from a live serial port via the schema transport: wrap the
-    configured tty fd in an :class:`FdLink`, then drive a :class:`SerialEndpoint`'s
-    ``try_read()`` under a selector — the same Link → Endpoint → try_read pattern
-    the bus and tests use (so framing, the rx accumulator, and the
-    :class:`EndpointClosed`-on-EOF contract all come from the transport, not from
-    this script). The 0.2 s selector timeout bounds shutdown latency: an idle link
-    re-checks ``_STOP`` at least that often."""
+    """Yield Messages from a live serial port using the schema transport's fd
+    helpers: read the configured tty fd with ``read_some`` under a selector and
+    de-frame with ``extract_frames`` — the same COBS framing the bus and tests
+    use, but inline (this tool is deliberately one read loop, no bus, no threads;
+    the active-object SerialEndpoint owns a thread, which we don't need here). The
+    0.2 s selector timeout bounds shutdown latency: an idle link re-checks
+    ``_STOP`` at least that often."""
     import serial  # pyserial: opens + configures the tty (baud, raw)
 
     ser = serial.Serial(port, baud)
-    # Hand the configured tty to FdLink, which owns + closes the fd. dup so
-    # FdLink's close() and pyserial's don't both target one fd; termios settings
-    # live on the tty, so they persist on the dup after ser.close().
-    ep = SerialEndpoint(FdLink(os.dup(ser.fileno())))
+    # dup the configured tty so we own + close our fd independently of pyserial;
+    # termios settings live on the tty, so they persist on the dup after close().
+    fd = os.dup(ser.fileno())
     ser.close()
+    set_nonblocking(fd)
     sel = selectors.DefaultSelector()
-    sel.register(ep.fileno(), selectors.EVENT_READ)
+    sel.register(fd, selectors.EVENT_READ)
+    rx = bytearray()
     try:
         while not _STOP.is_set():
             if not sel.select(timeout=0.2):
                 continue  # idle tick: re-check _STOP
-            try:
-                yield from ep.try_read()
-            except EndpointClosed:
-                return  # link broke / device unplugged
+            chunk = read_some(fd, 4096)
+            if chunk is None:
+                return  # EOF: link broke / device unplugged
+            rx.extend(chunk)  # b"" on EAGAIN is harmless
+            yield from extract_frames(rx)
     finally:
         sel.close()
-        ep.close()
+        close_fd(fd)
 
 
 def read_serial_resolved(port: str, baud: int) -> Iterator[tuple[Message, Channel]]:

@@ -1,104 +1,114 @@
-// Backpressure / stalled-peer — a reactor SerialEndpoint never blocks the bus
-// thread and never throws when the consumer stops reading. Writes go through a
-// bounded FramedOutbox (WritePolicy), so a peer that fills the kernel send buffer
-// makes the outbox shed (drop-oldest) rather than block or disconnect. The
-// positive control shows a draining peer keeps up with no shedding-induced error.
-//
-// This replaces the old write-timeout contract (where a stalled write tripped a
-// poll(POLLOUT) timeout and surfaced EndpointClosed): backpressure is now an
-// outbox property, not a per-write blocking timeout. See umi_channel.hpp.
+// Backpressure / stalled-peer — an active-object endpoint owns a bounded outbox
+// with a WritePolicy. A stalled peer (one that never reads) can't drain the fd,
+// so the outbox fills and SHEDS frames (dropped() rises) while Send() stays
+// non-blocking on the caller's thread — it never blocks behind a slow consumer.
+// The positive control shows a draining peer sheds nothing.
 #include <gtest/gtest.h>
 #include <sys/socket.h>
-#include <unistd.h>
 
 #include <atomic>
 #include <chrono>
 #include <string>
 #include <thread>
 
+#include "visio_schema/transport/framed_fd.hpp"
 #include "visio_schema/transport/link.hpp"
-#include "visio_schema/transport/serial.hpp"
 #include "visio_schema/transport/write_policy.hpp"
 
-using visio_schema::transport::MakeFdLink;
-using visio_schema::transport::SerialEndpoint;
+using namespace std::chrono_literals;
+using visio_schema::transport::CloseFd;
+using visio_schema::transport::FramedFdEndpoint;
+using visio_schema::transport::MakeFdPair;
+using visio_schema::transport::ReadSome;
 using visio_schema::transport::WritePolicy;
 using visio_schema::wire::Message;
 
 namespace {
 
-// A connected stream socket pair with small buffers so a non-draining peer fills
-// fast. Returns {writer_fd, peer_fd}.
-std::pair<int, int> SmallSocketPair() {
-  int sv[2] = {-1, -1};
-  EXPECT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, sv), 0);
-  int sz = 8192;
-  ::setsockopt(sv[0], SOL_SOCKET, SO_SNDBUF, &sz, sizeof(sz));
-  ::setsockopt(sv[1], SOL_SOCKET, SO_RCVBUF, &sz, sizeof(sz));
-  return {sv[0], sv[1]};
+// Shrink both ends' socket buffers so a non-draining peer fills fast and the
+// outbox starts shedding within a small flood.
+void ShrinkBuffers(int a, int b) {
+  int sz = 4096;
+  ::setsockopt(a, SOL_SOCKET, SO_SNDBUF, &sz, sizeof(sz));
+  ::setsockopt(b, SOL_SOCKET, SO_RCVBUF, &sz, sizeof(sz));
+}
+
+Message Frame(std::size_t n) {
+  Message m;
+  m.stream_id = 16;
+  m.payload = std::string(n, 'x');
+  return m;
 }
 
 }  // namespace
 
-TEST(Backpressure, StalledPeerSheddsWithoutBlockingOrThrowing) {
-  auto [wfd, peer] = SmallSocketPair();
-  // drop-oldest with a small depth: a peer that never reads makes the outbox
-  // shed once both the kernel send buffer and the queue are full.
-  SerialEndpoint tx(MakeFdLink(wfd, /*set_raw=*/false),
-                    WritePolicy::drop_oldest(/*depth=*/8));
-  Message m;
-  m.stream_id = 16;
-  m.payload = std::string(2048, 'x');
+TEST(Backpressure, StalledPeerShedsAndNeverBlocks) {
+  auto [a, b] = MakeFdPair();
+  ASSERT_GE(a, 0);
+  ASSERT_GE(b, 0);
+  ShrinkBuffers(a, b);
 
-  // Far more than the 8 KB socket buffer + 8-frame queue can hold. Must neither
-  // block (the fd is forced non-blocking) nor throw (it sheds per policy).
-  EXPECT_NO_THROW({
-    for (int i = 0; i < 1000; ++i) tx.Write(m);
-  });
-  // The outbox stays bounded by the policy (<=8 queued + 1 in-flight frame),
-  // independent of how many writes were offered: 1000 un-shed 2 KB frames would
-  // be ~2 MB, so a tens-of-KB ceiling proves drop-oldest held.
-  EXPECT_LT(tx.pending_bytes(), 32u * 1024u);
-  EXPECT_TRUE(tx.link_up());  // a stalled (not broken) peer keeps the link up
-  ::close(peer);
+  // Small bounded outbox; the peer `b` is never read, so the I/O thread cannot
+  // drain `a` once the kernel buffer fills.
+  FramedFdEndpoint tx(a, WritePolicy::drop_oldest(/*depth=*/8));
+  tx.Start({}, {});  // write-only sink: no inbound / on_closed needed
+
+  // Flood. Send() must never block the caller even though nothing drains.
+  const Message m = Frame(512);
+  for (int i = 0; i < 5000; ++i) tx.Send(m);
+
+  // Shedding is applied at enqueue once the queue hits max_depth; give the I/O
+  // thread a beat to fill the kernel buffer + back up the queue, then assert.
+  bool shed = false;
+  for (int i = 0; i < 200 && !shed; ++i) {
+    if (tx.dropped() > 0) {
+      shed = true;
+    } else {
+      tx.Send(m);
+      std::this_thread::sleep_for(1ms);
+    }
+  }
+  EXPECT_TRUE(shed) << "a stalled peer should make the bounded outbox shed frames";
+  // Shedding must be substantial — most of the 5000-frame flood, since the
+  // depth-8 outbox can only hold a handful. A regression that left the queue
+  // effectively unbounded (the bug a bounded outbox prevents) would shed ~none.
+  EXPECT_GT(tx.dropped(), 100u);
+
+  tx.Stop();
+  CloseFd(b);
 }
 
-TEST(Backpressure, DrainedPeerKeepsUpAndDelivers) {
-  int sv[2] = {-1, -1};
-  ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, sv), 0);  // default buffers
-  const int wfd = sv[0], peer = sv[1];
+TEST(Backpressure, DrainingPeerShedsNothing) {
+  auto [a, b] = MakeFdPair();
+  ASSERT_GE(a, 0);
+  ASSERT_GE(b, 0);
 
-  std::atomic<std::size_t> total{0};
-  std::thread reader([peer, &total] {
-    char buf[8192];
-    ssize_t n;
-    while ((n = ::read(peer, buf, sizeof(buf))) > 0) total += static_cast<std::size_t>(n);
+  std::atomic<bool> stop{false};
+  std::thread reader([b = b, &stop] {
+    std::uint8_t buf[4096];
+    while (!stop.load()) {
+      long n = ReadSome(b, buf, sizeof(buf));
+      if (n < 0) break;            // EOF / dead
+      if (n == 0) std::this_thread::sleep_for(1ms);  // would-block: nothing yet
+    }
   });
 
-  const int N = 200;
-  const std::size_t kPayload = 16384;
-  {
-    SerialEndpoint tx(MakeFdLink(wfd, /*set_raw=*/false),
-                      WritePolicy::drop_oldest(/*depth=*/2048));
-    Message m;
-    m.stream_id = 16;
-    m.payload = std::string(kPayload, 'y');
-    EXPECT_NO_THROW({
-      for (int i = 0; i < N; ++i) tx.Write(m);
-    });
-    EXPECT_TRUE(tx.link_up());
-    // Flush anything still buffered in the outbox to the socket (standalone — no
-    // bus POLLOUT pump). The peer is draining, so WriteSome keeps making room.
-    for (int i = 0; i < 2000 && tx.pending_bytes() > 0; ++i) {
-      tx.OnWritable();
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-    EXPECT_EQ(tx.pending_bytes(), 0u);
-  }  // tx closes wfd → reader drains the socket, then sees EOF
+  FramedFdEndpoint tx(a, WritePolicy::drop_oldest(1024));
+  tx.Start({}, {});
+  const Message m = Frame(512);
+  for (int i = 0; i < 1000; ++i) tx.Send(m);
 
+  // With the peer keeping up, the outbox drains to empty and nothing is shed.
+  bool drained = false;
+  for (int i = 0; i < 500 && !drained; ++i) {
+    if (tx.pending_bytes() == 0) drained = true;
+    else std::this_thread::sleep_for(1ms);
+  }
+  EXPECT_TRUE(drained) << "outbox should fully drain to a keeping-up peer";
+  EXPECT_EQ(tx.dropped(), 0u);
+
+  tx.Stop();
+  stop.store(true);
+  CloseFd(b);
   reader.join();
-  ::close(peer);
-  // A draining peer must actually RECEIVE the stream (not silently shed it): the
-  // bytes read exceed the raw payload total (framing adds header + COBS overhead).
-  EXPECT_GT(total.load(), static_cast<std::size_t>(N) * kPayload);
 }

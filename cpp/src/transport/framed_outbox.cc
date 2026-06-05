@@ -15,19 +15,26 @@ FramedOutbox::FramedOutbox(WritePolicy policy, NowFn now)
 
 bool FramedOutbox::Enqueue(const std::uint8_t* frame, std::size_t len) {
   const std::int64_t enqueue_us = now_();
+  std::lock_guard<std::mutex> lk(mu_);
+  const std::size_t before = queue_.size();
   if (!ApplyDropBound(policy_, queue_, queue_bytes_, len,
                       [](const Entry& e) { return e.data.size(); })) {
-    return false;  // DropOnFail: queue at max_depth
+    dropped_.fetch_add(1, std::memory_order_relaxed);  // DropOnFail: rejected
+    return false;
+  }
+  if (const std::size_t evicted = before - queue_.size()) {
+    dropped_.fetch_add(evicted, std::memory_order_relaxed);  // evicted-oldest
   }
   queue_.push_back({std::vector<std::uint8_t>(frame, frame + len), enqueue_us});
   queue_bytes_ += len;
   return true;
 }
 
-// Three-phase drain (see header + umi_channel.hpp). Eviction (phase 2) may only
+// Three-phase drain (see header + umi_channel.hpp). The blocking WriteFn runs
+// OUTSIDE mu_; only phase 2/3 (touching queue_) hold the lock. Eviction may only
 // touch the uncommitted queue_; in_flight_ is already on the wire.
 bool FramedOutbox::Drain(const WriteFn& wr) {
-  // Phase 1: finish what's in-flight. No eviction here — committed bytes.
+  // Phase 1: finish what's in-flight (drainer-private; no lock). Committed bytes.
   if (in_flight_off_ < in_flight_.size()) {
     const long r = wr(in_flight_.data() + in_flight_off_,
                       in_flight_.size() - in_flight_off_);
@@ -38,21 +45,24 @@ bool FramedOutbox::Drain(const WriteFn& wr) {
     in_flight_off_ = 0;
   }
 
-  // Phase 2: queue is the only source of pending bytes now. Age-evict.
-  if (policy_.drop == WritePolicy::DropMode::StaleEviction &&
-      policy_.max_age.count() > 0) {
-    const std::int64_t now_us = now_();
-    const std::int64_t max_age_us = policy_.max_age.count();
-    while (!queue_.empty() &&
-           (now_us - queue_.front().enqueue_us) > max_age_us) {
-      queue_bytes_ -= queue_.front().data.size();
-      queue_.pop_front();
+  // Phase 2 + 3 under the queue lock: age-evict, then promote into in_flight_.
+  {
+    std::lock_guard<std::mutex> lk(mu_);
+    if (policy_.drop == WritePolicy::DropMode::StaleEviction &&
+        policy_.max_age.count() > 0) {
+      const std::int64_t now_us = now_();
+      const std::int64_t max_age_us = policy_.max_age.count();
+      while (!queue_.empty() &&
+             (now_us - queue_.front().enqueue_us) > max_age_us) {
+        queue_bytes_ -= queue_.front().data.size();
+        queue_.pop_front();
+      }
     }
+    if (queue_.empty()) return true;
+    PromoteToInFlight();  // queue_ -> in_flight_ (commit point)
   }
-  if (queue_.empty()) return true;
 
-  // Phase 3: promote next batch/frame, then best-effort write it this tick.
-  PromoteToInFlight();
+  // Trailing best-effort write (no lock; in_flight_ is drainer-private now).
   if (in_flight_off_ < in_flight_.size()) {
     const long r = wr(in_flight_.data() + in_flight_off_,
                       in_flight_.size() - in_flight_off_);
@@ -66,6 +76,7 @@ bool FramedOutbox::Drain(const WriteFn& wr) {
   return true;
 }
 
+// Caller holds mu_.
 void FramedOutbox::PromoteToInFlight() {
   if (queue_.empty()) return;
   if (policy_.drain == WritePolicy::DrainMode::BatchAll) {
@@ -87,9 +98,12 @@ void FramedOutbox::PromoteToInFlight() {
 }
 
 void FramedOutbox::Clear() {
-  queue_.clear();
-  queue_bytes_ = 0;
-  in_flight_.clear();
+  {
+    std::lock_guard<std::mutex> lk(mu_);
+    queue_.clear();
+    queue_bytes_ = 0;
+  }
+  in_flight_.clear();   // drainer-private
   in_flight_off_ = 0;
 }
 

@@ -1,18 +1,22 @@
-// McapEndpoint — a sink Endpoint that records messages to MCAP. A transport
-// Endpoint (like SerialEndpoint), but its "wire" is an MCAP file: it wraps
-// visio_schema::mcap::McapWriter and resolves each message's stream_id to its
-// Channel via a resolve(stream_id) -> const Channel* callback (typically a lambda
-// over ChannelRegistry::Resolve, with or without a bus). A message whose id does
-// not resolve (no DeviceInfo announce seen) is dropped (drop-until-mapped). No
-// bus dependency. Mirrors python/visio_schema/transport/mcap_endpoint.py.
+// McapEndpoint — a write-only sink ACTIVE OBJECT that records to MCAP. Send()
+// (called on the bus dispatch thread) resolves + snapshots the channel and
+// enqueues into a bounded queue (WritePolicy); the endpoint's OWN writer thread
+// drains it to disk, so the blocking SD write never touches the bus. Resolution
+// happens on the Send() caller (dispatch, serialized) and is snapshotted, so the
+// writer thread never touches the (non-thread-safe) ChannelRegistry. Ignores
+// on_inbound (write-only). Mirrors python/visio_schema/transport/mcap_endpoint.py.
 #pragma once
 
+#include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <deque>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string_view>
-#include <vector>
+#include <thread>
+#include <unordered_map>
 
 #include "visio_schema/mcap/writer.hpp"
 #include "visio_schema/routing/channel.hpp"   // Channel
@@ -22,21 +26,20 @@
 
 namespace visio_schema::transport {
 
-// resolve(stream_id) -> const Channel* (nullptr if unmapped). The pointer must
-// stay valid for the Write() call (a ChannelRegistry resolves synchronously).
+// resolve(stream_id) -> const Channel* (nullptr if unmapped). Called only on the
+// Send() caller's thread (the bus dispatch thread).
 using StreamResolver = std::function<const Channel*(std::uint32_t)>;
 
-// A recording sink. Write() (bus thread) enqueues into a bounded queue under a
-// WritePolicy; the frames are flushed to the MCAP file synchronously on OnTick()
-// (also the bus thread — no writer thread) and on Close(). On the embedded board
-// a bounded policy (drop-oldest / byte-cap) bounds RAM if the SD card stalls; on
-// the host the default lossless policy never drops. Mirrors
-// python/visio_schema/transport/mcap_endpoint.py.
+// The writer thread's view of the storage device — its write-stall pattern.
+struct McapWriterStats {
+  std::uint64_t writes = 0;
+  std::uint64_t blocked_ns = 0;
+  std::uint64_t max_block_ns = 0;
+  std::uint64_t slow_writes = 0;
+};
+
 class McapEndpoint : public Endpoint {
  public:
-  // Record to a filesystem path. `resolve` maps a stream_id to its Channel.
-  // max_bytes / max_duration_s rotate into numbered parts (see McapWriter).
-  // `policy` bounds the in-RAM queue (default lossless — never drop).
   McapEndpoint(std::string_view path, StreamResolver resolve,
                std::uint64_t max_bytes = 0, double max_duration_s = 0.0,
                WritePolicy policy = WritePolicy::lossless());
@@ -45,28 +48,44 @@ class McapEndpoint : public Endpoint {
   McapEndpoint(const McapEndpoint&) = delete;
   McapEndpoint& operator=(const McapEndpoint&) = delete;
 
-  int Fileno() const override { return -1; }      // sink-only, not fd-driven
-  std::vector<Message> TryRead() override { return {}; }
-  void Write(const Message& msg) override;         // enqueue (bounded)
-  void OnTick(std::int64_t now_ns) override;       // flush queue to the file
-  void Close() override;                            // flush + finalize
+  void Start(InboundFn on_inbound, ClosedFn on_closed) override;  // spawn writer thread
+  void Send(const Message& msg) override;                          // resolve + enqueue
+  void Stop() override;                                             // stop+join, finalize
 
-  std::size_t pending_frames() const { return queue_.size(); }
-  // Total frames the policy has shed because the storage couldn't keep up. A
-  // non-zero, growing value means the recording has gaps (SD card too slow).
-  std::uint64_t dropped_frames() const { return dropped_frames_; }
+  std::size_t pending_frames() const;
+  std::size_t pending_bytes() const;
+  std::uint64_t dropped_frames() const { return dropped_.load(std::memory_order_relaxed); }
+  McapWriterStats stats() const;
 
  private:
-  void Drain();             // write every queued frame to the MCAP writer (bus thread)
-  void NoteDrop(std::size_t n);  // count + throttled-log shed frames
+  struct Entry {
+    std::shared_ptr<const Channel> channel;  // snapshot — writer-thread safe
+    Message msg;
+  };
+  void WriterLoop();
+  void DrainBatch(std::deque<Entry>& batch);  // timed writer_->Write
+  void NoteDrop(std::size_t n);
+
+  static constexpr std::uint64_t kSlowWriteNs = 50'000'000;  // 50 ms
 
   const StreamResolver resolve_;
   std::unique_ptr<visio_schema::mcap::McapWriter> writer_;
   WritePolicy policy_;
-  std::deque<Message> queue_;
+  // Send()-caller-thread-only (the serialized bus dispatch thread); no lock.
+  std::unordered_map<std::uint32_t, std::shared_ptr<const Channel>> channel_cache_;
+
+  mutable std::mutex mu_;       // guards queue_, queue_bytes_, stop_
+  std::condition_variable cv_;
+  std::deque<Entry> queue_;
   std::size_t queue_bytes_ = 0;
-  std::uint64_t dropped_frames_ = 0;
-  bool closed_ = false;
+  bool stop_ = false;
+  std::thread thread_;
+
+  std::atomic<std::uint64_t> dropped_{0};
+  std::atomic<std::uint64_t> stat_writes_{0};
+  std::atomic<std::uint64_t> stat_blocked_ns_{0};
+  std::atomic<std::uint64_t> stat_max_block_ns_{0};
+  std::atomic<std::uint64_t> stat_slow_writes_{0};
 };
 
 }  // namespace visio_schema::transport
