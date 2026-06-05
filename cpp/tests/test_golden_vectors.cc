@@ -140,4 +140,21 @@ TEST(GoldenVectors, DeviceInfo) {
   EXPECT_EQ(view.channels[0].schema_name, kChSchema);
 }
 
+TEST(GoldenVectors, DeviceInfoWithInlineSchema) {
+  auto vec = LoadGolden();
+  Channel c;
+  c.id = 16;
+  c.topic = kChTopic;
+  c.schema_name = kChSchema;
+  c.schema = std::string("\x01\x02\x03", 3);  // non-empty bytes field
+  std::vector<Channel> chans{c};
+  std::string di = ChannelRegistry::Encode(kDevice, kFirmware, "", "", 0, chans);
+  EXPECT_EQ(Hex(di), Hex(vec["device_info_with_schema"]));
+
+  ChannelRegistry::DeviceView view;
+  ASSERT_TRUE(ChannelRegistry::Decode(vec["device_info_with_schema"], &view));
+  ASSERT_EQ(view.channels.size(), 1u);
+  EXPECT_EQ(view.channels[0].schema, std::string("\x01\x02\x03", 3));
+}
+
 }  // namespace

@@ -15,6 +15,10 @@
 #   device_info  announce: device_name="gripper_left", firmware_version="1.2.3",
 #                one channel id=16 topic="/gripper_left/imus/2/raw"
 #                schema_name="visio_schema.sensor.v1.ImuRaw" (no inline schema)
+#   device_info_with_schema  same announce but the channel carries a non-empty
+#                inline schema (bytes 01 02 03) — pins the bytes-typed `schema`
+#                field encoding cross-language (nanopb FT_POINTER vs libprotobuf)
 header=081010071a0608d20910ae2c
 frame=0c081010071a0608d20910ae2c676f6c64656e2d7061796c6f61642229
 device_info=0a0c677269707065725f6c656674124f081012182f677269707065725f6c6566742f696d75732f322f7261771a0870726f746f627566221d766973696f5f736368656d612e73656e736f722e76312e496d75526177320870726f746f6275661a05312e322e33
+device_info_with_schema=0a0c677269707065725f6c6566741254081012182f677269707065725f6c6566742f696d75732f322f7261771a0870726f746f627566221d766973696f5f736368656d612e73656e736f722e76312e496d755261772a03010203320870726f746f6275661a05312e322e33

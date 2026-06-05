@@ -74,12 +74,17 @@ std::string ChannelRegistry::Encode(const std::string& device_name,
   di.channels = cstructs.empty() ? nullptr : cstructs.data();
 
   std::size_t sz = 0;
-  pb_get_encoded_size(&sz, visio_schema_service_device_info_v1_DeviceInfo_fields,
-                      &di);
+  if (!pb_get_encoded_size(
+          &sz, visio_schema_service_device_info_v1_DeviceInfo_fields, &di)) {
+    throw std::logic_error("DeviceInfo: pb_get_encoded_size failed");
+  }
   std::string out(sz, '\0');
   pb_ostream_t os = pb_ostream_from_buffer(
       reinterpret_cast<std::uint8_t*>(out.data()), out.size());
-  pb_encode(&os, visio_schema_service_device_info_v1_DeviceInfo_fields, &di);
+  if (!pb_encode(&os, visio_schema_service_device_info_v1_DeviceInfo_fields, &di)) {
+    throw std::logic_error(std::string("DeviceInfo: pb_encode failed: ") +
+                           PB_GET_ERROR(&os));
+  }
   out.resize(os.bytes_written);
   return out;
 }

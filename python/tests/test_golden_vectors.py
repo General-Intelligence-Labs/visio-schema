@@ -85,3 +85,22 @@ def test_device_info_golden() -> None:
     assert dd.channels[0].id == CH_ID
     assert dd.channels[0].topic == CH_TOPIC
     assert dd.channels[0].schema_name == CH_SCHEMA
+
+
+def test_device_info_with_inline_schema_golden() -> None:
+    # Same announce but with a non-empty inline schema, so the bytes-typed
+    # `schema` field's wire encoding is pinned cross-language (the field nanopb
+    # FT_POINTER must omit when empty and emit when present).
+    di = DeviceInfo(device_name=DEVICE, firmware_version=FIRMWARE)
+    c = di.channels.add()
+    c.id = CH_ID
+    c.topic = CH_TOPIC
+    c.encoding = "protobuf"
+    c.schema_name = CH_SCHEMA
+    c.schema = b"\x01\x02\x03"
+    c.schema_encoding = "protobuf"
+    assert di.SerializeToString() == VEC["device_info_with_schema"]
+
+    dd = DeviceInfo()
+    dd.ParseFromString(VEC["device_info_with_schema"])
+    assert dd.channels[0].schema == b"\x01\x02\x03"
