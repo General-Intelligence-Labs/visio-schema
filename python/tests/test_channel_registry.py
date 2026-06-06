@@ -15,7 +15,7 @@ from visio_schema.routing import (
     DuplicateTopicError,
     Routed,
 )
-from visio_schema.service.device_info.v1.device_info_pb2 import Channel
+from visio_schema.v1.service.device_info.device_info_pb2 import Channel
 from visio_schema.wire.control import (
     COMMAND,
     DEVICE_INFO,
@@ -24,8 +24,8 @@ from visio_schema.wire.control import (
 )
 from visio_schema.wire.message import Message
 
-_IMU = "visio_schema.sensor.v1.ImuRaw"
-_QUAT = "visio_schema.ros.geometry_msgs.v1.Quaternion"
+_IMU = "visio_schema.v1.sensor.ImuRaw"
+_QUAT = "visio_schema.v1.ros.geometry_msgs.Quaternion"
 
 
 def _channel(cid: int, topic: str, schema_name: str = _IMU) -> Channel:
@@ -34,7 +34,7 @@ def _channel(cid: int, topic: str, schema_name: str = _IMU) -> Channel:
 
 
 def _announce(*channels: Channel) -> Message:
-    from visio_schema.service.device_info.v1.device_info_pb2 import DeviceInfo
+    from visio_schema.v1.service.device_info.device_info_pb2 import DeviceInfo
     return Message(stream_id=1, payload=DeviceInfo(channels=channels).SerializeToString())
 
 
@@ -153,7 +153,7 @@ def test_well_known_device_info_channel_resolves() -> None:
     ch = reg.resolve(DEVICE_INFO)
     assert ch is not None
     assert ch.topic == "/device_info"
-    assert ch.schema_name == "visio_schema.service.device_info.v1.DeviceInfo"
+    assert ch.schema_name == "visio_schema.v1.service.device_info.DeviceInfo"
     assert ch.schema                       # carries the FileDescriptorSet
     assert reg.channels() == []            # not an own/learned data channel
     assert reg.has_own_outputs is False

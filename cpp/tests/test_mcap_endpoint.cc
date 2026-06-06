@@ -35,7 +35,7 @@ Channel MakeChannel(std::uint32_t id, const std::string& topic) {
   Channel c;
   c.id = id;
   c.topic = topic;
-  c.schema_name = "visio_schema.sensor.v1.ImuRaw";
+  c.schema_name = "visio_schema.v1.sensor.ImuRaw";
   c.schema = std::string(8, '\x01');  // dummy FileDescriptorSet bytes
   return c;
 }

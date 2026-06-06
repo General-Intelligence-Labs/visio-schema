@@ -6,7 +6,7 @@
 
 #include <gtest/gtest.h>
 
-#include "visio_schema/wire/v1/header.pb.h"
+#include "visio_schema/v1/wire/header.pb.h"
 
 using visio_schema::Channel;
 using visio_schema::kFirstDynamic;
@@ -17,15 +17,15 @@ using visio_schema::wire::Message;
 namespace {
 
 constexpr std::uint32_t kDeviceInfo =
-    visio_schema_wire_v1_ControlStream_CONTROL_STREAM_DEVICE_INFO;
+    visio_schema_v1_wire_ControlStream_CONTROL_STREAM_DEVICE_INFO;
 constexpr std::uint32_t kHeartbeat =
-    visio_schema_wire_v1_ControlStream_CONTROL_STREAM_HEARTBEAT;
+    visio_schema_v1_wire_ControlStream_CONTROL_STREAM_HEARTBEAT;
 
 Channel MakeChannel(std::uint32_t id, const std::string& topic) {
   Channel c;
   c.id = id;
   c.topic = topic;
-  c.schema_name = "visio_schema.sensor.v1.ImuRaw";
+  c.schema_name = "visio_schema.v1.sensor.ImuRaw";
   return c;
 }
 
@@ -153,7 +153,7 @@ TEST(ChannelRegistry, WellKnownDeviceInfoChannelResolves) {
   const Channel* ch = r.Resolve(kDeviceInfo);
   ASSERT_NE(ch, nullptr);
   EXPECT_EQ(ch->topic, "/device_info");
-  EXPECT_EQ(ch->schema_name, "visio_schema.service.device_info.v1.DeviceInfo");
+  EXPECT_EQ(ch->schema_name, "visio_schema.v1.service.device_info.DeviceInfo");
   EXPECT_FALSE(ch->schema.empty());        // carries the FileDescriptorSet
   EXPECT_TRUE(r.Channels().empty());       // not an own/learned data channel
   EXPECT_FALSE(r.HasOwnOutputs());

@@ -19,7 +19,7 @@
 #include "visio_schema/routing/registry.hpp"
 #include "visio_schema/wire/codec/frame.hpp"
 #include "visio_schema/wire/message.hpp"
-#include "visio_schema/wire/v1/header.pb.h"
+#include "visio_schema/v1/wire/header.pb.h"
 
 #ifndef VISIO_GOLDEN_DIR
 #error "VISIO_GOLDEN_DIR must be defined by the build (path to tests/golden)"
@@ -41,7 +41,7 @@ constexpr std::int32_t kTsN = 5678;
 const std::string kPayload = "golden-payload";
 const std::string kDevice = "gripper_left", kFirmware = "1.2.3";
 const std::string kChTopic = "/gripper_left/imus/2/raw";
-const std::string kChSchema = "visio_schema.sensor.v1.ImuRaw";
+const std::string kChSchema = "visio_schema.v1.sensor.ImuRaw";
 
 std::string FromHex(const std::string& h) {
   std::string out;
@@ -77,7 +77,7 @@ std::map<std::string, std::string> LoadGolden() {
 
 TEST(GoldenVectors, Header) {
   auto vec = LoadGolden();
-  visio_schema_wire_v1_Header h = visio_schema_wire_v1_Header_init_zero;
+  visio_schema_v1_wire_Header h = visio_schema_v1_wire_Header_init_zero;
   h.stream_id = kStreamId;
   h.seq = kSeq;
   h.has_timestamp = true;
@@ -85,14 +85,14 @@ TEST(GoldenVectors, Header) {
   h.timestamp.nanos = kTsN;
   std::uint8_t buf[64];
   pb_ostream_t os = pb_ostream_from_buffer(buf, sizeof(buf));
-  ASSERT_TRUE(pb_encode(&os, visio_schema_wire_v1_Header_fields, &h));
+  ASSERT_TRUE(pb_encode(&os, visio_schema_v1_wire_Header_fields, &h));
   std::string got(reinterpret_cast<char*>(buf), os.bytes_written);
   EXPECT_EQ(Hex(got), Hex(vec["header"]));
 
-  visio_schema_wire_v1_Header d = visio_schema_wire_v1_Header_init_zero;
+  visio_schema_v1_wire_Header d = visio_schema_v1_wire_Header_init_zero;
   pb_istream_t is = pb_istream_from_buffer(
       reinterpret_cast<const pb_byte_t*>(vec["header"].data()), vec["header"].size());
-  ASSERT_TRUE(pb_decode(&is, visio_schema_wire_v1_Header_fields, &d));
+  ASSERT_TRUE(pb_decode(&is, visio_schema_v1_wire_Header_fields, &d));
   EXPECT_EQ(d.stream_id, kStreamId);
   EXPECT_EQ(d.seq, kSeq);
   EXPECT_TRUE(d.has_timestamp);

@@ -24,7 +24,7 @@ import struct
 from google.protobuf.message import DecodeError
 
 from visio_schema.wire.codec.crc16 import crc16
-from visio_schema.wire.v1.header_pb2 import Header
+from visio_schema.v1.wire.header_pb2 import Header
 
 
 class FrameError(Exception):

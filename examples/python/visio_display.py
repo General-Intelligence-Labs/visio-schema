@@ -64,20 +64,20 @@ from google.protobuf.timestamp_pb2 import Timestamp
 from visio_schema.foxglove.CompressedVideo_pb2 import CompressedVideo
 from visio_schema.foxglove.FrameTransform_pb2 import FrameTransform
 from visio_schema.mcap import McapWriter, read_mcap
-from visio_schema.ros.geometry_msgs.v1.quaternion_pb2 import Quaternion
+from visio_schema.v1.ros.geometry_msgs.quaternion_pb2 import Quaternion
 from visio_schema.routing import ChannelRegistry
-from visio_schema.sensor.v1.imu_raw_pb2 import ImuRaw
-from visio_schema.sensor.v1.system_health_pb2 import SystemHealth
-from visio_schema.service.device_info.v1.device_info_pb2 import Channel
+from visio_schema.v1.sensor.imu_raw_pb2 import ImuRaw
+from visio_schema.v1.sensor.system_health_pb2 import SystemHealth
+from visio_schema.v1.service.device_info.device_info_pb2 import Channel
 from visio_schema.transport import close_fd, extract_frames, read_some, set_nonblocking
 from visio_schema.wire.message import Message
 from visio_schema.wire.schema import file_descriptor_set
 
 # Payload schema names dispatched on (== the protobuf full names on the wire).
-_QUAT_SCHEMA = "visio_schema.ros.geometry_msgs.v1.Quaternion"
+_QUAT_SCHEMA = "visio_schema.v1.ros.geometry_msgs.Quaternion"
 _VIDEO_SCHEMA = "foxglove.CompressedVideo"
-_IMU_RAW_SCHEMA = "visio_schema.sensor.v1.ImuRaw"
-_HEALTH_SCHEMA = "visio_schema.sensor.v1.SystemHealth"
+_IMU_RAW_SCHEMA = "visio_schema.v1.sensor.ImuRaw"
+_HEALTH_SCHEMA = "visio_schema.v1.sensor.SystemHealth"
 # Starter Foxglove layout shipped beside this script (panels mirror the Rerun view).
 _LAYOUT_PATH = Path(__file__).resolve().parent / "visio_layout.json"
 # Synthetic stream id for the derived /tf channel — outside the wire id space so

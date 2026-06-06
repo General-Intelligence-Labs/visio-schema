@@ -47,7 +47,7 @@ is no ping-pong). Both directions beacon, so sync is symmetric.
 ### Wire shape
 
 ```proto
-package visio_schema.service.heartbeat.v1;
+package visio_schema.v1.service.heartbeat;
 
 message Heartbeat {
   uint64 tx_mono_ns      = 1;   // sender send time, stamped at the wire

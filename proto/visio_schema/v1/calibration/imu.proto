@@ -1,4 +1,4 @@
-// visio_schema/calibration/v1/imu.proto
+// visio_schema/v1/calibration/imu.proto
 //
 // Per-IMU intrinsic calibration. Published as ordinary stream messages on
 // STREAM_IMU_CALIBRATION (typically at 1 Hz, like Foxglove's
@@ -14,7 +14,7 @@
 
 syntax = "proto3";
 
-package visio_schema.calibration.v1;
+package visio_schema.v1.calibration;
 
 import "foxglove/Pose.proto";
 

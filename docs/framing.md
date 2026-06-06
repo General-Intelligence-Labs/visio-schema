@@ -10,7 +10,7 @@ Every Visio wire message consists of:
 
 1. A small **`HEADER_LEN`** (1 byte, unsigned 8-bit) giving the size
    of the serialized Header in bytes.
-2. The **Header** — `visio_schema.wire.v1.Header` protobuf payload, length
+2. The **Header** — `visio_schema.v1.wire.Header` protobuf payload, length
    `HEADER_LEN` bytes.
 3. The **payload** — the inner message bytes; protobuf-encoded per
    `Header.stream`'s mapped type (see
@@ -35,8 +35,8 @@ core frame (always the same):
 
 ## 2. The Header
 
-`visio_schema.wire.v1.Header` is a protobuf message — see
-[`proto/visio_schema/wire/v1/header.proto`](../proto/visio_schema/wire/v1/header.proto):
+`visio_schema.v1.wire.Header` is a protobuf message — see
+[`proto/visio_schema/v1/wire/header.proto`](../proto/visio_schema/v1/wire/header.proto):
 
 ```proto
 message Header {
@@ -65,7 +65,7 @@ one seq varint, and the ~8-byte Timestamp submessage).
 255 bytes, and it grows *compatibly* via optional protobuf fields, so a
 wider length field buys nothing. There is also **no separate header
 version byte** — structural breaks are handled by the proto package
-version (`visio_schema.wire.v1` → `v2`). (This field was `u16` in an earlier
+version (`visio_schema.v1.wire` → `v2`). (This field was `u16` in an earlier
 draft; the narrowing is a deliberate pre-1.0 wire change.)
 
 ## 3. Per-Endpoint frame wrappers

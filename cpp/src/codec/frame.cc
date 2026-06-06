@@ -20,8 +20,8 @@ std::uint16_t ReadU16LE(const char* p) {
       (static_cast<std::uint8_t>(p[1]) << 8));
 }
 
-visio_schema_wire_v1_Header ToHeader(const Message& msg) {
-  visio_schema_wire_v1_Header h = visio_schema_wire_v1_Header_init_zero;
+visio_schema_v1_wire_Header ToHeader(const Message& msg) {
+  visio_schema_v1_wire_Header h = visio_schema_v1_wire_Header_init_zero;
   h.stream_id = msg.stream_id;
   h.seq = msg.seq;
   h.has_timestamp = true;
@@ -43,12 +43,12 @@ const char* FrameStatusName(FrameStatus s) noexcept {
 }
 
 std::string EncodeFrame(const Message& msg) {
-  visio_schema_wire_v1_Header header = ToHeader(msg);
+  visio_schema_v1_wire_Header header = ToHeader(msg);
   // The Header is bounded by the generated max size, which is far under the u8
   // HEADER_LEN cap — so this stack buffer always fits and pb_encode can't fail.
-  pb_byte_t hbuf[visio_schema_wire_v1_Header_size];
+  pb_byte_t hbuf[visio_schema_v1_wire_Header_size];
   pb_ostream_t os = pb_ostream_from_buffer(hbuf, sizeof(hbuf));
-  pb_encode(&os, visio_schema_wire_v1_Header_fields, &header);
+  pb_encode(&os, visio_schema_v1_wire_Header_fields, &header);
   const std::size_t header_len = os.bytes_written;
 
   std::string out;
@@ -76,10 +76,10 @@ FrameStatus DecodeFrame(std::string_view frame, Message* out) {
     return FrameStatus::kCrcMismatch;
   }
 
-  visio_schema_wire_v1_Header header = visio_schema_wire_v1_Header_init_zero;
+  visio_schema_v1_wire_Header header = visio_schema_v1_wire_Header_init_zero;
   pb_istream_t is = pb_istream_from_buffer(
       reinterpret_cast<const pb_byte_t*>(frame.data() + 1), header_len);
-  if (!pb_decode(&is, visio_schema_wire_v1_Header_fields, &header)) {
+  if (!pb_decode(&is, visio_schema_v1_wire_Header_fields, &header)) {
     return FrameStatus::kHeaderParseError;
   }
 

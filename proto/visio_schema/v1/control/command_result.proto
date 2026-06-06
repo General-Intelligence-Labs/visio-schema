@@ -1,4 +1,4 @@
-// visio_schema/control/v1/command_result.proto
+// visio_schema/v1/control/command_result.proto
 //
 // Acknowledgement for a Command (command.proto). A target replies with exactly
 // one CommandResult on its own /<device>/command_result channel, correlated to
@@ -13,7 +13,7 @@
 
 syntax = "proto3";
 
-package visio_schema.control.v1;
+package visio_schema.v1.control;
 
 // One Wi-Fi access point seen in a scan.
 message WifiScanResult {

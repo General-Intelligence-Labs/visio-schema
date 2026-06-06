@@ -19,7 +19,7 @@
 
 syntax = "proto3";
 
-package visio_schema.input.v1;
+package visio_schema.v1.input;
 
 import "google/protobuf/timestamp.proto";
 

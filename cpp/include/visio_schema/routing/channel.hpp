@@ -1,6 +1,6 @@
 // Channel + the routing value types. Mirrors python/visio_schema/routing/channel.py.
 //
-// Channel mirrors visio_schema.service.device_info.v1.Channel field-for-field
+// Channel mirrors visio_schema.v1.service.device_info.Channel field-for-field
 // (itself a mirror of the Foxglove channel); the nanopb type is used only at the
 // DeviceInfo encode/decode boundary, so everything else works with this plain
 // struct. Routed is the per-message decision the registry returns;

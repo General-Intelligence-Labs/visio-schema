@@ -10,14 +10,16 @@ lint:
   use:
     - STANDARD
   except:
-    # We use proto packages like `visio_schema.sensor.v1`, `visio_schema.ros.geometry_msgs.v1`,
-    # etc. — the standard rule wants the *file* path to mirror the package, which
-    # would force every leaf dir to host the file directly. Our layout puts
-    # multiple .protos under a single v1 dir for related types, which is the
-    # common convention in larger schemas. Skip the strict check.
+    # We use version-first proto packages like `visio_schema.v1.sensor`,
+    # `visio_schema.v1.ros.geometry_msgs`, etc. The standard rule wants the *file*
+    # path to mirror the package (which our layout does: proto/visio_schema/v1/...),
+    # but it also wants one file per leaf dir; we put multiple .protos under a
+    # single group dir for related types, the common convention in larger schemas.
+    # Skip the strict check.
     - PACKAGE_DIRECTORY_MATCH
-    # Foxglove's proto package is `foxglove`, not `foxglove.v1`. Don't fail their
-    # files for our convention.
+    # Our packages put the version first (`visio_schema.v1.sensor`), not as the
+    # trailing component the rule expects (`...sensor.v1`); foxglove's package is
+    # just `foxglove`. Neither matches the version-suffix convention — skip it.
     - PACKAGE_VERSION_SUFFIX
     # Our enum values are scope-prefixed by the enum's logical category
     # (DEVICE_*, STREAM_*, MAGNET_*) rather than the exact enum name

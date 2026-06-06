@@ -22,7 +22,7 @@ enum class FrameStatus : std::uint8_t {
 const char* FrameStatusName(FrameStatus s) noexcept;
 
 // Serialize a message's Header + payload into the core wire frame. The Header
-// is a fixed, small protobuf (<= visio_schema_wire_v1_Header_size bytes, far
+// is a fixed, small protobuf (<= visio_schema_v1_wire_Header_size bytes, far
 // under the u8 HEADER_LEN cap), so encoding is infallible.
 std::string EncodeFrame(const Message& msg);
 

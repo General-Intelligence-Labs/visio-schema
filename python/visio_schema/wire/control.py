@@ -15,7 +15,7 @@ across a hop (a control id is a shared constant that is NEVER remapped):
   carry a device-identity field in its payload (source for announce/telemetry,
   target for directed control) since the stream id can't disambiguate them.
 """
-from visio_schema.wire.v1.header_pb2 import ControlStream
+from visio_schema.v1.wire.header_pb2 import ControlStream
 
 FIRST_DYNAMIC = ControlStream.CONTROL_STREAM_FIRST_DYNAMIC
 DEVICE_INFO = ControlStream.CONTROL_STREAM_DEVICE_INFO

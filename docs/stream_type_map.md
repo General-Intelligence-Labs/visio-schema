@@ -12,7 +12,7 @@ message Channel {
   uint32 id = 1;               // per-link stream_id label
   string topic = 2;            // /glove_left/imus/3/raw
   string encoding = 3;         // "protobuf"
-  string schema_name = 4;      // visio_schema.sensor.v1.ImuRaw (protobuf full name)
+  string schema_name = 4;      // visio_schema.v1.sensor.ImuRaw (protobuf full name)
   bytes  schema = 5;           // serialized FileDescriptorSet (payload + deps)
   string schema_encoding = 6;  // "protobuf"
 }

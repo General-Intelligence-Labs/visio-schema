@@ -14,9 +14,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from google.protobuf.timestamp_pb2 import Timestamp
-from visio_schema.service.device_info.v1.device_info_pb2 import DeviceInfo
+from visio_schema.v1.service.device_info.device_info_pb2 import DeviceInfo
 from visio_schema.wire.message import Message, decode_message, encode_message
-from visio_schema.wire.v1.header_pb2 import Header
+from visio_schema.v1.wire.header_pb2 import Header
 
 _GOLDEN = Path(__file__).resolve().parents[1].parent / "tests" / "golden" / "wire_vectors.txt"
 
@@ -26,7 +26,7 @@ PAYLOAD = b"golden-payload"
 DEVICE = "gripper_left"
 FIRMWARE = "1.2.3"
 CH_ID, CH_TOPIC = 16, "/gripper_left/imus/2/raw"
-CH_SCHEMA = "visio_schema.sensor.v1.ImuRaw"
+CH_SCHEMA = "visio_schema.v1.sensor.ImuRaw"
 
 
 def _load() -> dict[str, bytes]:

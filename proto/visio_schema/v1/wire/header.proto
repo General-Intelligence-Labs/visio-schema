@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package visio_schema.wire.v1;
+package visio_schema.v1.wire;
 
 import "google/protobuf/timestamp.proto";
 

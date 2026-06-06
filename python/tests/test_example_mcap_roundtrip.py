@@ -56,8 +56,8 @@ def test_sample_mcap_roundtrips(tmp_path) -> None:
     assert gen.IMU_QUAT_TOPIC in topics
     # Foxglove invariant: the schema name is the protobuf full name (resolvable
     # inside the embedded FileDescriptorSet), NOT a ROS-style name.
-    assert "visio_schema.sensor.v1.ImuRaw" in schema_names
-    assert "visio_schema.ros.geometry_msgs.v1.Quaternion" in schema_names
+    assert "visio_schema.v1.sensor.ImuRaw" in schema_names
+    assert "visio_schema.v1.ros.geometry_msgs.Quaternion" in schema_names
 
 
 def test_writer_records_by_channel(tmp_path) -> None:
@@ -65,18 +65,18 @@ def test_writer_records_by_channel(tmp_path) -> None:
     the live reader performs) and writes the payload verbatim — what the example
     relies on for the --out sink."""
     from visio_schema.mcap import McapWriter, read_mcap
-    from visio_schema.service.device_info.v1.device_info_pb2 import Channel
+    from visio_schema.v1.service.device_info.device_info_pb2 import Channel
     from visio_schema.wire.message import Message
     from visio_schema.wire.schema import file_descriptor_set
-    from visio_schema.wire.v1.header_pb2 import ControlStream
+    from visio_schema.v1.wire.header_pb2 import ControlStream
 
     sid = ControlStream.CONTROL_STREAM_FIRST_DYNAMIC
     ch = Channel(
         id=sid,
         topic="/glove_left/imus/0/raw",
         encoding="protobuf",
-        schema_name="visio_schema.sensor.v1.ImuRaw",
-        schema=file_descriptor_set("visio_schema.sensor.v1.ImuRaw"),
+        schema_name="visio_schema.v1.sensor.ImuRaw",
+        schema=file_descriptor_set("visio_schema.v1.sensor.ImuRaw"),
         schema_encoding="protobuf",
     )
     out = tmp_path / "sink.mcap"
@@ -89,5 +89,5 @@ def test_writer_records_by_channel(tmp_path) -> None:
     assert len(rows) == 1
     rmsg, rch = rows[0]
     assert rch.topic == "/glove_left/imus/0/raw"
-    assert rch.schema_name == "visio_schema.sensor.v1.ImuRaw"
+    assert rch.schema_name == "visio_schema.v1.sensor.ImuRaw"
     assert rmsg.payload == b"raw-bytes" and rmsg.seq == 1

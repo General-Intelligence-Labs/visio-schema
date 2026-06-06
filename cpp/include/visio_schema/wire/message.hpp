@@ -1,4 +1,4 @@
-// In-memory Visio wire message: the visio_schema.wire.v1.Header fields plus
+// In-memory Visio wire message: the visio_schema.v1.wire.Header fields plus
 // the opaque payload bytes.
 //
 // The C++ wire library is nanopb-only (no full libprotobuf) so it links on the
@@ -12,7 +12,7 @@
 #include <string>
 
 #include "google/protobuf/timestamp.pb.h"    // nanopb: google_protobuf_Timestamp
-#include "visio_schema/wire/v1/header.pb.h"   // nanopb: Header + ControlStream
+#include "visio_schema/v1/wire/header.pb.h"   // nanopb: Header + ControlStream
 
 namespace visio_schema::wire {
 

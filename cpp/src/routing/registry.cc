@@ -8,9 +8,9 @@
 #include <stdexcept>
 #include <utility>
 
-#include "visio_schema/service/device_info/v1/device_info.pb.h"
+#include "visio_schema/v1/service/device_info/device_info.pb.h"
 #include "visio_schema/wire/schema_blobs.gen.hpp"
-#include "visio_schema/wire/v1/header.pb.h"
+#include "visio_schema/v1/wire/header.pb.h"
 
 namespace visio_schema::routing {
 
@@ -19,7 +19,7 @@ namespace {
 // Well-known channel for the DeviceInfo control stream (see device_info_channel_).
 constexpr const char* kDeviceInfoTopic = "/device_info";
 constexpr const char* kDeviceInfoSchema =
-    "visio_schema.service.device_info.v1.DeviceInfo";
+    "visio_schema.v1.service.device_info.DeviceInfo";
 
 // nanopb POINTER string: NULL omits the field; non-NULL (even empty) encodes it.
 char* OrNull(const std::string& s) {
@@ -37,12 +37,12 @@ std::string ChannelRegistry::Encode(const std::string& device_name,
                                     std::uint64_t boot_unix_seconds,
                                     const std::vector<Channel>& channels) {
   std::vector<std::vector<std::uint8_t>> schema_blobs(channels.size());
-  std::vector<visio_schema_service_device_info_v1_Channel> cstructs(
+  std::vector<visio_schema_v1_service_device_info_Channel> cstructs(
       channels.size());
   for (std::size_t i = 0; i < channels.size(); ++i) {
     const Channel& c = channels[i];
     auto& cs = cstructs[i];
-    cs = visio_schema_service_device_info_v1_Channel_init_zero;
+    cs = visio_schema_v1_service_device_info_Channel_init_zero;
     cs.id = c.id;
     cs.topic = const_cast<char*>(c.topic.c_str());
     cs.encoding = const_cast<char*>(c.encoding.c_str());
@@ -63,8 +63,8 @@ std::string ChannelRegistry::Encode(const std::string& device_name,
     }
   }
 
-  visio_schema_service_device_info_v1_DeviceInfo di =
-      visio_schema_service_device_info_v1_DeviceInfo_init_zero;
+  visio_schema_v1_service_device_info_DeviceInfo di =
+      visio_schema_v1_service_device_info_DeviceInfo_init_zero;
   di.device_name = const_cast<char*>(device_name.c_str());
   di.firmware_version = OrNull(firmware_version);
   di.hardware_revision = OrNull(hardware_revision);
@@ -75,13 +75,13 @@ std::string ChannelRegistry::Encode(const std::string& device_name,
 
   std::size_t sz = 0;
   if (!pb_get_encoded_size(
-          &sz, visio_schema_service_device_info_v1_DeviceInfo_fields, &di)) {
+          &sz, visio_schema_v1_service_device_info_DeviceInfo_fields, &di)) {
     throw std::logic_error("DeviceInfo: pb_get_encoded_size failed");
   }
   std::string out(sz, '\0');
   pb_ostream_t os = pb_ostream_from_buffer(
       reinterpret_cast<std::uint8_t*>(out.data()), out.size());
-  if (!pb_encode(&os, visio_schema_service_device_info_v1_DeviceInfo_fields, &di)) {
+  if (!pb_encode(&os, visio_schema_v1_service_device_info_DeviceInfo_fields, &di)) {
     throw std::logic_error(std::string("DeviceInfo: pb_encode failed: ") +
                            PB_GET_ERROR(&os));
   }
@@ -90,12 +90,12 @@ std::string ChannelRegistry::Encode(const std::string& device_name,
 }
 
 bool ChannelRegistry::Decode(const std::string& payload, DeviceView* out) {
-  visio_schema_service_device_info_v1_DeviceInfo di =
-      visio_schema_service_device_info_v1_DeviceInfo_init_zero;
+  visio_schema_v1_service_device_info_DeviceInfo di =
+      visio_schema_v1_service_device_info_DeviceInfo_init_zero;
   pb_istream_t is = pb_istream_from_buffer(
       reinterpret_cast<const std::uint8_t*>(payload.data()), payload.size());
   const bool ok = pb_decode(
-      &is, visio_schema_service_device_info_v1_DeviceInfo_fields, &di);
+      &is, visio_schema_v1_service_device_info_DeviceInfo_fields, &di);
   if (ok) {
     if (di.device_name) out->device_name = di.device_name;
     if (di.firmware_version) out->firmware_version = di.firmware_version;
@@ -119,7 +119,7 @@ bool ChannelRegistry::Decode(const std::string& payload, DeviceView* out) {
       out->channels.push_back(std::move(c));
     }
   }
-  pb_release(visio_schema_service_device_info_v1_DeviceInfo_fields, &di);
+  pb_release(visio_schema_v1_service_device_info_DeviceInfo_fields, &di);
   return ok;
 }
 

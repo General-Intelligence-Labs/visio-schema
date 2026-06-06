@@ -22,7 +22,7 @@ endif()
 set(NANOPB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/nanopb")
 set(NANOPB_GEN "${CMAKE_CURRENT_SOURCE_DIR}/generated_nanopb")
 
-if(NOT EXISTS "${NANOPB_GEN}/visio_schema/wire/v1/header.pb.h")
+if(NOT EXISTS "${NANOPB_GEN}/visio_schema/v1/wire/header.pb.h")
   message(FATAL_ERROR
     "nanopb bindings not found at ${NANOPB_GEN}. Run `make gen` first.")
 endif()

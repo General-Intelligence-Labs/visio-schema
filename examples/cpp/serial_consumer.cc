@@ -33,7 +33,7 @@
 
 #include "visio_schema/routing/registry.hpp"
 #include "visio_schema/transport/framing.hpp"
-#include "visio_schema/wire/v1/header.pb.h"
+#include "visio_schema/v1/wire/header.pb.h"
 
 namespace {
 
@@ -75,7 +75,7 @@ int main(int argc, char** argv) {
   // topic + schema — the whole self-contained consume path, no bus.
   visio_schema::routing::ChannelRegistry registry;
   constexpr std::uint32_t kDeviceInfo =
-      visio_schema_wire_v1_ControlStream_CONTROL_STREAM_DEVICE_INFO;
+      visio_schema_v1_wire_ControlStream_CONTROL_STREAM_DEVICE_INFO;
 
   std::vector<std::uint8_t> rx;  // byte accumulator across reads
   std::uint8_t chunk[4096];

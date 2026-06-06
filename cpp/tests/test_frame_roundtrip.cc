@@ -14,7 +14,7 @@ namespace {
 Message MakeMsg() {
   Message m;
   // A dynamic data stream id (>= CONTROL_STREAM_FIRST_DYNAMIC).
-  m.stream_id = visio_schema_wire_v1_ControlStream_CONTROL_STREAM_FIRST_DYNAMIC + 3;
+  m.stream_id = visio_schema_v1_wire_ControlStream_CONTROL_STREAM_FIRST_DYNAMIC + 3;
   m.seq = 42;
   m.timestamp.seconds = 1'700'000'000;
   m.timestamp.nanos = 123'456'789;

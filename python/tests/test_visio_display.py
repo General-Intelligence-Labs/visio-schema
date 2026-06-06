@@ -32,8 +32,8 @@ def test_tf_deriver_quat_to_frame_transform() -> None:
     rotation, child frame (from the topic), and timestamp carried through."""
     vd = _vd()
     from visio_schema.foxglove.FrameTransform_pb2 import FrameTransform
-    from visio_schema.ros.geometry_msgs.v1.quaternion_pb2 import Quaternion
-    from visio_schema.service.device_info.v1.device_info_pb2 import Channel
+    from visio_schema.v1.ros.geometry_msgs.quaternion_pb2 import Quaternion
+    from visio_schema.v1.service.device_info.device_info_pb2 import Channel
 
     q = Quaternion()
     q.x, q.y, q.z, q.w = 0.0, 0.7071, 0.0, 0.7071

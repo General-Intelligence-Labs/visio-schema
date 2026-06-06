@@ -1,6 +1,6 @@
 """Channel + the routing value types.
 
-``Channel`` is the generated ``visio_schema.service.device_info.v1.Channel`` proto
+``Channel`` is the generated ``visio_schema.v1.service.device_info.Channel`` proto
 (topic + schema, mirroring the Foxglove channel); it is re-exported here so the
 routing layer has one name for it. ``Routed`` is the per-message decision the
 registry returns; ``DuplicateTopicError`` is the unique-topic invariant.
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
-from visio_schema.service.device_info.v1.device_info_pb2 import Channel
+from visio_schema.v1.service.device_info.device_info_pb2 import Channel
 from visio_schema.wire.message import Message
 
 __all__ = ["Channel", "Routed", "DuplicateTopicError"]

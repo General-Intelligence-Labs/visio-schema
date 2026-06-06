@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import IO
 
 from visio_schema.mcap import McapWriter
-from visio_schema.service.device_info.v1.device_info_pb2 import Channel
+from visio_schema.v1.service.device_info.device_info_pb2 import Channel
 from visio_schema.transport.endpoint import ClosedFn, Endpoint, InboundFn
 from visio_schema.wire.message import Message
 

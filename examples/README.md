@@ -72,7 +72,7 @@ Add a **Plot** panel for `/glove_left/imu_raw/3`, a **3D**/orientation panel for
 
 > **Protobuf schema naming.** These channels use protobuf encoding, so each
 > channel's schema *name* is the protobuf full name (e.g.
-> `visio_schema.ros.geometry_msgs.v1.Quaternion`) — that's how Foxglove
+> `visio_schema.v1.ros.geometry_msgs.Quaternion`) — that's how Foxglove
 > resolves the type from the embedded `FileDescriptorSet`. The ROS-name remap
 > documented in `docs/foxglove_compat.md` (`geometry_msgs/msg/Quaternion`)
 > applies only to **ros2msg-encoded** channels; using it as a protobuf schema

@@ -1,4 +1,4 @@
-// visio_schema/service/device_info/v1/device_info.proto
+// visio_schema/v1/service/device_info/device_info.proto
 //
 // Discovery service on the CONTROL_STREAM_DEVICE_INFO control stream.
 //
@@ -16,12 +16,12 @@
 //
 // Calibration is NOT special-cased here. Devices declare calibration outputs
 // as ordinary channels (e.g. foxglove.CameraCalibration,
-// visio_schema.calibration.v1.ImuCalibration) alongside sensor channels; the
+// visio_schema.v1.calibration.ImuCalibration) alongside sensor channels; the
 // recorder writes them as regular MCAP Message records.
 
 syntax = "proto3";
 
-package visio_schema.service.device_info.v1;
+package visio_schema.v1.service.device_info;
 
 // One stream a device produces, described exactly as a Foxglove channel.
 message Channel {
@@ -39,7 +39,7 @@ message Channel {
   string encoding = 3;
 
   // Fully-qualified protobuf type name of the payload,
-  // e.g. "visio_schema.sensor.v1.ImuRaw".
+  // e.g. "visio_schema.v1.sensor.ImuRaw".
   string schema_name = 4;
 
   // Serialized google.protobuf.FileDescriptorSet (payload type + transitive

@@ -12,7 +12,7 @@
 
 syntax = "proto3";
 
-package visio_schema.sensor.v1;
+package visio_schema.v1.sensor;
 
 import "google/protobuf/timestamp.proto";
 

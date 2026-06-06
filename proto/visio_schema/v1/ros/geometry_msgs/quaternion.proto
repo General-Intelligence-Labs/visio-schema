@@ -9,7 +9,7 @@
 // How Foxglove sees this: when McapEndpoint writes the Schema record
 // for a stream using this proto, it MUST set the Schema.name to
 // "geometry_msgs/msg/Quaternion" (NOT the protobuf full name
-// "visio_schema.ros.geometry_msgs.v1.Quaternion"). Foxglove panels filter
+// "visio_schema.v1.ros.geometry_msgs.Quaternion"). Foxglove panels filter
 // topics by Schema.name string; matching the ROS name is what gives
 // us native rendering. The encoding stays "protobuf"; Studio parses
 // the bytes via the embedded FileDescriptor.
@@ -27,7 +27,7 @@
 
 syntax = "proto3";
 
-package visio_schema.ros.geometry_msgs.v1;
+package visio_schema.v1.ros.geometry_msgs;
 
 import "google/protobuf/timestamp.proto";
 

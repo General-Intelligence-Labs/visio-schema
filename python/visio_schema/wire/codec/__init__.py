@@ -2,7 +2,7 @@
 
 Ships inside the `visio-schema` package alongside the generated protobuf
 bindings: `from visio_schema.wire.codec import encode_frame` sits next to
-`from visio_schema.wire.v1 import header_pb2`. These are the executable form of
+`from visio_schema.v1.wire import header_pb2`. These are the executable form of
 the byte specs in visio-schema/docs/framing.md.
 """
 from visio_schema.wire.codec.cobs import cobs_decode, cobs_encode

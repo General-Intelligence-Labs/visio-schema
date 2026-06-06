@@ -16,11 +16,11 @@ pytest.importorskip("mcap", reason="mcap library not installed")
 
 from visio_schema.mcap import McapWriter, read_mcap
 from visio_schema.routing import FIRST_DYNAMIC
-from visio_schema.service.device_info.v1.device_info_pb2 import Channel
+from visio_schema.v1.service.device_info.device_info_pb2 import Channel
 from visio_schema.wire.message import Message
 from visio_schema.wire.schema import file_descriptor_set
 
-_IMU = "visio_schema.sensor.v1.ImuRaw"
+_IMU = "visio_schema.v1.sensor.ImuRaw"
 
 
 def _channel(cid: int = FIRST_DYNAMIC, topic: str = "/dev/imus/0/raw") -> Channel:

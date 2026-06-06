@@ -9,7 +9,7 @@
 
 syntax = "proto3";
 
-package visio_schema.control.v1;
+package visio_schema.v1.control;
 
 message Command {
   // Intended recipient, by device name. A receiving peer MUST ignore

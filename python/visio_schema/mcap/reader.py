@@ -13,7 +13,7 @@ from pathlib import Path
 
 from google.protobuf.timestamp_pb2 import Timestamp
 
-from visio_schema.service.device_info.v1.device_info_pb2 import Channel
+from visio_schema.v1.service.device_info.device_info_pb2 import Channel
 from visio_schema.wire.message import Message
 
 __all__ = ["read_mcap"]

@@ -14,7 +14,7 @@
 
 syntax = "proto3";
 
-package visio_schema.geometry.v1;
+package visio_schema.v1.geometry;
 
 import "foxglove/Vector3.proto";
 import "google/protobuf/timestamp.proto";

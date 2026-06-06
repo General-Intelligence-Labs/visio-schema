@@ -25,49 +25,49 @@ foxglove.CompressedImage.frame_id   max_size:32
 foxglove.CompressedImage.format     max_size:8
 
 # ---- Sensors: short button id (samples stay callback — see strategy above) -
-visio_schema.sensor.v1.ButtonEvent.button_id   max_size:32
+visio_schema.v1.sensor.ButtonEvent.button_id   max_size:32
 
 # ---- Control: command payload strings (bounded inline — small, fixed shape) -
-visio_schema.control.v1.ConnectWifi.ssid              max_size:33
-visio_schema.control.v1.ConnectWifi.passphrase        max_size:64
-visio_schema.control.v1.SetStorage.endpoint_url       max_size:128
-visio_schema.control.v1.SetStorage.region             max_size:32
-visio_schema.control.v1.SetStorage.bucket             max_size:64
-visio_schema.control.v1.SetStorage.access_key_id      max_size:32
-visio_schema.control.v1.SetStorage.secret_access_key  max_size:64
-visio_schema.control.v1.SetStorage.prefix             max_size:128
-visio_schema.control.v1.TestStorage.endpoint_url      max_size:128
-visio_schema.control.v1.TestStorage.region            max_size:32
-visio_schema.control.v1.TestStorage.bucket            max_size:64
-visio_schema.control.v1.TestStorage.access_key_id     max_size:32
-visio_schema.control.v1.TestStorage.secret_access_key max_size:64
-visio_schema.control.v1.TestStorage.prefix            max_size:128
+visio_schema.v1.control.ConnectWifi.ssid              max_size:33
+visio_schema.v1.control.ConnectWifi.passphrase        max_size:64
+visio_schema.v1.control.SetStorage.endpoint_url       max_size:128
+visio_schema.v1.control.SetStorage.region             max_size:32
+visio_schema.v1.control.SetStorage.bucket             max_size:64
+visio_schema.v1.control.SetStorage.access_key_id      max_size:32
+visio_schema.v1.control.SetStorage.secret_access_key  max_size:64
+visio_schema.v1.control.SetStorage.prefix             max_size:128
+visio_schema.v1.control.TestStorage.endpoint_url      max_size:128
+visio_schema.v1.control.TestStorage.region            max_size:32
+visio_schema.v1.control.TestStorage.bucket            max_size:64
+visio_schema.v1.control.TestStorage.access_key_id     max_size:32
+visio_schema.v1.control.TestStorage.secret_access_key max_size:64
+visio_schema.v1.control.TestStorage.prefix            max_size:128
 
 # ---- Control: CommandResult ack + DeviceState snapshot (bounded inline so the
 #      ack is a static struct; the two list payloads below are FT_POINTER) -----
-visio_schema.control.v1.CommandResult.error_code               max_size:32
-visio_schema.control.v1.CommandResult.error_message            max_size:128
-visio_schema.control.v1.DeviceState.recording_session_name     max_size:64
-visio_schema.control.v1.DeviceState.wifi_ssid                  max_size:33
-visio_schema.control.v1.DeviceState.wifi_ip                    max_size:46
-visio_schema.control.v1.DeviceState.wifi_last_error            max_size:128
-visio_schema.control.v1.DeviceState.storage_endpoint           max_size:128
-visio_schema.control.v1.DeviceState.storage_bucket             max_size:64
-visio_schema.control.v1.DeviceState.storage_prefix             max_size:128
-visio_schema.control.v1.DeviceState.upload_last_error          max_size:128
+visio_schema.v1.control.CommandResult.error_code               max_size:32
+visio_schema.v1.control.CommandResult.error_message            max_size:128
+visio_schema.v1.control.DeviceState.recording_session_name     max_size:64
+visio_schema.v1.control.DeviceState.wifi_ssid                  max_size:33
+visio_schema.v1.control.DeviceState.wifi_ip                    max_size:46
+visio_schema.v1.control.DeviceState.wifi_last_error            max_size:128
+visio_schema.v1.control.DeviceState.storage_endpoint           max_size:128
+visio_schema.v1.control.DeviceState.storage_bucket             max_size:64
+visio_schema.v1.control.DeviceState.storage_prefix             max_size:128
+visio_schema.v1.control.DeviceState.upload_last_error          max_size:128
 
 # ---- Control: variable-length result lists — FT_POINTER (mirror DeviceInfo):
 #      malloc only what's sent, freed with the message; keeps CommandResult's
 #      union small (a fixed array[N] would bloat every ack). -------------------
-visio_schema.control.v1.WifiScanResults.results   type:FT_POINTER
-visio_schema.control.v1.WifiScanResult.ssid       type:FT_POINTER
-visio_schema.control.v1.WifiScanResult.security   type:FT_POINTER
-visio_schema.control.v1.RecordingsList.recordings type:FT_POINTER
-visio_schema.control.v1.RecordingEntry.name       type:FT_POINTER
-visio_schema.control.v1.RecordingEntry.last_error type:FT_POINTER
+visio_schema.v1.control.WifiScanResults.results   type:FT_POINTER
+visio_schema.v1.control.WifiScanResult.ssid       type:FT_POINTER
+visio_schema.v1.control.WifiScanResult.security   type:FT_POINTER
+visio_schema.v1.control.RecordingsList.recordings type:FT_POINTER
+visio_schema.v1.control.RecordingEntry.name       type:FT_POINTER
+visio_schema.v1.control.RecordingEntry.last_error type:FT_POINTER
 
 # ---- Geometry: short frame id ---------------------------------------------
-visio_schema.geometry.v1.Twist.frame_id   max_size:32
+visio_schema.v1.geometry.Twist.frame_id   max_size:32
 
 # ---- DeviceInfo discovery: a periodic announce, built fresh per emit, that
 #      carries KB-scale serialized FileDescriptorSets. Everything variable-length
@@ -78,13 +78,13 @@ visio_schema.geometry.v1.Twist.frame_id   max_size:32
 #      DeviceInfo is released. (Callbacks would force a hand-written
 #      encode/decode function per field; FT_POINTER is plain struct assignment.)
 #      Channel mirrors the Foxglove channel; `schema` is the FileDescriptorSet.
-visio_schema.service.device_info.v1.DeviceInfo.device_name         type:FT_POINTER
-visio_schema.service.device_info.v1.DeviceInfo.firmware_version    type:FT_POINTER
-visio_schema.service.device_info.v1.DeviceInfo.hardware_revision   type:FT_POINTER
-visio_schema.service.device_info.v1.DeviceInfo.serial              type:FT_POINTER
-visio_schema.service.device_info.v1.DeviceInfo.channels            type:FT_POINTER
-visio_schema.service.device_info.v1.Channel.topic                  type:FT_POINTER
-visio_schema.service.device_info.v1.Channel.encoding               type:FT_POINTER
-visio_schema.service.device_info.v1.Channel.schema_name            type:FT_POINTER
-visio_schema.service.device_info.v1.Channel.schema_encoding        type:FT_POINTER
-visio_schema.service.device_info.v1.Channel.schema                 type:FT_POINTER
+visio_schema.v1.service.device_info.DeviceInfo.device_name         type:FT_POINTER
+visio_schema.v1.service.device_info.DeviceInfo.firmware_version    type:FT_POINTER
+visio_schema.v1.service.device_info.DeviceInfo.hardware_revision   type:FT_POINTER
+visio_schema.v1.service.device_info.DeviceInfo.serial              type:FT_POINTER
+visio_schema.v1.service.device_info.DeviceInfo.channels            type:FT_POINTER
+visio_schema.v1.service.device_info.Channel.topic                  type:FT_POINTER
+visio_schema.v1.service.device_info.Channel.encoding               type:FT_POINTER
+visio_schema.v1.service.device_info.Channel.schema_name            type:FT_POINTER
+visio_schema.v1.service.device_info.Channel.schema_encoding        type:FT_POINTER
+visio_schema.v1.service.device_info.Channel.schema                 type:FT_POINTER

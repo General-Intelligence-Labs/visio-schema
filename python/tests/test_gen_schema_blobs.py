@@ -31,10 +31,10 @@ def test_emitted_header_has_lookup_and_ego_types(tmp_path) -> None:
     text = hdr.read_text()
     assert "std::string_view FileDescriptorSetFor(" in text
     # Every type the ego firmware records must have a case.
-    for fqn in ("visio_schema.sensor.v1.ImuRaw",
-                "visio_schema.ros.geometry_msgs.v1.Quaternion",
+    for fqn in ("visio_schema.v1.sensor.ImuRaw",
+                "visio_schema.v1.ros.geometry_msgs.Quaternion",
                 "foxglove.CompressedVideo",
-                "visio_schema.sensor.v1.SystemHealth"):
+                "visio_schema.v1.sensor.SystemHealth"):
         assert f'proto_type == "{fqn}"' in text, fqn
 
 
@@ -69,7 +69,7 @@ def test_emitted_header_compiles(tmp_path) -> None:
         '#include "visio_schema/wire/schema_blobs.gen.hpp"\n'
         "int main() {\n"
         '  return visio_schema::wire::FileDescriptorSetFor('
-        '"visio_schema.sensor.v1.ImuRaw").empty() ? 1 : 0;\n}\n')
+        '"visio_schema.v1.sensor.ImuRaw").empty() ? 1 : 0;\n}\n')
     r = subprocess.run(["g++", "-std=c++17", "-fsyntax-only", f"-I{hdr_root}", str(src)],
                        capture_output=True, text=True)
     assert r.returncode == 0, r.stderr

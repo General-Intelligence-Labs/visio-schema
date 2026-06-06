@@ -29,7 +29,7 @@
 
 syntax = "proto3";
 
-package visio_schema.service.heartbeat.v1;
+package visio_schema.v1.service.heartbeat;
 
 message Heartbeat {
   // Sender's local monotonic clock (ns) at send, stamped at the wire by

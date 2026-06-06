@@ -29,10 +29,10 @@ import math
 import sys
 
 from visio_schema.mcap import McapWriter
-from visio_schema.service.device_info.v1.device_info_pb2 import Channel
+from visio_schema.v1.service.device_info.device_info_pb2 import Channel
 from visio_schema.wire.message import Message
 from visio_schema.wire.schema import file_descriptor_set, message_class
-from visio_schema.wire.v1.header_pb2 import ControlStream
+from visio_schema.v1.wire.header_pb2 import ControlStream
 
 START_NS = 1_700_000_000 * 1_000_000_000      # fixed epoch -> reproducible file
 
@@ -48,8 +48,8 @@ RAW_HZ, BUNDLE_HZ, QUAT_HZ = 200, 20, 50
 VIDEO_TOPIC = "/ego/cam/0/video"
 VID_W, VID_H, VID_FPS = 320, 240, 30
 
-_IMU_RAW = "visio_schema.sensor.v1.ImuRaw"
-_QUAT = "visio_schema.ros.geometry_msgs.v1.Quaternion"
+_IMU_RAW = "visio_schema.v1.sensor.ImuRaw"
+_QUAT = "visio_schema.v1.ros.geometry_msgs.Quaternion"
 _VIDEO = "foxglove.CompressedVideo"
 
 

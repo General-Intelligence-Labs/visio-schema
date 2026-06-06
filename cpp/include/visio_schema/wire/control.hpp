@@ -14,18 +14,18 @@
 
 #include <cstdint>
 
-#include "visio_schema/wire/v1/header.pb.h"
+#include "visio_schema/v1/wire/header.pb.h"
 
 namespace visio_schema {
 
 inline constexpr std::uint32_t kFirstDynamic = static_cast<std::uint32_t>(
-    visio_schema_wire_v1_ControlStream_CONTROL_STREAM_FIRST_DYNAMIC);
+    visio_schema_v1_wire_ControlStream_CONTROL_STREAM_FIRST_DYNAMIC);
 inline constexpr std::uint32_t kDeviceInfo = static_cast<std::uint32_t>(
-    visio_schema_wire_v1_ControlStream_CONTROL_STREAM_DEVICE_INFO);
+    visio_schema_v1_wire_ControlStream_CONTROL_STREAM_DEVICE_INFO);
 inline constexpr std::uint32_t kHeartbeat = static_cast<std::uint32_t>(
-    visio_schema_wire_v1_ControlStream_CONTROL_STREAM_HEARTBEAT);
+    visio_schema_v1_wire_ControlStream_CONTROL_STREAM_HEARTBEAT);
 inline constexpr std::uint32_t kCommand = static_cast<std::uint32_t>(
-    visio_schema_wire_v1_ControlStream_CONTROL_STREAM_COMMAND);
+    visio_schema_v1_wire_ControlStream_CONTROL_STREAM_COMMAND);
 
 // True for control streams that never cross a hop (the bus drops them rather than
 // relaying). The single source of truth for "link-scoped"; mirrors Python's

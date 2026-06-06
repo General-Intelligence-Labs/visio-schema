@@ -32,12 +32,12 @@
 // Magnetometer policy: include `magnetic_field` only when the IMU
 // produces mag at the SAME cadence as gyro/accel (BNO055-style
 // integrated mag). For separate-rate mag chips, leave it unset and
-// publish mag on a future visio_schema.sensor.v1.MagneticField stream — do
+// publish mag on a future visio_schema.v1.sensor.MagneticField stream — do
 // NOT resample mag to match gyro/accel at the publisher.
 
 syntax = "proto3";
 
-package visio_schema.sensor.v1;
+package visio_schema.v1.sensor;
 
 import "foxglove/Vector3.proto";
 import "google/protobuf/timestamp.proto";

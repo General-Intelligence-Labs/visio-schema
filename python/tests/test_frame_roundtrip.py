@@ -6,7 +6,7 @@ from google.protobuf.timestamp_pb2 import Timestamp
 
 from visio_schema.wire.codec.frame import FrameError, decode_frame, encode_frame
 from visio_schema.wire.message import Message, decode_message, encode_message
-from visio_schema.wire.v1.header_pb2 import Header
+from visio_schema.v1.wire.header_pb2 import Header
 
 
 def _make_header() -> Header:

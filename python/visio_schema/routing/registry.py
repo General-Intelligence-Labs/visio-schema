@@ -27,7 +27,7 @@ import logging
 from collections.abc import Iterable, Iterator
 
 from visio_schema.routing.channel import Channel, DuplicateTopicError, Routed
-from visio_schema.service.device_info.v1.device_info_pb2 import DeviceInfo
+from visio_schema.v1.service.device_info.device_info_pb2 import DeviceInfo
 from visio_schema.wire.control import DEVICE_INFO as _DEVICE_INFO
 from visio_schema.wire.control import FIRST_DYNAMIC
 from visio_schema.wire.message import Message
@@ -42,7 +42,7 @@ _PROTOBUF = "protobuf"
 # apart by the device_name field inside each message). It lives at the control id
 # DEVICE_INFO and is resolution-only — never an own output, never announced.
 DEVICE_INFO_TOPIC = "/device_info"
-DEVICE_INFO_SCHEMA = "visio_schema.service.device_info.v1.DeviceInfo"
+DEVICE_INFO_SCHEMA = "visio_schema.v1.service.device_info.DeviceInfo"
 
 
 class ChannelRegistry:

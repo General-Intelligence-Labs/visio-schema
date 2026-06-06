@@ -16,7 +16,7 @@ types fall into which bucket, and why.
 |---|---|---|---|
 | **A. Adopt-as-is (Foxglove)** | `third_party/foxglove-sdk/schemas/proto/foxglove/*.proto` | foxglove-native name (e.g. `foxglove.CompressedVideo`) | yes, native |
 | **B. ROS-named mimic** | `proto/visio/ros/<package>/v1/*.proto` (we own the proto) | ROS-canonical name (e.g. `geometry_msgs/msg/Quaternion`) | yes, via Studio's ROS-schema panel matching |
-| **C. Wholly Visio** | `proto/visio/*` | Visio-native name (e.g. `visio_schema.sensor.v1.ImuRaw`) | not natively; use Plot panel for scalar fields, or write a converter extension |
+| **C. Wholly Visio** | `proto/visio/*` | Visio-native name (e.g. `visio_schema.v1.sensor.ImuRaw`) | not natively; use Plot panel for scalar fields, or write a converter extension |
 
 ## Inventory
 
@@ -38,7 +38,7 @@ types fall into which bucket, and why.
 
 | Visio proto | Wire schema name | MCAP `Schema.name` | StreamKind | Why named-not-canonical |
 |---|---|---|---|---|
-| `visio_schema.ros.geometry_msgs.v1.Quaternion` | (4 doubles `x, y, z, w` + `timestamp`) | **`geometry_msgs/msg/Quaternion`** | `STREAM_IMU_QUAT` | Foxglove's community orientation panels filter by `schemaName === "geometry_msgs/msg/Quaternion"`. Naming our proto with the ROS string gives us out-of-box panel rendering. The extra `timestamp` field is ignored by the panels (only `x/y/z/w` are read) and used by our own consumers for self-description. |
+| `visio_schema.v1.ros.geometry_msgs.Quaternion` | (4 doubles `x, y, z, w` + `timestamp`) | **`geometry_msgs/msg/Quaternion`** | `STREAM_IMU_QUAT` | Foxglove's community orientation panels filter by `schemaName === "geometry_msgs/msg/Quaternion"`. Naming our proto with the ROS string gives us out-of-box panel rendering. The extra `timestamp` field is ignored by the panels (only `x/y/z/w` are read) and used by our own consumers for self-description. |
 
 This pattern (ROS-name on the wire, our own protobuf body) is the
 template for any future "Foxglove must recognize this as ROS" type.
@@ -49,17 +49,17 @@ proto-name distinction.
 
 | Visio proto | StreamKind | Why custom |
 |---|---|---|
-| `visio_schema.sensor.v1.ImuRaw` | `STREAM_IMU_RAW` | Foxglove has NO raw-IMU schema (verified against `foxglove-sdk` v0.24.0). Bundled per-IMU samples preserve per-tick fidelity that UMI's grid-ZOH discarded. |
-| `visio_schema.sensor.v1.EncoderRaw` | `STREAM_ENCODER_RAW` | Raw count, magnetic-field magnitude, AGC, magnet-detection enum — diagnostics for bring-up. Foxglove has nothing like it; `foxglove.JointState` only covers cooked position/velocity/effort. |
-| `visio_schema.sensor.v1.SystemHealth` | `STREAM_SYSTEM_HEALTH` | CPU / RAM / battery / disk / stream-clients periodic telemetry. No Foxglove equivalent. |
-| `visio_schema.sensor.v1.AudioCompressed` | `STREAM_AUDIO_COMPRESSED` | `foxglove.RawAudio` only supports PCM-S16. We need AAC-LC ADTS / Opus / Vorbis for the UMI headset mic path. |
-| `visio_schema.sensor.v1.ButtonEvent` | `STREAM_BUTTON_EVENT` | Named-button edge events; no Foxglove equivalent. |
-| `visio_schema.input.v1.QuestControllerState` | `STREAM_CONTROLLER_STATE` | Quest controller buttons + sticks for BOTH hands per tick. No Foxglove equivalent (`foxglove.JointStates` is the closest but joints are continuous, not buttons). |
-| `visio_schema.control.v1.Command` | `STREAM_COMMAND` | Host→device intents (StartRecording, StopRecording, Identify). Application-specific. |
-| `visio_schema.geometry.v1.Twist` | `STREAM_TWIST` | 6-DoF velocity. Foxglove only has linear `Velocity3`; no Twist. We use `foxglove.Vector3` primitives so it composes. |
-| `visio_schema.service.device_info.v1.DeviceInfo` | DEVICE_INFO control stream (id 1) | Periodic announce: identity + the `Channel`s this device produces; each `Channel` carries its schema inline (`schema_name` + `schema` FileDescriptorSet), so a listener self-describes every stream. No Request/Response. |
-| `visio_schema.service.heartbeat.v1.Heartbeat` | HEARTBEAT control stream (id 3) | Liveness + backpressure hint + NTP-style timesync beacon (the 4-timestamp loop rides the heartbeat; bus-layer concern, no analogue). |
-| `visio_schema.calibration.v1.ImuCalibration` | `STREAM_IMU_CALIBRATION` | Per-IMU bias / scale / mounting pose. Published as a regular stream message (Foxglove convention — same shape as `foxglove.CameraCalibration` on `STREAM_CAMERA_CALIB`). |
+| `visio_schema.v1.sensor.ImuRaw` | `STREAM_IMU_RAW` | Foxglove has NO raw-IMU schema (verified against `foxglove-sdk` v0.24.0). Bundled per-IMU samples preserve per-tick fidelity that UMI's grid-ZOH discarded. |
+| `visio_schema.v1.sensor.EncoderRaw` | `STREAM_ENCODER_RAW` | Raw count, magnetic-field magnitude, AGC, magnet-detection enum — diagnostics for bring-up. Foxglove has nothing like it; `foxglove.JointState` only covers cooked position/velocity/effort. |
+| `visio_schema.v1.sensor.SystemHealth` | `STREAM_SYSTEM_HEALTH` | CPU / RAM / battery / disk / stream-clients periodic telemetry. No Foxglove equivalent. |
+| `visio_schema.v1.sensor.AudioCompressed` | `STREAM_AUDIO_COMPRESSED` | `foxglove.RawAudio` only supports PCM-S16. We need AAC-LC ADTS / Opus / Vorbis for the UMI headset mic path. |
+| `visio_schema.v1.sensor.ButtonEvent` | `STREAM_BUTTON_EVENT` | Named-button edge events; no Foxglove equivalent. |
+| `visio_schema.v1.input.QuestControllerState` | `STREAM_CONTROLLER_STATE` | Quest controller buttons + sticks for BOTH hands per tick. No Foxglove equivalent (`foxglove.JointStates` is the closest but joints are continuous, not buttons). |
+| `visio_schema.v1.control.Command` | `STREAM_COMMAND` | Host→device intents (StartRecording, StopRecording, Identify). Application-specific. |
+| `visio_schema.v1.geometry.Twist` | `STREAM_TWIST` | 6-DoF velocity. Foxglove only has linear `Velocity3`; no Twist. We use `foxglove.Vector3` primitives so it composes. |
+| `visio_schema.v1.service.device_info.DeviceInfo` | DEVICE_INFO control stream (id 1) | Periodic announce: identity + the `Channel`s this device produces; each `Channel` carries its schema inline (`schema_name` + `schema` FileDescriptorSet), so a listener self-describes every stream. No Request/Response. |
+| `visio_schema.v1.service.heartbeat.Heartbeat` | HEARTBEAT control stream (id 3) | Liveness + backpressure hint + NTP-style timesync beacon (the 4-timestamp loop rides the heartbeat; bus-layer concern, no analogue). |
+| `visio_schema.v1.calibration.ImuCalibration` | `STREAM_IMU_CALIBRATION` | Per-IMU bias / scale / mounting pose. Published as a regular stream message (Foxglove convention — same shape as `foxglove.CameraCalibration` on `STREAM_CAMERA_CALIB`). |
 
 ## Foxglove submodule policy
 
@@ -78,7 +78,7 @@ docker setups, etc.) is ignored.
    doesn't traverse the submodule directly, but we run a local
    diff of the schema files we depend on as part of CI.)
 3. Bump `visio-schema` minor version. Any peer using
-   `visio_schema.wire.v1.Header.stream` enum values that map to foxglove
+   `visio_schema.v1.wire.Header.stream` enum values that map to foxglove
    types now sees the new field set; old peers continue to work
    because protobuf forward-compatibility tolerates unknown fields.
 4. Downstream `visio` regenerates bindings on the next pull. No

@@ -19,7 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # the hand-written codec); there is no separate gen/ tree.
 PKG_ROOT = REPO_ROOT / "python"
 
-if not (PKG_ROOT / "visio_schema" / "wire" / "v1" / "header_pb2.py").is_file():
+if not (PKG_ROOT / "visio_schema" / "v1" / "wire" / "header_pb2.py").is_file():
     raise SystemExit(f"missing generated bindings under {PKG_ROOT} — run `make gen` first")
 
 try:
@@ -37,19 +37,19 @@ sys.path.insert(0, str(PKG_ROOT))
 # glob-discovered) so a missing file is caught here rather than passing
 # silently.
 VISIO_MODULES = [
-    "visio_schema.wire.v1.header_pb2",
-    "visio_schema.sensor.v1.imu_raw_pb2",
-    "visio_schema.sensor.v1.encoder_raw_pb2",
-    "visio_schema.sensor.v1.system_health_pb2",
-    "visio_schema.sensor.v1.audio_compressed_pb2",
-    "visio_schema.sensor.v1.button_pb2",
-    "visio_schema.calibration.v1.imu_pb2",
-    "visio_schema.ros.geometry_msgs.v1.quaternion_pb2",
-    "visio_schema.input.v1.quest_controller_state_pb2",
-    "visio_schema.geometry.v1.twist_pb2",
-    "visio_schema.control.v1.command_pb2",
-    "visio_schema.service.device_info.v1.device_info_pb2",
-    "visio_schema.service.heartbeat.v1.heartbeat_pb2",
+    "visio_schema.v1.wire.header_pb2",
+    "visio_schema.v1.sensor.imu_raw_pb2",
+    "visio_schema.v1.sensor.encoder_raw_pb2",
+    "visio_schema.v1.sensor.system_health_pb2",
+    "visio_schema.v1.sensor.audio_compressed_pb2",
+    "visio_schema.v1.sensor.button_pb2",
+    "visio_schema.v1.calibration.imu_pb2",
+    "visio_schema.v1.ros.geometry_msgs.quaternion_pb2",
+    "visio_schema.v1.input.quest_controller_state_pb2",
+    "visio_schema.v1.geometry.twist_pb2",
+    "visio_schema.v1.control.command_pb2",
+    "visio_schema.v1.service.device_info.device_info_pb2",
+    "visio_schema.v1.service.heartbeat.heartbeat_pb2",
 ]
 
 # A representative subset of foxglove.* modules we depend on. They ship

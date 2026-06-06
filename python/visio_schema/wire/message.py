@@ -1,6 +1,6 @@
 """Neutral in-memory Visio message — the wire Header fields + payload.
 
-This is the codec-level view of a message: the `visio_schema.wire.v1.Header`
+This is the codec-level view of a message: the `visio_schema.v1.wire.Header`
 fields (a per-link `stream_id`, a `seq` counter, and a `timestamp`) plus the
 inner payload bytes, with helpers to round-trip a Message through the core frame
 codec. It carries no bus/transport semantics — higher layers (e.g. visio-mq's
@@ -14,12 +14,12 @@ from dataclasses import dataclass, field
 from google.protobuf.timestamp_pb2 import Timestamp
 
 from visio_schema.wire.codec.frame import decode_frame, encode_frame
-from visio_schema.wire.v1.header_pb2 import Header
+from visio_schema.v1.wire.header_pb2 import Header
 
 
 @dataclass
 class Message:
-    """A wire message: `visio_schema.wire.v1.Header` fields + payload bytes."""
+    """A wire message: `visio_schema.v1.wire.Header` fields + payload bytes."""
 
     stream_id: int = 0                               # per-link stream label
     payload: bytes = b""
