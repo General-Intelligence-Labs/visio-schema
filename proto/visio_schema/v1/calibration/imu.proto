@@ -1,22 +1,17 @@
 // visio_schema/v1/calibration/imu.proto
 //
-// Per-IMU intrinsic calibration. Published as ordinary stream messages on
-// STREAM_IMU_CALIBRATION (typically at 1 Hz, like Foxglove's
-// foxglove.CameraCalibration on STREAM_CAMERA_CALIB) — recorders write
-// each message to MCAP like any sensor channel; Foxglove Studio renders
-// natively.
+// Per-IMU intrinsic calibration — the "info" half of an IMU's calibration,
+// published on /<dev>/imu/<i>/info (typically 1 Hz). Mirrors a kalibr
+// `kalibr_imu_chain.yaml` entry: bias/scale + noise densities / random walks +
+// update rate, plus the cam-IMU time offset that foxglove can't carry. The
+// IMU's spatial pose is NOT here — it rides on /<dev>/imu/<i>/extrinsics as a
+// foxglove.FrameTransform (child "imu<i>" anchored to parent "cam0").
 //
-// stream_index on the wire Header matches the data IMU's stream_index on
-// STREAM_IMU_RAW so the recorder can join (raw, calibration) at view time.
-//
-// Apply as: `corrected = scale * (raw - bias)`. `mounting_pose` locates
-// this IMU's frame in the device's reference frame.
+// Apply as: `corrected = scale * (raw - bias)`.
 
 syntax = "proto3";
 
 package visio_schema.v1.calibration;
-
-import "foxglove/Pose.proto";
 
 message ImuCalibration {
   // Accelerometer bias in m/s² (subtract from raw before scaling).
@@ -35,6 +30,24 @@ message ImuCalibration {
   double gyro_scale_x = 10;
   double gyro_scale_y = 11;
   double gyro_scale_z = 12;
-  // Static mounting transform (IMU frame → device reference frame).
-  foxglove.Pose mounting_pose = 13;
+
+  // 13 was `foxglove.Pose mounting_pose` — the IMU pose now rides on the
+  // /<dev>/imu/<i>/extrinsics topic (foxglove.FrameTransform, anchored to cam0).
+  reserved 13;
+  reserved "mounting_pose";
+
+  // ── Noise model (kalibr_imu_chain.yaml; consumed by OpenVINS / ORB-SLAM3) ──
+  double accel_noise_density = 14;  // m/s²/√Hz
+  double accel_random_walk   = 15;  // m/s³/√Hz
+  double gyro_noise_density   = 16;  // rad/s/√Hz
+  double gyro_random_walk     = 17;  // rad/s²/√Hz
+  double update_rate_hz       = 18;
+
+  // Optional full 3×3 scale-misalignment (row-major, length 9). Empty = use the
+  // per-axis scale above (identity misalignment). kalibr `Ta`/`Tw` equivalent.
+  repeated double accel_misalignment = 19;
+  repeated double gyro_misalignment  = 20;
+
+  // Cam-IMU time offset (kalibr `timeshift_cam_imu`): t_imu = t_cam0 + offset.
+  double time_offset_to_cam0_s = 21;
 }

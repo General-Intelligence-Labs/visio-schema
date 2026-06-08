@@ -28,6 +28,9 @@ foxglove.CompressedImage.format     max_size:8
 visio_schema.v1.sensor.ButtonEvent.button_id   max_size:32
 
 # ---- Control: command payload strings (bounded inline — small, fixed shape) -
+# target_device must be bounded (not the default callback) so on_command can read
+# it and honor end-to-end addressing when a hub relays Commands to multiple leaves.
+visio_schema.v1.control.Command.target_device         max_size:32
 visio_schema.v1.control.ConnectWifi.ssid              max_size:33
 visio_schema.v1.control.ConnectWifi.passphrase        max_size:64
 visio_schema.v1.control.SetStorage.endpoint_url       max_size:128
@@ -65,6 +68,21 @@ visio_schema.v1.control.WifiScanResult.security   type:FT_POINTER
 visio_schema.v1.control.RecordingsList.recordings type:FT_POINTER
 visio_schema.v1.control.RecordingEntry.name       type:FT_POINTER
 visio_schema.v1.control.RecordingEntry.last_error type:FT_POINTER
+
+# ---- Calibration: bound the foxglove camera/transform + ImuCalibration repeated
+#      fields so every SetCalibration artifact (and the published calibration) is a
+#      fully FT_STATIC struct — no malloc / no hand-written callbacks on the inbound
+#      Command decode path. Safe: these foxglove types are unused elsewhere on-device.
+foxglove.CameraCalibration.distortion_model   max_size:24
+foxglove.CameraCalibration.frame_id           max_size:16
+foxglove.CameraCalibration.D                   max_count:8
+foxglove.CameraCalibration.K                   max_count:9
+foxglove.CameraCalibration.R                   max_count:9
+foxglove.CameraCalibration.P                   max_count:12
+foxglove.FrameTransform.parent_frame_id       max_size:16
+foxglove.FrameTransform.child_frame_id        max_size:16
+visio_schema.v1.calibration.ImuCalibration.accel_misalignment   max_count:9
+visio_schema.v1.calibration.ImuCalibration.gyro_misalignment    max_count:9
 
 # ---- Geometry: short frame id ---------------------------------------------
 visio_schema.v1.geometry.Twist.frame_id   max_size:32

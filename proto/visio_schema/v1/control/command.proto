@@ -11,6 +11,10 @@ syntax = "proto3";
 
 package visio_schema.v1.control;
 
+import "foxglove/CameraCalibration.proto";
+import "foxglove/FrameTransform.proto";
+import "visio_schema/v1/calibration/imu.proto";
+
 message Command {
   // Intended recipient, by device name. A receiving peer MUST ignore
   // Commands whose target_device is neither empty (broadcast) nor its own
@@ -32,6 +36,7 @@ message Command {
     TestStorage    test_storage    = 17;
     ListRecordings list_recordings = 18;
     GetState       get_state       = 19;
+    SetCalibration set_calibration = 20;
   }
 }
 
@@ -105,4 +110,30 @@ message ListRecordings {
 // Pull the device's operational-state snapshot; the CommandResult carries
 // DeviceState. Replaces GET /info.
 message GetState {
+}
+
+// Persist one piece of sensor calibration (effective on next boot). The target
+// device is the enclosing Command.target_device (end-to-end, hub-forwarded), so
+// a host can address a specific relayed leaf by name. The artifact is routed by
+// (sensor_kind, sensor_index, which_artifact) to the matching topic + store:
+//   intrinsics  -> /<dev>/camera/<i>/intrinsics  (foxglove.CameraCalibration)
+//   extrinsics  -> /<dev>/camera/<i>/extrinsics or /<dev>/imu/<i>/extrinsics
+//                  (foxglove.FrameTransform, child posed in the cam0 frame)
+//   imu_info    -> /<dev>/imu/<i>/info           (ImuCalibration)
+// Answered by a CommandResult (ok + DeviceState), correlated by command_id.
+message SetCalibration {
+  enum SensorKind {
+    SENSOR_KIND_UNSPECIFIED = 0;
+    CAMERA = 1;
+    IMU = 2;
+  }
+  SensorKind sensor_kind = 1;   // which sensor family the artifact targets
+  uint32     sensor_index = 2;  // 0-based instance within that family
+
+  oneof artifact {
+    foxglove.CameraCalibration intrinsics = 11;  // CAMERA
+    foxglove.FrameTransform    extrinsics = 12;  // CAMERA (i>0) or IMU, rel. cam0
+    visio_schema.v1.calibration.ImuCalibration imu_info = 13;  // IMU
+    // 10 and 14 reserved for deferred gripper / magnetometer artifacts.
+  }
 }

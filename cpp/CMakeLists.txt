@@ -109,6 +109,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT CMAKE_CROSSCOMPILI
     tests/test_io.cc
     tests/test_framed_outbox.cc
     tests/test_golden_vectors.cc
+    tests/test_calibration_nanopb.cc
     tests/test_tcp_io.cc
     tests/test_backpressure.cc
     tests/test_serial_watchdog.cc
