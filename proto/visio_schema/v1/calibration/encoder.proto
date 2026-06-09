@@ -1,0 +1,25 @@
+// visio_schema/v1/calibration/encoder.proto
+//
+// Per-encoder gripper calibration — the "info" half of a gripper encoder's
+// calibration, published on /<dev>/encoder/<i>/info (typically 1 Hz). Maps a
+// raw magnetic-encoder angle to a normalized [0,1] gripper width / joint
+// position: the firmware computes `normalized = f(raw, raw_open, raw_closed,
+// range, invert)` on-device (circular distance with wrap-around) and publishes
+// it as foxglove.JointStates.
+//
+// raw_open / raw_closed / range are in encoder counts; their count space is
+// `encoder_counts` (the installed chip's resolution: AS5600 = 4096, MT6701 =
+// 16384), carried here so a remote reader can interpret the raw endpoints.
+
+syntax = "proto3";
+
+package visio_schema.v1.calibration;
+
+message EncoderCalibration {
+  uint32 raw_open    = 1;  // raw angle at the open / joint-zero endpoint
+  uint32 raw_closed  = 2;  // raw angle at the closed / joint-max endpoint
+  uint32 range       = 3;  // counts from open to closed (shorter circular path)
+  bool   invert      = 4;  // true if closing advances counter-clockwise
+  bool   calibrated  = 5;  // false = endpoints unset (firmware falls back to a safe default)
+  uint32 encoder_counts = 6;  // chip resolution (counts/rev) the raw_* values live in
+}

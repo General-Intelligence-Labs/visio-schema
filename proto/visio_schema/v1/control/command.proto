@@ -14,6 +14,7 @@ package visio_schema.v1.control;
 import "foxglove/CameraCalibration.proto";
 import "foxglove/FrameTransform.proto";
 import "visio_schema/v1/calibration/imu.proto";
+import "visio_schema/v1/calibration/encoder.proto";
 
 message Command {
   // Intended recipient, by device name. A receiving peer MUST ignore
@@ -120,12 +121,14 @@ message GetState {
 //   extrinsics  -> /<dev>/camera/<i>/extrinsics or /<dev>/imu/<i>/extrinsics
 //                  (foxglove.FrameTransform, child posed in the cam0 frame)
 //   imu_info    -> /<dev>/imu/<i>/info           (ImuCalibration)
+//   encoder_info-> /<dev>/encoder/<i>/info       (EncoderCalibration)
 // Answered by a CommandResult (ok + DeviceState), correlated by command_id.
 message SetCalibration {
   enum SensorKind {
     SENSOR_KIND_UNSPECIFIED = 0;
     CAMERA = 1;
     IMU = 2;
+    ENCODER = 3;
   }
   SensorKind sensor_kind = 1;   // which sensor family the artifact targets
   uint32     sensor_index = 2;  // 0-based instance within that family
@@ -134,6 +137,7 @@ message SetCalibration {
     foxglove.CameraCalibration intrinsics = 11;  // CAMERA
     foxglove.FrameTransform    extrinsics = 12;  // CAMERA (i>0) or IMU, rel. cam0
     visio_schema.v1.calibration.ImuCalibration imu_info = 13;  // IMU
-    // 10 and 14 reserved for deferred gripper / magnetometer artifacts.
+    visio_schema.v1.calibration.EncoderCalibration encoder_info = 14;  // ENCODER
+    // 10 reserved for a deferred magnetometer artifact.
   }
 }
