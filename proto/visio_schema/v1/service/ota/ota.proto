@@ -136,8 +136,19 @@ message OtaStatus {
 
   // Machine- then human-readable failure detail (empty unless FAILED), matching
   // CommandResult's error_code/error_message convention. Codes e.g.
-  // "bad_signature", "board_mismatch", "anti_rollback", "sha256_mismatch",
-  // "staging_write_failed", "no_space".
+  // "verify_failed", "sha256_mismatch", "stage_write_failed", "no_space".
   string error_code    = 6;
   string error_message = 7;
+
+  // ── A/B slot state (set on every status the device emits) ─────────────────
+  // The booted slot ("a"/"b") and the OTHER slot's recorded firmware version
+  // (empty when unknown/never flashed). When `revert_available`, pushing an
+  // OtaBegin whose fw_version equals `other_slot_version` performs an instant
+  // slot flip (no image transfer): the device re-arms the old slot and reboots
+  // — the user-triggered revert. `last_ota_reverted` reports that the previous
+  // update never boot-confirmed and U-Boot auto-rolled back to this slot.
+  string active_slot        = 8;
+  string other_slot_version = 9;
+  bool   revert_available   = 10;
+  bool   last_ota_reverted  = 11;
 }

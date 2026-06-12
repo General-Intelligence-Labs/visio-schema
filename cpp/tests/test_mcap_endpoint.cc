@@ -140,8 +140,8 @@ TEST(McapEndpoint, RotatesByBytes) {
     auto it = table.find(id);
     return it == table.end() ? nullptr : &it->second;
   };
-  const std::string p0 = TempPath("visio_mcap_test_rot_000.mcap");
-  const std::string p1 = TempPath("visio_mcap_test_rot_001.mcap");
+  const std::string p0 = TempPath("visio_mcap_test_rot_0000.mcap");
+  const std::string p1 = TempPath("visio_mcap_test_rot_0001.mcap");
   std::remove(p0.c_str());
   std::remove(p1.c_str());
   {

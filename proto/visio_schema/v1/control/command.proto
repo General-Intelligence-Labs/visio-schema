@@ -38,6 +38,7 @@ message Command {
     GetState       get_state       = 19;
     SetCalibration set_calibration = 20;
     SetTime        set_time        = 21;
+    SetRecordingMeta set_recording_meta = 22;
   }
 }
 
@@ -78,6 +79,25 @@ message Identify {
 // does not toggle the current session). Replaces POST /recording/auto_start.
 message SetAutoStart {
   bool auto_start = 1;
+}
+
+// Persist default recording metadata to a device-side sidecar
+// (/root/umi_embedded/recording_meta.json). Applied to EVERY new session until
+// changed — including auto-started boot recordings, which carry no app input.
+// Persisted; takes effect on the next recording or reboot (does NOT retag the
+// in-progress session). An explicit StartRecording.{task,location} overrides
+// these defaults for that one session. Answered by a CommandResult (ok +
+// DeviceState echoing the persisted values).
+message SetRecordingMeta {
+  string task     = 1;  // free-text capture task / label
+  string location = 2;  // human-readable place (user-entered)
+  string message  = 3;  // free-text note / annotation
+  // GPS + host time/zone, mirroring StartRecording — persisted so auto-started
+  // boot recordings (no app input) still carry them. All optional; 0 = unknown.
+  double latitude              = 4;  // GPS; 0 when unknown
+  double longitude             = 5;  // GPS; 0 when unknown
+  int64  client_unix_us        = 6;  // host reference timestamp (us since epoch)
+  sint32 client_utc_offset_min = 7;  // minutes east of UTC (+480 = UTC+8)
 }
 
 // Set the device's wall clock + UTC offset. RV1106 boards have no RTC and boot

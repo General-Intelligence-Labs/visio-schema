@@ -22,10 +22,13 @@ namespace {
   return opts;
 }
 
-// Insert "_NNN" before the file extension: run.mcap -> run_000.mcap.
+// Insert "_NNNN" before the file extension: run.mcap -> run_0000.mcap.
+// 4-digit zero-pad: parts stay lexicographically ordered through 9999. (At 3
+// digits, part 1000 -> "_1000" sorts before "_999", breaking the chronological
+// order the uploader/playback rely on once a session exceeds 999 parts.)
 std::string NumberedPart(const std::string& path, std::size_t index) {
-  char tag[8];
-  std::snprintf(tag, sizeof(tag), "_%03zu", index);
+  char tag[16];
+  std::snprintf(tag, sizeof(tag), "_%04zu", index);
   const std::size_t slash = path.find_last_of('/');
   const std::size_t dot = path.find_last_of('.');
   const bool has_ext = dot != std::string::npos &&

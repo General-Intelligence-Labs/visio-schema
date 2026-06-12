@@ -11,7 +11,7 @@
 // (Channel::schema), so Foxglove resolves the type from the embedded set.
 //
 // Rotation: pass max_bytes and/or max_duration_s to split into self-contained
-// numbered parts <stem>_000<ext>, <stem>_001<ext>, … max_bytes counts written
+// numbered parts <stem>_0000<ext>, <stem>_0001<ext>, … max_bytes counts written
 // payload bytes (approximate).
 //
 // Embeddable: the vendored header-only mcap writer is pulled into the .cc alone

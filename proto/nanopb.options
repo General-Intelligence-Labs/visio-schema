@@ -51,6 +51,12 @@ visio_schema.v1.control.TestStorage.prefix            max_size:128
 visio_schema.v1.control.StartRecording.task           max_size:64
 visio_schema.v1.control.StartRecording.location       max_size:128
 
+# SetRecordingMeta: persisted recording-metadata defaults (same bounds as
+# StartRecording; message is a longer free-text note).
+visio_schema.v1.control.SetRecordingMeta.task         max_size:64
+visio_schema.v1.control.SetRecordingMeta.location     max_size:128
+visio_schema.v1.control.SetRecordingMeta.message      max_size:256
+
 # ---- Control: CommandResult ack + DeviceState snapshot (bounded inline so the
 #      ack is a static struct; the two list payloads below are FT_POINTER) -----
 visio_schema.v1.control.CommandResult.error_code               max_size:32
@@ -112,6 +118,8 @@ visio_schema.v1.service.ota.OtaAbort.reason            max_size:64
 visio_schema.v1.service.ota.OtaStatus.device           max_size:32
 visio_schema.v1.service.ota.OtaStatus.error_code       max_size:32
 visio_schema.v1.service.ota.OtaStatus.error_message    max_size:128
+visio_schema.v1.service.ota.OtaStatus.active_slot         max_size:4
+visio_schema.v1.service.ota.OtaStatus.other_slot_version  max_size:32
 
 # ---- DeviceInfo discovery: a periodic announce, built fresh per emit, that
 #      carries KB-scale serialized FileDescriptorSets. Everything variable-length
