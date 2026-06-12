@@ -60,6 +60,7 @@ message DeviceState {
   bool   recording_auto_start    = 1;
   string recording_session_name  = 2;  // empty when not recording
   uint64 recording_started_at_us = 3;  // 0 when not recording
+  string recording_task          = 19; // active capture task; empty otherwise
 
   // ── disk ──
   sint32 disk_free_pct = 4;   // 0..100, or -1 = unknown

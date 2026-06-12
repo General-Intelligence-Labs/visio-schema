@@ -46,11 +46,17 @@ visio_schema.v1.control.TestStorage.access_key_id     max_size:32
 visio_schema.v1.control.TestStorage.secret_access_key max_size:64
 visio_schema.v1.control.TestStorage.prefix            max_size:128
 
+# StartRecording capture metadata: bounded so they decode into the static
+# struct (session_name stays the nanopb default callback — firmware ignores it).
+visio_schema.v1.control.StartRecording.task           max_size:64
+visio_schema.v1.control.StartRecording.location       max_size:128
+
 # ---- Control: CommandResult ack + DeviceState snapshot (bounded inline so the
 #      ack is a static struct; the two list payloads below are FT_POINTER) -----
 visio_schema.v1.control.CommandResult.error_code               max_size:32
 visio_schema.v1.control.CommandResult.error_message            max_size:128
 visio_schema.v1.control.DeviceState.recording_session_name     max_size:64
+visio_schema.v1.control.DeviceState.recording_task             max_size:64
 visio_schema.v1.control.DeviceState.wifi_ssid                  max_size:33
 visio_schema.v1.control.DeviceState.wifi_ip                    max_size:46
 visio_schema.v1.control.DeviceState.wifi_last_error            max_size:128
@@ -86,6 +92,26 @@ visio_schema.v1.calibration.ImuCalibration.gyro_misalignment    max_count:9
 
 # ---- Geometry: short frame id ---------------------------------------------
 visio_schema.v1.geometry.Twist.frame_id   max_size:32
+
+# ---- OTA: the host->device control message. OtaBegin is the only body the
+#      normal-mode firmware decodes, so bound everything in it to keep the whole
+#      OtaMessage a fully FT_STATIC struct (no malloc on the inbound decode) —
+#      same approach as Command/SetCalibration. The bulk OtaChunk.data is the one
+#      exception: FT_POINTER so the (recovery-side) receiver allocates exactly one
+#      chunk and frees it, never a fixed 64 KB reserve in the union.
+visio_schema.v1.service.ota.OtaMessage.target_device   max_size:32
+visio_schema.v1.service.ota.OtaBegin.fw_version        max_size:32
+visio_schema.v1.service.ota.OtaBegin.board             max_size:32
+visio_schema.v1.service.ota.OtaBegin.sha256            max_size:32
+visio_schema.v1.service.ota.OtaBegin.signature         max_size:64
+visio_schema.v1.service.ota.OtaBegin.partitions        max_count:8
+visio_schema.v1.service.ota.OtaPartition.name          max_size:24
+visio_schema.v1.service.ota.OtaPartition.sha256        max_size:32
+visio_schema.v1.service.ota.OtaChunk.data              type:FT_POINTER
+visio_schema.v1.service.ota.OtaAbort.reason            max_size:64
+visio_schema.v1.service.ota.OtaStatus.device           max_size:32
+visio_schema.v1.service.ota.OtaStatus.error_code       max_size:32
+visio_schema.v1.service.ota.OtaStatus.error_message    max_size:128
 
 # ---- DeviceInfo discovery: a periodic announce, built fresh per emit, that
 #      carries KB-scale serialized FileDescriptorSets. Everything variable-length

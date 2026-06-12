@@ -37,6 +37,7 @@ message Command {
     ListRecordings list_recordings = 18;
     GetState       get_state       = 19;
     SetCalibration set_calibration = 20;
+    SetTime        set_time        = 21;
   }
 }
 
@@ -44,6 +45,17 @@ message Command {
 message StartRecording {
   // Optional session name. If empty, the target picks one.
   string session_name = 1;
+
+  // ── capture metadata (host-supplied; persisted into the session's
+  // session.json sidecar). All optional; empty/zero means "unknown".
+  string task          = 2;  // free-text capture task / label
+  string location      = 3;  // human-readable place (user-entered)
+  double latitude      = 4;  // GPS; 0 when unknown
+  double longitude     = 5;  // GPS; 0 when unknown
+  int64  client_unix_us = 6; // host capture timestamp (us since Unix epoch, UTC)
+  sint32 client_utc_offset_min = 7;  // minutes east of UTC (+480 = UTC+8); for
+                                     // on-device local time = utc + offset
+  uint32 fps           = 8;  // capture frame rate; 0 = use the device's config
 }
 
 // End the current recording session on the target.
@@ -66,6 +78,15 @@ message Identify {
 // does not toggle the current session). Replaces POST /recording/auto_start.
 message SetAutoStart {
   bool auto_start = 1;
+}
+
+// Set the device's wall clock + UTC offset. RV1106 boards have no RTC and boot
+// to 1970-01-01, so a host pushes the real time (typically right after it
+// connects, before recording) so session timestamps are correct. Answered by a
+// CommandResult (ok + DeviceState).
+message SetTime {
+  int64  unix_us        = 1;  // wall-clock time, us since Unix epoch (UTC)
+  sint32 utc_offset_min = 2;  // minutes east of UTC (+480 = UTC+8)
 }
 
 // Provision Wi-Fi STA credentials and (re)associate. Replaces POST /wifi.

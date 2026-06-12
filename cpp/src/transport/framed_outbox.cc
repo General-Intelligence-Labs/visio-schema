@@ -52,10 +52,21 @@ bool FramedOutbox::Drain(const WriteFn& wr) {
         policy_.max_age.count() > 0) {
       const std::int64_t now_us = now_();
       const std::int64_t max_age_us = policy_.max_age.count();
-      while (!queue_.empty() &&
-             (now_us - queue_.front().enqueue_us) > max_age_us) {
-        queue_bytes_ -= queue_.front().data.size();
-        queue_.pop_front();
+      // Evict stale frames, but keep small control frames (< protect_below_bytes)
+      // even when stale — on a leg flooded with bulk video they age out behind it,
+      // yet the host still needs them (command results, OTA status, DeviceInfo).
+      // With protect_below_bytes==0 this is the original front-run shed: frames
+      // are FIFO/time-ordered, so the stale run is contiguous at the front.
+      for (auto it = queue_.begin(); it != queue_.end();) {
+        if ((now_us - it->enqueue_us) <= max_age_us) {
+          ++it;
+        } else if (policy_.protect_below_bytes > 0 &&
+                   it->data.size() < policy_.protect_below_bytes) {
+          ++it;  // keep this stale-but-small control frame
+        } else {
+          queue_bytes_ -= it->data.size();
+          it = queue_.erase(it);
+        }
       }
     }
     if (queue_.empty()) return true;
