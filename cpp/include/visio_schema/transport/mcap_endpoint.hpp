@@ -17,6 +17,8 @@
 #include <string_view>
 #include <thread>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include "visio_schema/mcap/writer.hpp"
 #include "visio_schema/routing/channel.hpp"   // Channel
@@ -51,6 +53,11 @@ class McapEndpoint : public Endpoint {
   void Start(InboundFn on_inbound, ClosedFn on_closed) override;  // spawn writer thread
   void Send(const Message& msg) override;                          // resolve + enqueue
   void Stop() override;                                             // stop+join, finalize
+
+  // Quasi-static messages written at the head of every part (see
+  // McapWriter::SetPreamble). Call before Start() — after the writer thread
+  // exists the inner writer is its property and must not be touched here.
+  void SetPreamble(std::vector<std::pair<Channel, Message>> preamble);
 
   std::size_t pending_frames() const;
   std::size_t pending_bytes() const;

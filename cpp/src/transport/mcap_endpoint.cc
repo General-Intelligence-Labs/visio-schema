@@ -25,6 +25,11 @@ McapEndpoint::McapEndpoint(std::string_view path, StreamResolver resolve,
 
 McapEndpoint::~McapEndpoint() { Stop(); }
 
+void McapEndpoint::SetPreamble(
+    std::vector<std::pair<Channel, Message>> preamble) {
+  writer_->SetPreamble(std::move(preamble));
+}
+
 void McapEndpoint::Start(InboundFn /*on_inbound*/, ClosedFn /*on_closed*/) {
   {
     std::lock_guard<std::mutex> lk(mu_);

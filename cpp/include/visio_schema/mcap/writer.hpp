@@ -26,6 +26,8 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include "visio_schema/routing/channel.hpp"   // Channel
 #include "visio_schema/wire/message.hpp"
@@ -54,6 +56,15 @@ class McapWriter {
   // Record one message against `channel` (lazily registering its schema +
   // channel records — declare-before-write).
   void Write(const Channel& channel, const Message& msg);
+
+  // Quasi-static messages (e.g. calibration) written once at the head of EVERY
+  // part — the current one immediately, each rotated part on open — so any
+  // single part is self-describing without the messages recurring in the
+  // stream. Call once, before the first Write(). Preamble bytes never trigger
+  // rotation, and a part holding only its preamble still counts as empty for
+  // the never-roll-an-empty-part rule.
+  void SetPreamble(std::vector<std::pair<Channel, Message>> preamble);
+
   void Close();
 
  private:
@@ -61,6 +72,7 @@ class McapWriter {
   void OpenPart();          // throws on open failure
   bool ShouldRoll() const;
   void Roll();
+  void WritePreamble();     // replay preamble_ into the just-opened part
 
   const std::string base_path_;
   const std::uint64_t max_bytes_;
@@ -72,6 +84,10 @@ class McapWriter {
   std::size_t part_index_ = 0;
   std::uint64_t part_bytes_ = 0;
   std::chrono::steady_clock::time_point part_start_;
+
+  std::vector<std::pair<Channel, Message>> preamble_;
+  bool in_preamble_ = false;             // suppress rotation mid-preamble
+  std::uint64_t part_preamble_bytes_ = 0;  // preamble's share of part_bytes_
 
   // Caches (reset per part): schema id per schema_name, channel id per Channel id.
   std::unordered_map<std::string, std::uint16_t> schema_ids_;

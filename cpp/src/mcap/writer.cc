@@ -61,6 +61,7 @@ void McapWriter::OpenPart() {
   schema_ids_.clear();
   channel_ids_.clear();
   part_bytes_ = 0;
+  part_preamble_bytes_ = 0;
   part_start_ = std::chrono::steady_clock::now();
   writer_ = std::make_unique<::mcap::McapWriter>();
   const std::string p = PartPath();
@@ -69,11 +70,28 @@ void McapWriter::OpenPart() {
     throw std::runtime_error("McapWriter: cannot open " + p + ": " +
                              status.message);
   }
+  WritePreamble();
+}
+
+void McapWriter::SetPreamble(std::vector<std::pair<Channel, Message>> preamble) {
+  preamble_ = std::move(preamble);
+  // The current part gets its copy now — but only while still empty (set after
+  // data has been written, the preamble starts with the next part).
+  if (part_bytes_ == 0) WritePreamble();
+}
+
+void McapWriter::WritePreamble() {
+  if (preamble_.empty()) return;
+  in_preamble_ = true;
+  for (const auto& [channel, msg] : preamble_) Write(channel, msg);
+  in_preamble_ = false;
+  part_preamble_bytes_ = part_bytes_;
 }
 
 bool McapWriter::ShouldRoll() const {
-  // Never roll an empty part (a stale duration would spin out empty files).
-  if (part_bytes_ == 0) return false;
+  // Never roll an empty part (a stale duration would spin out empty files); a
+  // part holding only its preamble is empty for this purpose.
+  if (part_bytes_ <= part_preamble_bytes_) return false;
   if (max_bytes_ > 0 && part_bytes_ >= max_bytes_) return true;
   if (max_duration_ns_ > 0) {
     const auto elapsed = std::chrono::steady_clock::now() - part_start_;
@@ -93,7 +111,9 @@ void McapWriter::Roll() {
 void McapWriter::Write(const Channel& channel, const Message& msg) {
   if (closed_) return;
 
-  if (rotating_ && ShouldRoll()) Roll();
+  // A preamble write must never roll: Roll() replays the preamble via
+  // OpenPart(), so rolling mid-preamble would recurse.
+  if (rotating_ && !in_preamble_ && ShouldRoll()) Roll();
 
   auto sit = schema_ids_.find(channel.schema_name);
   if (sit == schema_ids_.end()) {

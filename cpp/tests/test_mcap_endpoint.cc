@@ -10,6 +10,8 @@
 
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 
@@ -67,6 +69,37 @@ TEST(McapEndpoint, RecordsResolvedChannel) {
   }
   ASSERT_TRUE(fs::exists(path));
   EXPECT_GT(fs::file_size(path), 0u);
+  std::remove(path.c_str());
+}
+
+TEST(McapEndpoint, PreambleRecordedBeforeStreamedFrames) {
+  const std::string path = TempPath("visio_mcap_test_preamble.mcap");
+  std::remove(path.c_str());
+  std::unordered_map<std::uint32_t, Channel> table{
+      {kFirstDynamic, MakeChannel(kFirstDynamic, "/dev/imu/0/raw")}};
+  auto resolve = [&](std::uint32_t id) -> const Channel* {
+    auto it = table.find(id);
+    return it == table.end() ? nullptr : &it->second;
+  };
+  const Channel calib_ch =
+      MakeChannel(kFirstDynamic + 1, "/dev/camera/0/intrinsics");
+  {
+    McapEndpoint ep(path, resolve);
+    // Preamble channels bypass the resolver (handed in pre-resolved) — a
+    // calibration channel needs no entry in `table`.
+    ep.SetPreamble({{calib_ch, Data(kFirstDynamic + 1, "CALIB-PREAMBLE")}});
+    ep.Start(nullptr, nullptr);
+    ep.Send(Data(kFirstDynamic, "frame-0"));
+    ep.Stop();
+  }
+  ASSERT_TRUE(fs::exists(path));
+  std::ifstream in(path, std::ios::binary);
+  std::ostringstream ss;
+  ss << in.rdbuf();
+  const std::string bytes = ss.str();  // Compression::None — verbatim payloads
+  EXPECT_NE(bytes.find("CALIB-PREAMBLE"), std::string::npos);
+  EXPECT_NE(bytes.find("frame-0"), std::string::npos);
+  EXPECT_LT(bytes.find("CALIB-PREAMBLE"), bytes.find("frame-0"));
   std::remove(path.c_str());
 }
 
