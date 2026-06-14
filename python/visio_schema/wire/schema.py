@@ -68,20 +68,50 @@ _load_payload_modules()
 
 
 def message_class(proto_type: str) -> type[_ProtoMessage]:
-    """Return the generated protobuf message class for a full type name."""
+    """Resolve a protobuf type name to its generated message class.
+
+    Decode a payload whose type you learned at runtime (a `Channel.schema_name`)
+    without importing the generated module yourself.
+
+    Args:
+        proto_type: The full protobuf type name, e.g.
+            ``"visio_schema.v1.sensor.ImuRaw"``.
+
+    Returns:
+        The generated message class — instantiate it and ``ParseFromString`` the
+        payload.
+
+    Raises:
+        KeyError: If `proto_type` is not a known generated type.
+
+    Example:
+        payload = message_class(channel.schema_name)()
+        payload.ParseFromString(msg.payload)
+    """
     return symbol_database.Default().GetSymbol(proto_type)
 
 
 @lru_cache(maxsize=None)
 def file_descriptor_set(proto_type: str) -> bytes:
-    """Serialized ``FileDescriptorSet`` for ``proto_type`` and its transitive
-    dependencies — the bytes an MCAP Schema record or a Foxglove protobuf
-    channel needs to self-describe the payload (``Channel.schema``). Files are
-    emitted dependencies-first.
+    """Serialized ``FileDescriptorSet`` for a type and its transitive dependencies.
 
-    Cached because the descriptor pool is immutable for the process lifetime and
-    walking + serializing transitive deps is the dominant cost on the announce
-    path that ships descriptors for every declared channel.
+    These are the bytes a `Channel`'s `schema` carries so an MCAP Schema record or a
+    Foxglove protobuf channel can self-describe the payload (files emitted
+    dependencies-first). Most users get this via `make_channel`, which fills it in;
+    reach for it directly only when building a `Channel` by hand.
+
+    Args:
+        proto_type: The full protobuf type name, e.g.
+            ``"visio_schema.v1.sensor.ImuRaw"``.
+
+    Returns:
+        The serialized ``google.protobuf.FileDescriptorSet`` bytes.
+
+    Example:
+        fds = file_descriptor_set("visio_schema.v1.sensor.ImuRaw")
+
+    Cached: the descriptor pool is immutable for the process, and walking +
+    serializing transitive deps dominates the announce path.
     """
     descriptor = symbol_database.Default().pool.FindMessageTypeByName(proto_type)
     seen: dict[str, FileDescriptor] = {}

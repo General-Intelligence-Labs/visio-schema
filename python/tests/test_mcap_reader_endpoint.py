@@ -15,11 +15,10 @@ import pytest
 pytest.importorskip("mcap", reason="mcap library not installed")
 
 from visio_schema.mcap import McapReaderEndpoint, McapWriter
-from visio_schema.routing import FIRST_DYNAMIC
-from visio_schema.v1.service.device_info.device_info_pb2 import Channel, DeviceInfo
+from visio_schema.routing import FIRST_DYNAMIC, Channel, make_channel
+from visio_schema.v1.service.device_info.device_info_pb2 import DeviceInfo
 from visio_schema.wire.control import DEVICE_INFO
 from visio_schema.wire.message import Message
-from visio_schema.wire.schema import file_descriptor_set
 
 _IMU = "visio_schema.v1.sensor.ImuRaw"
 _TOPICS = ("/dev/imus/0/raw", "/dev/imus/1/raw")
@@ -27,9 +26,7 @@ _N = 4  # messages per channel
 
 
 def _channel(cid: int, topic: str) -> Channel:
-    return Channel(id=cid, topic=topic, encoding="protobuf",
-                   schema_name=_IMU, schema=file_descriptor_set(_IMU),
-                   schema_encoding="protobuf")
+    return make_channel(topic, _IMU, stream_id=cid)
 
 
 def _write_recording(path, *, span_ns: int) -> int:
@@ -43,7 +40,7 @@ def _write_recording(path, *, span_ns: int) -> int:
             for ci, ch in enumerate(chans):
                 m = Message(stream_id=ch.id, payload=f"{ci}-{i}".encode(), seq=i)
                 m.timestamp.FromNanoseconds(ts)
-                w.write(ch, m)
+                w.write(m, ch)
     return _N * len(_TOPICS)
 
 

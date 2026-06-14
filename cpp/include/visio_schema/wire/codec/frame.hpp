@@ -1,5 +1,5 @@
 // Core wire frame: HEADER_LEN(u8) | header_pb | payload | CRC16(u16_le).
-// Per visio-schema/docs/framing.md §1.
+// Per visio-schema/docs/protocol/framing.md §1.
 #pragma once
 
 #include <cstdint>

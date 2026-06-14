@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-"""Display / record live Visio serial data: Foxglove, Rerun, and/or MCAP.
+"""Display / record live Visio data: Foxglove, Rerun, and/or MCAP.
 
-Reads Visio messages from a **live serial port** (COBS-delimited core frames,
-framing.md §3.2) **or replays a recorded MCAP file**, and fans them out to any
-combination of a **live Foxglove Studio** WebSocket server, a **live Rerun**
-viewer, and an **MCAP recording**. Depends only on the `visio-schema` package
-plus a few thin libraries (see requirements.txt).
+Reads Visio messages from a **live serial port** or a **live TCP connection**
+(both COBS-delimited core frames, framing.md §3.2) **or replays a recorded MCAP
+file**, and fans them out to any combination of a **live Foxglove Studio**
+WebSocket server, a **live Rerun** viewer, and an **MCAP recording**. Depends
+only on the `visio-schema` package plus a few thin libraries (see
+requirements.txt).
 
     # live serial -> Rerun (spawns the viewer; auto-lays-out views)
     python visio_display.py --serial /dev/ttyACM0 --rerun
+
+    # live TCP (the device's preview listener, default port 9000) -> Rerun
+    python visio_display.py --tcp GILABS-1234.local --rerun
 
     # replay a recorded MCAP file into Rerun
     python visio_display.py --mcap-in run.mcap --rerun
@@ -16,17 +20,17 @@ plus a few thin libraries (see requirements.txt).
     # live serial -> Foxglove Studio (prints a URL to open)
     python visio_display.py --serial /dev/ttyACM0 --foxglove
 
-    # live serial -> record an MCAP (and watch live at the same time)
-    python visio_display.py --serial /dev/ttyACM0 --out run.mcap --rerun
+    # live TCP -> record an MCAP (and watch live at the same time)
+    python visio_display.py --tcp 10.0.0.7:9000 --out run.mcap --rerun
 
-The source is exactly one of `--serial` / `--mcap-in`. MCAP-file -> Foxglove is
-not supported (open the file directly in Foxglove Studio, which seeks/scrubs);
-the script says so and ignores `--foxglove` for a file source.
+The source is exactly one of `--serial` / `--tcp` / `--mcap-in`. MCAP-file ->
+Foxglove is not supported (open the file directly in Foxglove Studio, which
+seeks/scrubs); the script says so and ignores `--foxglove` for a file source.
 
 `--foxglove` starts a WebSocket *data source* server (not itself a viewer) and
 prints a URL; open it in Foxglove Studio, or in Studio choose
 Open connection → Foxglove WebSocket → ws://localhost:8765. A starter layout is
-in `visio_layout.json` (Studio ▸ Layouts ▸ Import from file).
+in `ego_layout.json` (Studio ▸ Layouts ▸ Import from file).
 
 `--rerun` spawns the Rerun viewer and drives an explicit layout (camera views,
 a 3D IMU-orientation scene, IMU time-series). The Rerun rendering is a port of
@@ -61,17 +65,23 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from google.protobuf.timestamp_pb2 import Timestamp
+# Stable public API — imported from the package root.
+from visio_schema import (
+    Channel,
+    ChannelRegistry,
+    McapWriter,
+    Message,
+    make_channel,
+    read_mcap,
+)
 from visio_schema.foxglove.CompressedVideo_pb2 import CompressedVideo
 from visio_schema.foxglove.FrameTransform_pb2 import FrameTransform
-from visio_schema.mcap import McapWriter, read_mcap
 from visio_schema.v1.ros.geometry_msgs.quaternion_pb2 import Quaternion
-from visio_schema.routing import ChannelRegistry
 from visio_schema.v1.sensor.imu_raw_pb2 import ImuRaw
 from visio_schema.v1.sensor.system_health_pb2 import SystemHealth
-from visio_schema.v1.service.device_info.device_info_pb2 import Channel
+
+# Low-level fd helpers (advanced/internal) — used to feed messages into resolved() as a generator.
 from visio_schema.transport import close_fd, extract_frames, read_some, set_nonblocking
-from visio_schema.wire.message import Message
-from visio_schema.wire.schema import file_descriptor_set
 
 # Payload schema names dispatched on (== the protobuf full names on the wire).
 _QUAT_SCHEMA = "visio_schema.v1.ros.geometry_msgs.Quaternion"
@@ -79,10 +89,13 @@ _VIDEO_SCHEMA = "foxglove.CompressedVideo"
 _IMU_RAW_SCHEMA = "visio_schema.v1.sensor.ImuRaw"
 _HEALTH_SCHEMA = "visio_schema.v1.sensor.SystemHealth"
 # Starter Foxglove layout shipped beside this script (panels mirror the Rerun view).
-_LAYOUT_PATH = Path(__file__).resolve().parent / "visio_layout.json"
+_LAYOUT_PATH = Path(__file__).resolve().parent / "ego_layout.json"
 # Synthetic stream id for the derived /tf channel — outside the wire id space so
 # it can't collide with an announced stream.
 _TF_STREAM_ID = 0x7F000001
+# The device's live-preview TCP listener port — matches the `_umi-protocol._tcp`
+# mDNS service and `port=9000` in the ego/glove .conf. Used when --tcp omits one.
+_DEFAULT_TCP_PORT = 9000
 
 # Set by SIGINT/SIGTERM so the read loop exits and the `finally` finalizes the
 # MCAP. Handling SIGTERM (not just Ctrl-C) matters when this runs under a
@@ -102,11 +115,8 @@ class TfDeriver:
     message rides the same ``sink.write(msg, ch)`` path as everything else."""
 
     def __init__(self) -> None:
-        self._channel = Channel(
-            id=_TF_STREAM_ID, topic="/tf", encoding="protobuf",
-            schema_name="foxglove.FrameTransform",
-            schema=file_descriptor_set("foxglove.FrameTransform"),
-            schema_encoding="protobuf",
+        self._channel = make_channel(
+            "/tf", "foxglove.FrameTransform", stream_id=_TF_STREAM_ID
         )
 
     def derive(self, msg: Message, ch: Channel) -> tuple[Message, Channel] | None:
@@ -128,21 +138,15 @@ class TfDeriver:
 # --------------------------------------------------------------------------- #
 # Source                                                                       #
 # --------------------------------------------------------------------------- #
-def read_serial(port: str, baud: int) -> Iterator[Message]:
-    """Yield Messages from a live serial port using the schema transport's fd
-    helpers: read the configured tty fd with ``read_some`` under a selector and
-    de-frame with ``extract_frames`` — the same COBS framing the bus and tests
-    use, but inline (this tool is deliberately one read loop, no bus, no threads;
-    the active-object SerialEndpoint owns a thread, which we don't need here). The
-    0.2 s selector timeout bounds shutdown latency: an idle link re-checks
-    ``_STOP`` at least that often."""
-    import serial  # pyserial: opens + configures the tty (baud, raw)
-
-    ser = serial.Serial(port, baud)
-    # dup the configured tty so we own + close our fd independently of pyserial;
-    # termios settings live on the tty, so they persist on the dup after close().
-    fd = os.dup(ser.fileno())
-    ser.close()
+def _read_fd_frames(fd: int) -> Iterator[Message]:
+    """Drive a non-blocking fd through the COBS de-framer until EOF or ``_STOP``,
+    yielding decoded Messages. The byte path shared by the serial and TCP sources
+    (they differ only in how the fd is opened): read with ``read_some`` under a
+    selector and de-frame with ``extract_frames`` — the same COBS framing the bus
+    and tests use, but inline (this tool is deliberately one read loop, no bus, no
+    threads; the active-object endpoints own a thread, which we don't need here).
+    The 0.2 s selector timeout bounds shutdown latency: an idle link re-checks
+    ``_STOP`` at least that often. Owns ``fd`` — closes it on exit."""
     set_nonblocking(fd)
     sel = selectors.DefaultSelector()
     sel.register(fd, selectors.EVENT_READ)
@@ -161,11 +165,58 @@ def read_serial(port: str, baud: int) -> Iterator[Message]:
         close_fd(fd)
 
 
+def read_serial(port: str, baud: int) -> Iterator[Message]:
+    """Yield Messages from a live serial port. pyserial opens + configures the tty
+    (baud, raw); we then dup its fd so we own + close it independently of pyserial
+    (termios settings live on the tty, so they persist on the dup after
+    ``ser.close()``) and drive it through the shared :func:`_read_fd_frames`."""
+    import serial  # pyserial: opens + configures the tty (baud, raw)
+
+    ser = serial.Serial(port, baud)
+    fd = os.dup(ser.fileno())
+    ser.close()
+    yield from _read_fd_frames(fd)
+
+
+def read_tcp(host: str, port: int) -> Iterator[Message]:
+    """Yield Messages from a live TCP connection to a device's preview listener
+    (``host:port``). The device runs a ``TcpAcceptor`` (transport/tcp.hpp) that
+    speaks the same COBS-delimited core frames as the serial link, so the read
+    path is identical — only the fd source differs. ``TCP_NODELAY`` +
+    ``SO_KEEPALIVE`` mirror the C++ ``DialTcpFd`` dialer so small frames aren't
+    Nagle-batched and a silently-dropped peer is eventually detected. ``detach()``
+    hands the connected fd to the shared :func:`_read_fd_frames`, which owns it."""
+    import socket
+
+    sock = socket.create_connection((host, port), timeout=5.0)
+    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    yield from _read_fd_frames(sock.detach())
+
+
 def read_serial_resolved(port: str, baud: int) -> Iterator[tuple[Message, Channel]]:
     """Live serial source as resolved (Message, Channel) pairs: a
     :class:`ChannelRegistry` learns DeviceInfo announces and resolves each data
     frame (drop-until-mapped) — the same routing the bus uses."""
     yield from ChannelRegistry().resolved(read_serial(port, baud))
+
+
+def read_tcp_resolved(host: str, port: int) -> Iterator[tuple[Message, Channel]]:
+    """Live TCP source as resolved (Message, Channel) pairs. DeviceInfo announces
+    are end-to-end forwarded over the bus's TCP leg too, so the same
+    :class:`ChannelRegistry` resolution as serial applies."""
+    yield from ChannelRegistry().resolved(read_tcp(host, port))
+
+
+def _parse_tcp(target: str) -> tuple[str, int]:
+    """Parse a ``--tcp HOST[:PORT]`` target into ``(host, port)``; the port
+    defaults to :data:`_DEFAULT_TCP_PORT` (the device's preview listener). IPv4
+    addresses and (mDNS) hostnames only — no IPv6 literals, matching the rest of
+    the stack."""
+    host, sep, port = target.rpartition(":")
+    if not sep:
+        return target, _DEFAULT_TCP_PORT
+    return host, int(port)
 
 
 def _replay(path: str) -> Iterator[tuple[Message, Channel]]:
@@ -401,6 +452,9 @@ def main(argv: list[str] | None = None) -> int:
     src = p.add_mutually_exclusive_group(required=True)
     src.add_argument("--serial", metavar="PORT",
                      help="live serial port to read from (e.g. /dev/ttyACM0)")
+    src.add_argument("--tcp", metavar="HOST[:PORT]",
+                     help="live TCP connection to a device's preview listener "
+                          f"(port defaults to {_DEFAULT_TCP_PORT})")
     src.add_argument("--mcap-in", metavar="IN.mcap",
                      help="replay a recorded MCAP file (Rerun/MCAP sinks only)")
     p.add_argument("--baud", type=int, default=921600, help="serial baud (default 921600)")
@@ -439,8 +493,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.rerun:
         sinks.append(RerunSink(memory_limit=args.rerun_memory))
 
-    source = _replay(args.mcap_in) if args.mcap_in \
-        else read_serial_resolved(args.serial, args.baud)
+    if args.mcap_in:
+        source = _replay(args.mcap_in)
+    elif args.tcp:
+        host, tcp_port = _parse_tcp(args.tcp)
+        source = read_tcp_resolved(host, tcp_port)
+    else:
+        source = read_serial_resolved(args.serial, args.baud)
     # The /tf transform exists so Foxglove's 3D panel can render IMU orientation;
     # Rerun renders it directly (rr.Transform3D), so only derive it when a
     # Foxglove or MCAP sink will use it — keeps the rerun-only path lean.
@@ -449,7 +508,7 @@ def main(argv: list[str] | None = None) -> int:
 
     def _fan_out(msg: Message, ch: Channel) -> None:
         if recorder is not None:
-            recorder.write(ch, msg)           # McapWriter is write(channel, msg)
+            recorder.write(msg, ch)
         for sink in sinks:
             sink.write(msg, ch)
 

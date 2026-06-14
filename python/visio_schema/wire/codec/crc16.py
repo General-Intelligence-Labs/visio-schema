@@ -1,4 +1,4 @@
-"""CRC-16/CCITT-FALSE per visio-schema/docs/framing.md §4.
+"""CRC-16/CCITT-FALSE per visio-schema/docs/protocol/framing.md §4.
 
 Polynomial 0x1021, initial value 0xFFFF, no reflection, no XOR-out.
 Check value: crc16(b"123456789") == 0x29B1.

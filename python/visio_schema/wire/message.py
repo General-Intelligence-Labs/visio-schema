@@ -19,7 +19,26 @@ from visio_schema.v1.wire.header_pb2 import Header
 
 @dataclass
 class Message:
-    """A wire message: `visio_schema.v1.wire.Header` fields + payload bytes."""
+    """One Visio wire message: the header fields plus the payload bytes.
+
+    The codec-level view of a message — what `read_serial` / `read_mcap` yield and
+    what `Endpoint.send` / `McapWriter.write` accept. The payload is the
+    already-serialized protobuf for the stream's type; decode it with
+    ``message_class(channel.schema_name)``.
+
+    Attributes:
+        stream_id: The per-link stream this message belongs to — a control id (e.g.
+            `COMMAND`), or a data id that `ChannelRegistry` resolves to a `Channel`.
+        payload: The serialized protobuf payload bytes.
+        seq: Per-stream sequence counter (uint32).
+        timestamp: Capture/log time, a ``google.protobuf.Timestamp``.
+
+    Example:
+        msg = Message(stream_id=16, payload=imu.SerializeToString())
+        # decode a received payload:
+        imu = message_class("visio_schema.v1.sensor.ImuRaw")()
+        imu.ParseFromString(msg.payload)
+    """
 
     stream_id: int = 0                               # per-link stream label
     payload: bytes = b""

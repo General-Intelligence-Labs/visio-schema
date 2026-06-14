@@ -1,12 +1,12 @@
-"""Core frame encode/decode per visio-schema/docs/framing.md §1 (u8 HEADER_LEN)."""
+"""Core frame encode/decode per visio-schema/docs/protocol/framing.md §1 (u8 HEADER_LEN)."""
 from __future__ import annotations
 
 import pytest
 from google.protobuf.timestamp_pb2 import Timestamp
 
+from visio_schema.v1.wire.header_pb2 import Header
 from visio_schema.wire.codec.frame import FrameError, decode_frame, encode_frame
 from visio_schema.wire.message import Message, decode_message, encode_message
-from visio_schema.v1.wire.header_pb2 import Header
 
 
 def _make_header() -> Header:

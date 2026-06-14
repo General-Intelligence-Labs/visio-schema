@@ -5,11 +5,12 @@ Minimal, dependency-light demos of the Visio wire. They use only the
 thin libraries. They are intentionally small — the heavier, bus-integrated
 machinery lives in `visio`.
 
-First make the package importable (from the repo root):
+First make the package importable (from the repo root). For a release install or full
+details, see [../docs/install.md](../docs/install.md):
 
 ```bash
-make gen                       # generate bindings into gen/
-pip install -e python          # or: make wheel && pip install dist/visio_schema-*.whl
+make gen                       # generate the protobuf bindings in-tree (needs buf; see install.md)
+pip install -e "python[mcap]"  # or: make wheel && pip install dist/visio_schema-*.whl
 ```
 
 ## Python — live serial → Foxglove Studio, Rerun, and/or MCAP
@@ -39,7 +40,7 @@ as scalar plots. (Needs `rerun-sdk`; `av` decodes the H.265 camera streams.)
 
 `--foxglove` starts a **WebSocket data-source server** (not itself a viewer)
 and prints a URL. Open it, or in **Foxglove Studio** choose **Open connection →
-Foxglove WebSocket → `ws://localhost:8765`**. Import `python/visio_layout.json`
+Foxglove WebSocket → `ws://localhost:8765`**. Import `python/ego_layout.json`
 (**Layouts ▸ Import from file**) for a ready-made panel set, or add panels by
 hand. Note: a bare IMU quaternion has no built-in Foxglove renderer — the script
 also publishes a `/tf` `FrameTransform` derived from it, so the **3D panel**
@@ -49,7 +50,7 @@ also publishes a `/tf` `FrameTransform` derived from it, so the **3D panel**
 
 `python/make_sample_mcap.py` writes one multi-topic synthetic recording —
 bundled raw IMU, a rotating fused orientation, and (if `av` is installed) an
-H.264 video stream — using the canonical `visio_schema.recording.McapWriter`:
+H.264 video stream — using the canonical `visio_schema.McapWriter`:
 
 ```bash
 python python/make_sample_mcap.py sample.mcap        # 5s clip (--seconds N to change)
@@ -74,7 +75,7 @@ Add a **Plot** panel for `/glove_left/imu_raw/3`, a **3D**/orientation panel for
 > channel's schema *name* is the protobuf full name (e.g.
 > `visio_schema.v1.ros.geometry_msgs.Quaternion`) — that's how Foxglove
 > resolves the type from the embedded `FileDescriptorSet`. The ROS-name remap
-> documented in `docs/foxglove_compat.md` (`geometry_msgs/msg/Quaternion`)
+> documented in `docs/protocol/foxglove_compat.md` (`geometry_msgs/msg/Quaternion`)
 > applies only to **ros2msg-encoded** channels; using it as a protobuf schema
 > name makes Studio report *"no such type"*. Native ROS-panel matching for
 > these types would require emitting a `ros2msg` schema, which these minimal

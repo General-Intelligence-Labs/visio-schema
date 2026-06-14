@@ -58,7 +58,7 @@ A PR that fails `make breaking` MUST either:
 3. Bump the repo MAJOR version and document the break in
    `CHANGELOG.md` (TBD).
 
-`docs/framing.md` and `docs/timesync.md` are **part of the contract**.
+[`framing.md`](framing.md) and [`timesync.md`](timesync.md) are **part of the contract**.
 Changes to them follow the same semver rules even though buf doesn't
 verify them — a wire-format spec change is a major version bump
 regardless of whether any `.proto` file moves.
@@ -84,8 +84,7 @@ to give downstream consumers time to migrate.
 
 ## Release process (sketch)
 
-1. Open a release PR. Bump version in `VERSION` (TBD; for now the
-   `MASTER_PLAN.md` version block).
+1. Open a release PR. Bump `version` in `python/pyproject.toml`.
 2. CI runs `make lint`, `make breaking`, `make gen`.
 3. Tag `vX.Y.Z` on merge.
 4. CI publishes language packages:

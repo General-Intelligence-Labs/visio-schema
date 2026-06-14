@@ -93,4 +93,4 @@ class McapWriterEndpoint(Endpoint):
                 if not batch and self._stop:
                     return                # stopped + fully drained
             for ch, msg in batch:
-                self._writer.write(ch, msg)
+                self._writer.write(msg, ch)

@@ -58,7 +58,7 @@ TEST(Cobs, RoundtripLongNonZeroRun) {
 // Exact-byte golden vectors pinning the canonical COBS encoding. These must
 // stay byte-identical to the Python side (python/tests/test_cobs.py) — the
 // 254-byte-multiple cases are where a non-canonical encoder emits a phantom
-// trailing 0x01 block. See docs/framing.md §3.2.
+// trailing 0x01 block. See docs/protocol/framing.md §3.2.
 TEST(Cobs, GoldenVectors) {
   struct Case {
     std::string_view input;

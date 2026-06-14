@@ -1,4 +1,4 @@
-"""COBS encode/decode round-trips per visio-schema/docs/framing.md §3.2."""
+"""COBS encode/decode round-trips per visio-schema/docs/protocol/framing.md §3.2."""
 from __future__ import annotations
 
 import pytest

@@ -28,10 +28,7 @@ import argparse
 import math
 import sys
 
-from visio_schema.mcap import McapWriter
-from visio_schema.v1.service.device_info.device_info_pb2 import Channel
-from visio_schema.wire.message import Message
-from visio_schema.wire.schema import file_descriptor_set, message_class
+from visio_schema import McapWriter, Message, make_channel, message_class
 from visio_schema.v1.wire.header_pb2 import ControlStream
 
 START_NS = 1_700_000_000 * 1_000_000_000      # fixed epoch -> reproducible file
@@ -53,22 +50,11 @@ _QUAT = "visio_schema.v1.ros.geometry_msgs.Quaternion"
 _VIDEO = "foxglove.CompressedVideo"
 
 
-def _channel(stream_id: int, topic: str, proto_type: str) -> Channel:
-    """Build the Channel a device would announce for this output stream."""
-    return Channel(
-        id=stream_id,
-        topic=topic,
-        encoding="protobuf",
-        schema_name=proto_type,
-        schema=file_descriptor_set(proto_type),
-        schema_encoding="protobuf",
-    )
-
-
-# Assign ids up front, as a device numbering its own outputs would.
-CH_IMU_RAW = _channel(_FIRST + 0, IMU_RAW_TOPIC, _IMU_RAW)
-CH_IMU_QUAT = _channel(_FIRST + 1, IMU_QUAT_TOPIC, _QUAT)
-CH_VIDEO = _channel(_FIRST + 2, VIDEO_TOPIC, _VIDEO)
+# Assign ids up front, as a device numbering its own outputs would. make_channel
+# fills each Channel's FileDescriptorSet from the schema name.
+CH_IMU_RAW = make_channel(IMU_RAW_TOPIC, _IMU_RAW, stream_id=_FIRST + 0)
+CH_IMU_QUAT = make_channel(IMU_QUAT_TOPIC, _QUAT, stream_id=_FIRST + 1)
+CH_VIDEO = make_channel(VIDEO_TOPIC, _VIDEO, stream_id=_FIRST + 2)
 
 
 # --------------------------------------------------------------------------- #
@@ -103,7 +89,7 @@ def _gen_imu(writer: McapWriter, seconds: float) -> int:
         msg = Message(stream_id=CH_IMU_RAW.id, seq=k,
                       payload=_imu_raw_bundle(t, samples_per_bundle, spin))
         msg.timestamp.FromNanoseconds(t)
-        writer.write(CH_IMU_RAW, msg)
+        writer.write(msg, CH_IMU_RAW)
         n += 1
 
     quat_dt = 1_000_000_000 // QUAT_HZ
@@ -113,7 +99,7 @@ def _gen_imu(writer: McapWriter, seconds: float) -> int:
         msg = Message(stream_id=CH_IMU_QUAT.id, seq=k,
                       payload=_imu_quat(2 * math.pi * k / total))
         msg.timestamp.FromNanoseconds(t)
-        writer.write(CH_IMU_QUAT, msg)
+        writer.write(msg, CH_IMU_QUAT)
         n += 1
     return n
 
@@ -170,7 +156,7 @@ def _gen_video(writer: McapWriter, seconds: float) -> int:
         msg = Message(stream_id=CH_VIDEO.id, seq=idx,
                       payload=_video_payload(annexb, t))
         msg.timestamp.FromNanoseconds(t)
-        writer.write(CH_VIDEO, msg)
+        writer.write(msg, CH_VIDEO)
         n += 1
     return n
 

@@ -79,6 +79,58 @@ def test_read_mcap_roundtrips(tmp_path) -> None:
         assert ch.encoding == "protobuf"
 
 
+def test_parse_tcp_defaults_and_explicit_port() -> None:
+    """--tcp HOST uses the device's default preview port; HOST:PORT overrides it."""
+    vd = _vd()
+    assert vd._DEFAULT_TCP_PORT == 9000
+    assert vd._parse_tcp("GILABS-1234.local") == ("GILABS-1234.local", 9000)
+    assert vd._parse_tcp("10.0.0.7:50001") == ("10.0.0.7", 50001)
+
+
+def test_read_tcp_roundtrips() -> None:
+    """read_tcp dials a TCP server, de-frames the same COBS core frames the serial
+    path uses, and yields the Messages — then returns cleanly on peer EOF (the
+    device closing the preview connection)."""
+    import socket
+    import threading
+
+    from visio_schema.transport import frame_bytes
+
+    vd = _vd()
+    vd._STOP.clear()
+
+    sent = []
+    for i in range(3):
+        m = vd.Message(stream_id=7, payload=bytes([i, i + 1, i + 2]), seq=i)
+        m.timestamp.FromNanoseconds(1_700_000_000_000_000_000 + i)
+        sent.append(m)
+
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    host, port = srv.getsockname()
+
+    def serve() -> None:
+        conn, _ = srv.accept()
+        with conn:
+            for m in sent:
+                conn.sendall(frame_bytes(m))
+        # conn closing => client sees EOF => read_tcp returns.
+
+    thread = threading.Thread(target=serve)
+    thread.start()
+    try:
+        got = list(vd.read_tcp(host, port))
+    finally:
+        thread.join(timeout=5)
+        srv.close()
+
+    assert len(got) == len(sent)
+    for out, exp in zip(got, sent):
+        assert (out.stream_id, out.seq, out.payload) == (exp.stream_id, exp.seq, exp.payload)
+
+
 def test_mcap_source_with_foxglove_is_rejected(capsys) -> None:
     """MCAP-file -> Foxglove is unsupported; with no other sink the tool exits
     with the open-it-in-Studio guidance rather than serving the file over WS."""

@@ -1,4 +1,4 @@
-"""COBS framing for serial transport per visio-schema/docs/framing.md §3.2.
+"""COBS framing for serial transport per visio-schema/docs/protocol/framing.md §3.2.
 
 A COBS-encoded frame on the wire is `cobs.encode(payload) || 0x00`. The
 trailing 0x00 is the frame delimiter; COBS encoding guarantees no other

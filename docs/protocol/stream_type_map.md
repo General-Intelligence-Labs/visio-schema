@@ -35,8 +35,9 @@ device's `device_name`.
 A device declares it at runtime — no schema edit:
 
 1. Build the payload's `FileDescriptorSet` from the descriptor pool
-   (`visio_schema.wire.streams.file_descriptor_set(proto_type)`), or let the
-   `StreamRouter` do it from a `(topic, schema_name)` pair.
+   (`visio_schema.wire.schema.file_descriptor_set(proto_type)`), or let
+   `visio_schema.make_channel(topic, schema_name, stream_id=...)` build the whole
+   `Channel` for you.
 2. Declare the output: `router.declare(topic, schema_name, fds)` (or pass it in
    `StreamRouter(bus, channels=[...])`), then publish by topic with
    `bus.publish_stream(topic, payload)` (the router installs the topic resolver).

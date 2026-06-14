@@ -36,7 +36,7 @@ core frame (always the same):
 ## 2. The Header
 
 `visio_schema.v1.wire.Header` is a protobuf message — see
-[`proto/visio_schema/v1/wire/header.proto`](../proto/visio_schema/v1/wire/header.proto):
+[`proto/visio_schema/v1/wire/header.proto`](../../proto/visio_schema/v1/wire/header.proto):
 
 ```proto
 message Header {
@@ -138,9 +138,8 @@ TCP+TLS-based, which is independent of our application-level integrity).
 MCAP is not a transport in the same sense — it's a structured
 container. The Header and payload do NOT serialize together on disk.
 McapEndpoint maps Header fields onto MCAP's own record fields; see
-[`stream_type_map.md`](stream_type_map.md) and the McapEndpoint
-mapping table in
-[`visio-schema/MASTER_PLAN.md`](../MASTER_PLAN.md#5-wire-header-v1-protobuf).
+[`stream_type_map.md`](stream_type_map.md) and
+[`foxglove_compat.md`](foxglove_compat.md) for the MCAP schema-name mapping.
 
 ## 4. CRC-16/CCITT-FALSE
 

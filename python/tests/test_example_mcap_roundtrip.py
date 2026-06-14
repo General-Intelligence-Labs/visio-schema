@@ -66,9 +66,9 @@ def test_writer_records_by_channel(tmp_path) -> None:
     relies on for the --out sink."""
     from visio_schema.mcap import McapWriter, read_mcap
     from visio_schema.v1.service.device_info.device_info_pb2 import Channel
+    from visio_schema.v1.wire.header_pb2 import ControlStream
     from visio_schema.wire.message import Message
     from visio_schema.wire.schema import file_descriptor_set
-    from visio_schema.v1.wire.header_pb2 import ControlStream
 
     sid = ControlStream.CONTROL_STREAM_FIRST_DYNAMIC
     ch = Channel(
@@ -83,7 +83,7 @@ def test_writer_records_by_channel(tmp_path) -> None:
     msg = Message(stream_id=sid, seq=1, payload=b"raw-bytes")
     msg.timestamp.FromNanoseconds(1_700_000_000_000_000_000)
     with McapWriter(str(out)) as w:
-        w.write(ch, msg)
+        w.write(msg, ch)
 
     rows = list(read_mcap(out))
     assert len(rows) == 1

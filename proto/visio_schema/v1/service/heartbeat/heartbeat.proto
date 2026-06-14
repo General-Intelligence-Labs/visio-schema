@@ -8,7 +8,7 @@
 // on, so there is no device field here.
 //
 // Beacon timesync (replaces the retired standalone timesync exchange — see
-// docs/timesync.md). Two roles, both driven by this one message:
+// docs/protocol/timesync.md). Two roles, both driven by this one message:
 //
 //   - Initiator: emits a beacon carrying only `tx_mono_ns` (its wire-stamped
 //     send time).

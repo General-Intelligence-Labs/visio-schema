@@ -1,4 +1,4 @@
-"""Visio core frame codec per visio-schema/docs/framing.md §1.
+"""Visio core frame codec per visio-schema/docs/protocol/framing.md §1.
 
 Frame layout (always, regardless of transport):
 

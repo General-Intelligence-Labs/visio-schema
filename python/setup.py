@@ -26,6 +26,10 @@ def _ext_modules():
         return []
     import pybind11  # build-time only; in [build-system].requires
 
+    # `_vendor_native` is a sibling of this file; pip's build backend doesn't put
+    # this directory on sys.path, so add it explicitly before importing it.
+    if HERE not in sys.path:
+        sys.path.insert(0, HERE)
     import _vendor_native
 
     _vendor_native.vendor()  # refresh _native_build/ from siblings when present

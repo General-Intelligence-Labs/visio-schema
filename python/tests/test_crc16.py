@@ -1,4 +1,4 @@
-"""CRC-16/CCITT-FALSE conformance per visio-schema/docs/framing.md §4."""
+"""CRC-16/CCITT-FALSE conformance per visio-schema/docs/protocol/framing.md §4."""
 from __future__ import annotations
 
 import pytest

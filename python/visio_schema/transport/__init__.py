@@ -33,14 +33,28 @@ from visio_schema.transport.serial import SerialEndpoint
 
 
 def serial_endpoint(path: str, *, max_depth: int = 4096) -> Endpoint:
-    """Open a serial Endpoint, preferring the native GIL-free reader.
+    """Open a bidirectional serial `Endpoint`, preferring the native reader.
 
-    Returns a :class:`NativeSerialEndpoint` when the native ``_creader`` extension
-    is importable and not disabled via ``VISIO_NO_NATIVE=1``; otherwise the
-    pure-Python :class:`SerialEndpoint`. Both satisfy the ``Endpoint`` ABC, so the
-    Bus and callers are agnostic to which one they get. Prefer this over
-    constructing an endpoint class directly when you want the native fast path
-    with an automatic fallback.
+    Returns a native GIL-free endpoint when the compiled ``_creader`` extension is
+    available (and not disabled via ``VISIO_NO_NATIVE=1``), otherwise a pure-Python
+    one; both implement the same `Endpoint` interface, so callers don't care which.
+    Use this when you need to send to the device (e.g. commands) as well as read; for
+    read-only viewing, `read_serial` is simpler.
+
+    Args:
+        path: Serial device path, e.g. ``"/dev/ttyACM0"``.
+        max_depth: Max inbound messages buffered before the reader sheds, bounding
+            back-pressure; keyword-only.
+
+    Returns:
+        An `Endpoint`. Call ``start(on_inbound, on_closed)`` to begin reading and
+        ``send(msg)`` to transmit; ``stop()`` to shut down.
+
+    Example:
+        ep = serial_endpoint("/dev/ttyACM0")
+        ep.start(lambda msg, _ep: print(msg.stream_id), None)
+        ep.send(command_message(cmd))
+        ep.stop()
     """
     import os
 

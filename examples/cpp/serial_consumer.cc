@@ -1,6 +1,6 @@
 // serial_consumer — minimal embedded-style consumer of live Visio serial.
 //
-// Reads COBS-delimited core frames (visio-schema/docs/framing.md §3.2) from a
+// Reads COBS-delimited core frames (visio-schema/docs/protocol/framing.md §3.2) from a
 // serial port, decodes each, and resolves it to a topic. This is the shape a
 // Linux-class embedded board (e.g. an RV1106 gripper) would use: a blocking
 // read loop, no bus, no threads, depending only on the single `visio_schema`

@@ -9,6 +9,7 @@ straight from the file with no DeviceInfo. ``mcap`` is an optional dependency
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from pathlib import Path
 
 from google.protobuf.timestamp_pb2 import Timestamp
@@ -34,9 +35,30 @@ def _reader_api():
     return make_reader
 
 
-def read_mcap(path: str | Path):
-    """Replay an MCAP recording as ``(Message, Channel)`` pairs. Channels with no
-    schema record are skipped (their payload type is unresolvable)."""
+def read_mcap(path: str | Path) -> Iterator[tuple[Message, Channel]]:
+    """Replay an MCAP recording as resolved ``(message, channel)`` rows.
+
+    Yields the same shape `read_serial` produces from a live device, so live and
+    replay code are identical. Each MCAP channel is self-describing, so payloads
+    decode by name with `message_class` — no device or announce needed. Channels with
+    no schema record are skipped (their payload type can't be resolved).
+
+    Args:
+        path: Path to the ``.mcap`` file.
+
+    Yields:
+        ``(message, channel)`` tuples in log order — a `Message` paired with the
+        `Channel` (topic + schema) it was recorded on.
+
+    Raises:
+        ImportError: If the optional ``mcap`` dependency is missing
+            (``pip install visio-schema[mcap]``).
+
+    Example:
+        for msg, channel in read_mcap("run.mcap"):
+            payload = message_class(channel.schema_name)()
+            payload.ParseFromString(msg.payload)
+    """
     make_reader = _reader_api()
     with open(path, "rb") as f:
         for schema, channel, message in make_reader(f).iter_messages():

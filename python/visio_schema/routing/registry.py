@@ -19,14 +19,14 @@ The whole no-bus consume path is::
 
     reg = ChannelRegistry()
     for msg, ch in reg.resolved(read_frames(serial)):
-        writer.write(ch, msg)
+        writer.write(msg, ch)
 """
 from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Iterator
 
-from visio_schema.routing.channel import Channel, DuplicateTopicError, Routed
+from visio_schema.routing.channel import _PROTOBUF, Channel, DuplicateTopicError, Routed
 from visio_schema.v1.service.device_info.device_info_pb2 import DeviceInfo
 from visio_schema.wire.control import DEVICE_INFO as _DEVICE_INFO
 from visio_schema.wire.control import FIRST_DYNAMIC
@@ -34,8 +34,6 @@ from visio_schema.wire.message import Message
 from visio_schema.wire.schema import file_descriptor_set
 
 log = logging.getLogger(__name__)
-
-_PROTOBUF = "protobuf"
 
 # Well-known channel for the DeviceInfo control stream, so a recorder can resolve
 # and write forwarded announces on one "/device_info" topic (devices are told
@@ -46,7 +44,19 @@ DEVICE_INFO_SCHEMA = "visio_schema.v1.service.device_info.DeviceInfo"
 
 
 class ChannelRegistry:
-    """Single-source ``stream_id -> Channel`` table + own outputs + discovery."""
+    """Maps a peer's ``stream_id`` to a `Channel` (topic + schema), learned from `DeviceInfo`.
+
+    A consumer reading one link uses it to turn raw inbound messages into
+    ``(message, channel)`` data rows: `resolved` is the clean loop (what `read_serial`
+    and `read_mcap` use internally), `accept` is the per-message primitive. A producer
+    also uses it to declare its own output streams. Topics are unique — announcing a
+    second id for a live topic raises `DuplicateTopicError`.
+
+    Example:
+        reg = ChannelRegistry()
+        for msg, channel in reg.resolved(read_frames(chunks)):
+            print(channel.topic, msg.seq)
+    """
 
     def __init__(
         self,
@@ -183,10 +193,20 @@ class ChannelRegistry:
     # ── Inbound (no-bus single-source consumer) ─────────────────────────
 
     def accept(self, msg: Message) -> Routed:
-        """Single-source inbound decision: DEVICE_INFO → learn → ``Routed(None,None)``;
-        control → ``Routed(msg,None)``; data → ``Routed(msg, channel)`` if the id
-        is known, else drop (bump :attr:`dropped_unmapped`). Used by a consumer
-        reading one link; on a bus the bus remaps before the registry."""
+        """Classify one inbound message — the per-message primitive behind `resolved`.
+
+        - A `DeviceInfo` announce is learned, then absorbed → ``Routed(None, None)``.
+        - Another control-stream message passes through unresolved → ``Routed(msg, None)``.
+        - A data message → ``Routed(msg, channel)`` if its id is known, else it is
+          dropped and `dropped_unmapped` is bumped → ``Routed(None, None)``.
+
+        Args:
+            msg: The inbound `Message` to classify.
+
+        Returns:
+            A `Routed(message, channel)`: ``message`` is what to forward (None = drop),
+            ``channel`` is what to record it against (None = none).
+        """
         sid = msg.stream_id
         if sid == _DEVICE_INFO:
             self.on_announce(msg.payload)
@@ -200,8 +220,22 @@ class ChannelRegistry:
         return Routed(msg, ch)
 
     def resolved(self, messages: Iterable[Message]) -> Iterator[tuple[Message, Channel]]:
-        """Run inbound messages through :meth:`accept` and yield the resolved
-        ``(message, channel)`` data rows. The clean consumer loop."""
+        """Resolve inbound messages to ``(message, channel)`` data rows.
+
+        Learns and absorbs `DeviceInfo` announces, drops control/unmapped traffic, and
+        yields only data messages paired with their resolved `Channel`. The clean
+        consumer loop — `read_serial` and `read_mcap` use it internally.
+
+        Args:
+            messages: An iterable of inbound `Message`s (e.g. de-framed wire reads).
+
+        Yields:
+            ``(message, channel)`` for each resolvable data message.
+
+        Example:
+            for msg, channel in reg.resolved(read_frames(chunks)):
+                ...
+        """
         for m in messages:
             message, channel = self.accept(m)
             if channel is not None:

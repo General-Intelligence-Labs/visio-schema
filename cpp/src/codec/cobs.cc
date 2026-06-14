@@ -12,7 +12,7 @@ std::vector<std::uint8_t> CobsEncode(std::string_view data) {
   // block opens a fresh block speculatively; if the input ends right there the
   // block stays empty and must be dropped, not emitted as a phantom 0x01. This
   // keeps the encoding canonical (byte-identical to the reference COBS used by
-  // the Python side) — see docs/framing.md §3.2.
+  // the Python side) — see docs/protocol/framing.md §3.2.
   bool block_open = true;
   for (char ch : data) {
     auto b = static_cast<std::uint8_t>(ch);

@@ -1,7 +1,7 @@
 # Changelog
 
 All notable wire-contract changes to `visio-schema`. Versioning follows
-[`docs/versioning.md`](docs/versioning.md). Pre-1.0, breaking changes
+[`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
 ## 0.2.0.dev0 — unreleased
@@ -17,7 +17,7 @@ bump the MINOR version.
   An initiating beacon carries only `tx_mono_ns`; a responder replies
   immediately, echoing the peer's send and stamping its receive time. The
   initiator closes the loop with a min-RTT-filtered midpoint estimate.
-  See [`docs/timesync.md`](docs/timesync.md).
+  See [`docs/protocol/timesync.md`](docs/protocol/timesync.md).
 - Peers are keyed by the **endpoint a beacon arrives on** (control streams
   are hop-local; the wire Header has no device field).
 

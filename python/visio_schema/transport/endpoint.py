@@ -40,17 +40,48 @@ class EndpointClosed(Exception):
 
 
 class Endpoint(ABC):
-    """Abstract active-object endpoint. Concrete subclasses implement all three."""
+    """A live, bidirectional connection to a device — read via a callback, write via `send`.
+
+    An endpoint owns its own I/O thread: `start` begins reading and invokes your
+    ``on_inbound(message, endpoint)`` for each decoded message (on the endpoint's
+    thread, not the caller's); `send` queues a message to transmit; `stop` shuts it
+    down. Get one from `serial_endpoint`; for read-only use, `read_serial` wraps this
+    in a simple iterator.
+
+    Example:
+        ep = serial_endpoint("/dev/ttyACM0")
+        def on_inbound(msg, _ep):
+            print(msg.stream_id, msg.seq)
+        ep.start(on_inbound, None)
+        ep.send(command_message(cmd))      # transmit
+        ep.stop()
+    """
 
     @abstractmethod
     def start(self, on_inbound: InboundFn | None, on_closed: ClosedFn | None) -> None:
-        """Spawn the endpoint's I/O thread. Either callback may be None."""
+        """Start the I/O thread and begin reading.
+
+        Args:
+            on_inbound: Called as ``on_inbound(message, endpoint)`` for each decoded
+                inbound `Message`, on the endpoint's own thread. Pass ``None`` for a
+                write-only endpoint.
+            on_closed: Called as ``on_closed(endpoint)`` once if a fixed link hits EOF
+                (reconnecting endpoints self-heal and never call it). Pass ``None`` to
+                ignore.
+        """
 
     @abstractmethod
     def send(self, msg: Message) -> None:
-        """Thread-safe, non-blocking enqueue for sending (drains on the endpoint's
-        own thread)."""
+        """Queue a `Message` to transmit.
+
+        Thread-safe and non-blocking: the endpoint's own thread performs the write.
+        On a full or stalled link the message is shed (dropped), never blocking the
+        caller.
+
+        Args:
+            msg: The wire `Message` to send (e.g. from `command_message`).
+        """
 
     @abstractmethod
     def stop(self) -> None:
-        """Stop + join the I/O thread and close the link. Idempotent."""
+        """Stop and join the I/O thread and close the link. Idempotent."""

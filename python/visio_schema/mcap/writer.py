@@ -1,9 +1,9 @@
 """McapWriter — the canonical Visio MCAP writer.
 
-Writes a spec-conformant, Foxglove-readable MCAP from ``(channel, message)``
+Writes a spec-conformant, Foxglove-readable MCAP from ``(message, channel)``
 pairs: a protobuf channel's ``Schema.name`` is the payload's protobuf full name
-and ``Schema.data`` is its ``FileDescriptorSet`` (both carried on the
-:class:`Channel`), so Foxglove resolves the type from the embedded set.
+and ``Schema.data`` is its ``FileDescriptorSet`` (both carried on the `Channel`),
+so Foxglove resolves the type from the embedded set.
 
 ``mcap`` is an optional dependency: ``pip install visio-schema[mcap]``; the writer
 imports it lazily and raises a clear error if it is missing.
@@ -41,28 +41,32 @@ def _is_seekable(stream: IO[bytes]) -> bool:
 
 
 class McapWriter:
-    """Write ``(channel, message)`` pairs to MCAP, optionally rotating into parts.
+    """Write ``(message, channel)`` pairs to an MCAP file (Foxglove's container format).
 
-    The payload bytes are stored verbatim (already-serialized protobuf); topic +
-    schema come from the :class:`Channel` the caller passes. Schema/channel
-    registration is lazy — one schema per ``Channel.schema_name``, one channel per
-    ``Channel.id``. Unlike the writer endpoint this does no resolution or
-    drop-until-mapped: the caller decides what to write (see
-    :class:`~visio_schema.mcap.writer_endpoint.McapWriterEndpoint` and
-    :meth:`ChannelRegistry.resolved`).
+    Payload bytes are stored verbatim (already-serialized protobuf); topic + schema
+    come from the `Channel` you pass. Schema and channel records are registered lazily
+    (one per `Channel.schema_name` / `Channel.id`), and the caller decides what to
+    write (unlike `McapWriterEndpoint`, which resolves and drops-until-mapped). Usable
+    as a context manager — `close` finalizes the file(s). Needs the optional ``mcap``
+    dependency (``pip install visio-schema[mcap]``).
 
-    ``output``: a filesystem path, or an already-open **seekable** binary stream
-    (a regular file or ``io.BytesIO``; a caller-supplied stream is left open on
-    :meth:`close`). The sink must be seekable — the ``mcap`` writer calls
-    ``.tell()`` — so a pipe/FIFO/socket is rejected at construction.
+    Args:
+        output: A filesystem path, or an already-open **seekable** binary stream (a
+            regular file or ``io.BytesIO``; a caller-supplied stream is left open on
+            `close`). The mcap writer calls ``.tell()``, so a pipe/FIFO/socket is
+            rejected.
+        compression: An ``mcap.writer.CompressionType`` (default: none); keyword-only.
+        max_bytes: If set, rotate into numbered parts ``name_000.mcap``,
+            ``name_001.mcap``, … once a part exceeds this many written payload bytes
+            (approximate — a part overshoots by at most one message). Path output
+            only; keyword-only.
+        max_duration_s: Like `max_bytes`, but rotate by elapsed log time. Path output
+            only; keyword-only.
 
-    ``compression``: an ``mcap.writer.CompressionType`` (default NONE).
-    ``max_bytes`` / ``max_duration_s``: rotate into numbered parts
-    ``name_000.mcap``, ``name_001.mcap``, … (path output only). Each part is a
-    complete, self-contained MCAP. ``max_bytes`` counts written payload bytes, so
-    treat it as approximate (a part overshoots by at most one message).
-
-    Usable as a context manager; :meth:`close` finalizes the file(s).
+    Example:
+        with McapWriter("run.mcap") as w:
+            for msg, channel in read_serial("/dev/ttyACM0"):
+                w.write(msg, channel)
     """
 
     def __init__(
@@ -113,9 +117,24 @@ class McapWriter:
     def __exit__(self, *exc) -> None:
         self.close()
 
-    def write(self, channel: Channel, msg: Message) -> None:
-        """Record one message against ``channel``. Lazily registers the channel's
-        schema and channel records (declare-before-write)."""
+    def write(self, msg: Message, channel: Channel) -> None:
+        """Record one message on a channel.
+
+        Schema and channel records are registered lazily on first use. Argument order
+        is ``(message, channel)`` — matching what `read_mcap`, `read_serial`, and
+        `ChannelRegistry.resolved` yield — so a read round-trips to a write without
+        reordering.
+
+        Args:
+            msg: The `Message` to record; its `payload` is stored verbatim and its
+                `timestamp` becomes the MCAP log time.
+            channel: The `Channel` (topic + schema) to record it on — from a read row
+                or built with `make_channel`.
+
+        Example:
+            for msg, channel in read_mcap("in.mcap"):
+                writer.write(msg, channel)
+        """
         if self._closed:
             return
 
@@ -151,6 +170,8 @@ class McapWriter:
         self._part_bytes += len(msg.payload)
 
     def close(self) -> None:
+        """Finalize and close the file(s). Idempotent. Prefer the context-manager form
+        (``with McapWriter(...) as w:``), which closes automatically."""
         if self._closed:
             return
         self._closed = True

@@ -2,9 +2,9 @@
 the SetCalibration command artifact (camera intrinsics / extrinsics / imu_info)."""
 from __future__ import annotations
 
+from visio_schema.foxglove import CameraCalibration_pb2, FrameTransform_pb2
 from visio_schema.v1.calibration import imu_pb2
 from visio_schema.v1.control import command_pb2
-from visio_schema.foxglove import CameraCalibration_pb2, FrameTransform_pb2
 from visio_schema.wire import schema
 
 

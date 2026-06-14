@@ -1,4 +1,4 @@
-// COBS encode/decode per visio-schema/docs/framing.md §3.2.
+// COBS encode/decode per visio-schema/docs/protocol/framing.md §3.2.
 //
 // On the wire a serial frame is `Encode(payload) || 0x00`. The trailing 0x00
 // is the inter-frame delimiter; Encode guarantees no other 0x00 bytes appear

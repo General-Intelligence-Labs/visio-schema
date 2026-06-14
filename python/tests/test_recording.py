@@ -1,6 +1,6 @@
 """McapWriter + read_mcap — the canonical visio-schema recording path.
 
-Writing ``(channel, message)`` pairs produces a spec-conformant, Foxglove-readable
+Writing ``(message, channel)`` pairs produces a spec-conformant, Foxglove-readable
 MCAP (schema name = protobuf full name, schema data = the embedded
 FileDescriptorSet), and reading it back yields the same ``(Message, Channel)``
 shape a live ``ChannelRegistry.resolved`` stream produces. Rotation splits into
@@ -15,20 +15,14 @@ import pytest
 pytest.importorskip("mcap", reason="mcap library not installed")
 
 from visio_schema.mcap import McapWriter, read_mcap
-from visio_schema.routing import FIRST_DYNAMIC
-from visio_schema.v1.service.device_info.device_info_pb2 import Channel
+from visio_schema.routing import FIRST_DYNAMIC, Channel, make_channel
 from visio_schema.wire.message import Message
-from visio_schema.wire.schema import file_descriptor_set
 
 _IMU = "visio_schema.v1.sensor.ImuRaw"
 
 
 def _channel(cid: int = FIRST_DYNAMIC, topic: str = "/dev/imus/0/raw") -> Channel:
-    return Channel(
-        id=cid, topic=topic, encoding="protobuf",
-        schema_name=_IMU, schema=file_descriptor_set(_IMU),
-        schema_encoding="protobuf",
-    )
+    return make_channel(topic, _IMU, stream_id=cid)
 
 
 def _msg(cid: int, i: int, payload: bytes) -> Message:
@@ -42,7 +36,7 @@ def test_round_trip_records_and_reads(tmp_path) -> None:
     out = tmp_path / "rec.mcap"
     with McapWriter(out) as w:
         for i in range(5):
-            w.write(ch, _msg(ch.id, i, f"imu-{i}".encode()))
+            w.write(_msg(ch.id, i, f"imu-{i}".encode()), ch)
 
     rows = list(read_mcap(out))
     assert len(rows) == 5
@@ -56,7 +50,7 @@ def test_bytesio_sink_records() -> None:
     ch = _channel()
     buf = io.BytesIO()
     w = McapWriter(buf)
-    w.write(ch, _msg(ch.id, 0, b"x"))
+    w.write(_msg(ch.id, 0, b"x"), ch)
     w.close()
     assert buf.getvalue()[:8] == b"\x89MCAP0\r\n"   # MCAP magic; not closed by us
     assert not buf.closed
@@ -75,7 +69,7 @@ def test_rotation_into_self_contained_parts(tmp_path) -> None:
     # ~16 B payloads, roll every 40 B -> ~3 messages/part across 10 messages.
     with McapWriter(base, max_bytes=40) as w:
         for i in range(10):
-            w.write(ch, _msg(ch.id, i, b"x" * 16))
+            w.write(_msg(ch.id, i, b"x" * 16), ch)
 
     parts = sorted(tmp_path.glob("run_*.mcap"))
     assert len(parts) >= 3
