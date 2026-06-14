@@ -107,6 +107,8 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT CMAKE_CROSSCOMPILI
     tests/test_mcap_writer.cc
     tests/test_mcap_writer_endpoint.cc
     tests/test_io.cc
+    tests/test_wake_fd.cc
+    tests/test_message_inbox.cc
     tests/test_framed_outbox.cc
     tests/test_golden_vectors.cc
     tests/test_calibration_nanopb.cc

@@ -27,16 +27,37 @@ from visio_schema.transport.link import (
     set_raw_mode,
     write_some,
 )
+from visio_schema.transport.native_serial import HAVE_NATIVE, NativeSerialEndpoint
 from visio_schema.transport.queue import QueueEndpoint
 from visio_schema.transport.serial import SerialEndpoint
 
+
+def serial_endpoint(path: str, *, max_depth: int = 4096) -> Endpoint:
+    """Open a serial Endpoint, preferring the native GIL-free reader.
+
+    Returns a :class:`NativeSerialEndpoint` when the native ``_creader`` extension
+    is importable and not disabled via ``VISIO_NO_NATIVE=1``; otherwise the
+    pure-Python :class:`SerialEndpoint`. Both satisfy the ``Endpoint`` ABC, so the
+    Bus and callers are agnostic to which one they get. Prefer this over
+    constructing an endpoint class directly when you want the native fast path
+    with an automatic fallback.
+    """
+    import os
+
+    if os.environ.get("VISIO_NO_NATIVE") != "1" and HAVE_NATIVE:
+        return NativeSerialEndpoint(path, max_depth=max_depth)
+    return SerialEndpoint(path=path)
+
+
 __all__ = [
+    "HAVE_NATIVE",
     "ClosedFn",
     "Endpoint",
     "EndpointClosed",
     "FdFactory",
     "FramedFdEndpoint",
     "InboundFn",
+    "NativeSerialEndpoint",
     "QueueEndpoint",
     "SerialEndpoint",
     "close_fd",
@@ -46,6 +67,7 @@ __all__ = [
     "open_serial_fd",
     "read_frames",
     "read_some",
+    "serial_endpoint",
     "set_nonblocking",
     "set_raw_mode",
     "write_some",

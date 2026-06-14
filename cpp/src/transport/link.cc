@@ -10,7 +10,38 @@
 
 #include <cerrno>
 
+// MSG_NOSIGNAL (Linux) suppresses SIGPIPE per-send; macOS/BSD lack it and use the
+// SO_NOSIGPIPE socket option instead (set by SetNoSigpipe at socket creation).
+// Define it to 0 where absent so the send() call still compiles.
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
+
 namespace visio_schema::transport {
+
+namespace {
+
+// FD_CLOEXEC on `fd` — portable replacement for the SOCK_CLOEXEC socket() flag
+// (Linux/BSD only). Best-effort; a missing CLOEXEC is not fatal.
+void SetCloexec(int fd) {
+  if (fd < 0) return;
+  const int fl = ::fcntl(fd, F_GETFD, 0);
+  if (fl >= 0) ::fcntl(fd, F_SETFD, fl | FD_CLOEXEC);
+}
+
+// Suppress SIGPIPE on writes to a socket whose peer hung up. Linux does this
+// per-send via MSG_NOSIGNAL; macOS/BSD need the SO_NOSIGPIPE socket option. No-op
+// where neither exists (the MSG_NOSIGNAL send path covers it).
+void SetNoSigpipe(int fd) {
+#ifdef SO_NOSIGPIPE
+  int one = 1;
+  ::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
+#else
+  (void)fd;
+#endif
+}
+
+}  // namespace
 
 bool SetNonblocking(int fd) {
   const int fl = ::fcntl(fd, F_GETFL, 0);
@@ -77,8 +108,10 @@ int DialTcpFd(const char* host, std::uint16_t port) {
   addr.sin_port = htons(port);
   if (::inet_pton(AF_INET, host, &addr.sin_addr) != 1) return -1;
 
-  const int fd = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
   if (fd < 0) return -1;
+  SetCloexec(fd);
+  SetNoSigpipe(fd);
   if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
     ::close(fd);
     return -1;
@@ -96,14 +129,18 @@ int DialTcpFd(const char* host, std::uint16_t port) {
 std::pair<int, int> MakeFdPair() {
   int sv[2] = {-1, -1};
   if (::socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) return {-1, -1};
-  SetNonblocking(sv[0]);
-  SetNonblocking(sv[1]);
+  for (int fd : sv) {
+    SetNonblocking(fd);
+    SetCloexec(fd);
+    SetNoSigpipe(fd);
+  }
   return {sv[0], sv[1]};
 }
 
 int OpenTcpListenSocket(std::uint16_t port) {
-  const int fd = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
   if (fd < 0) return -1;
+  SetCloexec(fd);
   int one = 1;
   ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
   sockaddr_in addr{};
@@ -116,6 +153,19 @@ int OpenTcpListenSocket(std::uint16_t port) {
     return -1;
   }
   return fd;
+}
+
+int AcceptCloexec(int listen_fd) {
+#if defined(__linux__)
+  return ::accept4(listen_fd, nullptr, nullptr, SOCK_CLOEXEC);
+#else
+  const int fd = ::accept(listen_fd, nullptr, nullptr);
+  if (fd >= 0) {
+    SetCloexec(fd);
+    SetNoSigpipe(fd);
+  }
+  return fd;
+#endif
 }
 
 }  // namespace visio_schema::transport

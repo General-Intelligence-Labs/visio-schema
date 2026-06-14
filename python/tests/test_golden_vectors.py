@@ -13,10 +13,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from google.protobuf.timestamp_pb2 import Timestamp
+
 from visio_schema.v1.service.device_info.device_info_pb2 import DeviceInfo
-from visio_schema.wire.message import Message, decode_message, encode_message
 from visio_schema.v1.wire.header_pb2 import Header
+from visio_schema.wire.codec import cobs_encode
+from visio_schema.wire.message import Message, decode_message, encode_message
 
 _GOLDEN = Path(__file__).resolve().parents[1].parent / "tests" / "golden" / "wire_vectors.txt"
 
@@ -66,6 +69,22 @@ def test_frame_golden() -> None:
     dm = decode_message(VEC["frame"])
     assert (dm.stream_id, dm.seq, dm.payload) == (STREAM_ID, SEQ, PAYLOAD)
     assert (dm.timestamp.seconds, dm.timestamp.nanos) == (TS_S, TS_N)
+
+
+def test_native_decodes_golden_frame() -> None:
+    # The native reader (_creader) compiles the SAME C++ codec the cpp golden test
+    # pins, so decoding the committed `frame` bytes through it ties native ==
+    # libprotobuf == nanopb at the byte level. COBS-wrap the core frame (the wire
+    # form the native deframe loop consumes) and assert the mirrored inputs.
+    _creader = pytest.importorskip("visio_schema._creader")
+    wire = cobs_encode(VEC["frame"]) + b"\x00"
+    frames, consumed = _creader.deframe(wire)
+    assert consumed == len(wire)
+    assert len(frames) == 1
+    f = frames[0]
+    assert (f.stream_id, f.seq) == (STREAM_ID, SEQ)
+    assert f.ts_ns == TS_S * 1_000_000_000 + TS_N
+    assert bytes(f.payload) == PAYLOAD
 
 
 def test_device_info_golden() -> None:

@@ -3,7 +3,6 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
-#include <sys/eventfd.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -30,7 +29,7 @@ TcpAcceptor::~TcpAcceptor() { Stop(); }
 
 void TcpAcceptor::Start(OnAccept on_accept) {
   on_accept_ = std::move(on_accept);
-  if (wake_fd_ < 0) wake_fd_ = ::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+  wake_.Open();
   stop_.store(false);
   thread_ = std::thread([this] { Loop(); });
 }
@@ -43,32 +42,22 @@ void TcpAcceptor::Stop() {
     ::close(listen_fd_);
     listen_fd_ = -1;
   }
-  if (wake_fd_ >= 0) {
-    ::close(wake_fd_);
-    wake_fd_ = -1;
-  }
+  wake_.Close();
 }
 
-void TcpAcceptor::Wake() {
-  if (wake_fd_ < 0) return;
-  const std::uint64_t one = 1;
-  (void)::write(wake_fd_, &one, sizeof(one));
-}
+void TcpAcceptor::Wake() { wake_.Signal(); }
 
 void TcpAcceptor::Loop() {
   while (!stop_.load()) {
-    pollfd pfds[2] = {{wake_fd_, POLLIN, 0}, {listen_fd_, POLLIN, 0}};
+    pollfd pfds[2] = {{wake_.poll_fd(), POLLIN, 0}, {listen_fd_, POLLIN, 0}};
     ::poll(pfds, 2, kTickMs);
-    if (pfds[0].revents & POLLIN) {
-      std::uint64_t drain;
-      while (::read(wake_fd_, &drain, sizeof(drain)) > 0) { /* drain */ }
-    }
+    if (pfds[0].revents & POLLIN) wake_.Drain();
     if (stop_.load()) break;
     if (!(pfds[1].revents & POLLIN)) continue;
 
     // Accept every pending connection; each becomes its own endpoint.
     for (;;) {
-      int cfd = ::accept4(listen_fd_, nullptr, nullptr, SOCK_CLOEXEC);
+      int cfd = AcceptCloexec(listen_fd_);
       if (cfd < 0) break;  // EAGAIN: no more pending
       int one = 1;
       ::setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));

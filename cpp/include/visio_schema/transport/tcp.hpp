@@ -27,6 +27,7 @@
 #include "visio_schema/transport/endpoint.hpp"
 #include "visio_schema/transport/framed_fd.hpp"
 #include "visio_schema/transport/link.hpp"  // DialTcpFd, OpenTcpListenSocket, FdFactory
+#include "visio_schema/transport/wake_fd.hpp"  // pollable cross-thread wakeup
 #include "visio_schema/transport/write_policy.hpp"
 
 namespace visio_schema::transport {
@@ -72,7 +73,7 @@ class TcpAcceptor {
   std::uint16_t port_;
   WritePolicy policy_;
   int listen_fd_ = -1;
-  int wake_fd_ = -1;
+  WakeFd wake_;
   OnAccept on_accept_;
   std::thread thread_;
   std::atomic<bool> stop_{false};

@@ -1,5 +1,8 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+# pybind11 is build-time only (header-only; no runtime dependency in the .so).
+# The native `_creader` extension it builds is OPTIONAL — a missing compiler just
+# falls back to the pure-Python reader (see setup.py / native_serial.py).
+requires = ["setuptools>=68", "wheel", "pybind11>=2.12"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -50,3 +53,24 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "RUF"]
+
+# Version-specific wheels (cp310–cp313), NOT abi3: the zero-copy Frame exports the
+# buffer protocol, which the CPython Limited API lacks at the cp310 floor (PEP 688
+# added it in 3.11, and fsglove runs 3.10). So we ship per-version wheels like the
+# `cobs` dependency does. The native ext is optional; a build failure or a missing
+# wheel falls back to the pure-Python reader.
+[tool.cibuildwheel]
+build = "cp310-* cp311-* cp312-* cp313-*"
+build-frontend = "build"
+test-requires = ["pytest>=8", "protobuf>=5.26", "cobs>=1.2", "mcap>=1.1"]
+# Run the in-wheel suite native-on, then forced onto the pure-Python fallback, so
+# both readers are exercised against the installed wheel.
+test-command = "pytest {package}/tests -q && VISIO_NO_NATIVE=1 pytest {package}/tests -q"
+
+[tool.cibuildwheel.linux]
+archs = ["x86_64"]                       # the host fleet
+manylinux-x86_64-image = "manylinux_2_28"
+
+[tool.cibuildwheel.macos]
+archs = ["universal2"]                    # one fat wheel (arm64 + x86_64)
+environment = { MACOSX_DEPLOYMENT_TARGET = "11.0" }

@@ -1,0 +1,95 @@
+name: wheels
+
+# Build version-specific (cp310–cp313) wheels for the optional native `_creader`
+# reader on linux (manylinux_2_28 x86_64) + macOS (universal2), run the in-wheel
+# test suite both native-on and on the pure-Python fallback, run the C++↔Python
+# interop both ways, and publish on a tag.
+on:
+  push:
+    tags: ["visio-schema-v*"]
+  workflow_dispatch:
+
+jobs:
+  build_wheels:
+    name: wheels (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive    # nanopb + foxglove-sdk are submodules
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Generate the in-package _pb2 bindings + the nanopb headers/.c the ext
+      # compiles. Done on the HOST runner (buf via npm); cibuildwheel copies the
+      # already-generated tree into the manylinux container.
+      - name: make gen
+        run: |
+          npm install -g @bufbuild/buf
+          make gen
+
+      # Vendor the sibling cpp/ + nanopb sources under python/ on the HOST, before
+      # cibuildwheel copies only python/ into its build container.
+      - name: vendor native sources
+        run: python python/_vendor_native.py
+
+      - name: build + test wheels
+        uses: pypa/cibuildwheel@v2.21
+        with:
+          package-dir: python
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: wheelhouse/*.whl
+
+  # Build the C++ transport + run its tests on linux AND macOS — proves the mac
+  # port (the eventfd->self-pipe / accept4 / SO_NOSIGPIPE guards) keeps the wire
+  # codec byte-identical. The golden-vector test (run in build_wheels) already
+  # ties the native reader to the committed cross-language bytes, so the live
+  # imu_producer interop stays in the parent `visio` repo's CI.
+  cpp_tests:
+    name: c++ transport (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: make gen
+        run: |
+          npm install -g @bufbuild/buf
+          make gen
+      - name: build + ctest
+        run: |
+          cmake -S cpp -B cpp/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build cpp/build -j
+          ctest --test-dir cpp/build --output-on-failure
+
+  publish:
+    name: publish wheels
+    needs: [build_wheels, cpp_tests]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist
+      - name: attach wheels to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.whl

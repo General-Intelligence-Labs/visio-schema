@@ -1,7 +1,6 @@
 #include "visio_schema/transport/framed_fd.hpp"
 
 #include <poll.h>
-#include <sys/eventfd.h>
 #include <unistd.h>
 
 #include "visio_schema/transport/framing.hpp"
@@ -46,7 +45,7 @@ FramedFdEndpoint::~FramedFdEndpoint() { Stop(); }
 void FramedFdEndpoint::Start(InboundFn on_inbound, ClosedFn on_closed) {
   on_inbound_ = std::move(on_inbound);
   on_closed_ = std::move(on_closed);
-  if (wake_fd_ < 0) wake_fd_ = ::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+  wake_.Open();
   stop_.store(false);
   thread_ = std::thread([this] { Loop(); });
 }
@@ -59,10 +58,7 @@ void FramedFdEndpoint::Stop() {
     CloseFd(fd_);
     fd_ = -1;
   }
-  if (wake_fd_ >= 0) {
-    ::close(wake_fd_);
-    wake_fd_ = -1;
-  }
+  wake_.Close();
 }
 
 void FramedFdEndpoint::Send(const Message& msg) {
@@ -71,11 +67,7 @@ void FramedFdEndpoint::Send(const Message& msg) {
   Wake();
 }
 
-void FramedFdEndpoint::Wake() {
-  if (wake_fd_ < 0) return;
-  const std::uint64_t one = 1;
-  (void)::write(wake_fd_, &one, sizeof(one));
-}
+void FramedFdEndpoint::Wake() { wake_.Signal(); }
 
 void FramedFdEndpoint::Pump() {
   if (fd_ < 0) return;
@@ -115,7 +107,7 @@ void FramedFdEndpoint::Loop() {
     const int fd = fd_;
     pollfd pfds[2];
     int n = 0;
-    pfds[n++] = {wake_fd_, POLLIN, 0};
+    pfds[n++] = {wake_.poll_fd(), POLLIN, 0};
     int fd_idx = -1;
     if (fd >= 0) {
       short ev = POLLIN;
@@ -124,10 +116,7 @@ void FramedFdEndpoint::Loop() {
       pfds[n++] = {fd, ev, 0};
     }
     ::poll(pfds, n, kTickMs);
-    if (pfds[0].revents & POLLIN) {
-      std::uint64_t drain;
-      while (::read(wake_fd_, &drain, sizeof(drain)) > 0) { /* drain */ }
-    }
+    if (pfds[0].revents & POLLIN) wake_.Drain();
     if (stop_.load()) break;
 
     Pump();  // drain outbox (no-op if fd down / nothing pending)

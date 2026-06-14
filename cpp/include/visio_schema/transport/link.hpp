@@ -58,4 +58,10 @@ std::pair<int, int> MakeFdPair();
 // the listen fd or -1 on failure. Used by TcpAcceptor.
 int OpenTcpListenSocket(std::uint16_t port);
 
+// Accept one pending connection on `listen_fd` with FD_CLOEXEC set on the new fd
+// (and SIGPIPE suppressed where the platform needs a socket option rather than a
+// send() flag). Returns the client fd, or -1 on EAGAIN / error. Portable stand-in
+// for Linux's accept4(SOCK_CLOEXEC).
+int AcceptCloexec(int listen_fd);
+
 }  // namespace visio_schema::transport

@@ -19,6 +19,7 @@
 #include "visio_schema/transport/endpoint.hpp"
 #include "visio_schema/transport/framed_outbox.hpp"
 #include "visio_schema/transport/link.hpp"   // fd I/O helpers + FdFactory
+#include "visio_schema/transport/wake_fd.hpp"  // pollable cross-thread wakeup
 #include "visio_schema/transport/write_policy.hpp"
 
 namespace visio_schema::transport {
@@ -66,7 +67,7 @@ class FramedFdEndpoint : public Endpoint {
   std::int64_t reopen_backoff_ns_ = 0;
   std::int64_t next_reopen_ns_ = 0;
   std::vector<std::uint8_t> rx_buf_;
-  int wake_fd_ = -1;
+  WakeFd wake_;
   std::thread thread_;
   std::atomic<bool> stop_{false};
   InboundFn on_inbound_;
