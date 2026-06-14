@@ -1,11 +1,16 @@
-// SerialEndpoint — FramedFdEndpoint over a CDC-ACM / serial fd, adding the
-// CDC-ACM liveness watchdog (run from the endpoint's own I/O thread via Tick()).
+// SerialEndpoint — FramedFdEndpoint over a CDC-ACM / serial fd.
 //
-// Ctors:
-//   - inherited fixed-fd / factory ctors (no watchdog).
-//   - SerialEndpoint(path, policy, usb_state): reopenable over a device path with
-//     the SerialWatchdog (reopen on USB-CONFIGURED edge / drain-stall / retry).
-//   - SerialEndpoint(factory, policy, usb_state): same, fd factory injected (test seam).
+// Two modes:
+//   - Reopenable + watchdog (a stable LOCAL gadget node, e.g. /dev/ttyGS0): the
+//     path/factory ctors run the SerialWatchdog from the I/O thread (reopen on
+//     USB-CONFIGURED edge / drain-stall / retry).
+//       - SerialEndpoint(path, policy, usb_state)
+//       - SerialEndpoint(factory, policy, usb_state)   // fd factory injected (test seam)
+//   - Non-reconnecting (a gated HOST-side child node, e.g. /dev/ttyACMn): the
+//     fixed-fd ctor adopts an already-open fd with NO watchdog/reopen — a drop
+//     fires on_closed so the owner re-discovers, instead of reopening a path
+//     whose device-node number is unstable across reconnect.
+//       - SerialEndpoint(fd, policy)
 #pragma once
 
 #include <functional>
@@ -23,7 +28,14 @@ class SerialEndpoint : public FramedFdEndpoint {
  public:
   using UsbStateFn = std::function<std::string()>;
 
-  using FramedFdEndpoint::FramedFdEndpoint;  // fixed-fd + factory ctors (no watchdog)
+  // Non-reconnecting mode. Adopts an already-open, gated serial fd (e.g. one the
+  // caller OpenSerialFd'd, read DeviceInfo from, and accepted) and frames over it
+  // WITHOUT the watchdog/reopen: a drop fires on_closed for the owner to
+  // re-discover, instead of silently reopening — required for host-side child
+  // nodes (/dev/ttyACMn) whose number is unstable across reconnect, where
+  // reopening the same path would hit the wrong device.
+  explicit SerialEndpoint(int fd, WritePolicy policy = WritePolicy::drop_oldest())
+      : FramedFdEndpoint(fd, policy) {}  // watchdog_enabled_ stays false
 
   explicit SerialEndpoint(std::string path,
                           WritePolicy policy = WritePolicy::drop_oldest(),

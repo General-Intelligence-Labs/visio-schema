@@ -66,6 +66,7 @@ class TestSerial : public SerialEndpoint {
  public:
   using SerialEndpoint::SerialEndpoint;
   using SerialEndpoint::Tick;
+  void SimulatePeerEof() { MarkLinkDead(); }
 };
 
 }  // namespace
@@ -117,6 +118,25 @@ TEST(EndpointReconnect, StopHaltsIoThreadWithoutReopen) {
   EXPECT_FALSE(ep.link_up());
   // The link stayed up for the run, so Tick never reopened: factory ran once.
   EXPECT_EQ(s->invocations, 1);
+}
+
+// The fixed-fd SerialEndpoint ctor is the NON-RECONNECTING mode: no factory, no
+// watchdog. After a peer EOF the link stays down and a Tick() must NOT reopen it
+// (vs the watchdog/factory modes above) — the owner is expected to re-discover
+// the device (whose /dev/ttyACMn number may have changed) rather than the
+// endpoint silently reopening a stale path.
+TEST(SerialEndpointNonReconnecting, FixedFdDoesNotReopenAfterEof) {
+  int sv[2] = {-1, -1};
+  ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, sv), 0);
+  TestSerial ep(sv[0]);  // fixed-fd ctor: adopts the fd, no factory/watchdog
+  EXPECT_TRUE(ep.link_up());
+
+  ::close(sv[1]);         // far side hangs up
+  ep.SimulatePeerEof();   // what the I/O thread does when ReadSome reports EOF
+  EXPECT_FALSE(ep.link_up());
+
+  ep.Tick(0);             // no factory → must stay down (no reconnect)
+  EXPECT_FALSE(ep.link_up());
 }
 
 TEST(SerialEndpointWatchdog, ReopensOnConfiguredEdge) {
