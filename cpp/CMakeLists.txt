@@ -58,17 +58,17 @@ add_library(visio_schema STATIC
   src/codec/crc16.cc
   src/codec/cobs.cc
   src/codec/frame.cc
-  # routing (id<->Channel table) + the MCAP container codec
+  # routing (id<->Channel table) + the MCAP container codec + its writer sink
   src/routing/registry.cc
   src/mcap/writer.cc
-  # transport: links + endpoints + framing (every Endpoint, incl. the MCAP sink)
+  src/mcap/writer_endpoint.cc
+  # transport: links + endpoints + framing
   src/transport/link.cc
   src/transport/framing.cc
   src/transport/framed_outbox.cc
   src/transport/framed_fd.cc
   src/transport/serial.cc
   src/transport/tcp.cc
-  src/transport/mcap_endpoint.cc
 )
 target_include_directories(visio_schema PUBLIC
   "${NANOPB_DIR}"
@@ -105,7 +105,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT CMAKE_CROSSCOMPILI
     tests/test_frame_roundtrip.cc
     tests/test_channel_registry.cc
     tests/test_mcap_writer.cc
-    tests/test_mcap_endpoint.cc
+    tests/test_mcap_writer_endpoint.cc
     tests/test_io.cc
     tests/test_framed_outbox.cc
     tests/test_golden_vectors.cc

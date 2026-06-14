@@ -4,10 +4,10 @@ A schema-only user reads from / writes to ONE visio stream with these and no bus
 get an fd (``open_serial_fd`` / ``make_fd_pair``), wrap it in a
 :class:`SerialEndpoint`, ``start(on_inbound, on_closed)`` it, and ``send()``.
 Every Endpoint is an active object that owns its own I/O thread; the byte layer is
-plain fd helpers (no Link object — the fd IS the link). The MCAP sink
-(`McapEndpoint`) wraps :class:`visio_schema.mcap.McapWriter` on its own writer
-thread. A fixed fd reports EOF via ``on_closed``; a reopenable one (``factory=``)
-self-heals.
+plain fd helpers (no Link object — the fd IS the link). A fixed fd reports EOF via
+``on_closed``; a reopenable one (``factory=``) self-heals. The MCAP sink/source
+endpoints (:class:`~visio_schema.mcap.McapWriterEndpoint` /
+:class:`~visio_schema.mcap.McapReaderEndpoint`) live in :mod:`visio_schema.mcap`.
 """
 from visio_schema.transport.endpoint import (
     ClosedFn,
@@ -27,7 +27,6 @@ from visio_schema.transport.link import (
     set_raw_mode,
     write_some,
 )
-from visio_schema.transport.mcap_endpoint import McapEndpoint
 from visio_schema.transport.queue import QueueEndpoint
 from visio_schema.transport.serial import SerialEndpoint
 
@@ -38,7 +37,6 @@ __all__ = [
     "FdFactory",
     "FramedFdEndpoint",
     "InboundFn",
-    "McapEndpoint",
     "QueueEndpoint",
     "SerialEndpoint",
     "close_fd",

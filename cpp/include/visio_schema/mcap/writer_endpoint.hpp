@@ -1,10 +1,10 @@
-// McapEndpoint — a write-only sink ACTIVE OBJECT that records to MCAP. Send()
+// McapWriterEndpoint — a write-only sink ACTIVE OBJECT that records to MCAP. Send()
 // (called on the bus dispatch thread) resolves + snapshots the channel and
 // enqueues into a bounded queue (WritePolicy); the endpoint's OWN writer thread
 // drains it to disk, so the blocking SD write never touches the bus. Resolution
 // happens on the Send() caller (dispatch, serialized) and is snapshotted, so the
 // writer thread never touches the (non-thread-safe) ChannelRegistry. Ignores
-// on_inbound (write-only). Mirrors python/visio_schema/transport/mcap_endpoint.py.
+// on_inbound (write-only). Mirrors python/visio_schema/mcap/writer_endpoint.py.
 #pragma once
 
 #include <atomic>
@@ -24,7 +24,9 @@
 #include "visio_schema/transport/write_policy.hpp"
 #include "visio_schema/wire/message.hpp"
 
-namespace visio_schema::transport {
+namespace visio_schema::mcap {
+
+using visio_schema::wire::Message;
 
 // resolve(stream_id) -> const Channel* (nullptr if unmapped). Called only on the
 // Send() caller's thread (the bus dispatch thread).
@@ -38,19 +40,19 @@ struct McapWriterStats {
   std::uint64_t slow_writes = 0;
 };
 
-class McapEndpoint : public Endpoint {
+class McapWriterEndpoint : public transport::Endpoint {
  public:
-  McapEndpoint(std::string_view path, StreamResolver resolve,
-               std::uint64_t max_bytes = 0, double max_duration_s = 0.0,
-               WritePolicy policy = WritePolicy::lossless());
-  ~McapEndpoint() override;
+  McapWriterEndpoint(std::string_view path, StreamResolver resolve,
+                     std::uint64_t max_bytes = 0, double max_duration_s = 0.0,
+                     transport::WritePolicy policy = transport::WritePolicy::lossless());
+  ~McapWriterEndpoint() override;
 
-  McapEndpoint(const McapEndpoint&) = delete;
-  McapEndpoint& operator=(const McapEndpoint&) = delete;
+  McapWriterEndpoint(const McapWriterEndpoint&) = delete;
+  McapWriterEndpoint& operator=(const McapWriterEndpoint&) = delete;
 
   void Start(InboundFn on_inbound, ClosedFn on_closed) override;  // spawn writer thread
-  void Send(const Message& msg) override;                          // resolve + enqueue
-  void Stop() override;                                             // stop+join, finalize
+  void Send(const Message& msg) override;              // resolve + enqueue
+  void Stop() override;                                // stop+join, finalize
 
   std::size_t pending_frames() const;
   std::size_t pending_bytes() const;
@@ -70,7 +72,7 @@ class McapEndpoint : public Endpoint {
 
   const StreamResolver resolve_;
   std::unique_ptr<visio_schema::mcap::McapWriter> writer_;
-  WritePolicy policy_;
+  transport::WritePolicy policy_;
   // Send()-caller-thread-only (the serialized bus dispatch thread); no lock.
   std::unordered_map<std::uint32_t, std::shared_ptr<const Channel>> channel_cache_;
 
@@ -88,4 +90,4 @@ class McapEndpoint : public Endpoint {
   std::atomic<std::uint64_t> stat_slow_writes_{0};
 };
 
-}  // namespace visio_schema::transport
+}  // namespace visio_schema::mcap

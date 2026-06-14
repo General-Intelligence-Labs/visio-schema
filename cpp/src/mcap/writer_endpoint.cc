@@ -1,10 +1,10 @@
-#include "visio_schema/transport/mcap_endpoint.hpp"
+#include "visio_schema/mcap/writer_endpoint.hpp"
 
 #include <chrono>
 #include <iostream>
 #include <utility>
 
-namespace visio_schema::transport {
+namespace visio_schema::mcap {
 
 namespace {
 std::uint64_t SteadyNs() {
@@ -15,17 +15,17 @@ std::uint64_t SteadyNs() {
 }
 }  // namespace
 
-McapEndpoint::McapEndpoint(std::string_view path, StreamResolver resolve,
-                           std::uint64_t max_bytes, double max_duration_s,
-                           WritePolicy policy)
+McapWriterEndpoint::McapWriterEndpoint(std::string_view path, StreamResolver resolve,
+                                       std::uint64_t max_bytes, double max_duration_s,
+                                       transport::WritePolicy policy)
     : resolve_(std::move(resolve)),
       writer_(std::make_unique<visio_schema::mcap::McapWriter>(
           path, max_bytes, max_duration_s)),
       policy_(policy) {}
 
-McapEndpoint::~McapEndpoint() { Stop(); }
+McapWriterEndpoint::~McapWriterEndpoint() { Stop(); }
 
-void McapEndpoint::Start(InboundFn /*on_inbound*/, ClosedFn /*on_closed*/) {
+void McapWriterEndpoint::Start(InboundFn /*on_inbound*/, ClosedFn /*on_closed*/) {
   {
     std::lock_guard<std::mutex> lk(mu_);
     stop_ = false;
@@ -33,7 +33,7 @@ void McapEndpoint::Start(InboundFn /*on_inbound*/, ClosedFn /*on_closed*/) {
   if (!thread_.joinable()) thread_ = std::thread([this] { WriterLoop(); });
 }
 
-void McapEndpoint::Stop() {
+void McapWriterEndpoint::Stop() {
   {
     std::lock_guard<std::mutex> lk(mu_);
     if (stop_) return;
@@ -44,15 +44,15 @@ void McapEndpoint::Stop() {
   if (writer_) writer_->Close();
 }
 
-void McapEndpoint::NoteDrop(std::size_t n) {
+void McapWriterEndpoint::NoteDrop(std::size_t n) {
   const std::uint64_t prev = dropped_.fetch_add(n, std::memory_order_relaxed);
   if (prev == 0 || (prev + n) / 1000 != prev / 1000) {
-    std::cerr << "McapEndpoint: dropped " << (prev + n)
+    std::cerr << "McapWriterEndpoint: dropped " << (prev + n)
               << " frames (storage can't keep up with the recording)\n";
   }
 }
 
-void McapEndpoint::Send(const Message& msg) {
+void McapWriterEndpoint::Send(const Message& msg) {
   // Resolve on the caller (bus dispatch) thread; snapshot the Channel once per id
   // so the writer thread is independent of the live registry.
   std::shared_ptr<const Channel> ch;
@@ -69,8 +69,8 @@ void McapEndpoint::Send(const Message& msg) {
   {
     std::lock_guard<std::mutex> lk(mu_);
     const std::size_t before = queue_.size();
-    if (!ApplyDropBound(policy_, queue_, queue_bytes_, len,
-                        [](const Entry& e) { return e.msg.payload.size(); })) {
+    if (!transport::ApplyDropBound(policy_, queue_, queue_bytes_, len,
+                                   [](const Entry& e) { return e.msg.payload.size(); })) {
       NoteDrop(1);
       return;
     }
@@ -81,7 +81,7 @@ void McapEndpoint::Send(const Message& msg) {
   cv_.notify_one();
 }
 
-void McapEndpoint::WriterLoop() {
+void McapWriterEndpoint::WriterLoop() {
   for (;;) {
     std::deque<Entry> batch;
     {
@@ -95,7 +95,7 @@ void McapEndpoint::WriterLoop() {
   }
 }
 
-void McapEndpoint::DrainBatch(std::deque<Entry>& batch) {
+void McapWriterEndpoint::DrainBatch(std::deque<Entry>& batch) {
   for (auto& e : batch) {
     if (!e.channel) continue;
     const std::uint64_t t0 = SteadyNs();
@@ -112,17 +112,17 @@ void McapEndpoint::DrainBatch(std::deque<Entry>& batch) {
   batch.clear();
 }
 
-std::size_t McapEndpoint::pending_frames() const {
+std::size_t McapWriterEndpoint::pending_frames() const {
   std::lock_guard<std::mutex> lk(mu_);
   return queue_.size();
 }
 
-std::size_t McapEndpoint::pending_bytes() const {
+std::size_t McapWriterEndpoint::pending_bytes() const {
   std::lock_guard<std::mutex> lk(mu_);
   return queue_bytes_;
 }
 
-McapWriterStats McapEndpoint::stats() const {
+McapWriterStats McapWriterEndpoint::stats() const {
   McapWriterStats s;
   s.writes = stat_writes_.load(std::memory_order_relaxed);
   s.blocked_ns = stat_blocked_ns_.load(std::memory_order_relaxed);
@@ -131,4 +131,4 @@ McapWriterStats McapEndpoint::stats() const {
   return s;
 }
 
-}  // namespace visio_schema::transport
+}  // namespace visio_schema::mcap

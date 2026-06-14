@@ -60,12 +60,12 @@ No server, no `--foxglove` — file playback is Studio's job, not this script's.
 Add a **Plot** panel for `/glove_left/imu_raw/3`, a **3D**/orientation panel for
 `/glove_left/imu_quat/3`, and an **Image** panel for `/ego/video_compressed/0`.
 
-> These scripts use the canonical `visio_schema.recording.McapWriter` (+
-> `ChannelRegistry` for live serial), so they depend only on `visio-schema`. The
-> bus-integrated recorder is `McapEndpoint` in the **visio** package
-> (`visio.mq.endpoints.mcap` / the C++ `visio::mq::McapEndpoint`) — a thin
-> Endpoint adapter over the same `McapWriter`; attach it to a `Bus` as a sink.
-> See `visio/README.md`.
+> These scripts use the canonical `visio_schema.mcap.McapWriter` (+
+> `ChannelRegistry` for live serial). The bus-integrated recorder is
+> `visio_schema.mcap.McapWriterEndpoint` (the C++ `visio_schema::mcap::McapWriterEndpoint`)
+> — a thin Endpoint adapter over the same `McapWriter`; attach it to a `Bus` as a
+> sink. Its replay counterpart, `visio_schema.mcap.McapReaderEndpoint`, streams a
+> recording in place of a live link so downstream is unchanged.
 
 > H.264 video needs the `av` package (`pip install av`); without it the sample
 > is written IMU-only.

@@ -1,14 +1,15 @@
-"""McapEndpoint — a write-only sink ACTIVE OBJECT that records messages to MCAP.
+"""McapWriterEndpoint — a write-only sink ACTIVE OBJECT that records messages to MCAP.
 
 ``send()`` (called on the bus dispatch thread) resolves + snapshots the channel
 and enqueues; the endpoint's OWN writer thread drains it to disk, so the blocking
 file write never touches the bus dispatch lock. Resolution happens on the send()
 caller (dispatch, serialized), so the writer thread never touches the registry.
-Ignores on_inbound (write-only). Mirrors the C++ ``McapEndpoint``.
+Ignores on_inbound (write-only). Mirrors the C++ ``McapWriterEndpoint``.
 
 A message whose id does not resolve (no DeviceInfo announce seen) is dropped
 (drop-until-mapped). ``output`` and the rotation options pass through to
-:class:`McapWriter`.
+:class:`McapWriter`. The replay counterpart is
+:class:`~visio_schema.mcap.reader_endpoint.McapReaderEndpoint`.
 """
 from __future__ import annotations
 
@@ -18,18 +19,18 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import IO
 
-from visio_schema.mcap import McapWriter
-from visio_schema.v1.service.device_info.device_info_pb2 import Channel
+from visio_schema.mcap.writer import McapWriter
 from visio_schema.transport.endpoint import ClosedFn, Endpoint, InboundFn
+from visio_schema.v1.service.device_info.device_info_pb2 import Channel
 from visio_schema.wire.message import Message
 
-__all__ = ["McapEndpoint"]
+__all__ = ["McapWriterEndpoint"]
 
 # resolve(stream_id) -> Channel | None. Typically bus.registry.resolve.
 StreamResolver = Callable[[int], "Channel | None"]
 
 
-class McapEndpoint(Endpoint):
+class McapWriterEndpoint(Endpoint):
     """Write-only sink Endpoint that records to MCAP on its own writer thread."""
 
     def __init__(

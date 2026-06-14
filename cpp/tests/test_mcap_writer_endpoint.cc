@@ -1,10 +1,10 @@
-// McapEndpoint tests — resolver-based channel naming, drop-until-mapped,
-// rotation. McapEndpoint is an active object: Start() spawns the writer thread,
-// Send() resolves+enqueues, Stop() drains+joins+finalizes the file. The file is
-// only readable after Stop(), so every test records via Start→Send→Stop, then
-// asserts on disk. Mirrors python/visio/tests/test_mcap_endpoint.py at the
+// McapWriterEndpoint tests — resolver-based channel naming, drop-until-mapped,
+// rotation. McapWriterEndpoint is an active object: Start() spawns the writer
+// thread, Send() resolves+enqueues, Stop() drains+joins+finalizes the file. The
+// file is only readable after Stop(), so every test records via Start→Send→Stop,
+// then asserts on disk. Mirrors python/visio/tests/test_mcap_endpoint.py at the
 // behavioural level (full MCAP content checks live in the Python suite).
-#include "visio_schema/transport/mcap_endpoint.hpp"
+#include "visio_schema/mcap/writer_endpoint.hpp"
 
 #include <gtest/gtest.h>
 
@@ -17,6 +17,7 @@
 #include "visio_schema/routing/registry.hpp"
 #include "visio_schema/wire/control.hpp"
 
+using namespace visio_schema::mcap;
 using namespace visio_schema::transport;
 using visio_schema::Channel;
 using visio_schema::kDeviceInfo;
@@ -49,7 +50,7 @@ Message Data(std::uint32_t id, std::string payload) {
 
 }  // namespace
 
-TEST(McapEndpoint, RecordsResolvedChannel) {
+TEST(McapWriterEndpoint, RecordsResolvedChannel) {
   const std::string path = TempPath("visio_mcap_test_basic.mcap");
   std::remove(path.c_str());
   std::unordered_map<std::uint32_t, Channel> table{
@@ -59,7 +60,7 @@ TEST(McapEndpoint, RecordsResolvedChannel) {
     return it == table.end() ? nullptr : &it->second;
   };
   {
-    McapEndpoint ep(path, resolve);
+    McapWriterEndpoint ep(path, resolve);
     ep.Start(nullptr, nullptr);
     ep.Send(Data(kFirstDynamic, "frame-0"));
     ep.Send(Data(kFirstDynamic, "frame-1"));
@@ -70,7 +71,7 @@ TEST(McapEndpoint, RecordsResolvedChannel) {
   std::remove(path.c_str());
 }
 
-TEST(McapEndpoint, BoundedQueueShedsWhenOverBounded) {
+TEST(McapWriterEndpoint, BoundedQueueShedsWhenOverBounded) {
   const std::string path = TempPath("visio_mcap_test_bounded.mcap");
   std::remove(path.c_str());
   std::unordered_map<std::uint32_t, Channel> table{
@@ -85,7 +86,7 @@ TEST(McapEndpoint, BoundedQueueShedsWhenOverBounded) {
     // thread can drain it, so the bounded queue sheds the oldest frames. We
     // assert that drops happened (robust inequality, not an exact count — the
     // writer drains concurrently so the precise number is timing-dependent).
-    McapEndpoint ep(path, resolve, /*max_bytes=*/0, /*max_duration_s=*/0.0,
+    McapWriterEndpoint ep(path, resolve, /*max_bytes=*/0, /*max_duration_s=*/0.0,
                     visio_schema::transport::WritePolicy::drop_oldest(4));
     ep.Start(nullptr, nullptr);
     for (int i = 0; i < 100000; ++i) ep.Send(Data(kFirstDynamic, "f"));
@@ -98,7 +99,7 @@ TEST(McapEndpoint, BoundedQueueShedsWhenOverBounded) {
   std::remove(path.c_str());
 }
 
-TEST(McapEndpoint, RecordsDeviceInfoViaWellKnownChannel) {
+TEST(McapWriterEndpoint, RecordsDeviceInfoViaWellKnownChannel) {
   // A DeviceInfo message resolves (via a real ChannelRegistry) to the well-known
   // /device_info channel and is recorded. No C++ MCAP reader exists, so this
   // checks the registry-resolve → writer-accepts path produces a non-empty file;
@@ -108,7 +109,7 @@ TEST(McapEndpoint, RecordsDeviceInfoViaWellKnownChannel) {
   ChannelRegistry reg("ego");
   auto resolve = [&](std::uint32_t id) { return reg.Resolve(id); };
   {
-    McapEndpoint ep(path, resolve);
+    McapWriterEndpoint ep(path, resolve);
     ep.Start(nullptr, nullptr);
     ep.Send(Data(kDeviceInfo, "announce-bytes"));  // resolves to /device_info
     ep.Stop();
@@ -118,12 +119,12 @@ TEST(McapEndpoint, RecordsDeviceInfoViaWellKnownChannel) {
   std::remove(path.c_str());
 }
 
-TEST(McapEndpoint, DropsUntilMapped) {
+TEST(McapWriterEndpoint, DropsUntilMapped) {
   const std::string path = TempPath("visio_mcap_test_drop.mcap");
   std::remove(path.c_str());
   auto resolve = [](std::uint32_t) -> const Channel* { return nullptr; };
   {
-    McapEndpoint ep(path, resolve);
+    McapWriterEndpoint ep(path, resolve);
     ep.Start(nullptr, nullptr);
     ep.Send(Data(kFirstDynamic + 5, "x"));  // unmapped -> dropped, no crash
     ep.Stop();
@@ -132,7 +133,7 @@ TEST(McapEndpoint, DropsUntilMapped) {
   std::remove(path.c_str());
 }
 
-TEST(McapEndpoint, RotatesByBytes) {
+TEST(McapWriterEndpoint, RotatesByBytes) {
   const std::string path = TempPath("visio_mcap_test_rot.mcap");
   std::unordered_map<std::uint32_t, Channel> table{
       {kFirstDynamic, MakeChannel(kFirstDynamic, "/dev/imu/0/raw")}};
@@ -145,7 +146,7 @@ TEST(McapEndpoint, RotatesByBytes) {
   std::remove(p0.c_str());
   std::remove(p1.c_str());
   {
-    McapEndpoint ep(path, resolve, /*max_bytes=*/16);
+    McapWriterEndpoint ep(path, resolve, /*max_bytes=*/16);
     ep.Start(nullptr, nullptr);
     for (int i = 0; i < 4; ++i) ep.Send(Data(kFirstDynamic, std::string(10, 'a')));
     ep.Stop();

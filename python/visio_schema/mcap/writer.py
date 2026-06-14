@@ -46,9 +46,9 @@ class McapWriter:
     The payload bytes are stored verbatim (already-serialized protobuf); topic +
     schema come from the :class:`Channel` the caller passes. Schema/channel
     registration is lazy — one schema per ``Channel.schema_name``, one channel per
-    ``Channel.id``. Unlike the transport endpoint this does no resolution or
+    ``Channel.id``. Unlike the writer endpoint this does no resolution or
     drop-until-mapped: the caller decides what to write (see
-    :class:`~visio_schema.transport.mcap_endpoint.McapEndpoint` and
+    :class:`~visio_schema.mcap.writer_endpoint.McapWriterEndpoint` and
     :meth:`ChannelRegistry.resolved`).
 
     ``output``: a filesystem path, or an already-open **seekable** binary stream
