@@ -39,6 +39,7 @@ message Command {
     SetCalibration set_calibration = 20;
     SetTime        set_time        = 21;
     SetRecordingMeta set_recording_meta = 22;
+    SetVideoStreaming set_video_streaming = 23;
   }
 }
 
@@ -66,6 +67,17 @@ message StopRecording {
 // Ask the target to publish its DeviceInfo immediately, out of the
 // normal cadence. Replaces UMI v3's T_DEVICE_INFO_REQ query.
 message Identify {
+}
+
+// Pause/resume camera video streaming to THIS bus client only (addressed by the
+// connection the Command arrives on — not a device-wide switch). Recording to
+// disk and any other connected client are unaffected. The app pauses streaming
+// on screens that don't render video (e.g. the recordings list) so a control
+// reply (ListRecordings, etc.) isn't stuck behind buffered H.265 on a slow
+// Wi-Fi AP. A fresh connection always starts streaming (paused state is not
+// persisted), so a reconnect auto-resumes.
+message SetVideoStreaming {
+  bool enabled = 1;  // true = stream video to me; false = pause it
 }
 
 // ── Provisioning / control surface folded from the old HTTP setup API ───────

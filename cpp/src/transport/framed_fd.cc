@@ -29,13 +29,23 @@ void FramedFdEndpoint::AdoptFd(int fd) {
   fd_ = fd;
 }
 
-FramedFdEndpoint::FramedFdEndpoint(int fd, WritePolicy policy) : outbox_(policy) {
+// Control queue: near-lossless and bounded by frame count (control + IMU are
+// low-byte; 512 frames is generous headroom, dropping oldest only if the link
+// stalls for seconds). OneAtATime drain (WritePolicy default) so Pump can
+// interleave it with video at frame boundaries.
+namespace {
+WritePolicy ControlPolicy() { return WritePolicy::drop_oldest(512); }
+}  // namespace
+
+FramedFdEndpoint::FramedFdEndpoint(int fd, WritePolicy policy)
+    : ctrl_outbox_(ControlPolicy()), outbox_(policy) {
   AdoptFd(fd);
 }
 
 FramedFdEndpoint::FramedFdEndpoint(FdFactory factory, WritePolicy policy,
                                    std::int64_t reopen_backoff_ns)
     : factory_(std::move(factory)),
+      ctrl_outbox_(ControlPolicy()),
       outbox_(policy),
       reopen_backoff_ns_(reopen_backoff_ns) {
   if (factory_) AdoptFd(factory_());
@@ -66,8 +76,15 @@ void FramedFdEndpoint::Stop() {
 }
 
 void FramedFdEndpoint::Send(const Message& msg) {
+  // Video paused for this client (e.g. the app is on a non-video screen): drop
+  // it at the door so it never enters the queue or contends for the AP. Control
+  // is never paused. Set under the same dispatch serialization as Send, so the
+  // relaxed read is consistent here.
+  if (msg.bulk && bulk_paused_.load(std::memory_order_relaxed)) return;
   const auto framed = EncodeFramed(msg);
-  outbox_.Enqueue(framed.data(), framed.size());  // thread-safe; no I/O
+  // Bulk (camera video) -> lossy video queue; everything else -> the control
+  // queue, which Pump() drains ahead of video. thread-safe; no I/O.
+  (msg.bulk ? outbox_ : ctrl_outbox_).Enqueue(framed.data(), framed.size());
   Wake();
 }
 
@@ -79,10 +96,28 @@ void FramedFdEndpoint::Wake() {
 
 void FramedFdEndpoint::Pump() {
   if (fd_ < 0) return;
+  // When streaming was just paused, shed any video still queued from before the
+  // pause — but only at a frame boundary (not mid-write, or the reader desyncs).
+  // Clear() is leg-thread-only, and Pump runs on the leg thread, so this is the
+  // safe place to do it. Frees the AP within one drain cycle.
+  if (bulk_paused_.load(std::memory_order_relaxed) && !outbox_.InFlightActive())
+    outbox_.Clear();
   const int fd = fd_;
-  const bool alive = outbox_.Drain(
-      [fd](const std::uint8_t* p, std::size_t n) { return WriteSome(fd, p, n); });
-  if (!alive) MarkLinkDead();
+  const auto wr = [fd](const std::uint8_t* p, std::size_t n) {
+    return WriteSome(fd, p, n);
+  };
+  // Multiplex the two outboxes over the one fd WITHOUT splitting a frame: if
+  // either has a frame mid-write (bytes already on the wire), finish exactly
+  // that one — switching now would inject the other queue's bytes into a
+  // half-written COBS frame and desync the reader. Only at a frame boundary
+  // (neither in-flight) do we choose, and then control goes first so a reply
+  // never waits behind the video backlog. The video outbox is OneAtATime, so
+  // "finish the in-flight frame" is bounded to a single video frame.
+  FramedOutbox* pick = outbox_.InFlightActive()        ? &outbox_
+                       : ctrl_outbox_.InFlightActive()  ? &ctrl_outbox_
+                       : ctrl_outbox_.HasPending()      ? &ctrl_outbox_
+                                                        : &outbox_;
+  if (!pick->Drain(wr)) MarkLinkDead();
 }
 
 void FramedFdEndpoint::MarkLinkDead() {
@@ -90,7 +125,8 @@ void FramedFdEndpoint::MarkLinkDead() {
     CloseFd(fd_);
     fd_ = -1;
   }
-  outbox_.Clear();  // a fresh reader after reopen would desync on a half-frame
+  ctrl_outbox_.Clear();  // a fresh reader after reopen would desync on a half-frame
+  outbox_.Clear();
   rx_buf_.clear();
   next_reopen_ns_ = 0;  // reopen ASAP on the next Tick
 }
@@ -119,7 +155,7 @@ void FramedFdEndpoint::Loop() {
     int fd_idx = -1;
     if (fd >= 0) {
       short ev = POLLIN;
-      if (outbox_.HasPending()) ev |= POLLOUT;
+      if (ctrl_outbox_.HasPending() || outbox_.HasPending()) ev |= POLLOUT;
       fd_idx = n;
       pfds[n++] = {fd, ev, 0};
     }

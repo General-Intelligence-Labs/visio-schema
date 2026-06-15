@@ -54,6 +54,12 @@ class Endpoint {
 
   // Stop + join the I/O thread and close the link. Idempotent.
   virtual void Stop() = 0;
+
+  // Pause/resume `bulk`-tagged frames (camera video) for THIS sink only, leaving
+  // control/sensor frames flowing. A streaming sink (FramedFdEndpoint) drops
+  // bulk while paused so a control reply isn't stuck behind buffered H.265; a
+  // recording sink (MCAP) ignores this and keeps capturing. Default: no-op.
+  virtual void SetBulkPaused(bool /*paused*/) {}
 };
 
 }  // namespace visio_schema::transport
