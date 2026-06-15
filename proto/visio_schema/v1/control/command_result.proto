@@ -45,6 +45,16 @@ message RecordingEntry {
   uint64      bytes_uploaded = 7;
   uint64      bytes_total    = 8;
   string      last_error     = 9;
+
+  // Per-session capture metadata, read from the session's session.json (the
+  // task/location/message the operator set on the device-detail "Set" panel,
+  // plus the GPS fix captured at recording start). Empty/zero when none was set.
+  // Lets the app show a recording's labels + location without parsing the MCAP.
+  string task      = 10;
+  string location  = 11;
+  string message   = 12;
+  double latitude  = 13;  // 0 when unknown
+  double longitude = 14;  // 0 when unknown
 }
 
 message RecordingsList {

@@ -83,6 +83,9 @@ visio_schema.v1.control.WifiScanResult.security   type:FT_POINTER
 visio_schema.v1.control.RecordingsList.recordings type:FT_POINTER
 visio_schema.v1.control.RecordingEntry.name       type:FT_POINTER
 visio_schema.v1.control.RecordingEntry.last_error type:FT_POINTER
+visio_schema.v1.control.RecordingEntry.task       type:FT_POINTER
+visio_schema.v1.control.RecordingEntry.location   type:FT_POINTER
+visio_schema.v1.control.RecordingEntry.message    type:FT_POINTER
 
 # ---- Calibration: bound the foxglove camera/transform + ImuCalibration repeated
 #      fields so every SetCalibration artifact (and the published calibration) is a
