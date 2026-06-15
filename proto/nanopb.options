@@ -63,6 +63,9 @@ visio_schema.v1.control.CommandResult.error_code               max_size:32
 visio_schema.v1.control.CommandResult.error_message            max_size:128
 visio_schema.v1.control.DeviceState.recording_session_name     max_size:64
 visio_schema.v1.control.DeviceState.recording_task             max_size:64
+visio_schema.v1.control.DeviceState.recording_meta_task        max_size:64
+visio_schema.v1.control.DeviceState.recording_meta_location    max_size:128
+visio_schema.v1.control.DeviceState.recording_meta_message     max_size:256
 visio_schema.v1.control.DeviceState.wifi_ssid                  max_size:33
 visio_schema.v1.control.DeviceState.wifi_ip                    max_size:46
 visio_schema.v1.control.DeviceState.wifi_last_error            max_size:128

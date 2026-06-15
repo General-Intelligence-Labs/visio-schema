@@ -62,6 +62,13 @@ message DeviceState {
   uint64 recording_started_at_us = 3;  // 0 when not recording
   string recording_task          = 19; // active capture task; empty otherwise
 
+  // Persisted recording-metadata defaults (SetRecordingMeta sidecar), echoed so
+  // the app can confirm what's stored — independent of whether a recording is
+  // active (unlike recording_task). Empty if unset.
+  string recording_meta_task     = 20;
+  string recording_meta_location = 21;
+  string recording_meta_message  = 22;
+
   // ── disk ──
   sint32 disk_free_pct = 4;   // 0..100, or -1 = unknown
   bool   disk_no_sdcard = 5;
