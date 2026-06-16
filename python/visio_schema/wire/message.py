@@ -31,7 +31,11 @@ class Message:
             `COMMAND`), or a data id that `ChannelRegistry` resolves to a `Channel`.
         payload: The serialized protobuf payload bytes.
         seq: Per-stream sequence counter (uint32).
-        timestamp: Capture/log time, a ``google.protobuf.Timestamp``.
+        timestamp: The payload's sensor **capture** time (NOT send/publish time),
+            a ``google.protobuf.Timestamp`` — the producer contract in
+            ``docs/protocol/timesync.md``. A relay re-expresses it into its own
+            clock via the heartbeat offset; control/transport messages with no
+            sensor instant carry the send time instead.
 
     Example:
         msg = Message(stream_id=16, payload=imu.SerializeToString())

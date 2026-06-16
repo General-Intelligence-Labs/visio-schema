@@ -9,6 +9,18 @@ liveness ping and one leg of a clock-offset exchange. Each peer's local
 to every inbound message's `Header.timestamp`, shifting it into the
 receiver's own clock domain.
 
+**Producer contract.** A data stream's `Header.timestamp` MUST be the
+payload's **sensor capture time** — the instant the measurement was taken,
+in the producer's local monotonic clock, identical to the time the payload
+self-describes with (`CompressedVideo.timestamp`, `ImuRaw.first_sample_time`,
+…). It MUST NOT be the publish/encode/send instant: that latency jitters
+per-frame and per-stream, and would corrupt both intra-stream rate and
+inter-stream (stereo, cam↔IMU) alignment. Only control/transport messages
+with no sensor instant (heartbeat, DeviceInfo, command results) stamp the
+send time. With this contract the rx-rewrite (§4) turns a data header into
+"capture time in the receiver's clock" — directly fusable across devices,
+while the payload retains the producer-clock original.
+
 This document is canonical. Implementations MUST conform.
 
 > **History.** Earlier Visio used a dedicated `STREAM_TIMESYNC` with
