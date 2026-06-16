@@ -40,6 +40,12 @@ class FramedOutbox {
   // Thread-safe. Returns false only when DropOnFail rejected this frame.
   bool Enqueue(const std::uint8_t* frame, std::size_t len);
 
+  // True iff a frame is committed to the wire but not yet fully written (a
+  // partial in_flight_). The owning endpoint uses this to multiplex two outboxes
+  // (control + bulk) over one fd WITHOUT interleaving half-frames: it only
+  // switches queues when neither has bytes mid-flight. Leg-thread-local read.
+  bool InFlightActive() const { return in_flight_off_ < in_flight_.size(); }
+
   // Drain as much as the link will accept right now, non-blocking. Returns false
   // if `wr` reported the link dead (<0). Call ONLY from the single leg I/O thread.
   bool Drain(const WriteFn& wr);

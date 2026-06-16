@@ -40,9 +40,10 @@ enum ControlStream {
   CONTROL_STREAM_DEVICE_INFO = 1;  // end-to-end (source: device_name)
   CONTROL_STREAM_HEARTBEAT = 3;    // link-scoped
   CONTROL_STREAM_COMMAND = 4;      // end-to-end (target: target_device)
+  CONTROL_STREAM_OTA = 5;          // end-to-end (target: target_device); see service/ota
   reserved 2;                      // was CONTROL_STREAM_TIMESYNC — folded into heartbeat
   reserved "CONTROL_STREAM_TIMESYNC";
-  // 5..15 reserved for future control streams.
+  // 6..15 reserved for future control streams.
   // Data-stream ids begin here; this value is the reserved/dynamic boundary,
   // not itself a control stream.
   CONTROL_STREAM_FIRST_DYNAMIC = 16;

@@ -1,0 +1,154 @@
+// visio_schema/v1/service/ota/ota.proto
+//
+// Firmware-update service. Host→device control + bulk data on the
+// CONTROL_STREAM_OTA control stream (end-to-end: forwarded across hops, so
+// OtaMessage carries target_device, exactly like Command). Device→host
+// progress is published on the per-device named channel "/<device>/ota_status"
+// (a dynamic data channel advertised via DeviceInfo — NOT a reserved control
+// id), mirroring the Command (control id) / CommandResult (named channel) split.
+//
+// Why its own control stream rather than a Command body: a full image is
+// 30–60 MB = tens of thousands of chunks. That is too big for the single-ack
+// CommandResult model and too heavy for the small-message COMMAND stream, so
+// OTA gets a dedicated stream that carries both control and data frames.
+//
+// Two-phase, NO persistent staging (see ota-plan.md):
+//   * Normal mode (full umi_embedded) verifies the signed OtaBegin MANIFEST
+//     only (a few hundred bytes), then reboots into recovery. Nothing large is
+//     staged across the reboot.
+//   * Recovery runs a slim receiver speaking this same protocol, and writes each
+//     OtaChunk STRAIGHT to its target MTD partition (flash_erase once, then
+//     nandwrite sequentially). The bulk stream is consumed live; the device
+//     never holds the whole image in RAM or on disk.
+//
+// Payload opacity: the bytes are an already-signed, already-encrypted image (the
+// SoC decrypts at boot via its OTP key; the device never decrypts). `sha256` and
+// the per-partition digests cover the bytes AS STORED (ciphertext); the manifest
+// `signature` makes authenticity independent of bus auth.
+
+syntax = "proto3";
+
+package visio_schema.v1.service.ota;
+
+// Host→device, on CONTROL_STREAM_OTA. One message type carries the whole
+// session (manifest, data, lifecycle), like Command's oneof body.
+message OtaMessage {
+  // Intended recipient, by device name (DeviceInfo.device_name). A receiving
+  // peer MUST ignore OtaMessages whose target_device is neither empty
+  // (broadcast — discouraged for OTA) nor its own name. Mirrors
+  // Command.target_device; required because a control id is never remapped and
+  // so cannot itself disambiguate devices across a hub.
+  string target_device = 1;
+
+  // Correlates every frame of one transfer; echoed in OtaStatus.session_id.
+  // The host picks it (monotonic per host is sufficient).
+  uint64 session_id = 2;
+
+  oneof body {
+    OtaBegin  begin  = 10;  // manifest, once, opens the session
+    OtaChunk  chunk  = 11;  // package bytes at an absolute offset
+    OtaCommit commit = 12;  // all bytes sent → verify + apply
+    OtaAbort  abort  = 13;  // cancel; device discards staging
+    OtaQuery  query  = 14;  // poll: emit current OtaStatus (for resume)
+  }
+}
+
+// Sent once to open a session. Pins everything the device needs to validate
+// the package before applying it. `signature` is Ed25519 over the canonical
+// manifest (fw_version, board, total_bytes, chunk_bytes, sha256, min_version);
+// the verifying public key is baked into the image, so the untrusted relay app
+// cannot forge an acceptable package. Re-sending OtaBegin with the same
+// session_id while a matching staging file exists is idempotent (resume), not
+// a restart.
+message OtaBegin {
+  string fw_version  = 1;  // version being delivered (free-form semver)
+  string board       = 2;  // MUST equal the device board, e.g. "hdk_ego_v1"
+  uint64 total_bytes = 3;  // sum of partition image sizes (the streamed bytes)
+  uint32 chunk_bytes = 4;  // sender's chunk size hint (32–64 KiB typical)
+  bytes  sha256      = 5;  // digest of the whole stream as sent
+  bytes  signature   = 6;  // Ed25519 over the manifest, verified on device
+  uint32 min_version = 7;  // anti-rollback floor; device rejects current < this
+
+  // Flash layout the streamed bytes map onto, in stream order. Recovery erases
+  // and writes these target MTD partitions directly — there is NO bundle file on
+  // the device and no untar step. OtaChunk.offset is the absolute offset into
+  // the concatenation of these images in this order, so recovery routes each
+  // byte range to the right partition. The signature covers this list too.
+  repeated OtaPartition partitions = 8;
+}
+
+// One target partition's image within the stream.
+message OtaPartition {
+  string name   = 1;  // MTD partition name, e.g. "boot", "rootfs"
+  uint64 size   = 2;  // bytes of this partition's image in the stream
+  bytes  sha256 = 3;  // per-partition digest (early corruption detection)
+}
+
+// One slice of the stream, at the ABSOLUTE byte offset into the concatenated
+// partition images (not a running counter) so retransmits are idempotent and
+// resume needs no per-chunk bookkeeping. In recovery the byte at `offset` is
+// written straight to its target MTD partition — never to a staging file. No
+// whole-image RAM or disk buffering on the device.
+message OtaChunk {
+  uint64 offset = 1;  // absolute offset into the concatenated images
+  bytes  data   = 2;  // chunk_bytes payload (last chunk may be short)
+}
+
+// All bytes delivered. Device verifies sha256 + Ed25519 signature + board +
+// anti-rollback over the staged file, stages it, then triggers `reboot
+// recovery`. Carries no fields — the session is identified by
+// OtaMessage.session_id.
+message OtaCommit {}
+
+// Cancel the in-flight session; device deletes the staging file and returns to
+// IDLE.
+message OtaAbort {
+  string reason = 1;  // human-readable, for logs/telemetry
+}
+
+// Ask the device to emit a fresh OtaStatus for OtaMessage.session_id without
+// sending data — used after a reconnect to read the resume cursor
+// (bytes_received) or learn the staging file vanished (NEEDS_RESUME).
+message OtaQuery {}
+
+// Device→host, published on "/<device>/ota_status". Serves three jobs at once:
+// progress UI, flow-control ACK (the app paces sends against bytes_received),
+// and the resume cursor. Emitted periodically during RECEIVING and on every
+// state transition.
+message OtaStatus {
+  string device     = 1;  // source device name (informational; topic is scoped)
+  uint64 session_id = 2;  // echoes OtaMessage.session_id; 0 when IDLE/no session
+
+  enum State {
+    IDLE       = 0;  // no session
+    RECEIVING  = 1;  // accepting chunks
+    VERIFYING  = 2;  // checking sha256 + signature on OtaCommit
+    STAGED     = 3;  // verified, about to reboot into recovery
+    APPLYING   = 4;  // recovery is flashing (reported on next normal boot)
+    SUCCESS    = 5;  // new firmware booted and checked in
+    FAILED     = 6;  // see error_code/error_message
+    NEEDS_RESUME = 7;  // staging file missing/short; host should re-Begin
+  }
+  State state = 3;
+
+  uint64 bytes_received = 4;  // contiguous bytes staged = progress + resume cursor + ACK
+  uint32 progress_pct   = 5;  // 0..100, convenience for UIs
+
+  // Machine- then human-readable failure detail (empty unless FAILED), matching
+  // CommandResult's error_code/error_message convention. Codes e.g.
+  // "verify_failed", "sha256_mismatch", "stage_write_failed", "no_space".
+  string error_code    = 6;
+  string error_message = 7;
+
+  // ── A/B slot state (set on every status the device emits) ─────────────────
+  // The booted slot ("a"/"b") and the OTHER slot's recorded firmware version
+  // (empty when unknown/never flashed). When `revert_available`, pushing an
+  // OtaBegin whose fw_version equals `other_slot_version` performs an instant
+  // slot flip (no image transfer): the device re-arms the old slot and reboots
+  // — the user-triggered revert. `last_ota_reverted` reports that the previous
+  // update never boot-confirmed and U-Boot auto-rolled back to this slot.
+  string active_slot        = 8;
+  string other_slot_version = 9;
+  bool   revert_available   = 10;
+  bool   last_ota_reverted  = 11;
+}

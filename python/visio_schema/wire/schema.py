@@ -42,6 +42,7 @@ _PAYLOAD_MODULES = (
     "visio_schema.v1.control.command_result_pb2",
     "visio_schema.v1.service.device_info.device_info_pb2",
     "visio_schema.v1.service.heartbeat.heartbeat_pb2",
+    "visio_schema.v1.service.ota.ota_pb2",
     "visio_schema.foxglove.CompressedVideo_pb2",
     "visio_schema.foxglove.CompressedImage_pb2",
     "visio_schema.foxglove.RawImage_pb2",

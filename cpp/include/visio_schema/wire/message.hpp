@@ -25,6 +25,13 @@ struct Message {
   google_protobuf_Timestamp timestamp = google_protobuf_Timestamp_init_zero;
 
   std::string payload;
+
+  // In-memory only (NOT serialized into the wire Header): marks a high-bandwidth
+  // bulk stream (camera video). A split-outbox endpoint sends non-bulk CONTROL
+  // frames (command results, DeviceInfo, OTA status, IMU) on a separate queue
+  // ahead of video, so a reply isn't stuck behind seconds of buffered H.265 on a
+  // bandwidth-limited link. Set by the producer (publish_video).
+  bool bulk = false;
 };
 
 }  // namespace visio_schema::wire

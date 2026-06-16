@@ -45,6 +45,16 @@ message RecordingEntry {
   uint64      bytes_uploaded = 7;
   uint64      bytes_total    = 8;
   string      last_error     = 9;
+
+  // Per-session capture metadata, read from the session's session.json (the
+  // task/location/message the operator set on the device-detail "Set" panel,
+  // plus the GPS fix captured at recording start). Empty/zero when none was set.
+  // Lets the app show a recording's labels + location without parsing the MCAP.
+  string task      = 10;
+  string location  = 11;
+  string message   = 12;
+  double latitude  = 13;  // 0 when unknown
+  double longitude = 14;  // 0 when unknown
 }
 
 message RecordingsList {
@@ -60,6 +70,14 @@ message DeviceState {
   bool   recording_auto_start    = 1;
   string recording_session_name  = 2;  // empty when not recording
   uint64 recording_started_at_us = 3;  // 0 when not recording
+  string recording_task          = 19; // active capture task; empty otherwise
+
+  // Persisted recording-metadata defaults (SetRecordingMeta sidecar), echoed so
+  // the app can confirm what's stored — independent of whether a recording is
+  // active (unlike recording_task). Empty if unset.
+  string recording_meta_task     = 20;
+  string recording_meta_location = 21;
+  string recording_meta_message  = 22;
 
   // ── disk ──
   sint32 disk_free_pct = 4;   // 0..100, or -1 = unknown
