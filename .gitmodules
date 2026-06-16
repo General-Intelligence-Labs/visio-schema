@@ -5,3 +5,10 @@
 [submodule "third_party/nanopb"]
 	path = third_party/nanopb
 	url = https://github.com/nanopb/nanopb.git
+# Header-only MCAP C++ library. PINNED to releases/cpp/v1.4.1 — do NOT bump to
+# v1.5.x: its writer.inl adds an unconditional `#include <lz4.h>` (not guarded by
+# MCAP_COMPRESSION_NO_LZ4) that breaks the compression-disabled RV1106 firmware
+# cross-compile. Only cpp/mcap/include/ is used (Compression::None only).
+[submodule "third_party/mcap"]
+	path = third_party/mcap
+	url = https://github.com/foxglove/mcap.git

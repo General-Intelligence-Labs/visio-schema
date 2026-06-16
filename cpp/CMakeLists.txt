@@ -37,10 +37,10 @@ endif()
 # so the recording layer cross-compiles for the RV1106 with no extra deps. The
 # .inl implementation is pulled into mcap_writer.cc alone, and mcap_writer.hpp
 # does NOT expose any mcap type, so this include stays PRIVATE to the library.
-# Vendored sources (not a submodule) — see third_party/mcap/VENDOR.md.
+# Header-only mcap submodule, pinned to v1.4.1 (see .gitmodules for the pin).
 set(MCAP_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/mcap/cpp/mcap/include")
 if(NOT EXISTS "${MCAP_INCLUDE_DIR}/mcap/writer.hpp")
-  message(FATAL_ERROR "vendored mcap not found at ${MCAP_INCLUDE_DIR}")
+  message(FATAL_ERROR "mcap submodule not initialized; run: git submodule update --init third_party/mcap")
 endif()
 
 # Every generated payload type, not just the Header. CONFIGURE_DEPENDS re-globs

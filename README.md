@@ -124,6 +124,6 @@ complete surface and the stability guarantee.
 
 [MIT](LICENSE) © 2026 General Intelligence Labs.
 
-This repo vendors third-party code under permissive licenses: [MCAP](third_party/mcap/) (MIT),
-and [nanopb](third_party/nanopb/) (zlib) and the [Foxglove SDK](third_party/foxglove-sdk/) (MIT)
-as git submodules — each retains its own license.
+This repo pulls third-party code under permissive licenses as git submodules:
+[MCAP](third_party/mcap/) (MIT), [nanopb](third_party/nanopb/) (zlib), and the
+[Foxglove SDK](third_party/foxglove-sdk/) (MIT) — each retains its own license.

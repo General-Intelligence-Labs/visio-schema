@@ -53,7 +53,7 @@ Use this to change the schema, build the native reader, or run the test suite. C
 ```bash
 git clone https://github.com/General-Intelligence-Labs/visio-schema
 cd visio-schema
-git submodule update --init third_party/nanopb third_party/foxglove-sdk
+git submodule update --init third_party/nanopb third_party/foxglove-sdk third_party/mcap
 
 npm install -g @bufbuild/buf        # or: npm install && export PATH="$PATH:$(pwd)/node_modules/.bin"
 make gen                            # generate Python + C++ (nanopb) bindings in-tree
@@ -88,7 +88,7 @@ VISIO_NO_NATIVE=1 python -m pytest tests -q
 - **`buf: command not found` during `make gen`** — install it (`npm install -g @bufbuild/buf`) or
   add `node_modules/.bin` to your `PATH`.
 - **`make gen` errors about missing protos / nanopb** — initialize the submodules:
-  `git submodule update --init third_party/nanopb third_party/foxglove-sdk`.
+  `git submodule update --init third_party/nanopb third_party/foxglove-sdk third_party/mcap`.
 - **Native reader didn't build** — that's fine; the pure-Python reader is used automatically. To
   build it you need a C/C++ compiler; check the `pip install` output for the compiler error.
 - **Permission denied opening `/dev/ttyACM0`** — add your user to the `dialout` group

@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive    # nanopb + foxglove-sdk are submodules
+          submodules: recursive    # nanopb + foxglove-sdk + mcap are submodules
 
       - uses: actions/setup-python@v5
         with:
