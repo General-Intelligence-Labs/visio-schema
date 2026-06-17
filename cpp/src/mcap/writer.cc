@@ -1,6 +1,11 @@
 #include "visio_schema/mcap/writer.hpp"
 
+#include <fcntl.h>
+#include <unistd.h>
+
+#include <cerrno>
 #include <cstdio>
+#include <cstring>
 #include <stdexcept>
 #include <string>
 
@@ -35,6 +40,52 @@ std::string NumberedPart(const std::string& path, std::size_t index) {
                        (slash == std::string::npos || dot > slash);
   if (!has_ext) return path + tag;
   return path.substr(0, dot) + tag + path.substr(dot);
+}
+
+// fsync a path (a file, or a directory with O_DIRECTORY) to push it to physical
+// media. Reopening read-only is enough — fsync flushes dirty pages regardless of
+// the open mode. Best-effort: a failure means the just-finished recording may
+// not survive an immediate power-down, so it is logged with that implication
+// (the device log is where storage degradation already surfaces, cf.
+// McapWriterEndpoint::NoteDrop) but never thrown — the file is already finalized
+// on disk, and turning that into an exception on the stop path would be strictly
+// worse.
+void FsyncPathBestEffort(const std::string& path, int extra_open_flags) {
+  const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | extra_open_flags);
+  if (fd < 0) {
+    std::fprintf(stderr,
+                 "McapWriter: cannot open %s to fsync (data may not be "
+                 "durable): %s\n",
+                 path.c_str(), std::strerror(errno));
+    return;
+  }
+  if (::fsync(fd) != 0) {
+    std::fprintf(stderr,
+                 "McapWriter: fsync %s failed (data may not be durable): %s\n",
+                 path.c_str(), std::strerror(errno));
+  }
+  ::close(fd);
+}
+
+// Push a finished MCAP part's data — and the directory entry recording it —
+// onto physical media. The upstream writer's close() ends in fclose(), which
+// only flushes stdio buffers into the kernel page cache; on the async-mounted
+// SD card a power-down within the writeback window (~30 s) would otherwise
+// truncate or corrupt the just-finalized file. fsync the file (its data + size)
+// and then the containing directory so the entry is durable too.
+void FsyncPart(const std::string& path) {
+  FsyncPathBestEffort(path, 0);
+
+  const std::size_t slash = path.find_last_of('/');
+  std::string dir;
+  if (slash == std::string::npos) {
+    dir = ".";
+  } else if (slash == 0) {
+    dir = "/";
+  } else {
+    dir = path.substr(0, slash);
+  }
+  FsyncPathBestEffort(dir, O_DIRECTORY);
 }
 
 }  // namespace
@@ -84,8 +135,14 @@ bool McapWriter::ShouldRoll() const {
   return false;
 }
 
-void McapWriter::Roll() {
+void McapWriter::CloseCurrentPart() {
+  const std::string p = PartPath();  // capture before close, while state is live
   writer_->close();
+  FsyncPart(p);
+}
+
+void McapWriter::Roll() {
+  CloseCurrentPart();
   ++part_index_;
   OpenPart();
 }
@@ -132,7 +189,7 @@ void McapWriter::Write(const Channel& channel, const Message& msg) {
 void McapWriter::Close() {
   if (closed_) return;
   closed_ = true;
-  if (writer_) writer_->close();
+  if (writer_) CloseCurrentPart();
 }
 
 }  // namespace visio_schema::mcap

@@ -61,6 +61,8 @@ class McapWriter {
   void OpenPart();          // throws on open failure
   bool ShouldRoll() const;
   void Roll();
+  // Close the current part and fsync it to physical media before moving on.
+  void CloseCurrentPart();
 
   const std::string base_path_;
   const std::uint64_t max_bytes_;
