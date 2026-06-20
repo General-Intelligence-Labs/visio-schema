@@ -10,6 +10,8 @@
 #   make pytest    - run the Python codec tests (python/tests)
 #   make cpp       - build + run the C++ codec tests (cpp/)
 #   make wheel     - build the combined visio-schema wheel (gen + codec)
+#   make sdist     - build the source distribution (sdist) for PyPI
+#   make dist      - build sdist + wheel (PyPI artifacts) into dist/
 #   make clean     - remove generated bindings + build artifacts
 #
 # `buf` is installed locally via `npm install @bufbuild/buf` and lives at
@@ -37,7 +39,7 @@ NANOPB_OPTIONS := proto/nanopb.options
 NANOPB_WKT_INC := third_party/nanopb/generator/proto
 FOXGLOVE_PROTO := third_party/foxglove-sdk/schemas/proto
 
-.PHONY: lint breaking gen test pytest cpp wheel clean help
+.PHONY: lint breaking gen test pytest cpp wheel sdist dist clean help
 
 help:
 	@echo "make lint      - lint protos"
@@ -47,6 +49,8 @@ help:
 	@echo "make pytest    - run the Python codec tests (python/tests)"
 	@echo "make cpp       - build + run the C++ codec tests (cpp/)"
 	@echo "make wheel     - build the combined visio-schema wheel (gen + codec)"
+	@echo "make sdist     - build the source distribution (sdist)"
+	@echo "make dist      - build sdist + wheel (PyPI artifacts) into dist/"
 	@echo "make clean     - remove generated bindings + build artifacts"
 
 lint:
@@ -122,6 +126,24 @@ wheel: gen
 	rm -rf dist
 	cd python && $(PYTHON) -m pip wheel --no-deps . -w "$(CURDIR)/dist"
 	@echo "wheel written to dist/"
+
+# Source distribution for PyPI. The generated _pb2 (gitignored at HEAD) and the
+# native sources are folded in via MANIFEST.in so the sdist builds without a
+# codegen toolchain. The platform wheels published to PyPI are the per-version
+# manylinux/macOS wheels built by cibuildwheel in CI (.github/workflows/wheels.yml).
+sdist: gen
+	rm -rf dist
+	$(PYTHON) python/_vendor_native.py
+	cd python && $(PYTHON) -m build --sdist --outdir "$(CURDIR)/dist"
+	@echo "sdist written to dist/"
+
+# Both PyPI artifacts (sdist + a local wheel) into dist/. `python -m build` builds
+# the wheel FROM the sdist, exercising the MANIFEST.in vendoring end to end.
+dist: gen
+	rm -rf dist
+	$(PYTHON) python/_vendor_native.py
+	cd python && $(PYTHON) -m build --outdir "$(CURDIR)/dist"
+	@echo "sdist + wheel written to dist/"
 
 clean:
 	rm -rf $(NANOPB_GEN) cpp/build examples/cpp/build dist build

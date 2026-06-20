@@ -6,6 +6,21 @@ bump the MINOR version.
 
 ## 0.2.0.dev0 — unreleased
 
+### Packaging & tooling
+
+- **PyPI packaging.** `visio-schema` now builds as a proper sdist + per-version
+  wheels and publishes to PyPI on a `visio-schema-v*` tag via Trusted Publishing
+  (`.github/workflows/wheels.yml`). Added `make sdist` / `make dist`, project
+  metadata (readme, classifiers, URLs), a `py.typed` marker, and `MANIFEST.in`.
+  See [`docs/publishing.md`](docs/publishing.md).
+- **`visio-display` command.** The live viewer moved from `examples/python/` into
+  the package (`visio_schema.display`) and installs as the `visio-display` console
+  script (also `python -m visio_schema.display`).
+- **One default install — no feature extras.** MCAP read/write and the viewer's
+  dependencies (serial, Foxglove, Rerun, H.265 decode) are now base dependencies,
+  so `pip install visio-schema` is all you need; the former `mcap` / `display`
+  extras are gone.
+
 ### Timesync folded into the heartbeat beacon
 
 - **Removed the standalone timesync exchange** (`timesync.v1` package and

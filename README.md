@@ -1,9 +1,9 @@
 # visio-schema
 
 The **wire contract** for the Visio sensor ecosystem: the protobuf message definitions, the
-byte-level framing codec, and the protocol specs that a Visio device, the `visio` bus, and any
+byte-level framing codec, and the protocol specs that a Visio device, the Visio bus, and any
 third-party client all share. This repo is the single source of truth for *what Visio data looks
-like on the wire* — it is not a transport, bus, or recording stack (those live in `visio`).
+like on the wire* — it is not a transport, bus, or recording stack (those live in a separate layer).
 
 It ships as one Python package, `visio-schema`, that bundles the generated protobuf bindings next
 to a small, hand-written framing codec, so you can read a live device or a recording with one
@@ -28,18 +28,20 @@ to [Write your own code](#write-your-own-code).
 ## Install
 
 ```bash
-pip install "visio-schema[mcap] @ git+https://github.com/General-Intelligence-Labs/visio-schema@visio-schema-v0.2.0#subdirectory=python"
+pip install visio-schema
 ```
 
-Released tags ship the generated bindings, so this needs no codegen toolchain. The `[mcap]` extra
-adds MCAP read/write; omit it if you only need the live wire codec. For a development checkout
-(building bindings from source, the optional native reader, troubleshooting), see
-**[docs/install.md](docs/install.md)**.
+One install includes MCAP read/write (`read_mcap` / `McapWriter`) and the ready-to-run
+`visio-display` viewer (next section). Wheels (Linux `manylinux_2_28` x86_64, macOS `universal2`,
+CPython 3.10–3.13) bundle an optional native reader for higher throughput; if no wheel matches your
+platform the sdist installs a pure-Python reader with identical behavior. For a development checkout
+(building bindings from source, the optional native reader, troubleshooting) or how releases are
+published to PyPI, see **[docs/install.md](docs/install.md)**.
 
 ## Quickstart — view a device or recording (no code)
 
-The ready-to-run viewer **[`examples/python/visio_display.py`](examples/python/visio_display.py)**
-streams a live device (or replays a recording) to a viewer — no code required. We recommend
+The ready-to-run viewer — the **`visio-display`** command (included with `pip install visio-schema`) —
+streams a live device (or replays a recording) to a viewer, no code required. We recommend
 **[Foxglove Studio](https://foxglove.dev)**: it has rich panels for video, IMU plots, and 3D, and
 opens both live connections and recorded `.mcap` files.
 
@@ -53,23 +55,17 @@ Use either:
 
 ### View a live device
 
-From a repo checkout, with the package installed (see [docs/install.md](docs/install.md)) and the
-example deps:
-
 ```bash
-pip install -r examples/python/requirements.txt
-
 # stream the device to Foxglove (prints a ws:// URL to open)
-python examples/python/visio_display.py --serial /dev/ttyACM0 --foxglove
+visio-display --serial /dev/ttyACM0 --foxglove
 
 # stream to Foxglove AND record an MCAP at the same time
-python examples/python/visio_display.py --serial /dev/ttyACM0 --foxglove --out run.mcap
+visio-display --serial /dev/ttyACM0 --foxglove --out run.mcap
 ```
 
 In Foxglove, choose **Open connection → Foxglove WebSocket** and enter the printed URL
-(`ws://localhost:8765`). Import
-[`examples/python/ego_layout.json`](examples/python/ego_layout.json) (**Layouts ▸ Import from
-file**) for a ready-made panel set.
+(`ws://localhost:8765`). For a ready-made panel set, import the starter layout — `visio-display`
+prints its absolute path alongside the connection URL — via **Layouts ▸ Import from file**.
 
 ### View a recording
 

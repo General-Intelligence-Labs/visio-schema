@@ -19,8 +19,7 @@ the announce exactly as it would from a live link, then resolves the data.
   * ``None`` — as fast as the (synchronous) ``on_inbound`` consumer accepts.
   * ``> 1`` faster, ``< 1`` slower (e.g. ``2.0`` = 2x, ``0.5`` = half speed).
 
-``mcap`` is an optional dependency (``pip install visio-schema[mcap]``), imported
-lazily by :func:`read_mcap`.
+``mcap`` is a default dependency, imported lazily by :func:`read_mcap`.
 """
 from __future__ import annotations
 

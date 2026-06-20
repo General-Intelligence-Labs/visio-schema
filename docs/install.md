@@ -13,8 +13,7 @@ first.
 | | Needed for |
 |---|---|
 | Python ≥ 3.10 | always |
-| `protobuf>=5.26`, `cobs>=1.2` | always (installed automatically) |
-| `mcap>=1.1` | only to read/write MCAP recordings — the `[mcap]` extra |
+| `protobuf`, `cobs`, `mcap`, `pyserial`, `foxglove-sdk`, `rerun-sdk`, `av` | always (installed automatically) — the codec, MCAP read/write, and the `visio-display` viewer |
 | A C/C++ compiler | only for the **optional** native reader; without one you get the pure-Python reader |
 | `git` + submodules, Node/`npm` | only for a **from-source** checkout (to run protobuf codegen) |
 
@@ -24,20 +23,38 @@ is identical; only throughput differs.
 
 ## Option A — install a release (recommended)
 
-Released tags ship the generated protobuf bindings, so no codegen toolchain is required.
+```bash
+pip install visio-schema
+```
+
+One install includes the wire codec + generated bindings, MCAP read/write, and the `visio-display`
+viewer — no extras to choose. Released wheels (Linux `manylinux_2_28` x86_64, macOS `universal2`,
+CPython 3.10–3.13) bundle the optional native reader. If no wheel matches your platform, pip falls
+back to the sdist, which ships the generated bindings (no codegen toolchain required) and the
+pure-Python reader — correct, just slower; building the native reader from the sdist additionally
+needs a C/C++ compiler.
+
+The package installs the **`visio-display`** command (also runnable as
+`python -m visio_schema.display`):
 
 ```bash
-# the wire codec only
-pip install "visio-schema @ git+https://github.com/General-Intelligence-Labs/visio-schema@visio-schema-v0.2.0#subdirectory=python"
+visio-display --serial /dev/ttyACM0 --rerun     # live device -> Rerun
+visio-display --tcp my-device.local --foxglove  # live device -> Foxglove WebSocket
+visio-display --mcap-in run.mcap --rerun        # replay a recording
+```
 
-# with MCAP read/write
-pip install "visio-schema[mcap] @ git+https://github.com/General-Intelligence-Labs/visio-schema@visio-schema-v0.2.0#subdirectory=python"
+### Install from a git tag (before a PyPI release)
+
+Release tags also ship the generated bindings, so a direct `git+…` install needs no codegen
+toolchain:
+
+```bash
+pip install "visio-schema @ git+https://github.com/General-Intelligence-Labs/visio-schema@visio-schema-v0.2.0#subdirectory=python"
 ```
 
 A plain `git+…` install does not initialize submodules, so the native reader is skipped and you get
-the pure-Python reader — correct, just slower. To get the compiled native reader, install a
-prebuilt wheel (from PyPI or a GitHub release once published — these are built per Python version
-for Linux and macOS), or build from source (Option B).
+the pure-Python reader — correct, just slower. For the compiled native reader, install a released
+wheel from PyPI, or build from source (Option B).
 
 Verify:
 
@@ -69,7 +86,8 @@ cd python && python -m pytest tests -q
 ```
 
 Useful `make` targets (see the `Makefile`): `make gen` (codegen), `make pytest` (Python suite),
-`make cpp` (C++ codec tests), `make wheel` (build a distributable wheel), `make clean`.
+`make cpp` (C++ codec tests), `make wheel` / `make sdist` / `make dist` (build distributables),
+`make clean`. To cut a PyPI release, see [publishing.md](publishing.md).
 
 ## Forcing the pure-Python reader
 
@@ -82,9 +100,10 @@ VISIO_NO_NATIVE=1 python -m pytest tests -q
 
 ## Troubleshooting
 
-- **`ImportError: MCAP support needs the 'mcap' package`** — install the extra: `pip install
-  visio-schema[mcap]`. You only hit this if you actually call `read_mcap` / `McapWriter`; importing
-  the package never requires `mcap`.
+- **`ImportError: MCAP support needs the 'mcap' package`** — `mcap` ships as a default dependency,
+  so a normal install won't hit this; if you do, your environment is missing it: `pip install mcap`
+  (or reinstall the package). `mcap` is imported lazily, so importing `visio_schema` itself never
+  requires it.
 - **`buf: command not found` during `make gen`** — install it (`npm install -g @bufbuild/buf`) or
   add `node_modules/.bin` to your `PATH`.
 - **`make gen` errors about missing protos / nanopb** — initialize the submodules:

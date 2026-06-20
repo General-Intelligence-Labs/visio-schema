@@ -4,24 +4,27 @@
 Reads Visio messages from a **live serial port** or a **live TCP connection**
 (both COBS-delimited core frames, framing.md §3.2) **or replays a recorded MCAP
 file**, and fans them out to any combination of a **live Foxglove Studio**
-WebSocket server, a **live Rerun** viewer, and an **MCAP recording**. Depends
-only on the `visio-schema` package plus a few thin libraries (see
-requirements.txt).
+WebSocket server, a **live Rerun** viewer, and an **MCAP recording**. Its serial,
+Foxglove, Rerun, and H.265-decode dependencies ship with the `visio-schema`
+package (``pip install visio-schema``) and are imported lazily.
+
+Installed as the ``visio-display`` console command (also runnable as
+``python -m visio_schema.display``):
 
     # live serial -> Rerun (spawns the viewer; auto-lays-out views)
-    python visio_display.py --serial /dev/ttyACM0 --rerun
+    visio-display --serial /dev/ttyACM0 --rerun
 
     # live TCP (the device's preview listener, default port 9000) -> Rerun
-    python visio_display.py --tcp GILABS-1234.local --rerun
+    visio-display --tcp GILABS-1234.local --rerun
 
     # replay a recorded MCAP file into Rerun
-    python visio_display.py --mcap-in run.mcap --rerun
+    visio-display --mcap-in run.mcap --rerun
 
     # live serial -> Foxglove Studio (prints a URL to open)
-    python visio_display.py --serial /dev/ttyACM0 --foxglove
+    visio-display --serial /dev/ttyACM0 --foxglove
 
     # live TCP -> record an MCAP (and watch live at the same time)
-    python visio_display.py --tcp 10.0.0.7:9000 --out run.mcap --rerun
+    visio-display --tcp 10.0.0.7:9000 --out run.mcap --rerun
 
 The source is exactly one of `--serial` / `--tcp` / `--mcap-in`. MCAP-file ->
 Foxglove is not supported (open the file directly in Foxglove Studio, which
@@ -34,7 +37,7 @@ in `ego_layout.json` (Studio ▸ Layouts ▸ Import from file).
 
 `--rerun` spawns the Rerun viewer and drives an explicit layout (camera views,
 a 3D IMU-orientation scene, IMU time-series). The Rerun rendering is a port of
-`capstone/umi_data/scripts/display_stream_rerun.py` (H.265 decoded with PyAV to
+an earlier Rerun renderer (H.265 decoded with PyAV to
 images, orientation boxes, blueprint), only swapping the data model to
 visio-schema. Needs `rerun-sdk` and `av`.
 
@@ -51,7 +54,7 @@ against it. A frame whose id hasn't been announced yet is dropped until it is
 ids are exactly the data-frame ids, so no remap is needed here.
 
 Deliberately minimal — one read loop, no bus, no threads. The heavier,
-bus-integrated transport lives in visio-mq.
+bus-integrated transport lives in a separate bus/transport layer.
 """
 from __future__ import annotations
 
@@ -63,8 +66,10 @@ import sys
 import threading
 from collections.abc import Iterator
 from pathlib import Path
+from typing import ClassVar
 
 from google.protobuf.timestamp_pb2 import Timestamp
+
 # Stable public API — imported from the package root.
 from visio_schema import (
     Channel,
@@ -76,12 +81,12 @@ from visio_schema import (
 )
 from visio_schema.foxglove.CompressedVideo_pb2 import CompressedVideo
 from visio_schema.foxglove.FrameTransform_pb2 import FrameTransform
-from visio_schema.v1.ros.geometry_msgs.quaternion_pb2 import Quaternion
-from visio_schema.v1.sensor.imu_raw_pb2 import ImuRaw
-from visio_schema.v1.sensor.system_health_pb2 import SystemHealth
 
 # Low-level fd helpers (advanced/internal) — used to feed messages into resolved() as a generator.
 from visio_schema.transport import close_fd, extract_frames, read_some, set_nonblocking
+from visio_schema.v1.ros.geometry_msgs.quaternion_pb2 import Quaternion
+from visio_schema.v1.sensor.imu_raw_pb2 import ImuRaw
+from visio_schema.v1.sensor.system_health_pb2 import SystemHealth
 
 # Payload schema names dispatched on (== the protobuf full names on the wire).
 _QUAT_SCHEMA = "visio_schema.v1.ros.geometry_msgs.Quaternion"
@@ -272,7 +277,7 @@ class FoxgloveSink:
 
 class RerunSink:
     """Visualize Visio streams in a live Rerun viewer — a faithful port of
-    capstone/umi_data/scripts/display_stream_rerun.py's Rerun rendering. Only the
+    an earlier Rerun renderer's rendering. Only the
     data model changes (UMI v3 MessagePack dict -> Visio protobuf / topic+schema);
     the Rerun calls (decode->Image, imu_world boxes, blueprint, timeline) are the
     reference's, which is the known-good behavior we're reproducing:
@@ -289,13 +294,15 @@ class RerunSink:
     # IMU orientation box + in-line slot layout (verbatim from the reference).
     _IMU_BOX_HALF = (0.04, 0.02, 0.005)
     _IMU_SLOT_SPACING = 2.0 * (_IMU_BOX_HALF[0] * 2)
-    _IMU_COLORS = [
+    _IMU_COLORS: ClassVar[list[list[int]]] = [
         [100, 180, 255], [255, 100, 100], [100, 255, 100], [255, 255, 100],
         [255, 100, 255], [100, 255, 255], [255, 180, 100], [180, 100, 255],
         [100, 255, 180], [255, 100, 180], [180, 255, 100], [100, 180, 180],
         [200, 200, 100], [200, 100, 200], [100, 200, 200], [200, 200, 200],
     ]
-    _AV_CODEC = {"h265": "hevc", "hevc": "hevc", "h264": "h264", "avc": "h264", "av1": "av1"}
+    _AV_CODEC: ClassVar[dict[str, str]] = {
+        "h265": "hevc", "hevc": "hevc", "h264": "h264", "avc": "h264", "av1": "av1",
+    }
 
     def __init__(self, memory_limit: str = "2GB") -> None:
         import av
@@ -363,7 +370,7 @@ class RerunSink:
                 # compress() matters: raw 1080p RGB is ~6 MB/frame and would blow
                 # the viewer's memory cap; JPEG keeps it ~tens of KB (as the reference).
                 rr.log(ent, rr.Image(img, color_model="rgb"))
-        except Exception as exc:  # noqa: BLE001  partial NALs at startup heal at next IDR
+        except Exception as exc:  # partial NALs at startup heal at next IDR
             print(f"rerun: {ent} decode dropped: {exc}", file=sys.stderr)
 
     def _log_orientation(self, msg: Message, topic: str) -> None:
@@ -448,7 +455,7 @@ class RerunSink:
 # Main                                                                         #
 # --------------------------------------------------------------------------- #
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p = argparse.ArgumentParser(prog="visio-display", description=__doc__.splitlines()[0])
     src = p.add_mutually_exclusive_group(required=True)
     src.add_argument("--serial", metavar="PORT",
                      help="live serial port to read from (e.g. /dev/ttyACM0)")
@@ -528,5 +535,11 @@ def main(argv: list[str] | None = None) -> int:
     return n
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+def run() -> None:
+    """Console-script entry point (the ``visio-display`` command).
+
+    Runs :func:`main` and exits 0 on a clean finish. :func:`main` returns the
+    processed-message count for programmatic/test use, which is not a meaningful
+    process exit code — so the installed command goes through this wrapper.
+    """
+    main()

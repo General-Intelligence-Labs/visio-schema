@@ -91,4 +91,4 @@ to give downstream consumers time to migrate.
    - C++: header-only release artifact
    - Python: wheel to PyPI (`visio-schema` package, abi3)
    - Java, Swift: TBD (post-Phase 2)
-5. Downstream `visio` pulls the new tag at its leisure.
+5. Downstream consumers pull the new tag at their leisure.

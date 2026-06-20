@@ -1,0 +1,21 @@
+# Files shipped beyond the package .py sources.
+#
+# Generated *_pb2.py are ordinary package modules (auto-included). These lines
+# add the rest: type stubs, the PEP 561 marker, the display starter layout, and
+# — for the sdist only — the native-extension C/C++ sources so an end user can
+# optionally compile the native reader from source (it degrades to pure-Python
+# if they don't).
+
+include README.md
+global-include *.pyi
+include visio_schema/py.typed
+include visio_schema/display/ego_layout.json
+
+# Native `_creader` extension sources (sdist; not needed in a built wheel).
+include setup.py
+include _vendor_native.py
+recursive-include src *.cc *.hpp
+recursive-include _native_build *.c *.h *.cc *.hpp
+
+prune **/__pycache__
+global-exclude *.pyc

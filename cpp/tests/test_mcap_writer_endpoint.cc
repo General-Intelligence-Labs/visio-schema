@@ -2,7 +2,7 @@
 // rotation. McapWriterEndpoint is an active object: Start() spawns the writer
 // thread, Send() resolves+enqueues, Stop() drains+joins+finalizes the file. The
 // file is only readable after Stop(), so every test records via Start→Send→Stop,
-// then asserts on disk. Mirrors python/visio/tests/test_mcap_endpoint.py at the
+// then asserts on disk. Mirrors the Python McapWriter endpoint test at the
 // behavioural level (full MCAP content checks live in the Python suite).
 #include "visio_schema/mcap/writer_endpoint.hpp"
 

@@ -1,7 +1,8 @@
-"""Unit tests for the host-runnable pure logic in examples/python/visio_display.py:
-the quat->FrameTransform derivation, MCAP replay, and the MCAP-source argument
-guard. The live sinks (Foxglove WS, Rerun viewer) need a viewer/board and are
-exercised manually, not here.
+"""Unit tests for the host-runnable pure logic in the packaged `visio_schema.display`
+viewer (the `visio-display` command): the quat->FrameTransform derivation, MCAP
+replay, the MCAP-source argument guard, and the packaging contract (console
+entry point + shipped layout data). The live sinks (Foxglove WS, Rerun viewer)
+need a viewer/board and are exercised manually, not here.
 """
 from __future__ import annotations
 
@@ -24,7 +25,8 @@ def _load(name: str, path: Path):
 
 
 def _vd():
-    return _load("visio_display", _EXAMPLES / "visio_display.py")
+    import visio_schema.display as vd
+    return vd
 
 
 def test_tf_deriver_quat_to_frame_transform() -> None:
@@ -127,7 +129,7 @@ def test_read_tcp_roundtrips() -> None:
         srv.close()
 
     assert len(got) == len(sent)
-    for out, exp in zip(got, sent):
+    for out, exp in zip(got, sent, strict=True):
         assert (out.stream_id, out.seq, out.payload) == (exp.stream_id, exp.seq, exp.payload)
 
 
@@ -139,3 +141,51 @@ def test_mcap_source_with_foxglove_is_rejected(capsys) -> None:
         vd.main(["--mcap-in", "/nonexistent.mcap", "--foxglove"])
     err = capsys.readouterr().err
     assert "Foxglove Studio" in err  # the user is pointed at File > Open local file
+
+
+def test_run_discards_message_count_and_exits_clean(monkeypatch) -> None:
+    """`run` is the console entry (not `main`) precisely so a successful N-message
+    run exits 0 instead of leaking the message count as the process exit code.
+    Guard that: `run` calls `main`, drops its int return, and raises no SystemExit."""
+    vd = _vd()
+    monkeypatch.setattr(vd, "main", lambda argv=None: 7)  # pretend 7 messages processed
+    assert vd.run() is None  # not SystemExit(7), not the count
+
+
+def test_help_exits_zero() -> None:
+    """The CLI parser is wired up: `--help` prints usage and exits 0."""
+    vd = _vd()
+    with pytest.raises(SystemExit) as ei:
+        vd.main(["--help"])
+    assert ei.value.code == 0
+
+
+def test_layout_data_is_shipped() -> None:
+    """The Foxglove starter layout ships as package data beside the module, so the
+    installed command can point users at its absolute path."""
+    import json
+
+    vd = _vd()
+    assert vd._LAYOUT_PATH.exists()
+    json.loads(vd._LAYOUT_PATH.read_text())  # parses as JSON
+
+
+def test_pyproject_declares_console_script_and_default_deps() -> None:
+    """Guard the packaging contract: the `visio-display` console script stays
+    declared, and the viewer + MCAP deps ship as base dependencies (installed by
+    default) rather than behind feature extras."""
+    import sys
+
+    if sys.version_info >= (3, 11):
+        import tomllib
+    else:
+        tomllib = pytest.importorskip("tomli")
+
+    pyproject = _THIS.parent / "pyproject.toml"
+    data = tomllib.loads(pyproject.read_text())
+    assert data["project"]["scripts"]["visio-display"] == "visio_schema.display:run"
+    deps = " ".join(data["project"]["dependencies"])
+    for pkg in ("mcap", "pyserial", "foxglove-sdk", "rerun-sdk", "av"):
+        assert pkg in deps, f"{pkg} should be a default dependency"
+    # No feature-gating extras — they were folded into the default install.
+    assert set(data["project"].get("optional-dependencies", {})) == {"dev"}

@@ -1,7 +1,0 @@
-# Dependencies for the Python examples (the visio-schema package itself is
-# assumed already importable — `pip install -e python` or `make wheel`).
-pyserial>=3.5          # visio_display.py: live serial read
-mcap>=1.1              # MCAP recording / sample generation
-foxglove-sdk>=0.10     # visio_display.py: live Foxglove WebSocket server
-rerun-sdk>=0.24        # visio_display.py: live Rerun viewer (--rerun)
-av>=11                 # visio_display.py (--rerun H.265 decode); make_sample_mcap.py

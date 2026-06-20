@@ -2,7 +2,7 @@
 
 These documents are the **normative wire contract** for Visio. They define the bytes on the link,
 how streams are named and discovered, how clocks are synchronized, and what a version bump means.
-Anything that talks Visio — the device firmware, the `visio` bus, this package's codec, and any
+Anything that talks Visio — the device firmware, the Visio bus, this package's codec, and any
 third-party client you write — must conform to what's here. If you only want to *use* the Python
 package, start with [`../usage.md`](../usage.md); read these when you implement or debug a client.
 
