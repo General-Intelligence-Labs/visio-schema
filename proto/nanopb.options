@@ -56,6 +56,7 @@ visio_schema.v1.control.StartRecording.location       max_size:128
 visio_schema.v1.control.SetRecordingMeta.task         max_size:64
 visio_schema.v1.control.SetRecordingMeta.location     max_size:128
 visio_schema.v1.control.SetRecordingMeta.message      max_size:256
+visio_schema.v1.control.SetRecordingMeta.capturer     max_size:64
 
 # ---- Control: CommandResult ack + DeviceState snapshot (bounded inline so the
 #      ack is a static struct; the two list payloads below are FT_POINTER) -----
@@ -66,6 +67,7 @@ visio_schema.v1.control.DeviceState.recording_task             max_size:64
 visio_schema.v1.control.DeviceState.recording_meta_task        max_size:64
 visio_schema.v1.control.DeviceState.recording_meta_location    max_size:128
 visio_schema.v1.control.DeviceState.recording_meta_message     max_size:256
+visio_schema.v1.control.DeviceState.recording_meta_capturer    max_size:64
 visio_schema.v1.control.DeviceState.wifi_ssid                  max_size:33
 visio_schema.v1.control.DeviceState.wifi_ip                    max_size:46
 visio_schema.v1.control.DeviceState.wifi_last_error            max_size:128
@@ -86,6 +88,7 @@ visio_schema.v1.control.RecordingEntry.last_error type:FT_POINTER
 visio_schema.v1.control.RecordingEntry.task       type:FT_POINTER
 visio_schema.v1.control.RecordingEntry.location   type:FT_POINTER
 visio_schema.v1.control.RecordingEntry.message    type:FT_POINTER
+visio_schema.v1.control.RecordingEntry.capturer   type:FT_POINTER
 
 # ---- Calibration: bound the foxglove camera/transform + ImuCalibration repeated
 #      fields so every SetCalibration artifact (and the published calibration) is a

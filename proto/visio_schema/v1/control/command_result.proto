@@ -55,6 +55,7 @@ message RecordingEntry {
   string message   = 12;
   double latitude  = 13;  // 0 when unknown
   double longitude = 14;  // 0 when unknown
+  string capturer  = 15;  // who operated the capture (user-entered)
 }
 
 message RecordingsList {
@@ -78,6 +79,7 @@ message DeviceState {
   string recording_meta_task     = 20;
   string recording_meta_location = 21;
   string recording_meta_message  = 22;
+  string recording_meta_capturer = 24;
 
   // ── disk ──
   sint32 disk_free_pct = 4;   // 0..100, or -1 = unknown
