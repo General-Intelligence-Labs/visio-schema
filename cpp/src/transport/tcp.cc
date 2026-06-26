@@ -61,6 +61,13 @@ void TcpAcceptor::Loop() {
       if (cfd < 0) break;  // EAGAIN: no more pending
       int one = 1;
       ::setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+      // Bound the kernel send buffer so a slow/lossy client can't bank seconds
+      // of live H.265 below the app-level outbox eviction (observed ~600 KB
+      // autotuned → ~0.5-1 s of standing latency on the Wi-Fi AP). 256 KB is
+      // well above the link BDP, so it doesn't throttle throughput; it just caps
+      // how much the kernel can hoard. Disables SO_SNDBUF autotuning.
+      int sndbuf = 256 * 1024;
+      ::setsockopt(cfd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
       // Fixed fd (no factory): a client EOF reports on_closed once and the
       // endpoint's I/O thread exits; the bus forgets it. The acceptor keeps
       // listening for the next client. FramedFdEndpoint takes ownership of cfd

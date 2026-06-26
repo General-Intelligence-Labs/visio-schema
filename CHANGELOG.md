@@ -4,6 +4,24 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.2.1 — 2026-06-22
+
+### `SystemHealth.realtime` wall-clock field (additive)
+
+- **`SystemHealth.realtime = 9`** — device wall-clock timestamp, so consumers can
+  read the board's real time (RV1106 boots to 1970 until SetTime).
+
+### Camera bitrate control (additive, wire-compatible)
+
+- **`SetBitrate` command** (`Command.set_bitrate = 24`) — sets the camera H.265
+  target bitrate (kbit/s) for all cameras. Like `SetAutoStart`, the device
+  persists it and applies it on the next boot.
+- **`DeviceState.video_bitrate_kbps = 23`** — echoes the persisted bitrate so a
+  client can show the active value.
+
+Both are additive (new oneof body + new field); existing readers ignore them, so
+this is non-breaking.
+
 ## 0.2.0 — 2026-06-20
 
 ### Packaging & tooling

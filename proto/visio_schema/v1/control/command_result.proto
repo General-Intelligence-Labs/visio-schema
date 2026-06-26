@@ -55,6 +55,7 @@ message RecordingEntry {
   string message   = 12;
   double latitude  = 13;  // 0 when unknown
   double longitude = 14;  // 0 when unknown
+  string capturer  = 15;  // who operated the capture (user-entered)
 }
 
 message RecordingsList {
@@ -78,6 +79,7 @@ message DeviceState {
   string recording_meta_task     = 20;
   string recording_meta_location = 21;
   string recording_meta_message  = 22;
+  string recording_meta_capturer = 24;
 
   // ── disk ──
   sint32 disk_free_pct = 4;   // 0..100, or -1 = unknown
@@ -106,6 +108,12 @@ message DeviceState {
   uint32 upload_failed              = 16;
   string upload_last_error          = 17;
   uint64 upload_last_completed_at_us = 18;
+
+  // ── video ──
+  // Persisted camera H.265 target bitrate (kbit/s), shared by all cameras (the
+  // SetBitrate sidecar, falling back to the per-camera config default). Echoed
+  // so the app can show which preset is active. Takes effect on the next boot.
+  uint32 video_bitrate_kbps = 23;
 }
 
 // The single ack a device emits per Command on /<device>/command_result.
