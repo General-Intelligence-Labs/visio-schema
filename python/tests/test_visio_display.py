@@ -7,6 +7,7 @@ need a viewer/board and are exercised manually, not here.
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -59,6 +60,126 @@ def test_tf_deriver_quat_to_frame_transform() -> None:
     # A non-quat channel is passed through untouched (no /tf emitted).
     cam = Channel(id=16, topic="/gripper/camera/0", schema_name=vd._VIDEO_SCHEMA)
     assert vd.TfDeriver().derive(m, cam) is None
+
+
+def _bitrate_msg(vd, stream_id: int, nbytes: int, t_ns: int, seq: int = 0):
+    m = vd.Message(stream_id=stream_id, payload=b"\x00" * nbytes, seq=seq)
+    m.timestamp.FromNanoseconds(t_ns)
+    return m
+
+
+def test_bitrate_deriver_counts_seq_gap_drops() -> None:
+    """A bitrate dip caused by *lost* frames is distinguished from one caused by
+    *smaller* frames: gaps in a stream's seq become `drops`/`drop_pct`, while a
+    large jump (reconnect/wrap) is not counted as a drop burst."""
+    vd = _vd()
+    from visio_schema.v1.service.device_info.device_info_pb2 import Channel
+
+    cam = Channel(id=16, topic="/ego/camera/left", schema_name=vd._VIDEO_SCHEMA)
+    S = 1_000_000_000
+
+    d = vd.BitrateDeriver(window=2.0)
+    # seq 0,1,2 then jump to 5 (3 and 4 lost) then 6 — 2 frames dropped in window.
+    for t_ns, seq in [(0, 0), (S // 10, 1), (S // 5, 2), (3 * S // 10, 5)]:
+        assert d.feed(_bitrate_msg(vd, 16, 1000, t_ns, seq=seq), cam) == []
+    out = d.feed(_bitrate_msg(vd, 16, 1000, S // 2, seq=6), cam)
+    assert out
+
+    samples = {ch.topic: json.loads(m.payload) for m, ch in out}
+    cam_s = samples["/stats/bitrate/ego/camera/left"]
+    assert cam_s["drops"] == 2                       # seq 3 and 4
+    assert cam_s["fps"] == pytest.approx(5 / 2.0)    # 5 delivered frames in the window
+    assert cam_s["drop_pct"] == pytest.approx(100.0 * 2 / 7)  # 2 lost of 7 expected
+    assert samples["/stats/bitrate/_total"]["drops"] == 2
+
+    # An implausible jump (reset/reconnect) is not a drop burst.
+    d2 = vd.BitrateDeriver(window=2.0)
+    assert d2.feed(_bitrate_msg(vd, 16, 1000, 0, seq=10), cam) == []
+    out2 = d2.feed(_bitrate_msg(vd, 16, 1000, S // 2, seq=999_999), cam)
+    assert json.loads(out2[0][0].payload)["drops"] == 0
+
+
+def test_bitrate_deriver_total_and_per_video() -> None:
+    """A sliding-window bitrate is published once an emit interval of message-time
+    elapses: one json line per video stream plus a /_total carrying every stream
+    (video + non-video) and a video-only subtotal — all with exact arithmetic over
+    the windowed bytes."""
+    vd = _vd()
+    from visio_schema.v1.service.device_info.device_info_pb2 import Channel
+
+    cam = Channel(id=16, topic="/ego/camera/left", schema_name=vd._VIDEO_SCHEMA)
+    imu = Channel(id=20, topic="/ego/imu/0/raw", schema_name=vd._IMU_RAW_SCHEMA)
+    S = 1_000_000_000  # 1 s in ns
+
+    d = vd.BitrateDeriver(window=2.0)
+    # First message only primes the message-time clock — nothing emitted.
+    assert d.feed(_bitrate_msg(vd, 16, 1000, 0), cam) == []
+    # Within the first 0.5 s of message-time: still throttled.
+    assert d.feed(_bitrate_msg(vd, 16, 1000, S // 10), cam) == []
+    assert d.feed(_bitrate_msg(vd, 16, 1000, S // 5), cam) == []
+    assert d.feed(_bitrate_msg(vd, 20, 500, S // 4), imu) == []   # non-video, counts in total
+    assert d.feed(_bitrate_msg(vd, 16, 1000, 3 * S // 10), cam) == []
+    assert d.feed(_bitrate_msg(vd, 16, 1000, 4 * S // 10), cam) == []
+    # t == 0.5 s: emit. Window (2 s) still covers everything fed so far.
+    out = d.feed(_bitrate_msg(vd, 16, 1000, S // 2), cam)
+    assert out, "a bitrate sample should be due at the emit interval"
+
+    samples = {ch.topic: json.loads(m.payload) for m, ch in out}
+    # Only the video stream gets its own line; the IMU folds into the total only.
+    assert set(samples) == {"/stats/bitrate/_total", "/stats/bitrate/ego/camera/left"}
+
+    w = 2.0
+    tot = samples["/stats/bitrate/_total"]
+    assert tot["bytes"] == 6 * 1000 + 500              # 6 video frames + 1 imu
+    assert tot["mbps"] == pytest.approx(6500 * 8 / w / 1e6)
+    assert tot["video_mbps"] == pytest.approx(6000 * 8 / w / 1e6)
+    assert tot["fps"] == pytest.approx(7 / w)
+
+    camrate = samples["/stats/bitrate/ego/camera/left"]
+    assert camrate["bytes"] == 6000
+    assert camrate["mbps"] == pytest.approx(6000 * 8 / w / 1e6)
+    assert camrate["fps"] == pytest.approx(6 / w)
+
+
+def test_bitrate_channels_are_json_and_in_synthetic_id_space() -> None:
+    """Bitrate rides json channels (so it never touches the protobuf wire
+    contract) on synthetic stream ids that can't collide with announced ids or
+    the /tf stream; the emitted message timestamp is the source message-time."""
+    vd = _vd()
+    from visio_schema.v1.service.device_info.device_info_pb2 import Channel
+
+    cam = Channel(id=17, topic="/ego/camera/right", schema_name=vd._VIDEO_SCHEMA)
+    d = vd.BitrateDeriver(window=2.0)
+    assert d.feed(_bitrate_msg(vd, 17, 2048, 0), cam) == []
+    out = d.feed(_bitrate_msg(vd, 17, 2048, 600_000_000), cam)  # 0.6 s -> emit
+    assert out
+
+    for m, ch in out:
+        assert ch.encoding == "json"
+        assert ch.schema_encoding == "jsonschema"
+        assert ch.schema_name == "visio.stats.Bitrate"
+        assert len(ch.schema) > 0                  # self-describing JSON Schema
+        assert ch.id >= vd._BITRATE_STREAM_BASE
+        assert ch.id != vd._TF_STREAM_ID
+        assert m.stream_id == ch.id
+        assert m.timestamp.ToNanoseconds() == 600_000_000
+    # The per-source channel id is the base offset by the source stream id.
+    ids = {ch.topic: ch.id for _, ch in out}
+    assert ids["/stats/bitrate/ego/camera/right"] == vd._BITRATE_STREAM_BASE + 17
+    assert ids["/stats/bitrate/_total"] == vd._BITRATE_STREAM_BASE
+
+
+def test_bitrate_deriver_throttles_before_emit_interval() -> None:
+    """No sample is emitted until an emit interval of message-time has passed
+    since the previous emit (the priming message included)."""
+    vd = _vd()
+    from visio_schema.v1.service.device_info.device_info_pb2 import Channel
+
+    cam = Channel(id=16, topic="/ego/camera/left", schema_name=vd._VIDEO_SCHEMA)
+    d = vd.BitrateDeriver(window=2.0)
+    assert d.feed(_bitrate_msg(vd, 16, 1000, 0), cam) == []            # prime
+    assert d.feed(_bitrate_msg(vd, 16, 1000, 400_000_000), cam) == []  # 0.4 s < 0.5 s
+    assert d.feed(_bitrate_msg(vd, 16, 1000, 600_000_000), cam)        # 0.6 s -> emit
 
 
 def test_read_mcap_roundtrips(tmp_path) -> None:
