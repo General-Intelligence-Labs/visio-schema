@@ -2,7 +2,7 @@
 
 Metadata lives in pyproject.toml; this file only declares the C/C++ extension.
 The ext is `optional=True`, so a missing compiler / build failure degrades to the
-pure-Python reader instead of failing `pip install` (matters for fsglove's
+pure-Python reader instead of failing `pip install` (matters for an
 editable install on a toolchain-less box). It is built only on linux/macOS; the
 pure-Python path covers everything else (and Windows, which is out of scope).
 

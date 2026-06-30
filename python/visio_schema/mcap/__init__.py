@@ -4,8 +4,8 @@
 pairs; `read_mcap` reads one back as the same pairs, so a recording round-trips through the
 same shape a live `ChannelRegistry.resolved` stream produces. `McapWriterEndpoint` is the
 active-object sink that records bus traffic; `McapReaderEndpoint` is its replay source — it
-streams a recording in place of a live link so downstream is unchanged. ``mcap`` is an
-optional dependency: ``pip install visio-schema[mcap]``.
+streams a recording in place of a live link so downstream is unchanged. ``mcap`` is a
+default dependency, imported lazily.
 """
 from visio_schema.mcap.reader import read_mcap
 from visio_schema.mcap.reader_endpoint import McapReaderEndpoint

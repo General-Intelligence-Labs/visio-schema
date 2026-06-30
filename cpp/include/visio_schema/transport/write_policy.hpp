@@ -1,5 +1,5 @@
 // WritePolicy — bounded outbound-queue policy for a streaming sink. Ported from
-// the original umi_protocol/cpp/umi_channel.hpp::WritePolicy so the embedded
+// an earlier channel's WritePolicy so the embedded
 // backpressure behavior matches what shipped: a slow/stalled consumer never
 // blocks producers; the queue sheds frames per the chosen mode.
 #pragma once

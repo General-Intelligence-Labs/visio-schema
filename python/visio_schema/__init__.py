@@ -24,9 +24,9 @@ The three things most users do — see ``docs/usage.md`` and ``examples/`` for r
 * **Integrate + command** — open a bidirectional `serial_endpoint`, then send a
   ``command_pb2.Command`` with `command_message` (wraps it onto the `COMMAND` stream).
 
-``read_mcap`` / `McapWriter` need the optional ``mcap`` dependency
-(``pip install visio-schema[mcap]``); importing this package never requires it — a clear error is
-raised only if you actually read or write a recording without it installed.
+``read_mcap`` / `McapWriter` use the ``mcap`` dependency (installed by default,
+imported lazily); importing this package never imports ``mcap``, and a clear error is
+raised only if you read or write a recording in an environment missing it.
 """
 from visio_schema.mcap import McapWriter, read_mcap
 from visio_schema.routing import Channel, ChannelRegistry, make_channel

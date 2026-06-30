@@ -5,8 +5,8 @@ pairs: a protobuf channel's ``Schema.name`` is the payload's protobuf full name
 and ``Schema.data`` is its ``FileDescriptorSet`` (both carried on the `Channel`),
 so Foxglove resolves the type from the embedded set.
 
-``mcap`` is an optional dependency: ``pip install visio-schema[mcap]``; the writer
-imports it lazily and raises a clear error if it is missing.
+``mcap`` is a default dependency, imported lazily; the writer raises a clear error
+if it is missing from the environment.
 """
 from __future__ import annotations
 
@@ -21,14 +21,14 @@ __all__ = ["McapWriter"]
 
 _INSTALL_HINT = (
     "MCAP support needs the 'mcap' package — install it with "
-    "`pip install visio-schema[mcap]`."
+    "`pip install mcap`."
 )
 
 
 def _writer_api():
     try:
         from mcap.writer import CompressionType, Writer
-    except ImportError as exc:  # pragma: no cover - exercised via skip in tests
+    except ImportError as exc:  # pragma: no cover
         raise ImportError(_INSTALL_HINT) from exc
     return Writer, CompressionType
 
@@ -47,8 +47,8 @@ class McapWriter:
     come from the `Channel` you pass. Schema and channel records are registered lazily
     (one per `Channel.schema_name` / `Channel.id`), and the caller decides what to
     write (unlike `McapWriterEndpoint`, which resolves and drops-until-mapped). Usable
-    as a context manager — `close` finalizes the file(s). Needs the optional ``mcap``
-    dependency (``pip install visio-schema[mcap]``).
+    as a context manager — `close` finalizes the file(s). Needs the ``mcap``
+    dependency (installed by default; ``pip install mcap`` if missing).
 
     Args:
         output: A filesystem path, or an already-open **seekable** binary stream (a

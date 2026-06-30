@@ -7,35 +7,72 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "visio-schema"
-version = "0.2.0.dev0"
+version = "0.2.1"
 description = "Visio wire contract — generated protobuf bindings + the framing codec"
+readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "General Intelligence Labs" }]
-# The hand-written codec needs these at runtime; the generated bindings
-# only need protobuf. One package, one dependency set.
+keywords = ["protobuf", "robotics", "sensors", "mcap", "foxglove", "wire-protocol", "visio"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Libraries",
+    "Typing :: Typed",
+]
+# Everything the package needs at runtime, installed by default (no feature
+# extras): the wire codec + generated bindings, MCAP read/write, and the
+# `visio-display` viewer's deps. The heavy viewer libs (rerun, av) are imported
+# lazily, so they cost nothing until the viewer is actually run.
 dependencies = [
     "protobuf>=5.26",
     "cobs>=1.2",
+    "mcap>=1.1",
+    "pyserial>=3.5",
+    "foxglove-sdk>=0.10",
+    "rerun-sdk>=0.24",
+    "av>=11",
 ]
 
 [project.optional-dependencies]
-# MCAP recording/replay (visio_schema.mcap) — the base stays protobuf+cobs.
-recording = [
-    "mcap>=1.1",
-]
 dev = [
     "pytest>=8.0",
     "mypy>=1.10",
     "ruff>=0.5",
-    "mcap>=1.1",
+    "build>=1.0",
+    "tomli>=2.0; python_version < '3.11'",
 ]
+
+[project.scripts]
+# `run` (not `main`) — see its docstring for why the console entry exits 0.
+visio-display = "visio_schema.display:run"
+
+[project.urls]
+Homepage = "https://github.com/General-Intelligence-Labs/visio-schema"
+Repository = "https://github.com/General-Intelligence-Labs/visio-schema"
+Issues = "https://github.com/General-Intelligence-Labs/visio-schema/issues"
+Changelog = "https://github.com/General-Intelligence-Labs/visio-schema/blob/main/CHANGELOG.md"
 
 # The wheel ships ONE `visio_schema` import root combining the hand-written
 # codec modules and the generated bindings, both under python/visio_schema
 # (`make gen` emits the bindings in-package). The generated foxglove.*
 # bindings are relocated under visio_schema.foxglove so they don't collide
 # with the official `foxglove` SDK package.
+[tool.setuptools]
+# Ship non-.py package data (type stubs, py.typed, the display layout) listed in
+# MANIFEST.in into the wheel as well as the sdist.
+include-package-data = true
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["visio_schema*"]
@@ -56,7 +93,7 @@ select = ["E", "F", "I", "B", "UP", "RUF"]
 
 # Version-specific wheels (cp310–cp313), NOT abi3: the zero-copy Frame exports the
 # buffer protocol, which the CPython Limited API lacks at the cp310 floor (PEP 688
-# added it in 3.11, and fsglove runs 3.10). So we ship per-version wheels like the
+# added it in 3.11, and we still target 3.10). So we ship per-version wheels like the
 # `cobs` dependency does. The native ext is optional; a build failure or a missing
 # wheel falls back to the pure-Python reader.
 [tool.cibuildwheel]

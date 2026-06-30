@@ -41,6 +41,7 @@ message Command {
     SetTime        set_time        = 21;
     SetRecordingMeta set_recording_meta = 22;
     SetVideoStreaming set_video_streaming = 23;
+    SetBitrate     set_bitrate     = 24;
   }
 }
 
@@ -94,6 +95,16 @@ message SetAutoStart {
   bool auto_start = 1;
 }
 
+// Persist the camera H.265 target bitrate to a device-side sidecar
+// (/root/umi_embedded.bitrate.json), applied to EVERY camera. Like
+// SetAutoStart, this is persisted but takes effect on the NEXT BOOT only — the
+// running encoder is not retuned live — so the app should tell the user to
+// reboot the device for the new bitrate to apply. The current persisted value
+// is echoed back in DeviceState.video_bitrate_kbps.
+message SetBitrate {
+  uint32 bitrate_kbps = 1;  // target CBR bitrate (kbit/s) for all cameras
+}
+
 // Persist default recording metadata to a device-side sidecar
 // (/root/umi_embedded/recording_meta.json). Applied to EVERY new session until
 // changed — including auto-started boot recordings, which carry no app input.
@@ -105,6 +116,7 @@ message SetRecordingMeta {
   string task     = 1;  // free-text capture task / label
   string location = 2;  // human-readable place (user-entered)
   string message  = 3;  // free-text note / annotation
+  string capturer = 8;  // who operated the capture (user-entered)
   // GPS + host time/zone, mirroring StartRecording — persisted so auto-started
   // boot recordings (no app input) still carry them. All optional; 0 = unknown.
   double latitude              = 4;  // GPS; 0 when unknown

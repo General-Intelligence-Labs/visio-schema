@@ -34,13 +34,13 @@ To **decode** a payload, look up its class by the channel's schema name (see
 device (use case 3), use `serial_endpoint` instead — it gives a bidirectional `Endpoint`.
 
 For a complete viewer that fans the live stream out to **Foxglove Studio**, **Rerun**, and/or an
-**MCAP recording** (with H.265 video decode and 3D transforms), see
-[`examples/python/visio_display.py`](../examples/python/visio_display.py):
+**MCAP recording** (with H.265 video decode and 3D transforms), use the `visio-display`
+command (included with `pip install visio-schema`; source in `visio_schema.display`):
 
 ```bash
-python examples/python/visio_display.py --serial /dev/ttyACM0 --rerun
-python examples/python/visio_display.py --serial /dev/ttyACM0 --foxglove
-python examples/python/visio_display.py --serial /dev/ttyACM0 --out run.mcap
+visio-display --serial /dev/ttyACM0 --rerun
+visio-display --serial /dev/ttyACM0 --foxglove
+visio-display --serial /dev/ttyACM0 --out run.mcap
 ```
 
 ### Recording while you watch
@@ -55,7 +55,7 @@ with McapWriter("run.mcap") as rec:
         rec.write(msg, channel)
 ```
 
-`McapWriter` needs the `[mcap]` extra (`pip install visio-schema[mcap]`).
+`McapWriter` uses the `mcap` package, which is installed by default with `visio-schema`.
 
 ---
 

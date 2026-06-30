@@ -4,24 +4,27 @@
 Reads Visio messages from a **live serial port** or a **live TCP connection**
 (both COBS-delimited core frames, framing.md §3.2) **or replays a recorded MCAP
 file**, and fans them out to any combination of a **live Foxglove Studio**
-WebSocket server, a **live Rerun** viewer, and an **MCAP recording**. Depends
-only on the `visio-schema` package plus a few thin libraries (see
-requirements.txt).
+WebSocket server, a **live Rerun** viewer, and an **MCAP recording**. Its serial,
+Foxglove, Rerun, and H.265-decode dependencies ship with the `visio-schema`
+package (``pip install visio-schema``) and are imported lazily.
+
+Installed as the ``visio-display`` console command (also runnable as
+``python -m visio_schema.display``):
 
     # live serial -> Rerun (spawns the viewer; auto-lays-out views)
-    python visio_display.py --serial /dev/ttyACM0 --rerun
+    visio-display --serial /dev/ttyACM0 --rerun
 
     # live TCP (the device's preview listener, default port 9000) -> Rerun
-    python visio_display.py --tcp GILABS-1234.local --rerun
+    visio-display --tcp GILABS-1234.local --rerun
 
     # replay a recorded MCAP file into Rerun
-    python visio_display.py --mcap-in run.mcap --rerun
+    visio-display --mcap-in run.mcap --rerun
 
     # live serial -> Foxglove Studio (prints a URL to open)
-    python visio_display.py --serial /dev/ttyACM0 --foxglove
+    visio-display --serial /dev/ttyACM0 --foxglove
 
     # live TCP -> record an MCAP (and watch live at the same time)
-    python visio_display.py --tcp 10.0.0.7:9000 --out run.mcap --rerun
+    visio-display --tcp 10.0.0.7:9000 --out run.mcap --rerun
 
 The source is exactly one of `--serial` / `--tcp` / `--mcap-in`. MCAP-file ->
 Foxglove is not supported (open the file directly in Foxglove Studio, which
@@ -32,9 +35,17 @@ prints a URL; open it in Foxglove Studio, or in Studio choose
 Open connection → Foxglove WebSocket → ws://localhost:8765. A starter layout is
 in `ego_layout.json` (Studio ▸ Layouts ▸ Import from file).
 
+`--bitrate` (on by default whenever a Foxglove or MCAP sink is active) derives a
+realtime sliding-window bitrate from the stream and publishes it as json on
+`/stats/bitrate/_total` (whole link + a video-only subtotal) and one
+`/stats/bitrate/<camera-topic>` per video stream — plot the `mbps` field in a
+Foxglove Plot panel (the shipped layout includes one). It's viewer-derived (json,
+not on the wire), so the device never sees it. Disable with `--no-bitrate`; tune
+the window with `--bitrate-window SECS` (default 2.0).
+
 `--rerun` spawns the Rerun viewer and drives an explicit layout (camera views,
 a 3D IMU-orientation scene, IMU time-series). The Rerun rendering is a port of
-`capstone/umi_data/scripts/display_stream_rerun.py` (H.265 decoded with PyAV to
+an earlier Rerun renderer (H.265 decoded with PyAV to
 images, orientation boxes, blueprint), only swapping the data model to
 visio-schema. Needs `rerun-sdk` and `av`.
 
@@ -51,11 +62,13 @@ against it. A frame whose id hasn't been announced yet is dropped until it is
 ids are exactly the data-frame ids, so no remap is needed here.
 
 Deliberately minimal — one read loop, no bus, no threads. The heavier,
-bus-integrated transport lives in visio-mq.
+bus-integrated transport lives in a separate bus/transport layer.
 """
 from __future__ import annotations
 
 import argparse
+import collections
+import json
 import os
 import selectors
 import signal
@@ -63,8 +76,10 @@ import sys
 import threading
 from collections.abc import Iterator
 from pathlib import Path
+from typing import ClassVar
 
 from google.protobuf.timestamp_pb2 import Timestamp
+
 # Stable public API — imported from the package root.
 from visio_schema import (
     Channel,
@@ -76,12 +91,12 @@ from visio_schema import (
 )
 from visio_schema.foxglove.CompressedVideo_pb2 import CompressedVideo
 from visio_schema.foxglove.FrameTransform_pb2 import FrameTransform
-from visio_schema.v1.ros.geometry_msgs.quaternion_pb2 import Quaternion
-from visio_schema.v1.sensor.imu_raw_pb2 import ImuRaw
-from visio_schema.v1.sensor.system_health_pb2 import SystemHealth
 
 # Low-level fd helpers (advanced/internal) — used to feed messages into resolved() as a generator.
 from visio_schema.transport import close_fd, extract_frames, read_some, set_nonblocking
+from visio_schema.v1.ros.geometry_msgs.quaternion_pb2 import Quaternion
+from visio_schema.v1.sensor.imu_raw_pb2 import ImuRaw
+from visio_schema.v1.sensor.system_health_pb2 import SystemHealth
 
 # Payload schema names dispatched on (== the protobuf full names on the wire).
 _QUAT_SCHEMA = "visio_schema.v1.ros.geometry_msgs.Quaternion"
@@ -96,6 +111,38 @@ _TF_STREAM_ID = 0x7F000001
 # The device's live-preview TCP listener port — matches the `_umi-protocol._tcp`
 # mDNS service and `port=9000` in the ego/glove .conf. Used when --tcp omits one.
 _DEFAULT_TCP_PORT = 9000
+
+# Derived realtime-bitrate channels (see BitrateDeriver). Synthetic stream ids in
+# a reserved high range so they can't collide with announced ids or _TF_STREAM_ID:
+# `/stats/bitrate/_total` uses the base itself (no source stream has id 0), each
+# per-source channel uses base + the source's stream_id.
+_BITRATE_STREAM_BASE = 0x7F010000
+_BITRATE_TOPIC_PREFIX = "/stats/bitrate"
+_BITRATE_TOTAL_TOPIC = f"{_BITRATE_TOPIC_PREFIX}/_total"
+_BITRATE_SCHEMA_NAME = "visio.stats.Bitrate"
+# json (not protobuf): bitrate is a viewer-derived metric, so it stays off the
+# wire contract. A permissive JSON Schema is enough for Foxglove to offer the
+# numeric fields as plot paths.
+_BITRATE_SCHEMA = json.dumps({
+    "type": "object",
+    "title": "Bitrate",
+    "description": "Realtime sliding-window bitrate of a Visio stream (or the whole link).",
+    "properties": {
+        "mbps": {"type": "number", "description": "delivered megabits/s over the window"},
+        "fps": {"type": "number", "description": "delivered messages/s over the window"},
+        "bytes": {"type": "integer", "description": "payload bytes summed over the window"},
+        "drops": {"type": "integer", "description": "frames lost in window (per-stream seq gaps)"},
+        "drop_pct": {"type": "number", "description": "percent of expected frames lost"},
+        "video_mbps": {"type": "number", "description": "video-only subtotal (the _total channel)"},
+    },
+}).encode()
+# How often (in *message-time* seconds) a bitrate sample is emitted. Message-time,
+# not wall clock, so a live link and an MCAP replay produce identical numbers.
+_BITRATE_EMIT_S = 0.5
+# A per-stream `seq` jump larger than this is read as a reconnect/reset/wrap, not a
+# real drop burst, so it doesn't spike the drop count. (seq is uint32, stamped at
+# publish before the transmit outbox, so an ordinary lost frame is a small gap.)
+_BITRATE_MAX_GAP = 10_000
 
 # Set by SIGINT/SIGTERM so the read loop exits and the `finally` finalizes the
 # MCAP. Handling SIGTERM (not just Ctrl-C) matters when this runs under a
@@ -133,6 +180,129 @@ class TfDeriver:
         out = Message(stream_id=_TF_STREAM_ID, payload=ft.SerializeToString(), seq=msg.seq)
         out.timestamp.CopyFrom(msg.timestamp)
         return out, self._channel
+
+
+# --------------------------------------------------------------------------- #
+# Realtime bitrate: make link/stream throughput plottable in Foxglove           #
+# --------------------------------------------------------------------------- #
+class BitrateDeriver:
+    """Derive a realtime per-stream + total *bitrate* from the message flow and
+    publish it on json ``/stats/bitrate/*`` channels Foxglove can plot.
+
+    Sink-agnostic, like :class:`TfDeriver` — but instead of one output per input
+    it accumulates payload bytes in a sliding window and emits a sample at most
+    every :data:`_BITRATE_EMIT_S`. The clock is the *message* timestamp, not wall
+    time, so a live link and an MCAP replay produce the same numbers (and a paused
+    or replayed stream doesn't decay to zero). Each video stream gets its own
+    ``/stats/bitrate/<topic>`` line — mirroring how each IMU gets its own plot —
+    and ``/stats/bitrate/_total`` carries the whole link (every stream) plus a
+    video-only subtotal.
+
+    The channels are json (encoding ``json`` / schema ``jsonschema``): bitrate is
+    viewer-derived, so it stays off the protobuf wire contract. The Foxglove and
+    MCAP sinks are encoding-agnostic; the Rerun sink ignores the unknown schema.
+
+    Each sample also carries a ``drops``/``drop_pct`` derived from gaps in the
+    per-stream ``seq``: a frame lost to transmit backpressure is stamped before
+    the device's outbox, so a dropped frame shows up as a missing seq. That
+    separates a bitrate dip caused by *lost* frames (drops > 0) from one caused by
+    *smaller* frames (drops 0, fps steady) — the difference between a saturated
+    link and a low-complexity scene.
+    """
+
+    def __init__(self, window: float = 2.0) -> None:
+        self._window = max(window, 0.1)
+        # Don't emit faster than the window itself when the window is very small.
+        self._emit_ns = int(min(_BITRATE_EMIT_S, self._window) * 1e9)
+        self._events: collections.deque = collections.deque()  # (t_ns, stream_id, nbytes, dropped)
+        self._video_topics: dict[int, str] = {}   # video source stream_id -> topic
+        self._channels: dict[int, Channel] = {}    # derived stream_id -> json Channel
+        self._last_seq: dict[int, int] = {}        # source stream_id -> last seen seq
+        self._last_emit_ns: int | None = None
+        self._seq = 0
+
+    def feed(self, msg: Message, ch: Channel) -> list[tuple[Message, Channel]]:
+        """Record one source message; return any bitrate samples due now (possibly
+        several — one per video stream plus the total — or none)."""
+        t = _ns(msg.timestamp)
+        sid = msg.stream_id
+        if ch.schema_name == _VIDEO_SCHEMA:
+            self._video_topics.setdefault(sid, ch.topic)
+        self._events.append((t, sid, len(msg.payload), self._gap(sid, msg.seq)))
+        if self._last_emit_ns is None:
+            self._last_emit_ns = t  # first message only primes the clock
+            return []
+        cutoff = t - int(self._window * 1e9)
+        ev = self._events
+        while ev and ev[0][0] < cutoff:  # device timestamps are ~monotonic per link
+            ev.popleft()
+        if t - self._last_emit_ns < self._emit_ns:
+            return []
+        self._last_emit_ns = t
+        return self._emit(t)
+
+    def _gap(self, sid: int, seq: int) -> int:
+        """Frames missing between the last seq seen on `sid` and this one (0 on
+        first sight, or on an implausibly large jump = reconnect/reset/wrap)."""
+        prev = self._last_seq.get(sid)
+        self._last_seq[sid] = seq
+        if prev is None:
+            return 0
+        gap = (seq - prev - 1) & 0xFFFFFFFF  # seq is uint32
+        return gap if 0 < gap <= _BITRATE_MAX_GAP else 0
+
+    def _emit(self, t: int) -> list[tuple[Message, Channel]]:
+        per_bytes: collections.Counter = collections.Counter()
+        per_frames: collections.Counter = collections.Counter()
+        per_drops: collections.Counter = collections.Counter()
+        total_bytes = total_frames = total_drops = 0
+        for _, sid, n, dropped in self._events:
+            per_bytes[sid] += n
+            per_frames[sid] += 1
+            per_drops[sid] += dropped
+            total_bytes += n
+            total_frames += 1
+            total_drops += dropped
+        w = self._window
+        out: list[tuple[Message, Channel]] = []
+        video_bytes = 0
+        for sid, topic in self._video_topics.items():
+            b = per_bytes.get(sid, 0)
+            video_bytes += b
+            out.append(self._sample(
+                _BITRATE_STREAM_BASE + sid, _BITRATE_TOPIC_PREFIX + topic, t,
+                self._fields(b, per_frames.get(sid, 0), per_drops.get(sid, 0))))
+        out.append(self._sample(
+            _BITRATE_STREAM_BASE, _BITRATE_TOTAL_TOPIC, t,
+            {**self._fields(total_bytes, total_frames, total_drops),
+             "video_mbps": video_bytes * 8 / w / 1e6}))
+        return out
+
+    def _fields(self, nbytes: int, frames: int, drops: int) -> dict:
+        w = self._window
+        expected = frames + drops
+        return {
+            "mbps": nbytes * 8 / w / 1e6,
+            "fps": frames / w,
+            "bytes": nbytes,
+            "drops": drops,
+            "drop_pct": (100.0 * drops / expected) if expected else 0.0,
+        }
+
+    def _sample(self, stream_id: int, topic: str, t: int,
+                fields: dict) -> tuple[Message, Channel]:
+        ch = self._channels.get(stream_id)
+        if ch is None:
+            ch = Channel(id=stream_id, topic=topic, encoding="json",
+                         schema_name=_BITRATE_SCHEMA_NAME, schema=_BITRATE_SCHEMA,
+                         schema_encoding="jsonschema")
+            self._channels[stream_id] = ch
+        msg = Message(stream_id=stream_id,
+                      payload=json.dumps(fields, separators=(",", ":")).encode(),
+                      seq=self._seq)
+        self._seq += 1
+        msg.timestamp.FromNanoseconds(t)
+        return msg, ch
 
 
 # --------------------------------------------------------------------------- #
@@ -272,7 +442,7 @@ class FoxgloveSink:
 
 class RerunSink:
     """Visualize Visio streams in a live Rerun viewer — a faithful port of
-    capstone/umi_data/scripts/display_stream_rerun.py's Rerun rendering. Only the
+    an earlier Rerun renderer's rendering. Only the
     data model changes (UMI v3 MessagePack dict -> Visio protobuf / topic+schema);
     the Rerun calls (decode->Image, imu_world boxes, blueprint, timeline) are the
     reference's, which is the known-good behavior we're reproducing:
@@ -289,13 +459,15 @@ class RerunSink:
     # IMU orientation box + in-line slot layout (verbatim from the reference).
     _IMU_BOX_HALF = (0.04, 0.02, 0.005)
     _IMU_SLOT_SPACING = 2.0 * (_IMU_BOX_HALF[0] * 2)
-    _IMU_COLORS = [
+    _IMU_COLORS: ClassVar[list[list[int]]] = [
         [100, 180, 255], [255, 100, 100], [100, 255, 100], [255, 255, 100],
         [255, 100, 255], [100, 255, 255], [255, 180, 100], [180, 100, 255],
         [100, 255, 180], [255, 100, 180], [180, 255, 100], [100, 180, 180],
         [200, 200, 100], [200, 100, 200], [100, 200, 200], [200, 200, 200],
     ]
-    _AV_CODEC = {"h265": "hevc", "hevc": "hevc", "h264": "h264", "avc": "h264", "av1": "av1"}
+    _AV_CODEC: ClassVar[dict[str, str]] = {
+        "h265": "hevc", "hevc": "hevc", "h264": "h264", "avc": "h264", "av1": "av1",
+    }
 
     def __init__(self, memory_limit: str = "2GB") -> None:
         import av
@@ -363,7 +535,7 @@ class RerunSink:
                 # compress() matters: raw 1080p RGB is ~6 MB/frame and would blow
                 # the viewer's memory cap; JPEG keeps it ~tens of KB (as the reference).
                 rr.log(ent, rr.Image(img, color_model="rgb"))
-        except Exception as exc:  # noqa: BLE001  partial NALs at startup heal at next IDR
+        except Exception as exc:  # partial NALs at startup heal at next IDR
             print(f"rerun: {ent} decode dropped: {exc}", file=sys.stderr)
 
     def _log_orientation(self, msg: Message, topic: str) -> None:
@@ -448,7 +620,7 @@ class RerunSink:
 # Main                                                                         #
 # --------------------------------------------------------------------------- #
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p = argparse.ArgumentParser(prog="visio-display", description=__doc__.splitlines()[0])
     src = p.add_mutually_exclusive_group(required=True)
     src.add_argument("--serial", metavar="PORT",
                      help="live serial port to read from (e.g. /dev/ttyACM0)")
@@ -461,6 +633,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--out", metavar="OUT.mcap", help="also record messages to an MCAP file")
     p.add_argument("--foxglove", action="store_true", help="serve live to Foxglove Studio")
     p.add_argument("--port", type=int, default=8765, help="Foxglove WS port (default 8765)")
+    p.add_argument("--bitrate", action=argparse.BooleanOptionalAction, default=True,
+                   help="publish realtime bitrate on /stats/bitrate/* whenever a "
+                        "Foxglove or MCAP sink is active (default: on; --no-bitrate off)")
+    p.add_argument("--bitrate-window", type=float, default=2.0, metavar="SECS",
+                   help="bitrate sliding-window length in seconds (default 2.0)")
     p.add_argument("--rerun", action="store_true", help="display in the Rerun viewer")
     p.add_argument("--rerun-memory", metavar="LIMIT", default="2GB",
                    help="Rerun viewer memory cap; old data drops past it (default 2GB)")
@@ -504,6 +681,14 @@ def main(argv: list[str] | None = None) -> int:
     # Rerun renders it directly (rr.Transform3D), so only derive it when a
     # Foxglove or MCAP sink will use it — keeps the rerun-only path lean.
     tf = TfDeriver() if (args.foxglove or args.out) else None
+    # Realtime bitrate is json, which only the Foxglove/MCAP sinks consume (Rerun
+    # ignores it) — so derive it only when one of those is active.
+    bitrate = (BitrateDeriver(window=args.bitrate_window)
+               if (args.bitrate and (args.foxglove or args.out)) else None)
+    if bitrate is not None and args.foxglove:
+        print(f"publishing realtime bitrate on {_BITRATE_TOTAL_TOPIC} "
+              f"(+ per-camera {_BITRATE_TOPIC_PREFIX}/<topic>); plot the `mbps` field",
+              file=sys.stderr)
     n = 0
 
     def _fan_out(msg: Message, ch: Channel) -> None:
@@ -518,6 +703,9 @@ def main(argv: list[str] | None = None) -> int:
             derived = tf.derive(msg, ch) if tf else None
             if derived is not None:
                 _fan_out(*derived)
+            if bitrate is not None:
+                for d_msg, d_ch in bitrate.feed(msg, ch):
+                    _fan_out(d_msg, d_ch)
             n += 1
     finally:
         if recorder is not None:
@@ -528,5 +716,11 @@ def main(argv: list[str] | None = None) -> int:
     return n
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+def run() -> None:
+    """Console-script entry point (the ``visio-display`` command).
+
+    Runs :func:`main` and exits 0 on a clean finish. :func:`main` returns the
+    processed-message count for programmatic/test use, which is not a meaningful
+    process exit code — so the installed command goes through this wrapper.
+    """
+    main()

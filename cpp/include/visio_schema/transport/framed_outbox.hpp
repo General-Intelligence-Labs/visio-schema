@@ -1,5 +1,5 @@
 // FramedOutbox — bounded outbound queue + non-blocking drain for one streaming
-// sink. A port of umi_protocol/cpp/umi_channel.hpp's write path (enqueue_locked_
+// sink. A port of an earlier channel implementation's write path (enqueue_locked_
 // / drain_writes_ / promote_to_in_flight_locked_). It is transport-neutral — the
 // owning Endpoint supplies a non-blocking WriteFn over its fd.
 //

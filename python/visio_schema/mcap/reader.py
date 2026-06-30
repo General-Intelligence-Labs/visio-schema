@@ -3,8 +3,8 @@
 The same shape :meth:`ChannelRegistry.resolved` yields from a live stream, so a
 recording and a live link feed a sink identically. Each MCAP channel is
 self-describing (topic + schema records), so the :class:`Channel` is rebuilt
-straight from the file with no DeviceInfo. ``mcap`` is an optional dependency
-(``pip install visio-schema[mcap]``), imported lazily.
+straight from the file with no DeviceInfo. ``mcap`` is a default dependency,
+imported lazily.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ log = logging.getLogger(__name__)
 
 _INSTALL_HINT = (
     "MCAP support needs the 'mcap' package — install it with "
-    "`pip install visio-schema[mcap]`."
+    "`pip install mcap`."
 )
 
 
@@ -51,8 +51,8 @@ def read_mcap(path: str | Path) -> Iterator[tuple[Message, Channel]]:
         `Channel` (topic + schema) it was recorded on.
 
     Raises:
-        ImportError: If the optional ``mcap`` dependency is missing
-            (``pip install visio-schema[mcap]``).
+        ImportError: If the ``mcap`` dependency is missing from the environment
+            (``pip install mcap``).
 
     Example:
         for msg, channel in read_mcap("run.mcap"):

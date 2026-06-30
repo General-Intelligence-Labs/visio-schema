@@ -3,8 +3,8 @@
 This is the codec-level view of a message: the `visio_schema.v1.wire.Header`
 fields (a per-link `stream_id`, a `seq` counter, and a `timestamp`) plus the
 inner payload bytes, with helpers to round-trip a Message through the core frame
-codec. It carries no bus/transport semantics — higher layers (e.g. visio-mq's
-Bus) own sequence stamping, stream-id remapping, and the heartbeat-beacon
+codec. It carries no bus/transport semantics — higher layers (a separate
+bus layer) own sequence stamping, stream-id remapping, and the heartbeat-beacon
 `timestamp` rewrite.
 """
 from __future__ import annotations
@@ -13,8 +13,8 @@ from dataclasses import dataclass, field
 
 from google.protobuf.timestamp_pb2 import Timestamp
 
-from visio_schema.wire.codec.frame import decode_frame, encode_frame
 from visio_schema.v1.wire.header_pb2 import Header
+from visio_schema.wire.codec.frame import decode_frame, encode_frame
 
 
 @dataclass
@@ -31,7 +31,11 @@ class Message:
             `COMMAND`), or a data id that `ChannelRegistry` resolves to a `Channel`.
         payload: The serialized protobuf payload bytes.
         seq: Per-stream sequence counter (uint32).
-        timestamp: Capture/log time, a ``google.protobuf.Timestamp``.
+        timestamp: The payload's sensor **capture** time (NOT send/publish time),
+            a ``google.protobuf.Timestamp`` — the producer contract in
+            ``docs/protocol/timesync.md``. A relay re-expresses it into its own
+            clock via the heartbeat offset; control/transport messages with no
+            sensor instant carry the send time instead.
 
     Example:
         msg = Message(stream_id=16, payload=imu.SerializeToString())

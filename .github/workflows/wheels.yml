@@ -3,7 +3,9 @@ name: wheels
 # Build version-specific (cp310–cp313) wheels for the optional native `_creader`
 # reader on linux (manylinux_2_28 x86_64) + macOS (universal2), run the in-wheel
 # test suite both native-on and on the pure-Python fallback, run the C++↔Python
-# interop both ways, and publish on a tag.
+# interop both ways, and build the sdist. On a `visio-schema-v*` tag, publish all
+# artifacts to PyPI via Trusted Publishing (OIDC — no stored token) and attach
+# them to the GitHub release. `workflow_dispatch` builds + tests without publishing.
 on:
   push:
     tags: ["visio-schema-v*"]
@@ -49,11 +51,46 @@ jobs:
           name: wheels-${{ matrix.os }}
           path: wheelhouse/*.whl
 
+  build_sdist:
+    name: sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # The sdist must carry the generated _pb2 (gitignored at HEAD) + the native
+      # sources, so generate + vendor on the host before building it.
+      - name: make gen
+        run: |
+          npm install -g @bufbuild/buf
+          make gen
+      - name: vendor native sources
+        run: python python/_vendor_native.py
+      - name: build sdist
+        run: |
+          python -m pip install --upgrade build
+          python -m build --sdist --outdir dist ./python
+      # Smoke test: the sdist installs + imports, and the visio-display console
+      # script runs, with no codegen toolchain or submodules — i.e. self-contained.
+      - name: verify sdist installs standalone
+        run: |
+          python -m venv /tmp/sdist-check
+          /tmp/sdist-check/bin/pip install dist/*.tar.gz
+          /tmp/sdist-check/bin/python -c "import visio_schema; from visio_schema import serial_endpoint; print('sdist import ok')"
+          /tmp/sdist-check/bin/visio-display --help > /dev/null && echo "visio-display script ok"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
   # Build the C++ transport + run its tests on linux AND macOS — proves the mac
   # port (the eventfd->self-pipe / accept4 / SO_NOSIGPIPE guards) keeps the wire
   # codec byte-identical. The golden-vector test (run in build_wheels) already
   # ties the native reader to the committed cross-language bytes, so the live
-  # imu_producer interop stays in the parent `visio` repo's CI.
+  # imu_producer interop stays in the bus/transport layer's CI.
   cpp_tests:
     name: c++ transport (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -78,18 +115,53 @@ jobs:
           cmake --build cpp/build -j
           ctest --test-dir cpp/build --output-on-failure
 
-  publish:
-    name: publish wheels
-    needs: [build_wheels, cpp_tests]
+  # Publish wheels + sdist to PyPI via Trusted Publishing (OIDC). No API token is
+  # stored: PyPI must be configured once with this repo+workflow+environment as a
+  # trusted publisher for the `visio-schema` project (https://docs.pypi.org/trusted-publishers/).
+  # The `pypi` environment also lets you require a manual approval before release.
+  publish_pypi:
+    name: publish to PyPI
+    needs: [build_wheels, build_sdist, cpp_tests]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
+    environment:
+      name: pypi
+      url: https://pypi.org/p/visio-schema
+    permissions:
+      id-token: write          # OIDC token for Trusted Publishing
     steps:
       - uses: actions/download-artifact@v4
         with:
           pattern: wheels-*
           merge-multiple: true
           path: dist
-      - name: attach wheels to the release
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+      - name: publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  release_assets:
+    name: attach artifacts to the GitHub release
+    needs: [build_wheels, build_sdist, cpp_tests]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write          # create/update the release + upload assets
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+      - name: attach wheels + sdist to the release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.whl
+          files: |
+            dist/*.whl
+            dist/*.tar.gz

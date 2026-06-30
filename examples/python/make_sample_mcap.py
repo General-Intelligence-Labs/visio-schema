@@ -16,10 +16,9 @@ to the writer alongside each message, mirroring the live reader's resolve step.
 
 Then just open the file in Foxglove Studio — **File ▸ Open local file** — and
 add panels: a Plot for the IMU fields, an Image panel for the video. (The live
-visio_display.py script is for real serial streams, not file playback.)
+`visio-display` command is for real serial streams, not file playback.)
 
-    make gen && pip install -e python         # make the package importable
-    pip install -r examples/python/requirements.txt
+    make gen && pip install -e python         # the package (incl. mcap + av) is enough
     python make_sample_mcap.py sample.mcap    # default: sample.mcap, 5 s
 """
 from __future__ import annotations

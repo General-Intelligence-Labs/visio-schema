@@ -41,4 +41,11 @@ message SystemHealth {
   // Count of remote subscribers currently connected to this device's
   // streams.
   optional uint32 stream_clients = 8;
+
+  // Device wall clock (CLOCK_REALTIME) at the moment this health frame was
+  // produced. Distinct from `timestamp` above, which is the device's monotonic
+  // acquisition clock — this is the true calendar time, meaningful only after a
+  // host has pushed it (SetTime) and/or the RTC seeded it at boot. A Timestamp
+  // (not a raw int64) so Foxglove and other tools render it as a readable date.
+  google.protobuf.Timestamp realtime = 9;
 }

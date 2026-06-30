@@ -1,7 +1,7 @@
 # Visio Wire Framing — canonical spec
 
 This document is the canonical wire spec for Visio messages. Both
-implementations (`visio/cpp/` and `visio/python/`) MUST conform.
+implementations (`cpp/` and `python/`) MUST conform.
 If anything in code disagrees with this document, this document wins.
 
 ## 1. Frame structure (overview)
@@ -195,4 +195,4 @@ correctly-framed test fixture for its transport:
    Endpoint over a real Link), every frame produced by one is
    parsed identically by the other.
 
-These checks live in `visio/tests/interop/`.
+These checks live in the bus/transport layer's interop tests.

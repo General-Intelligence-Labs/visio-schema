@@ -53,6 +53,23 @@
       ],
       "showLegend": true, "legendDisplay": "floating",
       "isSynced": true, "xAxisVal": "timestamp"
+    },
+    "Plot!bitrate": {
+      "title": "Bitrate (Mbps)",
+      "paths": [
+        { "value": "/stats/bitrate/_total.mbps", "label": "link total", "enabled": true, "timestampMethod": "receiveTime" },
+        { "value": "/stats/bitrate/_total.video_mbps", "label": "video", "enabled": true, "timestampMethod": "receiveTime" }
+      ],
+      "showLegend": true, "legendDisplay": "floating",
+      "isSynced": true, "xAxisVal": "timestamp"
+    },
+    "Plot!framedrops": {
+      "title": "Frame drops (% lost) — spikes here = link-limited, not scene complexity",
+      "paths": [
+        { "value": "/stats/bitrate/_total.drop_pct", "label": "% frames lost", "enabled": true, "timestampMethod": "receiveTime" }
+      ],
+      "showLegend": true, "legendDisplay": "floating",
+      "isSynced": true, "xAxisVal": "timestamp"
     }
   },
   "globalVariables": {},
@@ -74,9 +91,19 @@
       },
       "second": {
         "first": "Plot!accel",
-        "second": "Plot!gyro",
+        "second": {
+          "first": "Plot!gyro",
+          "second": {
+            "first": "Plot!bitrate",
+            "second": "Plot!framedrops",
+            "direction": "column",
+            "splitPercentage": 60
+          },
+          "direction": "row",
+          "splitPercentage": 50
+        },
         "direction": "row",
-        "splitPercentage": 50
+        "splitPercentage": 34
       },
       "direction": "column",
       "splitPercentage": 55

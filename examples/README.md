@@ -3,34 +3,35 @@
 Minimal, dependency-light demos of the Visio wire. They use only the
 `visio-schema` package (generated bindings + framing codec) plus a couple of
 thin libraries. They are intentionally small — the heavier, bus-integrated
-machinery lives in `visio`.
+machinery lives in a separate bus/transport layer.
 
 First make the package importable (from the repo root). For a release install or full
 details, see [../docs/install.md](../docs/install.md):
 
 ```bash
 make gen                       # generate the protobuf bindings in-tree (needs buf; see install.md)
-pip install -e "python[mcap]"  # or: make wheel && pip install dist/visio_schema-*.whl
+pip install -e python          # or: make wheel && pip install dist/visio_schema-*.whl
 ```
 
 ## Python — live serial → Foxglove Studio, Rerun, and/or MCAP
 
-`python/visio_display.py` reads Visio messages from a **live serial port** and
-fans them out to any combination of a live Foxglove Studio WebSocket server, a
-live **Rerun** viewer, and an MCAP recording. (It only handles live streams — to
-view an MCAP *file*, open it in Studio directly; see below.)
+The viewer ships in the package as the **`visio-display`** command (source:
+`visio_schema/display/`). It reads Visio messages from a **live serial port** (or TCP, or an MCAP
+file) and fans them out to any combination of a live Foxglove Studio WebSocket
+server, a live **Rerun** viewer, and an MCAP recording. (To view an MCAP *file*,
+open it in Studio directly; see below.)
 
 ```bash
-pip install -r python/requirements.txt
+pip install visio-schema
 
 # live serial -> Rerun (spawns the viewer; auto-lays-out views)
-python python/visio_display.py --serial /dev/ttyACM0 --rerun
+visio-display --serial /dev/ttyACM0 --rerun
 
-# live serial -> Foxglove Studio (the script prints a URL to open)
-python python/visio_display.py --serial /dev/ttyACM0 --foxglove
+# live serial -> Foxglove Studio (the command prints a URL to open)
+visio-display --serial /dev/ttyACM0 --foxglove
 
 # live serial -> record an MCAP while watching live
-python python/visio_display.py --serial /dev/ttyACM0 --out run.mcap --rerun
+visio-display --serial /dev/ttyACM0 --out run.mcap --rerun
 ```
 
 `--rerun` spawns the **Rerun viewer** and logs each stream under its topic path.
@@ -40,11 +41,12 @@ as scalar plots. (Needs `rerun-sdk`; `av` decodes the H.265 camera streams.)
 
 `--foxglove` starts a **WebSocket data-source server** (not itself a viewer)
 and prints a URL. Open it, or in **Foxglove Studio** choose **Open connection →
-Foxglove WebSocket → `ws://localhost:8765`**. Import `python/ego_layout.json`
-(**Layouts ▸ Import from file**) for a ready-made panel set, or add panels by
-hand. Note: a bare IMU quaternion has no built-in Foxglove renderer — the script
-also publishes a `/tf` `FrameTransform` derived from it, so the **3D panel**
-(display frame `world`) shows the orientation.
+Foxglove WebSocket → `ws://localhost:8765`**. For a ready-made panel set, import
+the starter layout — `visio-display` prints its absolute path alongside the URL —
+via **Layouts ▸ Import from file**, or add panels by hand. Note: a bare IMU
+quaternion has no built-in Foxglove renderer — the command also publishes a `/tf`
+`FrameTransform` derived from it, so the **3D panel** (display frame `world`)
+shows the orientation.
 
 ### No hardware? Generate a sample MCAP and open it
 
@@ -68,8 +70,8 @@ Add a **Plot** panel for `/glove_left/imu_raw/3`, a **3D**/orientation panel for
 > sink. Its replay counterpart, `visio_schema.mcap.McapReaderEndpoint`, streams a
 > recording in place of a live link so downstream is unchanged.
 
-> H.264 video needs the `av` package (`pip install av`); without it the sample
-> is written IMU-only.
+> H.264 video uses the `av` package, which `visio-schema` installs by default; in
+> an environment without it, the sample is written IMU-only.
 
 > **Protobuf schema naming.** These channels use protobuf encoding, so each
 > channel's schema *name* is the protobuf full name (e.g.

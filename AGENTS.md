@@ -8,7 +8,7 @@ file. For end-user docs see [README.md](README.md), [docs/install.md](docs/insta
 
 `visio-schema` is the **wire contract** for the Visio sensor ecosystem: the protobuf message
 definitions (`proto/`), a small hand-written framing codec, and the protocol specs. It is *not* a
-transport, bus, or recording stack — those live in the sibling `visio` repo. It ships as one Python
+transport, bus, or recording stack — those live in a separate bus/transport layer. It ships as one Python
 package (`visio-schema` → `import visio_schema`) and a C++ codec (`cpp/`).
 
 ## Import model
@@ -74,8 +74,8 @@ Internal submodule surfaces are deliberately *not* pinned — change them freely
 
 See [docs/usage.md](docs/usage.md) and [`examples/`](examples/) for full recipes.
 
-1. **Live view** — `for msg, ch in read_serial("/dev/ttyACM0"):`. Full viewer:
-   `examples/python/visio_display.py`.
+1. **Live view** — `for msg, ch in read_serial("/dev/ttyACM0"):`. Full viewer: the `visio-display`
+   command (installed with the package; source in `visio_schema/display/`).
 2. **Read a recording** — `for msg, ch in read_mcap("run.mcap"):`; decode with
    `message_class(ch.schema_name)`; write with `McapWriter.write(msg, make_channel(...))`. Sample:
    `examples/python/make_sample_mcap.py`.
