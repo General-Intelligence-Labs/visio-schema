@@ -42,6 +42,7 @@ message Command {
     SetRecordingMeta set_recording_meta = 22;
     SetVideoStreaming set_video_streaming = 23;
     SetBitrate     set_bitrate     = 24;
+    FormatStorage  format_storage  = 25;
   }
 }
 
@@ -176,6 +177,20 @@ message ListRecordings {
 // Pull the device's operational-state snapshot; the CommandResult carries
 // DeviceState. Replaces GET /info.
 message GetState {
+}
+
+// Reformat the recording SD card, then re-mount it. Manufacturing / quality-
+// check path for a sealed unit that has no shell — the device unmounts the card,
+// runs mkfs, re-mounts, and re-creates the recording dir. Any active recording
+// is stopped (and finalized) first, and ALL data on the card is destroyed.
+// Answered by a CommandResult (ok + DeviceState; disk_free_pct reflects the
+// freshly-formatted card). The device needs the matching mkfs on its rootfs
+// (ext4/exfat/vfat); an unsupported type is refused (ok=false).
+message FormatStorage {
+  // Target filesystem. Empty = preserve the card's current type (detected from
+  // the on-disk superblock; a blank card or an unsupported filesystem falls
+  // back to FAT32/vfat). Explicit "ext4" / "exfat" / "vfat" forces a type.
+  string fs_type = 1;
 }
 
 // Persist one piece of sensor calibration (effective on next boot). The target

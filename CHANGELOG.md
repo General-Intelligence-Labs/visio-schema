@@ -4,6 +4,16 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.2.2 — 2026-07-02
+
+### `FormatStorage` command (additive, wire-compatible)
+
+- **`Command.format_storage = 25`** (`FormatStorage { string fs_type = 1; }`) —
+  reformat + re-mount the recording SD card over the bus, for sealed units with
+  no shell (manufacturing quality-check). `fs_type` empty = preserve the card's
+  current filesystem (ext4/exfat/vfat); explicit type forces one. Answered by a
+  `CommandResult` (ok + `DeviceState`).
+
 ## 0.2.1 — 2026-06-22
 
 ### `SystemHealth.realtime` wall-clock field (additive)
