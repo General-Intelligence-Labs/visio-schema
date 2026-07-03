@@ -32,8 +32,9 @@ classifiers = [
 ]
 # Everything the package needs at runtime, installed by default (no feature
 # extras): the wire codec + generated bindings, MCAP read/write, and the
-# `visio-display` viewer's deps. The heavy viewer libs (rerun, av) are imported
-# lazily, so they cost nothing until the viewer is actually run.
+# `visio-display` viewer + `--serve` launcher deps. The heavy/serve-only libs
+# (rerun, av, aiohttp, zeroconf) are imported lazily, so they cost nothing until
+# the viewer or the launcher is actually run.
 dependencies = [
     "protobuf>=5.26",
     "cobs>=1.2",
@@ -42,6 +43,8 @@ dependencies = [
     "foxglove-sdk>=0.10",
     "rerun-sdk>=0.24",
     "av>=11",
+    "aiohttp>=3.9",     # `--serve` launcher web app
+    "zeroconf>=0.130",  # `--serve` mDNS device discovery
 ]
 
 [project.optional-dependencies]

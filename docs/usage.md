@@ -35,7 +35,7 @@ device (use case 3), use `serial_endpoint` instead — it gives a bidirectional 
 
 For a complete viewer that fans the live stream out to **Foxglove Studio**, **Rerun**, and/or an
 **MCAP recording** (with H.265 video decode and 3D transforms), use the `visio-display`
-command (included with `pip install visio-schema`; source in `visio_schema.display`):
+command (see the [README](../README.md#python-library) to install; source in `visio_schema.display`):
 
 ```bash
 visio-display --serial /dev/ttyACM0 --rerun

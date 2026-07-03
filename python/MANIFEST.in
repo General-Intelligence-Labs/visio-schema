@@ -10,6 +10,7 @@ include README.md
 global-include *.pyi
 include visio_schema/py.typed
 include visio_schema/display/ego_layout.json
+recursive-include visio_schema/display/static *
 
 # Native `_creader` extension sources (sdist; not needed in a built wheel).
 include setup.py

@@ -11,9 +11,14 @@ fds (``/dev/ttyUSB*`` / ``/dev/ttyGS0``) alike.
 from __future__ import annotations
 
 import os
-import termios
-import tty
 from collections.abc import Callable
+
+try:
+    import termios
+    import tty
+except ImportError:      # Windows: no POSIX tty control — the serial-tty helpers no-op
+    termios = None       # type: ignore[assignment]
+    tty = None           # type: ignore[assignment]
 
 # A source of fresh, connected fds for a reopenable endpoint (-1 on failure).
 FdFactory = Callable[[], int]
@@ -25,7 +30,10 @@ def set_nonblocking(fd: int) -> None:
 
 
 def set_raw_mode(fd: int) -> None:
-    """Best-effort raw tty mode. No-op on non-ttys (termios refuses with ENOTTY)."""
+    """Best-effort raw tty mode. No-op on non-ttys (termios refuses with ENOTTY) and
+    where POSIX tty control is unavailable (Windows)."""
+    if tty is None or termios is None:
+        return
     try:
         tty.setraw(fd, termios.TCSANOW)
     except termios.error:
@@ -62,10 +70,11 @@ def close_fd(fd: int) -> None:
     close doesn't block when no host is reading; no-op (ENOTTY) on non-ttys."""
     if fd < 0:
         return
-    try:
-        termios.tcflush(fd, termios.TCOFLUSH)
-    except (termios.error, OSError):
-        pass
+    if termios is not None:
+        try:
+            termios.tcflush(fd, termios.TCOFLUSH)
+        except (termios.error, OSError):
+            pass
     try:
         os.close(fd)
     except OSError:

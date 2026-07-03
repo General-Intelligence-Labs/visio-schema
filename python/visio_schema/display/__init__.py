@@ -76,7 +76,7 @@ import sys
 import threading
 from collections.abc import Iterator
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, Protocol
 
 from google.protobuf.timestamp_pb2 import Timestamp
 
@@ -308,23 +308,27 @@ class BitrateDeriver:
 # --------------------------------------------------------------------------- #
 # Source                                                                       #
 # --------------------------------------------------------------------------- #
-def _read_fd_frames(fd: int) -> Iterator[Message]:
-    """Drive a non-blocking fd through the COBS de-framer until EOF or ``_STOP``,
+def _read_fd_frames(fd: int, stop: threading.Event | None = None) -> Iterator[Message]:
+    """Drive a non-blocking fd through the COBS de-framer until EOF or ``stop``,
     yielding decoded Messages. The byte path shared by the serial and TCP sources
     (they differ only in how the fd is opened): read with ``read_some`` under a
     selector and de-frame with ``extract_frames`` — the same COBS framing the bus
     and tests use, but inline (this tool is deliberately one read loop, no bus, no
     threads; the active-object endpoints own a thread, which we don't need here).
     The 0.2 s selector timeout bounds shutdown latency: an idle link re-checks
-    ``_STOP`` at least that often. Owns ``fd`` — closes it on exit."""
+    ``stop`` at least that often. ``stop`` defaults to the module-global ``_STOP``
+    (what the one-shot CLI + its SIGINT/SIGTERM handlers drive); ``--serve`` passes a
+    per-bridge event to stop one device's reader without touching the global. Owns
+    ``fd`` — closes it on exit."""
+    stop = _STOP if stop is None else stop
     set_nonblocking(fd)
     sel = selectors.DefaultSelector()
     sel.register(fd, selectors.EVENT_READ)
     rx = bytearray()
     try:
-        while not _STOP.is_set():
+        while not stop.is_set():
             if not sel.select(timeout=0.2):
-                continue  # idle tick: re-check _STOP
+                continue  # idle tick: re-check stop
             chunk = read_some(fd, 4096)
             if chunk is None:
                 return  # EOF: link broke / device unplugged
@@ -335,20 +339,69 @@ def _read_fd_frames(fd: int) -> Iterator[Message]:
         close_fd(fd)
 
 
-def read_serial(port: str, baud: int) -> Iterator[Message]:
-    """Yield Messages from a live serial port. pyserial opens + configures the tty
-    (baud, raw); we then dup its fd so we own + close it independently of pyserial
-    (termios settings live on the tty, so they persist on the dup after
-    ``ser.close()``) and drive it through the shared :func:`_read_fd_frames`."""
+def read_serial(port: str, baud: int, stop: threading.Event | None = None) -> Iterator[Message]:
+    """Yield Messages from a live serial port. On POSIX, pyserial opens + configures
+    the tty (baud, raw); we dup its fd so we own + close it independently of pyserial
+    (termios settings live on the tty, so they persist on the dup after ``ser.close()``)
+    and drive it through the shared :func:`_read_fd_frames`. Windows exposes no
+    ``select()``-able serial fd, so there we keep the pyserial object and read through
+    it (:func:`_read_serial_win`)."""
     import serial  # pyserial: opens + configures the tty (baud, raw)
 
+    if sys.platform == "win32":
+        yield from _read_serial_win(serial.Serial(port, baud, timeout=0.2), stop)
+        return
     ser = serial.Serial(port, baud)
     fd = os.dup(ser.fileno())
     ser.close()
-    yield from _read_fd_frames(fd)
+    yield from _read_fd_frames(fd, stop)
 
 
-def read_tcp(host: str, port: int) -> Iterator[Message]:
+def _read_serial_win(ser, stop: threading.Event | None = None) -> Iterator[Message]:
+    """Windows serial read loop. pyserial exposes no ``select()``-able fd on Windows,
+    so read through the ``Serial`` object (blocking up to its 0.2 s timeout, which
+    bounds ``stop`` latency) rather than the POSIX fd path. Owns + closes ``ser``."""
+    stop = _STOP if stop is None else stop
+    rx = bytearray()
+    try:
+        while not stop.is_set():
+            chunk = ser.read(4096)   # whatever arrived within the timeout
+            if chunk:
+                rx.extend(chunk)
+                yield from extract_frames(rx)
+    finally:
+        ser.close()
+
+
+def _read_sock_win(sock, stop: threading.Event | None = None) -> Iterator[Message]:
+    """Windows TCP read loop. ``os.read`` doesn't work on a Windows socket handle, so
+    poll with ``selectors`` (which does support sockets on Windows) + ``recv`` instead
+    of the POSIX fd path. Owns + closes ``sock``."""
+    stop = _STOP if stop is None else stop
+    sock.setblocking(False)
+    sel = selectors.DefaultSelector()
+    sel.register(sock, selectors.EVENT_READ)
+    rx = bytearray()
+    try:
+        while not stop.is_set():
+            if not sel.select(timeout=0.2):
+                continue
+            try:
+                chunk = sock.recv(4096)
+            except BlockingIOError:
+                continue
+            except OSError:
+                return
+            if not chunk:
+                return  # EOF: peer closed
+            rx.extend(chunk)
+            yield from extract_frames(rx)
+    finally:
+        sel.close()
+        sock.close()
+
+
+def read_tcp(host: str, port: int, stop: threading.Event | None = None) -> Iterator[Message]:
     """Yield Messages from a live TCP connection to a device's preview listener
     (``host:port``). The device runs a ``TcpAcceptor`` (transport/tcp.hpp) that
     speaks the same COBS-delimited core frames as the serial link, so the read
@@ -361,21 +414,26 @@ def read_tcp(host: str, port: int) -> Iterator[Message]:
     sock = socket.create_connection((host, port), timeout=5.0)
     sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-    yield from _read_fd_frames(sock.detach())
+    if sys.platform == "win32":     # os.read() can't read a Windows socket handle
+        yield from _read_sock_win(sock, stop)
+        return
+    yield from _read_fd_frames(sock.detach(), stop)
 
 
-def read_serial_resolved(port: str, baud: int) -> Iterator[tuple[Message, Channel]]:
+def read_serial_resolved(port: str, baud: int,
+                         stop: threading.Event | None = None) -> Iterator[tuple[Message, Channel]]:
     """Live serial source as resolved (Message, Channel) pairs: a
     :class:`ChannelRegistry` learns DeviceInfo announces and resolves each data
     frame (drop-until-mapped) — the same routing the bus uses."""
-    yield from ChannelRegistry().resolved(read_serial(port, baud))
+    yield from ChannelRegistry().resolved(read_serial(port, baud, stop))
 
 
-def read_tcp_resolved(host: str, port: int) -> Iterator[tuple[Message, Channel]]:
+def read_tcp_resolved(host: str, port: int,
+                      stop: threading.Event | None = None) -> Iterator[tuple[Message, Channel]]:
     """Live TCP source as resolved (Message, Channel) pairs. DeviceInfo announces
     are end-to-end forwarded over the bus's TCP leg too, so the same
     :class:`ChannelRegistry` resolution as serial applies."""
-    yield from ChannelRegistry().resolved(read_tcp(host, port))
+    yield from ChannelRegistry().resolved(read_tcp(host, port, stop))
 
 
 def _parse_tcp(target: str) -> tuple[str, int]:
@@ -389,10 +447,11 @@ def _parse_tcp(target: str) -> tuple[str, int]:
     return host, int(port)
 
 
-def _replay(path: str) -> Iterator[tuple[Message, Channel]]:
+def _replay(path: str, stop: threading.Event | None = None) -> Iterator[tuple[Message, Channel]]:
     """Replay an MCAP via the canonical ``read_mcap``, stopping on SIGINT/SIGTERM."""
+    stop = _STOP if stop is None else stop
     for pair in read_mcap(path):
-        if _STOP.is_set():
+        if stop.is_set():
             break
         yield pair
 
@@ -421,6 +480,11 @@ class FoxgloveSink:
               f"  Foxglove Studio ▸ Layouts ▸ Import from file ▸ {_LAYOUT_PATH}",
               file=sys.stderr)
 
+    @property
+    def port(self) -> int:
+        """The port the WS server actually bound (resolves ``port=0`` auto-assign)."""
+        return self._server.port
+
     def write(self, msg: Message, ch: Channel) -> None:
         channel = self._channels.get(msg.stream_id)
         if channel is None:
@@ -435,6 +499,19 @@ class FoxgloveSink:
             )
             self._channels[msg.stream_id] = channel
         channel.log(msg.payload, log_time=_ns(msg.timestamp))
+
+    def reset(self) -> None:
+        """Drop the current device's channels so the next device starts clean —
+        used by the ``--serve`` launcher on a device switch, where this one server
+        outlives every source. The cached ``foxglove.Channel`` objects are keyed by
+        wire ``stream_id``, which the next device reuses for *different* topics and
+        schemas, so each must be closed and the table cleared (``write`` lazily
+        recreates them for the new device). ``clear_session()`` then bumps the
+        Foxglove session id so connected viewers reset their advertised topics."""
+        for channel in self._channels.values():
+            channel.close()
+        self._channels.clear()
+        self._server.clear_session()
 
     def close(self) -> None:
         self._server.stop()
@@ -617,6 +694,63 @@ class RerunSink:
 
 
 # --------------------------------------------------------------------------- #
+# Bridge core — shared by the one-shot CLI and the --serve launcher            #
+# --------------------------------------------------------------------------- #
+class Sink(Protocol):
+    """Structural type for a display/record sink fanned to by :func:`run_bridge` —
+    ``FoxgloveSink``, ``RerunSink``, ``McapWriter`` and the launcher's status sink all
+    satisfy it (write a resolved pair; close on shutdown)."""
+
+    def write(self, msg: Message, ch: Channel) -> None: ...
+    def close(self) -> None: ...
+
+
+def run_bridge(
+    source: Iterator[tuple[Message, Channel]],
+    sinks: list[Sink],
+    *,
+    derive_tf: bool = False,
+    derive_bitrate: bool = False,
+    bitrate_window: float = 2.0,
+    close_sinks: bool = True,
+) -> int:
+    """Pump a resolved ``(Message, Channel)`` source into ``sinks`` and return the
+    processed-message count. Each sink is any object with ``write(msg, ch)`` +
+    ``close()`` (``FoxgloveSink``, ``RerunSink``, ``McapWriter`` all qualify), fanned
+    to in order — so a caller that also records puts the ``McapWriter`` first.
+
+    This is the loop the one-shot CLI (``main``) and the ``--serve`` launcher share.
+    ``/tf`` and ``/stats/bitrate/*`` are derived only when asked. Stopping is the
+    *source's* job: pass a ``stop`` event into ``read_*``/``_replay`` and its
+    generator ends, ending this loop. ``close_sinks`` is ``True`` for the one-shot
+    CLI (it owns its sinks) and ``False`` for the launcher, whose Foxglove server
+    outlives any single device's source."""
+    tf = TfDeriver() if derive_tf else None
+    bitrate = BitrateDeriver(window=bitrate_window) if derive_bitrate else None
+    n = 0
+
+    def _fan_out(msg: Message, ch: Channel) -> None:
+        for sink in sinks:
+            sink.write(msg, ch)
+
+    try:
+        for msg, ch in source:
+            _fan_out(msg, ch)
+            derived = tf.derive(msg, ch) if tf else None
+            if derived is not None:
+                _fan_out(*derived)
+            if bitrate is not None:
+                for d_msg, d_ch in bitrate.feed(msg, ch):
+                    _fan_out(d_msg, d_ch)
+            n += 1
+    finally:
+        if close_sinks:
+            for sink in sinks:
+                sink.close()
+    return n
+
+
+# --------------------------------------------------------------------------- #
 # Main                                                                         #
 # --------------------------------------------------------------------------- #
 def main(argv: list[str] | None = None) -> int:
@@ -629,10 +763,20 @@ def main(argv: list[str] | None = None) -> int:
                           f"(port defaults to {_DEFAULT_TCP_PORT})")
     src.add_argument("--mcap-in", metavar="IN.mcap",
                      help="replay a recorded MCAP file (Rerun/MCAP sinks only)")
+    src.add_argument("--serve", action="store_true",
+                     help="run the device-picker launcher: discover connected devices "
+                          "(serial / local AP / Wi-Fi), pick one in the browser, and open "
+                          "it in Foxglove")
     p.add_argument("--baud", type=int, default=921600, help="serial baud (default 921600)")
     p.add_argument("--out", metavar="OUT.mcap", help="also record messages to an MCAP file")
     p.add_argument("--foxglove", action="store_true", help="serve live to Foxglove Studio")
     p.add_argument("--port", type=int, default=8765, help="Foxglove WS port (default 8765)")
+    p.add_argument("--serve-port", type=int, default=8770,
+                   help="--serve only: launcher web-UI port (default 8770)")
+    p.add_argument("--viewer", choices=("desktop", "browser", "both"), default="both",
+                   help="--serve only: which Foxglove to open on device select — the "
+                        "desktop app (foxglove:// deep link, works offline), a browser tab "
+                        "(app.foxglove.dev), or both (default both)")
     p.add_argument("--bitrate", action=argparse.BooleanOptionalAction, default=True,
                    help="publish realtime bitrate on /stats/bitrate/* whenever a "
                         "Foxglove or MCAP sink is active (default: on; --no-bitrate off)")
@@ -642,6 +786,22 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--rerun-memory", metavar="LIMIT", default="2GB",
                    help="Rerun viewer memory cap; old data drops past it (default 2GB)")
     args = p.parse_args(argv)
+
+    # --serve is a persistent launcher, not a one-shot pipe: it discovers devices
+    # and starts/stops per-device bridges itself. Dispatch before the one-shot
+    # source/sink wiring below. (serve.py is imported lazily so the codec-only /
+    # one-shot paths never pull aiohttp + zeroconf.)
+    if args.serve:
+        from visio_schema.display import serve
+        serve.run_serve(
+            serve_port=args.serve_port,
+            ws_port=args.port,
+            viewer=args.viewer,
+            baud=args.baud,
+            bitrate=args.bitrate,
+            bitrate_window=args.bitrate_window,
+        )
+        return 0
 
     # MCAP-file -> Foxglove is not a streaming job: Foxglove Studio opens MCAP
     # files natively and far better (seek/scrub). Refuse it and point the user
@@ -664,11 +824,13 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGTERM, lambda *_: _STOP.set())
 
     recorder = McapWriter(args.out) if args.out else None
-    sinks: list[FoxgloveSink | RerunSink] = []    # display sinks: write(msg, ch)
+    display_sinks: list[Sink] = []
     if args.foxglove:
-        sinks.append(FoxgloveSink(args.port))
+        display_sinks.append(FoxgloveSink(args.port))
     if args.rerun:
-        sinks.append(RerunSink(memory_limit=args.rerun_memory))
+        display_sinks.append(RerunSink(memory_limit=args.rerun_memory))
+    # Recorder first so it captures the raw fan-out order ahead of the display sinks.
+    sinks = display_sinks if recorder is None else [recorder, *display_sinks]
 
     if args.mcap_in:
         source = _replay(args.mcap_in)
@@ -677,41 +839,25 @@ def main(argv: list[str] | None = None) -> int:
         source = read_tcp_resolved(host, tcp_port)
     else:
         source = read_serial_resolved(args.serial, args.baud)
-    # The /tf transform exists so Foxglove's 3D panel can render IMU orientation;
-    # Rerun renders it directly (rr.Transform3D), so only derive it when a
-    # Foxglove or MCAP sink will use it — keeps the rerun-only path lean.
-    tf = TfDeriver() if (args.foxglove or args.out) else None
-    # Realtime bitrate is json, which only the Foxglove/MCAP sinks consume (Rerun
-    # ignores it) — so derive it only when one of those is active.
-    bitrate = (BitrateDeriver(window=args.bitrate_window)
-               if (args.bitrate and (args.foxglove or args.out)) else None)
-    if bitrate is not None and args.foxglove:
+
+    # The /tf transform lets Foxglove's 3D panel render IMU orientation, and the
+    # json bitrate is only consumed by the Foxglove/MCAP sinks (Rerun renders
+    # orientation directly and ignores the json) — so derive both only when a
+    # Foxglove or MCAP sink is active, keeping the rerun-only path lean.
+    want_derived = bool(args.foxglove or args.out)
+    if args.bitrate and want_derived and args.foxglove:
         print(f"publishing realtime bitrate on {_BITRATE_TOTAL_TOPIC} "
               f"(+ per-camera {_BITRATE_TOPIC_PREFIX}/<topic>); plot the `mbps` field",
               file=sys.stderr)
-    n = 0
 
-    def _fan_out(msg: Message, ch: Channel) -> None:
-        if recorder is not None:
-            recorder.write(msg, ch)
-        for sink in sinks:
-            sink.write(msg, ch)
-
-    try:
-        for msg, ch in source:
-            _fan_out(msg, ch)
-            derived = tf.derive(msg, ch) if tf else None
-            if derived is not None:
-                _fan_out(*derived)
-            if bitrate is not None:
-                for d_msg, d_ch in bitrate.feed(msg, ch):
-                    _fan_out(d_msg, d_ch)
-            n += 1
-    finally:
-        if recorder is not None:
-            recorder.close()
-        for sink in sinks:
-            sink.close()
+    # Source stop is the module-global _STOP (driven by the SIGINT/SIGTERM handlers
+    # above); run_bridge closes the sinks when the source ends.
+    n = run_bridge(
+        source, sinks,
+        derive_tf=want_derived,
+        derive_bitrate=bool(args.bitrate and want_derived),
+        bitrate_window=args.bitrate_window,
+    )
     print(f"done ({n} messages)", file=sys.stderr)
     return n
 

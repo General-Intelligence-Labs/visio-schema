@@ -3,12 +3,12 @@ name: wheels
 # Build version-specific (cp310–cp313) wheels for the optional native `_creader`
 # reader on linux (manylinux_2_28 x86_64) + macOS (universal2), run the in-wheel
 # test suite both native-on and on the pure-Python fallback, run the C++↔Python
-# interop both ways, and build the sdist. On a `visio-schema-v*` tag, publish all
+# interop both ways, and build the sdist. On a `v*` tag, publish all
 # artifacts to PyPI via Trusted Publishing (OIDC — no stored token) and attach
 # them to the GitHub release. `workflow_dispatch` builds + tests without publishing.
 on:
   push:
-    tags: ["visio-schema-v*"]
+    tags: ["v*"]
   workflow_dispatch:
 
 jobs:
