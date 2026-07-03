@@ -74,8 +74,8 @@ TEST(McapWriter, DestructorFinalizes) {
 
 TEST(McapWriter, RotatesByBytesIntoNumberedParts) {
   const std::string path = TempPath("visio_schema_mcap_rot.mcap");
-  const std::string p0 = TempPath("visio_schema_mcap_rot_000.mcap");
-  const std::string p1 = TempPath("visio_schema_mcap_rot_001.mcap");
+  const std::string p0 = TempPath("visio_schema_mcap_rot_0000.mcap");
+  const std::string p1 = TempPath("visio_schema_mcap_rot_0001.mcap");
   std::remove(p0.c_str());
   std::remove(p1.c_str());
   const Channel ch = MakeChannel(kFirstDynamic, "/dev/imu/0/raw");
