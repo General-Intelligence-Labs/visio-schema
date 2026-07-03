@@ -23,16 +23,19 @@ is identical; only throughput differs.
 
 ## Option A — install a release (recommended)
 
+Install a released **sdist** straight from the GitHub release with pip — grab the newest URL from
+the [releases page](https://github.com/General-Intelligence-Labs/visio-schema/releases):
+
 ```bash
-pip install visio-schema
+pip install https://github.com/General-Intelligence-Labs/visio-schema/releases/download/v0.2.1/visio_schema-0.2.1.tar.gz
 ```
 
-One install includes the wire codec + generated bindings, MCAP read/write, and the `visio-display`
-viewer — no extras to choose. Released wheels (Linux `manylinux_2_28` x86_64, macOS `universal2`,
-CPython 3.10–3.13) bundle the optional native reader. If no wheel matches your platform, pip falls
-back to the sdist, which ships the generated bindings (no codegen toolchain required) and the
-pure-Python reader — correct, just slower; building the native reader from the sdist additionally
-needs a C/C++ compiler.
+This includes the wire codec + generated bindings, MCAP read/write, and the `visio-display` viewer —
+no extras to choose. The sdist ships the generated bindings (no codegen toolchain required) and
+installs the pure-Python reader; it additionally builds the optional native reader for higher
+throughput when a C/C++ compiler is present. (Release wheels that pre-bundle the native reader for
+Linux `manylinux_2_28` x86_64 and macOS `universal2`, CPython 3.10–3.13, are attached to releases as
+they are published.)
 
 The package installs the **`visio-display`** command (also runnable as
 `python -m visio_schema.display`):
@@ -49,7 +52,7 @@ Release tags also ship the generated bindings, so a direct `git+…` install nee
 toolchain:
 
 ```bash
-pip install "visio-schema @ git+https://github.com/General-Intelligence-Labs/visio-schema@visio-schema-v0.2.0#subdirectory=python"
+pip install "visio-schema @ git+https://github.com/General-Intelligence-Labs/visio-schema@v0.2.1#subdirectory=python"
 ```
 
 A plain `git+…` install does not initialize submodules, so the native reader is skipped and you get

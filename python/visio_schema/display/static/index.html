@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Visio Launcher</title>
+  <style>
+    :root {
+      --bg: #14161a; --panel: #1c1f26; --panel2: #232732; --line: #2c313d;
+      --fg: #e7e9ee; --muted: #9aa2b1; --accent: #4f9dff; --ok: #45c07a;
+      --warn: #e0b04a; --err: #e56a6a; --radius: 10px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font: 14px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg); color: var(--fg); height: 100vh; display: flex; flex-direction: column;
+    }
+    header {
+      padding: 12px 18px; border-bottom: 1px solid var(--line);
+      display: flex; align-items: center; gap: 10px;
+    }
+    header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+    header .sub { color: var(--muted); font-size: 12px; }
+    main { flex: 1; display: grid; grid-template-columns: minmax(280px, 380px) 1fr; min-height: 0; }
+    .col { padding: 16px; overflow-y: auto; }
+    .col.left { border-right: 1px solid var(--line); }
+    h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 18px 0 8px; }
+    h2:first-child { margin-top: 0; }
+    .device {
+      display: flex; align-items: center; gap: 10px; padding: 10px 12px; margin-bottom: 6px;
+      background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+      cursor: pointer; transition: border-color .12s, background .12s;
+    }
+    .device:hover { border-color: var(--accent); }
+    .device.active { border-color: var(--accent); background: var(--panel2); }
+    .device .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+    .device.active .dot { background: var(--ok); }
+    .device .info { min-width: 0; flex: 1; }
+    .device .label { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .device .meta { color: var(--muted); font-size: 12px; }
+    .badge { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; padding: 2px 6px; border-radius: 6px; background: var(--panel2); color: var(--muted); flex: none; }
+    .empty { color: var(--muted); font-size: 13px; padding: 4px 0 8px; }
+    form.manual { display: flex; gap: 8px; margin-top: 6px; }
+    input, button, select { font: inherit; }
+    input {
+      background: var(--panel); border: 1px solid var(--line); color: var(--fg);
+      border-radius: 8px; padding: 8px 10px; min-width: 0;
+    }
+    input#host { flex: 1; }
+    input#port { width: 80px; }
+    button {
+      background: var(--accent); color: #06101f; border: none; border-radius: 8px;
+      padding: 8px 14px; cursor: pointer; font-weight: 600;
+    }
+    button.secondary { background: var(--panel2); color: var(--fg); border: 1px solid var(--line); }
+    button:disabled { opacity: .5; cursor: default; }
+    .status { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; }
+    .status .state { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    .status .state .dot { width: 10px; height: 10px; border-radius: 50%; }
+    .s-idle .dot { background: var(--muted); } .s-connecting .dot { background: var(--warn); }
+    .s-streaming .dot { background: var(--ok); } .s-error .dot { background: var(--err); }
+    .status dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 14px 0; }
+    .status dt { color: var(--muted); } .status dd { margin: 0; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+    .hint { color: var(--muted); font-size: 12px; margin-top: 14px; }
+    .err { color: var(--err); }
+    code { background: var(--panel2); padding: 1px 5px; border-radius: 5px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Visio Launcher</h1>
+    <span class="sub" data-i18n="tagline">discover a device &rarr; open it in Foxglove</span>
+    <button id="btn-lang" class="secondary" style="margin-left:auto">中文</button>
+    <button id="btn-quit" class="secondary" data-i18n="quit">Quit</button>
+  </header>
+  <main>
+    <section class="col left">
+      <h2 data-i18n="usb">USB</h2>          <div id="grp-usb"></div>
+      <h2 data-i18n="wifi">Wi-Fi</h2>       <div id="grp-sta"></div>
+      <h2 data-i18n="ap">Access Point / Manual</h2>
+      <div id="grp-ap"></div>
+      <form class="manual" id="manual-form">
+        <input id="host" placeholder="192.168.4.1" autocomplete="off" />
+        <input id="port" type="number" placeholder="50001" />
+        <button type="submit" class="secondary" data-i18n="add">Add</button>
+      </form>
+      <div class="empty err" id="manual-err"></div>
+    </section>
+
+    <section class="col right">
+      <div class="status" id="status">
+        <div class="state s-idle"><span class="dot"></span><span id="state-text">No device selected</span></div>
+        <dl>
+          <dt data-i18n="stDevice">Device</dt><dd id="st-label">&mdash;</dd>
+          <dt data-i18n="stTransport">Transport</dt><dd id="st-transport">&mdash;</dd>
+          <dt data-i18n="stMessages">Messages</dt><dd id="st-messages">&mdash;</dd>
+          <dt data-i18n="stTopics">Topics</dt><dd id="st-topics">&mdash;</dd>
+          <dt data-i18n="stWebSocket">WebSocket</dt><dd><code id="st-ws">&mdash;</code></dd>
+        </dl>
+        <div class="err" id="st-error"></div>
+        <div class="actions">
+          <button id="btn-desktop" data-i18n="btnDesktop" disabled>Open in Foxglove Desktop</button>
+          <button id="btn-browser" class="secondary" data-i18n="btnBrowser" disabled>Open in browser</button>
+          <button id="btn-disconnect" class="secondary" data-i18n="btnDisconnect" disabled>Disconnect</button>
+        </div>
+        <p class="hint" data-i18n-html="hint">
+          <b>Desktop</b> opens Foxglove Studio via a <code>foxglove://</code> link &mdash; works offline.
+          If nothing opens, install Foxglove Studio or use <b>Open in browser</b>
+          (<code>app.foxglove.dev</code>, needs internet + a Foxglove account).
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <!-- Translations live inline in this UTF-8 document so the CJK text is decoded
+       correctly regardless of how the static .js is served. app.js reads window.I18N. -->
+  <script>
+    window.I18N = {
+      en: {
+        tagline: "discover a device → open it in Foxglove",
+        quit: "Quit", usb: "USB", wifi: "Wi-Fi", ap: "Access Point / Manual", add: "Add",
+        stDevice: "Device", stTransport: "Transport", stMessages: "Messages",
+        stTopics: "Topics", stWebSocket: "WebSocket",
+        btnDesktop: "Open in Foxglove Desktop", btnBrowser: "Open in browser",
+        btnDisconnect: "Disconnect",
+        hint: "<b>Desktop</b> opens Foxglove Studio via a <code>foxglove://</code> link — works offline. " +
+              "If nothing opens, install Foxglove Studio or use <b>Open in browser</b> " +
+              "(<code>app.foxglove.dev</code>, needs internet + a Foxglove account).",
+        stateIdle: "No device selected", stateConnecting: "Connecting…",
+        stateStreaming: "Streaming", stateError: "Error",
+        emptyUsb: "no USB device", emptySta: "no device on this network",
+        emptyAp: "join the device AP, then add it below",
+        stopped: "Launcher stopped — you can close this tab.",
+        connectFailed: "connect failed", unreachable: "could not reach device",
+      },
+      zh: {
+        tagline: "发现设备 → 在 Foxglove 中查看",
+        quit: "退出", usb: "USB", wifi: "Wi-Fi", ap: "接入点 / 手动添加", add: "添加",
+        stDevice: "设备", stTransport: "连接方式", stMessages: "消息数",
+        stTopics: "主题数", stWebSocket: "WebSocket",
+        btnDesktop: "在 Foxglove 桌面版中打开", btnBrowser: "在浏览器中打开",
+        btnDisconnect: "断开连接",
+        hint: "<b>桌面版</b>：通过 <code>foxglove://</code> 链接打开 Foxglove Studio —— 可离线使用。" +
+              "若无反应，请先安装 Foxglove Studio，或使用<b>在浏览器中打开</b>" +
+              "（<code>app.foxglove.dev</code>，需要联网 + Foxglove 账号）。",
+        stateIdle: "未选择设备", stateConnecting: "连接中…",
+        stateStreaming: "正在接收数据", stateError: "错误",
+        emptyUsb: "未检测到 USB 设备", emptySta: "此网络中没有设备",
+        emptyAp: "先连接设备热点，再在下方添加",
+        stopped: "启动器已停止 —— 可以关闭此标签页。",
+        connectFailed: "连接失败", unreachable: "无法连接到设备",
+      },
+    };
+  </script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

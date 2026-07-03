@@ -202,6 +202,22 @@ def test_read_mcap_roundtrips(tmp_path) -> None:
         assert ch.encoding == "protobuf"
 
 
+def test_replay_stops_on_event(tmp_path) -> None:
+    """`_replay` honors a passed stop event (defaulting to the module `_STOP`): a
+    pre-set event yields nothing; a fresh one replays the whole file."""
+    import threading
+
+    vd = _vd()
+    gen = _load("make_sample_mcap", _EXAMPLES / "make_sample_mcap.py")
+    out = tmp_path / "s.mcap"
+    gen.generate(str(out), seconds=1.0)
+
+    stop = threading.Event()
+    stop.set()
+    assert list(vd._replay(str(out), stop)) == []          # already stopped → nothing
+    assert len(list(vd._replay(str(out), threading.Event()))) > 0   # fresh → replays
+
+
 def test_parse_tcp_defaults_and_explicit_port() -> None:
     """--tcp HOST uses the device's default preview port; HOST:PORT overrides it."""
     vd = _vd()
@@ -306,7 +322,8 @@ def test_pyproject_declares_console_script_and_default_deps() -> None:
     data = tomllib.loads(pyproject.read_text())
     assert data["project"]["scripts"]["visio-display"] == "visio_schema.display:run"
     deps = " ".join(data["project"]["dependencies"])
-    for pkg in ("mcap", "pyserial", "foxglove-sdk", "rerun-sdk", "av"):
+    for pkg in ("mcap", "pyserial", "foxglove-sdk", "rerun-sdk", "av",
+                "aiohttp", "zeroconf"):
         assert pkg in deps, f"{pkg} should be a default dependency"
     # No feature-gating extras — they were folded into the default install.
     assert set(data["project"].get("optional-dependencies", {})) == {"dev"}

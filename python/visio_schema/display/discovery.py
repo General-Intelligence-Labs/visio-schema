@@ -1,0 +1,239 @@
+#!/usr/bin/env python3
+"""Discover connected Visio devices for the ``visio-display --serve`` launcher.
+
+Three transports, merged into one live list the launcher renders:
+
+* :data:`USB` — a device on the USB CDC-ACM serial gadget, found by enumerating
+  serial ports and keeping those with the GI-Labs USB vendor id (``0x2207``).
+  Reached over the tty (``/dev/ttyACM*`` / ``/dev/cu.usbmodem*`` / ``COM*``), no IP.
+* :data:`STA` — a device on the same Wi-Fi / LAN, found by browsing the
+  ``_umi-protocol._tcp`` mDNS service it advertises; the SRV record carries the host
+  and the Visio bus port (50001 on production units). Reached over TCP.
+* :data:`AP` — a device in soft-AP fallback. A desktop can't portably scan/join
+  Wi-Fi, so this is *manual*: once the operator has joined the ``GILABS-xxxx``
+  hotspot, they add the device by ``host:port`` (default ``192.168.4.1:50001``) and
+  we probe it.
+
+Listing is deliberately **passive** — we never open the device's single-reader bus
+to read its identity here, since that would starve the live bridge (a device's
+serial / name would need a connection to learn, so listing shows the mDNS/USB label
+only).
+
+Discovery threads (zeroconf's own browser thread + our serial-poll thread) call
+``on_change`` after any add/update/remove; a caller running an asyncio event loop
+should marshal that onto the loop (e.g. ``loop.call_soon_threadsafe``).
+"""
+from __future__ import annotations
+
+import socket
+import sys
+import threading
+from collections.abc import Callable
+
+# Transport tags — the closed set a device DTO's ``transport`` is drawn from.
+USB = "usb"
+STA = "sta"
+AP = "ap"
+
+# GI-Labs USB vendor id — the CDC-ACM gadget on every ego / glove / gripper.
+_GILABS_USB_VID = 0x2207
+# The Visio bus mDNS service. The SRV record's port is authoritative (50001 on prod
+# ego); the one-shot ``--tcp`` default of 9000 is a *different* preview listener.
+_MDNS_SERVICE = "_umi-protocol._tcp.local."
+# soft-AP fallback gateway + bus port (see wifi_manager.cpp start_ap()).
+DEFAULT_AP_HOST = "192.168.4.1"
+DEFAULT_BUS_PORT = 50001
+# How often to re-enumerate serial ports (bounds appear/disappear latency).
+_SERIAL_POLL_S = 1.5
+
+
+def _usb_id(device: str) -> str:
+    return f"usb:{device}"
+
+
+def _tcp_id(host: str, port: int) -> str:
+    return f"tcp:{host}:{port}"
+
+
+def _device(*, dev_id: str, label: str, transport: str, host: str | None = None,
+            port: int | None = None, device: str | None = None) -> dict:
+    """Build a device DTO. ``id`` is a stable *connection* key (not the serial, which
+    is unknown until we connect) — so the same unit reachable over both USB and Wi-Fi
+    legitimately appears as two rows, each describing one way to reach it."""
+    return {"id": dev_id, "label": label, "transport": transport,
+            "host": host, "port": port, "device": device}
+
+
+class DiscoveryService:
+    """Continuously discover devices across usb / sta / ap and notify on any change.
+
+    Owns a zeroconf browser (its own thread) and a serial-poll thread. All device
+    mutations are serialized by ``_lock``; ``on_change`` fires (from whichever
+    discovery thread) after any add/update/remove. Degrades if a transport backend
+    is unavailable (no network → no mDNS; no pyserial → no USB), warning to stderr so
+    a genuinely broken/mis-bundled dependency is visible rather than silent."""
+
+    def __init__(self, on_change: Callable[[], None] | None = None,
+                 *, bus_port: int = DEFAULT_BUS_PORT) -> None:
+        self._on_change = on_change
+        self._bus_port = bus_port
+        self._devices: dict[str, dict] = {}
+        self._mdns_ids: dict[str, str] = {}   # mDNS instance name -> device id
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._serial_thread: threading.Thread | None = None
+        self._serial_warned = False
+        self._zc = None            # zeroconf.Zeroconf
+        self._browser = None       # zeroconf.ServiceBrowser
+
+    # -- lifecycle ---------------------------------------------------------- #
+    def start(self) -> None:
+        self._start_mdns()
+        self._serial_thread = threading.Thread(
+            target=self._serial_loop, name="visio-serial-scan", daemon=True)
+        self._serial_thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._browser is not None:
+            self._browser.cancel()
+        if self._zc is not None:
+            self._zc.close()
+        if self._serial_thread is not None:
+            self._serial_thread.join(timeout=2.0)
+
+    def set_on_change(self, on_change: Callable[[], None] | None) -> None:
+        """Set the change callback after construction — the launcher wires this once
+        its event loop exists (the callback marshals onto that loop)."""
+        self._on_change = on_change
+
+    def snapshot(self) -> list[dict]:
+        with self._lock:
+            return list(self._devices.values())
+
+    # -- mutation ----------------------------------------------------------- #
+    def _upsert(self, dto: dict) -> None:
+        with self._lock:
+            if self._devices.get(dto["id"]) == dto:
+                return
+            self._devices[dto["id"]] = dto
+        self._notify()
+
+    def _remove(self, dev_id: str) -> None:
+        with self._lock:
+            if dev_id not in self._devices:
+                return
+            del self._devices[dev_id]
+        self._notify()
+
+    def _notify(self) -> None:
+        if self._on_change is None:
+            return
+        try:
+            self._on_change()
+        except RuntimeError:
+            pass  # event loop already closed during shutdown — nothing to notify
+
+    # -- manual (AP) -------------------------------------------------------- #
+    def add_manual(self, host: str, port: int | None = None) -> dict:
+        """Add a device by ``host:port`` — the soft-AP / manual path. Probes
+        reachability first (raises ``OSError`` on failure) so an unreachable entry is
+        never shown as connectable."""
+        port = port or self._bus_port
+        with socket.create_connection((host, port), timeout=1.0):
+            pass
+        dto = _device(dev_id=_tcp_id(host, port), label=f"{host}:{port}",
+                      transport=AP, host=host, port=port)
+        self._upsert(dto)
+        return dto
+
+    # -- serial (USB) ------------------------------------------------------- #
+    def _serial_loop(self) -> None:
+        try:
+            from serial.tools import list_ports
+        except ImportError:
+            print("visio-display: pyserial missing — USB discovery disabled",
+                  file=sys.stderr)
+            return
+        while not self._stop.is_set():
+            try:
+                self._scan_serial(list_ports)
+            except OSError as exc:
+                if not self._serial_warned:      # warn once; don't spam every 1.5 s
+                    self._serial_warned = True
+                    print(f"visio-display: serial scan failed: {exc}", file=sys.stderr)
+            self._stop.wait(_SERIAL_POLL_S)
+
+    def _scan_serial(self, list_ports) -> None:
+        seen: set[str] = set()
+        for p in list_ports.comports():
+            if p.vid != _GILABS_USB_VID:      # ListPortInfo always defines .vid (None if unknown)
+                continue
+            dev_id = _usb_id(p.device)
+            seen.add(dev_id)
+            product = p.product
+            label = f"{product} ({p.device})" if product else f"USB {p.device}"
+            self._upsert(_device(dev_id=dev_id, label=label,
+                                 transport=USB, device=p.device))
+        for dev_id in [d["id"] for d in self.snapshot()
+                       if d["transport"] == USB and d["id"] not in seen]:
+            self._remove(dev_id)
+
+    # -- mDNS (Wi-Fi / STA) ------------------------------------------------- #
+    def _start_mdns(self) -> None:
+        try:
+            from zeroconf import ServiceBrowser, Zeroconf
+        except ImportError:
+            print("visio-display: zeroconf missing — Wi-Fi discovery disabled",
+                  file=sys.stderr)
+            return
+        try:
+            self._zc = Zeroconf()
+        except OSError:
+            self._zc = None
+            return  # no multicast / network → degrade to usb + manual
+        self._browser = ServiceBrowser(self._zc, _MDNS_SERVICE, self._MdnsListener(self))
+
+    def _on_mdns(self, zc, type_: str, name: str) -> None:
+        info = zc.get_service_info(type_, name, timeout=1500)
+        if info is None:
+            return
+        addrs = info.parsed_addresses()
+        if not addrs or not info.port:
+            return
+        host, port = addrs[0], info.port
+        label = name.removesuffix("." + _MDNS_SERVICE) or host
+        dev_id = _tcp_id(host, port)
+        # If this instance previously resolved to a different address, drop the stale
+        # row before adding the new one.
+        prev = self._mdns_ids.get(name)
+        if prev is not None and prev != dev_id:
+            self._remove(prev)
+        self._mdns_ids[name] = dev_id
+        self._upsert(_device(dev_id=dev_id, label=label, transport=STA,
+                             host=host, port=port))
+
+    def _off_mdns(self, name: str) -> None:
+        dev_id = self._mdns_ids.pop(name, None)
+        if dev_id is not None:
+            self._remove(dev_id)
+
+    class _MdnsListener:
+        """zeroconf ``ServiceListener`` — thin adapter onto the enclosing service."""
+
+        def __init__(self, svc: DiscoveryService) -> None:
+            self._svc = svc
+
+        def add_service(self, zc, type_, name):
+            self._svc._on_mdns(zc, type_, name)
+
+        def update_service(self, zc, type_, name):
+            # add_service already resolved this instance; re-resolving on every TTL
+            # refresh would block the zeroconf callback thread in get_service_info
+            # for no gain. A genuine address change re-announces (goodbye→hello =
+            # remove→add), so only resolve instances we haven't seen.
+            if name not in self._svc._mdns_ids:
+                self._svc._on_mdns(zc, type_, name)
+
+        def remove_service(self, zc, type_, name):
+            self._svc._off_mdns(name)
