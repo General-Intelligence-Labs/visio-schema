@@ -32,7 +32,17 @@ jobs:
       # compiles. Done on the HOST runner (buf via npm); cibuildwheel copies the
       # already-generated tree into the manylinux container.
       - name: make gen
+        shell: bash
         run: |
+          # make gen's nanopb step shells out to protoc; the nanopb generator +
+          # scripts/gen_schema_blobs.py also need the pure-Python deps that
+          # `import visio_schema` pulls.
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            brew list protobuf >/dev/null 2>&1 || brew install protobuf
+          else
+            sudo apt-get update && sudo apt-get install -y protobuf-compiler
+          fi
+          python -m pip install protobuf cobs mcap pyserial
           npm install -g @bufbuild/buf
           make gen
 
@@ -64,7 +74,17 @@ jobs:
       # The sdist must carry the generated _pb2 (gitignored at HEAD) + the native
       # sources, so generate + vendor on the host before building it.
       - name: make gen
+        shell: bash
         run: |
+          # make gen's nanopb step shells out to protoc; the nanopb generator +
+          # scripts/gen_schema_blobs.py also need the pure-Python deps that
+          # `import visio_schema` pulls.
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            brew list protobuf >/dev/null 2>&1 || brew install protobuf
+          else
+            sudo apt-get update && sudo apt-get install -y protobuf-compiler
+          fi
+          python -m pip install protobuf cobs mcap pyserial
           npm install -g @bufbuild/buf
           make gen
       - name: vendor native sources
@@ -106,7 +126,17 @@ jobs:
         with:
           python-version: "3.11"
       - name: make gen
+        shell: bash
         run: |
+          # make gen's nanopb step shells out to protoc; the nanopb generator +
+          # scripts/gen_schema_blobs.py also need the pure-Python deps that
+          # `import visio_schema` pulls.
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            brew list protobuf >/dev/null 2>&1 || brew install protobuf
+          else
+            sudo apt-get update && sudo apt-get install -y protobuf-compiler
+          fi
+          python -m pip install protobuf cobs mcap pyserial
           npm install -g @bufbuild/buf
           make gen
       - name: build + ctest
