@@ -28,7 +28,7 @@ build your own tooling, install the [Python library](#python-library) instead.
 ## View a device in Foxglove Studio — download & run (no install)
 
 Download the ready-to-run **`visio-display` launcher** for your OS from the
-[v0.2.1 release](https://github.com/General-Intelligence-Labs/visio-schema/releases/tag/v0.2.1),
+[v0.2.2 release](https://github.com/General-Intelligence-Labs/visio-schema/releases/tag/v0.2.2),
 unzip it, and **double-click** it — **macOS** `visio-display.app`, **Windows**
 `visio-display\visio-display.exe`, or **Linux** `visio-display/visio-display`.
 
@@ -44,7 +44,7 @@ Install a released build straight from the GitHub release with pip — grab the 
 the [releases page](https://github.com/General-Intelligence-Labs/visio-schema/releases):
 
 ```bash
-pip install https://github.com/General-Intelligence-Labs/visio-schema/releases/download/v0.2.1/visio_schema-0.2.1.tar.gz
+pip install https://github.com/General-Intelligence-Labs/visio-schema/releases/download/v0.2.2/visio_schema-0.2.2.tar.gz
 ```
 
 This includes MCAP read/write (`read_mcap` / `McapWriter`), the `visio-display` CLI viewer (next

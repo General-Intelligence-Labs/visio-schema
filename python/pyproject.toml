@@ -101,6 +101,9 @@ select = ["E", "F", "I", "B", "UP", "RUF"]
 # wheel falls back to the pure-Python reader.
 [tool.cibuildwheel]
 build = "cp310-* cp311-* cp312-* cp313-*"
+# rerun-sdk (a runtime dep) ships no musllinux wheel, so the in-wheel test install
+# fails there. We ship manylinux + macOS only.
+skip = "*-musllinux*"
 build-frontend = "build"
 test-requires = ["pytest>=8", "protobuf>=5.26", "cobs>=1.2", "mcap>=1.1"]
 # Run the in-wheel suite native-on, then forced onto the pure-Python fallback, so

@@ -151,7 +151,7 @@ jobs:
   # The `pypi` environment also lets you require a manual approval before release.
   publish_pypi:
     name: publish to PyPI
-    needs: [build_wheels, build_sdist, cpp_tests]
+    needs: [build_wheels, build_sdist]   # cpp_tests runs as a signal; it doesn't gate the Python release (separate C++ artifact)
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     environment:
@@ -174,7 +174,7 @@ jobs:
 
   release_assets:
     name: attach artifacts to the GitHub release
-    needs: [build_wheels, build_sdist, cpp_tests]
+    needs: [build_wheels, build_sdist]   # cpp_tests runs as a signal; it doesn't gate the Python release (separate C++ artifact)
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
