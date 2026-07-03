@@ -24,11 +24,14 @@ FIRST_DYNAMIC = ControlStream.CONTROL_STREAM_FIRST_DYNAMIC
 DEVICE_INFO = ControlStream.CONTROL_STREAM_DEVICE_INFO
 HEARTBEAT = ControlStream.CONTROL_STREAM_HEARTBEAT
 COMMAND = ControlStream.CONTROL_STREAM_COMMAND
+EXPOSURE_SYNC = ControlStream.CONTROL_STREAM_EXPOSURE_SYNC
 
 # Control streams that never cross a hop (the bus drops them rather than relaying).
 # A new control stream belongs here iff it is link-scoped and carries no device
 # identity; end-to-end control (device_info, command) is left out and forwarded.
-LINK_LOCAL_CONTROL = frozenset({HEARTBEAT})
+# Exposure-sync is single-hop hub↔child (a child source's grid is re-emitted to
+# the other children by the hub's service, not by bus auto-forwarding).
+LINK_LOCAL_CONTROL = frozenset({HEARTBEAT, EXPOSURE_SYNC})
 
 
 def command_message(command: _ProtoMessage) -> Message:
@@ -57,6 +60,7 @@ def command_message(command: _ProtoMessage) -> Message:
 __all__ = [
     "COMMAND",
     "DEVICE_INFO",
+    "EXPOSURE_SYNC",
     "FIRST_DYNAMIC",
     "HEARTBEAT",
     "LINK_LOCAL_CONTROL",
