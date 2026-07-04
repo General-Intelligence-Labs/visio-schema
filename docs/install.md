@@ -27,7 +27,7 @@ Install a released **sdist** straight from the GitHub release with pip — grab 
 the [releases page](https://github.com/General-Intelligence-Labs/visio-schema/releases):
 
 ```bash
-pip install https://github.com/General-Intelligence-Labs/visio-schema/releases/download/v0.2.2/visio_schema-0.2.2.tar.gz
+pip install https://github.com/General-Intelligence-Labs/visio-schema/releases/download/v0.3.0/visio_schema-0.3.0.tar.gz
 ```
 
 This includes the wire codec + generated bindings, MCAP read/write, and the `visio-display` viewer —
@@ -52,7 +52,7 @@ Release tags also ship the generated bindings, so a direct `git+…` install nee
 toolchain:
 
 ```bash
-pip install "visio-schema @ git+https://github.com/General-Intelligence-Labs/visio-schema@v0.2.2#subdirectory=python"
+pip install "visio-schema @ git+https://github.com/General-Intelligence-Labs/visio-schema@v0.3.0#subdirectory=python"
 ```
 
 A plain `git+…` install does not initialize submodules, so the native reader is skipped and you get
