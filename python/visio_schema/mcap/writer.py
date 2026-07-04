@@ -56,8 +56,8 @@ class McapWriter:
             `close`). The mcap writer calls ``.tell()``, so a pipe/FIFO/socket is
             rejected.
         compression: An ``mcap.writer.CompressionType`` (default: none); keyword-only.
-        max_bytes: If set, rotate into numbered parts ``name_000.mcap``,
-            ``name_001.mcap``, … once a part exceeds this many written payload bytes
+        max_bytes: If set, rotate into numbered parts ``name_0000.mcap``,
+            ``name_0001.mcap``, … once a part exceeds this many written payload bytes
             (approximate — a part overshoots by at most one message). Path output
             only; keyword-only.
         max_duration_s: Like `max_bytes`, but rotate by elapsed log time. Path output
@@ -184,8 +184,12 @@ class McapWriter:
         assert self._path is not None
         if not self._rotating:
             return self._path
+        # 4-digit zero-pad (matches the C++ writer's NumberedPart): parts stay
+        # lexicographically ordered through 9999. At 3 digits, part 1000 sorts
+        # before part 999, breaking the chronological order the uploader and
+        # playback rely on once a session exceeds 999 parts.
         return self._path.with_name(
-            f"{self._path.stem}_{self._part_index:03d}{self._path.suffix}"
+            f"{self._path.stem}_{self._part_index:04d}{self._path.suffix}"
         )
 
     def _open_part(self) -> None:

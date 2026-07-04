@@ -33,10 +33,17 @@ void ShrinkBuffers(int a, int b) {
   ::setsockopt(b, SOL_SOCKET, SO_RCVBUF, &sz, sizeof(sz));
 }
 
+// Mark the frame `bulk` so Send() routes it to the outbox whose depth THIS
+// endpoint's WritePolicy configures (`outbox_`). Non-bulk frames go to the
+// separate control outbox, which is hardwired to drop_oldest(512) and ignores
+// the constructor policy — so a non-bulk flood tests a queue the test never
+// sized, making the shed/no-shed outcome a race (flaky, esp. on macOS where
+// small default AF_UNIX socket buffers stall the drainer).
 Message Frame(std::size_t n) {
   Message m;
   m.stream_id = 16;
   m.payload = std::string(n, 'x');
+  m.bulk = true;
   return m;
 }
 
@@ -48,8 +55,8 @@ TEST(Backpressure, StalledPeerShedsAndNeverBlocks) {
   ASSERT_GE(b, 0);
   ShrinkBuffers(a, b);
 
-  // Small bounded outbox; the peer `b` is never read, so the I/O thread cannot
-  // drain `a` once the kernel buffer fills.
+  // Small bounded (bulk) outbox; the peer `b` is never read, so the I/O thread
+  // cannot drain `a` once the kernel buffer fills.
   FramedFdEndpoint tx(a, WritePolicy::drop_oldest(/*depth=*/8));
   tx.Start({}, {});  // write-only sink: no inbound / on_closed needed
 
@@ -93,6 +100,9 @@ TEST(Backpressure, DrainingPeerShedsNothing) {
     }
   });
 
+  // Depth-1024 (bulk) outbox holds the whole 1000-frame flood without shedding,
+  // even if the drainer never runs — so "sheds nothing" is deterministic, not a
+  // race against the peer/OS.
   FramedFdEndpoint tx(a, WritePolicy::drop_oldest(1024));
   tx.Start({}, {});
   const Message m = Frame(512);
