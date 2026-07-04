@@ -28,7 +28,7 @@ build your own tooling, install the [Python library](#python-library) instead.
 ## View a device in Foxglove Studio — download & run (no install)
 
 Download the ready-to-run **`visio-display` launcher** for your OS from the
-[v0.3.0 release](https://github.com/General-Intelligence-Labs/visio-schema/releases/tag/v0.3.0),
+[v0.3.1 release](https://github.com/General-Intelligence-Labs/visio-schema/releases/tag/v0.3.1),
 unzip it, and **double-click** it — **macOS** `visio-display.app`, **Windows**
 `visio-display\visio-display.exe`, or **Linux** `visio-display/visio-display`.
 
