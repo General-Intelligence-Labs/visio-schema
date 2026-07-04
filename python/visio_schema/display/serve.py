@@ -26,27 +26,91 @@ connected across a switch. Only one bridge (one bus reader) runs at a time.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
+import queue
 import subprocess
 import sys
 import threading
+import time
 import traceback
 import urllib.parse
 import webbrowser
+from datetime import datetime
 from pathlib import Path
 
 from aiohttp import web
+from google.protobuf.json_format import MessageToDict
+from google.protobuf.message import DecodeError
 
-from . import (
-    FoxgloveSink,
-    read_serial_resolved,
-    read_tcp_resolved,
-    run_bridge,
-)
+from visio_schema import ChannelRegistry, command_message
+from visio_schema.transport import serial_endpoint
+from visio_schema.transport.framed_fd import FramedFdEndpoint
+from visio_schema.v1.control import command_pb2, command_result_pb2
+
+from . import FoxgloveSink, dial_tcp, run_bridge
 from .discovery import DEFAULT_BUS_PORT, USB, DiscoveryService
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+# A CommandResult reply times out if the device doesn't answer within this window.
+# ScanWifi is the slow one (the device scans for a couple seconds), so keep it roomy.
+_COMMAND_TIMEOUT_S = 10.0
+# The device answers a Command with a CommandResult published on its
+# ``/<device>/command_result`` DATA channel (NOT the COMMAND control stream — see the
+# firmware's VisioPublisher::declare(command_result_topic_)), so replies arrive as normal
+# resolved rows in the streaming fan-out and we pick them off by schema.
+_COMMAND_RESULT_SCHEMA = "visio_schema.v1.control.CommandResult"
+
+
+class _CommandResultSink:
+    """A display sink that routes CommandResult rows to the pending-command table. It sits
+    in the same run_bridge fan-out as the Foxglove/status sinks, so it sees every resolved
+    ``(message, channel)`` and forwards the ones on the command_result channel. (Those also
+    reach Foxglove as a ``/…/command_result`` topic, which is harmless.)"""
+
+    def __init__(self, deliver) -> None:
+        self._deliver = deliver
+
+    def write(self, msg: object, ch) -> None:
+        if ch.schema_name == _COMMAND_RESULT_SCHEMA:
+            self._deliver(msg.payload)
+
+    def close(self) -> None:
+        pass
+
+
+def _open_endpoint(dto: dict):
+    """Open a bidirectional `Endpoint` to a discovered device — the same connection
+    both streams to Foxglove and carries config commands (the bus is single-reader, so
+    there is exactly one). USB uses the (native-preferring) serial endpoint; sta/ap dial
+    a TCP socket (the same `dial_tcp` the read-only `read_tcp` uses) and wrap its fd."""
+    if dto["transport"] == USB:
+        return serial_endpoint(dto["device"])
+    return FramedFdEndpoint(dial_tcp(dto["host"], dto["port"]).detach())   # adopts + owns the fd
+
+
+def _md(m) -> dict:
+    # snake_case field names + INTEGER enums (the page compares wifi_state against ints,
+    # and integers survive an unknown future enum value that a name lookup would choke on).
+    return MessageToDict(m, preserving_proto_field_name=True, use_integers_for_enums=True)
+
+
+def _result_to_dict(res: command_result_pb2.CommandResult) -> dict:
+    """Flatten a CommandResult into the JSON the page consumes: ok + error, plus the
+    typed payload (DeviceState / WifiScanResults) under a stable key when present."""
+    out: dict = {"ok": res.ok, "command_id": res.command_id}
+    if not res.ok:
+        out["error"] = res.error_message or res.error_code or "device reported failure"
+    which = res.WhichOneof("payload")
+    if which == "state":
+        out["state"] = _md(res.state)
+    elif which == "scan":
+        out["scan"] = [_md(r) for r in res.scan.results]
+    elif which == "recordings":
+        out["recordings"] = [_md(r) for r in res.recordings.recordings]
+    return out
 
 
 def _open_deep_link(url: str) -> bool:
@@ -113,66 +177,190 @@ class BridgeManager:
         self._bitrate_window = bitrate_window
         self._sink = FoxgloveSink(ws_port)   # long-lived; started here
         self._status = _StatusSink()
+        # _connect_lock serializes connect/disconnect/shutdown (only ONE reader ever).
+        # _lock guards the short state reads/writes. They are split so a transition can
+        # join() the old reader thread WITHOUT holding _lock — the reader touches _lock
+        # in its own teardown, so joining under _lock would deadlock.
+        self._connect_lock = threading.Lock()
         self._lock = threading.RLock()
         self._thread: threading.Thread | None = None
         self._stop: threading.Event | None = None
         self._current: dict | None = None
         self._error: str | None = None
         self._viewer_opened = False
+        # Command/reply plumbing for device config. The active bridge's Endpoint is
+        # bidirectional, so config commands ride the SAME connection as the stream;
+        # replies (CommandResult) are matched to their request by command_id.
+        self._endpoint = None                # visio_schema.transport Endpoint | None
+        self._cmd_lock = threading.Lock()
+        self._command_seq = 0
+        self._pending: dict[int, dict] = {}   # command_id -> {event, result}
+        self._cmd_sink = _CommandResultSink(self._deliver_result)   # in the run_bridge fan-out
 
     @property
     def ws_url(self) -> str:
         return f"ws://localhost:{self._sink.port}/"      # the actually-bound port
 
-    # -- bridge lifecycle --------------------------------------------------- #
+    # -- bridge lifecycle (call the following only under _connect_lock) ------ #
     def _stop_current(self) -> None:
-        """Stop + join the active reader thread. The idle source rechecks its stop
-        event every 0.2 s, so a bounded join is enough once any in-flight blocking
-        open (serial/TCP) has completed."""
-        if self._thread is not None and self._thread.is_alive() and self._stop is not None:
-            self._stop.set()
-            self._thread.join(timeout=1.5)
-        self._thread = None
-        self._stop = None
+        """Signal + join the active reader thread. Grabs the thread/stop refs under
+        _lock, then joins OUTSIDE it (the reader's teardown takes _lock, so joining
+        while holding it would deadlock). The idle source rechecks its stop event
+        every 0.2 s, so a bounded join suffices once any blocking open has completed."""
+        with self._lock:
+            thread, stop = self._thread, self._stop
+            self._thread = None
+            self._stop = None
+        if stop is not None:
+            stop.set()
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=1.5)
+        self._fail_pending("device disconnected")   # the connection they'd answer on is gone
+
+    def _fail_pending(self, reason: str) -> None:
+        """Release every in-flight command waiter with a failure — the endpoint they were
+        waiting on is going away, so their reply will never arrive."""
+        with self._cmd_lock:
+            pending = list(self._pending.values())
+            self._pending.clear()
+        for slot in pending:
+            slot["result"] = {"ok": False, "error": reason}
+            slot["event"].set()
 
     def connect(self, dto: dict) -> dict:
-        with self._lock:
-            self._stop_current()
-            self._sink.reset()      # drop the previous device's channels/session
+        with self._connect_lock:
+            self._stop_current()      # joins the old reader outside _lock
+            self._sink.reset()        # drop the previous device's channels/session
             self._status.reset()
-            self._error = None
-            self._current = dto
-            self._stop = threading.Event()
-            self._thread = threading.Thread(
-                target=self._run, args=(dto, self._stop),
-                name="visio-bridge", daemon=True)
-            self._thread.start()
+            with self._lock:
+                self._error = None
+                self._current = dto
+                self._stop = threading.Event()
+                self._thread = threading.Thread(
+                    target=self._run, args=(dto, self._stop),
+                    name="visio-bridge", daemon=True)
+                self._thread.start()
         opened = self.open_viewer(force=False)
         return {**self.status(), **opened}
 
     def disconnect(self) -> dict:
-        with self._lock:
+        with self._connect_lock:
             self._stop_current()
-            self._current = None
+            with self._lock:
+                self._current = None
         return self.status()
 
     def _run(self, dto: dict, stop: threading.Event) -> None:
-        # The source generators open lazily on first iteration, so the blocking
-        # serial/TCP open happens here on the reader thread — never on the async
-        # handler that called connect(). The source stops when `stop` is set.
+        # Open the bidirectional endpoint here on the reader thread — never on the async
+        # handler that called connect() — since the serial/TCP open blocks. on_inbound
+        # runs on the endpoint's OWN thread: it peels off CommandResult replies (they
+        # ride the COMMAND control stream, which resolved() would drop) and queues
+        # everything else for the streaming path. This thread then drains that queue
+        # through the same run_bridge fan-out the read-only mode used.
         try:
-            if dto["transport"] == USB:
-                source = read_serial_resolved(dto["device"], self._baud, stop)
-            else:
-                source = read_tcp_resolved(dto["host"], dto["port"], stop)
-            run_bridge(source, [self._sink, self._status], derive_tf=True,
+            ep = _open_endpoint(dto)
+        except Exception as exc:  # connect refused, device unplugged mid-open...
+            traceback.print_exc(file=sys.stderr)
+            with self._lock:
+                if self._stop is stop:
+                    self._error = f"{type(exc).__name__}: {exc}"
+            return
+
+        inbox: queue.Queue = queue.Queue(maxsize=8192)
+        link_closed = threading.Event()   # EOF signal — a flag, not a queue item, so a
+                                          # backed-up inbox can never swallow the disconnect
+
+        def on_inbound(msg, _ep) -> None:
+            # The native reader hands out a ZERO-COPY memoryview payload valid only for
+            # THIS callback (its buffer is reused for the next frame), and Foxglove's
+            # channel.log rejects a memoryview outright. Materialize to bytes before the
+            # message crosses the queue to the reader thread or reaches a sink. (Command
+            # replies are demuxed downstream by _CommandResultSink, not here — they ride a
+            # data channel, not the COMMAND stream.)
+            msg.payload = bytes(msg.payload)
+            with contextlib.suppress(queue.Full):
+                inbox.put_nowait(msg)         # streaming is lossy-ok under backpressure
+
+        ep.start(on_inbound, link_closed.set)
+        with self._lock:
+            if self._stop is not stop:        # a newer connect() already superseded us
+                ep.stop()
+                return
+            self._endpoint = ep
+
+        def raw_frames():
+            while not stop.is_set():
+                try:
+                    yield inbox.get(timeout=0.2)
+                except queue.Empty:
+                    if link_closed.is_set():   # EOF, and the backlog is drained
+                        return
+                    # else idle tick: re-check stop / EOF
+
+        try:
+            source = ChannelRegistry().resolved(raw_frames())
+            run_bridge(source, [self._sink, self._status, self._cmd_sink], derive_tf=True,
                        derive_bitrate=self._bitrate,
                        bitrate_window=self._bitrate_window, close_sinks=False)
-        except Exception as exc:  # connect refused, device unplugged mid-open, a bug...
-            traceback.print_exc(file=sys.stderr)   # full detail for debugging
+        except Exception as exc:
+            traceback.print_exc(file=sys.stderr)
             with self._lock:
-                if self._stop is stop:   # only report if we're still the current bridge
+                if self._stop is stop:
                     self._error = f"{type(exc).__name__}: {exc}"
+        finally:
+            with self._lock:
+                if self._endpoint is ep:   # don't clobber a superseding connect's endpoint
+                    self._endpoint = None
+            ep.stop()
+
+    # -- device config: send a Command, await its CommandResult ------------- #
+    def send_command(self, cmd: command_pb2.Command, *,
+                     timeout: float = _COMMAND_TIMEOUT_S) -> dict:
+        """Send a Command on the active bridge connection and block until its
+        CommandResult (matched by command_id) or ``timeout``. Returns the flattened
+        result dict (see :func:`_result_to_dict`), or an ``ok=False`` error if no device
+        is connected / the send fails / it times out. Called from an executor thread by
+        the config routes, so blocking here is fine."""
+        with self._lock:
+            ep = self._endpoint
+        if ep is None:
+            return {"ok": False, "error": "no device connected"}
+        with self._cmd_lock:
+            self._command_seq += 1
+            cid = self._command_seq
+            cmd.command_id = cid
+            slot = {"event": threading.Event(), "result": None}
+            self._pending[cid] = slot
+        try:
+            ep.send(command_message(cmd))
+        except Exception as exc:
+            with self._cmd_lock:
+                self._pending.pop(cid, None)
+            return {"ok": False, "error": f"send failed: {exc}"}
+        if not slot["event"].wait(timeout):
+            with self._cmd_lock:
+                self._pending.pop(cid, None)
+            return {"ok": False, "error": "timed out waiting for the device"}
+        return slot["result"]
+
+    def _deliver_result(self, payload) -> None:
+        """Match a CommandResult payload to its waiter by command_id and hand it over.
+        Called from the streaming reader thread by :class:`_CommandResultSink` for each row
+        on the command_result channel. A decode failure is a real anomaly (corruption /
+        version skew) — log and drop rather than crash the reader; the waiter falls back to
+        its timeout."""
+        res = command_result_pb2.CommandResult()
+        try:
+            res.ParseFromString(payload)
+        except DecodeError as exc:
+            print(f"visio-display: undecodable CommandResult dropped: {exc}", file=sys.stderr)
+            return
+        with self._cmd_lock:
+            slot = self._pending.pop(res.command_id, None)
+        if slot is None:
+            return   # unsolicited / already-timed-out reply
+        slot["result"] = _result_to_dict(res)
+        slot["event"].set()
 
     # -- viewer ------------------------------------------------------------- #
     def viewer_urls(self) -> dict:
@@ -223,9 +411,10 @@ class BridgeManager:
         }
 
     def shutdown(self) -> None:
-        with self._lock:
+        with self._connect_lock:
             self._stop_current()
-            self._current = None
+            with self._lock:
+                self._current = None
         self._sink.close()
 
 
@@ -319,6 +508,79 @@ async def _status(request: web.Request) -> web.Response:
     return web.json_response(request.app[_BRIDGE].status())
 
 
+# -- device config (send a Command on the connected device's bridge) --------- #
+async def _send_command(request: web.Request, cmd: command_pb2.Command) -> web.Response:
+    """Run the blocking send+await off the event loop; 200 on ok, 502 on a device/comm
+    failure (so the page can show the device's own error_message)."""
+    bridge = request.app[_BRIDGE]
+    result = await asyncio.get_running_loop().run_in_executor(None, bridge.send_command, cmd)
+    return web.json_response(result, status=200 if result.get("ok") else 502)
+
+
+async def _config_state(request: web.Request) -> web.Response:
+    return await _send_command(request, command_pb2.Command(get_state=command_pb2.GetState()))
+
+
+async def _config_identify(request: web.Request) -> web.Response:
+    return await _send_command(request, command_pb2.Command(identify=command_pb2.Identify()))
+
+
+async def _config_wifi_scan(request: web.Request) -> web.Response:
+    return await _send_command(request, command_pb2.Command(scan_wifi=command_pb2.ScanWifi()))
+
+
+async def _config_wifi(request: web.Request) -> web.Response:
+    body = await request.json()
+    ssid = (body.get("ssid") or "").strip()
+    if not ssid:
+        return web.json_response({"ok": False, "error": "ssid required"}, status=400)
+    cmd = command_pb2.Command(connect_wifi=command_pb2.ConnectWifi(
+        ssid=ssid, passphrase=body.get("passphrase") or ""))
+    return await _send_command(request, cmd)
+
+
+async def _config_time(request: web.Request) -> web.Response:
+    # The launcher runs on the operator's machine, so the server's own clock IS the host
+    # time to push — no input needed. RV1106 boards boot to 1970, so this fixes recording
+    # timestamps in one click.
+    now = datetime.now().astimezone()
+    offset_min = int(now.utcoffset().total_seconds() // 60) if now.utcoffset() else 0
+    cmd = command_pb2.Command(set_time=command_pb2.SetTime(
+        unix_us=int(time.time() * 1_000_000), utc_offset_min=offset_min))
+    return await _send_command(request, cmd)
+
+
+async def _config_bitrate(request: web.Request) -> web.Response:
+    body = await request.json()
+    try:
+        kbps = int(body.get("bitrate_kbps"))
+    except (TypeError, ValueError):
+        return web.json_response({"ok": False, "error": "bitrate_kbps must be a number"},
+                                 status=400)
+    if kbps <= 0:
+        return web.json_response({"ok": False, "error": "bitrate_kbps must be positive"},
+                                 status=400)
+    cmd = command_pb2.Command(set_bitrate=command_pb2.SetBitrate(bitrate_kbps=kbps))
+    return await _send_command(request, cmd)
+
+
+async def _config_meta(request: web.Request) -> web.Response:
+    body = await request.json()
+    cmd = command_pb2.Command(set_recording_meta=command_pb2.SetRecordingMeta(
+        task=body.get("task") or "", location=body.get("location") or "",
+        message=body.get("message") or "", capturer=body.get("capturer") or ""))
+    return await _send_command(request, cmd)
+
+
+async def _config_format(request: web.Request) -> web.Response:
+    # Destructive: the page gates this behind a typed confirmation. fs_type "" = keep the
+    # card's current filesystem; an explicit ext4/exfat/vfat forces one.
+    body = await request.json()
+    cmd = command_pb2.Command(format_storage=command_pb2.FormatStorage(
+        fs_type=(body.get("fs_type") or "").strip()))
+    return await _send_command(request, cmd)
+
+
 async def _shutdown(request: web.Request) -> web.Response:
     # The page's Quit button: a double-clicked app has no terminal to Ctrl-C, so this
     # is how the operator stops it. Flush the response, then hard-exit — the daemon
@@ -342,6 +604,15 @@ def _build_app(bridge: BridgeManager, discovery: DiscoveryService) -> web.Applic
     app.router.add_post("/api/open-viewer", _open_viewer)
     app.router.add_post("/api/shutdown", _shutdown)
     app.router.add_get("/api/status", _status)
+    # device config — each sends a Command on the connected device's bridge
+    app.router.add_post("/api/config/state", _config_state)
+    app.router.add_post("/api/config/identify", _config_identify)
+    app.router.add_post("/api/config/wifi/scan", _config_wifi_scan)
+    app.router.add_post("/api/config/wifi", _config_wifi)
+    app.router.add_post("/api/config/time", _config_time)
+    app.router.add_post("/api/config/bitrate", _config_bitrate)
+    app.router.add_post("/api/config/meta", _config_meta)
+    app.router.add_post("/api/config/format", _config_format)
     app.router.add_static("/static/", _STATIC_DIR)
     return app
 
