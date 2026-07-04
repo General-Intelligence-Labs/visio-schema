@@ -30,6 +30,7 @@ import contextlib
 import json
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -44,8 +45,8 @@ from aiohttp import web
 from google.protobuf.json_format import MessageToDict
 from google.protobuf.message import DecodeError
 
-from visio_schema import COMMAND, ChannelRegistry, command_message
-from visio_schema.transport import serial_endpoint
+from visio_schema import ChannelRegistry, command_message
+from visio_schema.transport import extract_frames, frame_bytes, serial_endpoint
 from visio_schema.transport.framed_fd import FramedFdEndpoint
 from visio_schema.v1.control import command_pb2, command_result_pb2
 
@@ -57,16 +58,134 @@ _STATIC_DIR = Path(__file__).resolve().parent / "static"
 # A CommandResult reply times out if the device doesn't answer within this window.
 # ScanWifi is the slow one (the device scans for a couple seconds), so keep it roomy.
 _COMMAND_TIMEOUT_S = 10.0
+# The device answers a Command with a CommandResult published on its
+# ``/<device>/command_result`` DATA channel (NOT the COMMAND control stream — see the
+# firmware's VisioPublisher::declare(command_result_topic_)), so replies arrive as normal
+# resolved rows in the streaming fan-out and we pick them off by schema.
+_COMMAND_RESULT_SCHEMA = "visio_schema.v1.control.CommandResult"
+
+
+class _CommandResultSink:
+    """A display sink that routes CommandResult rows to the pending-command table. It sits
+    in the same run_bridge fan-out as the Foxglove/status sinks, so it sees every resolved
+    ``(message, channel)`` and forwards the ones on the command_result channel. (Those also
+    reach Foxglove as a ``/…/command_result`` topic, which is harmless.)"""
+
+    def __init__(self, deliver) -> None:
+        self._deliver = deliver
+
+    def write(self, msg: object, ch) -> None:
+        if ch.schema_name == _COMMAND_RESULT_SCHEMA:
+            self._deliver(msg.payload)
+
+    def close(self) -> None:
+        pass
+
+
+# CDC-ACM is a virtual UART, so the baud is ignored by the device — but pyserial (the
+# Windows read path) requires one.
+_WIN_BAUD = 921600
+
+
+class _WinEndpoint:
+    """A bidirectional endpoint for Windows, where the POSIX-fd transport
+    (:class:`FramedFdEndpoint`: ``os.pipe`` self-pipe + ``select``/``os.read`` on a raw fd,
+    and ``os.O_NOCTTY``) doesn't apply. A daemon thread reads + COBS-de-frames from a
+    blocking, timeout-bounded byte source; ``send`` frames + writes on the caller's thread.
+    Matches the Endpoint contract BridgeManager uses: ``start(on_inbound, on_closed)`` /
+    ``send(msg)`` / ``stop()``. ``read_chunk(n)`` returns bytes (``b""`` = idle tick to
+    re-check stop, ``None`` = EOF/link dropped)."""
+
+    def __init__(self, read_chunk, write_bytes, close) -> None:
+        self._read_chunk = read_chunk
+        self._write_bytes = write_bytes
+        self._close = close
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self, on_inbound, on_closed) -> None:
+        self._thread = threading.Thread(
+            target=self._run, args=(on_inbound, on_closed),
+            name="visio-win-ep", daemon=True)
+        self._thread.start()
+
+    def _run(self, on_inbound, on_closed) -> None:
+        rx = bytearray()
+        try:
+            while not self._stop.is_set():
+                chunk = self._read_chunk(4096)
+                if chunk is None:       # EOF: link dropped / device unplugged
+                    break
+                if not chunk:           # timeout tick
+                    continue
+                rx.extend(chunk)
+                for msg in extract_frames(rx):
+                    on_inbound(msg, self)
+        finally:
+            if on_closed is not None:
+                on_closed()
+
+    def send(self, msg) -> None:
+        self._write_bytes(frame_bytes(msg))
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1.5)
+        self._close()
 
 
 def _open_endpoint(dto: dict):
     """Open a bidirectional `Endpoint` to a discovered device — the same connection
     both streams to Foxglove and carries config commands (the bus is single-reader, so
-    there is exactly one). USB uses the (native-preferring) serial endpoint; sta/ap dial
-    a TCP socket (the same `dial_tcp` the read-only `read_tcp` uses) and wrap its fd."""
+    there is exactly one). On POSIX, USB uses the (native-preferring) serial endpoint and
+    sta/ap wrap a `dial_tcp` fd in a `FramedFdEndpoint`. On Windows those POSIX-fd paths
+    don't work (no select()-able serial fd, `os.read` can't read a socket handle), so we
+    read via pyserial / selectors+recv through a :class:`_WinEndpoint`."""
     if dto["transport"] == USB:
+        if sys.platform == "win32":
+            import serial
+            ser = serial.Serial(dto["device"], _WIN_BAUD, timeout=0.2)
+
+            def _read(n):
+                try:
+                    return ser.read(n)          # b"" on timeout, bytes on data
+                except serial.SerialException:
+                    return None                 # device gone
+            return _WinEndpoint(_read, ser.write, ser.close)
         return serial_endpoint(dto["device"])
-    return FramedFdEndpoint(dial_tcp(dto["host"], dto["port"]).detach())   # adopts + owns the fd
+
+    sock = dial_tcp(dto["host"], dto["port"])
+    if sys.platform != "win32":
+        return FramedFdEndpoint(sock.detach())   # POSIX: adopts + owns the fd
+    # Windows: os.read can't read a socket handle; poll with selectors + recv (which do
+    # support sockets on Windows), mirroring the read-only _read_sock_win path.
+    import selectors
+    sock.setblocking(False)
+    sel = selectors.DefaultSelector()
+    sel.register(sock, selectors.EVENT_READ)
+
+    def _read(n):
+        if not sel.select(timeout=0.2):
+            return b""                           # idle tick
+        try:
+            chunk = sock.recv(n)
+        except BlockingIOError:
+            return b""
+        except OSError:
+            return None
+        return chunk or None                     # recv returns b"" on EOF
+
+    def _close():
+        sel.close()
+        sock.close()
+    return _WinEndpoint(_read, sock.sendall, _close)
+
+
+def _md(m) -> dict:
+    # snake_case field names + INTEGER enums (the page compares wifi_state against ints,
+    # and integers survive an unknown future enum value that a name lookup would choke on).
+    return MessageToDict(m, preserving_proto_field_name=True, use_integers_for_enums=True)
 
 
 def _result_to_dict(res: command_result_pb2.CommandResult) -> dict:
@@ -77,14 +196,104 @@ def _result_to_dict(res: command_result_pb2.CommandResult) -> dict:
         out["error"] = res.error_message or res.error_code or "device reported failure"
     which = res.WhichOneof("payload")
     if which == "state":
-        out["state"] = MessageToDict(res.state, preserving_proto_field_name=True)
+        out["state"] = _md(res.state)
     elif which == "scan":
-        out["scan"] = [MessageToDict(r, preserving_proto_field_name=True)
-                       for r in res.scan.results]
+        out["scan"] = [_md(r) for r in res.scan.results]
     elif which == "recordings":
-        out["recordings"] = [MessageToDict(r, preserving_proto_field_name=True)
-                             for r in res.recordings.recordings]
+        out["recordings"] = [_md(r) for r in res.recordings.recordings]
     return out
+
+
+def _scan_host_wifi() -> list[dict]:
+    """Scan for Wi-Fi networks visible to THIS host (the operator's PC), so they can pick
+    one to provision onto the device. We scan host-side, NOT via the device's ScanWifi,
+    because the device usually can't scan while it's in single-radio AP-fallback — and the
+    PC is co-located with the device, so it sees the same networks the device could join.
+    Returns ``[{ssid, signal(0-100), security}]`` strongest-first; raises if no host
+    scanner is available (the page then falls back to manual SSID entry)."""
+    if sys.platform == "darwin":
+        return _scan_macos()
+    if sys.platform == "win32":
+        return _scan_windows()
+    return _scan_linux()
+
+
+def _dedup_strongest(nets: list[dict]) -> list[dict]:
+    """One row per SSID, keeping the strongest signal, sorted strongest-first."""
+    best: dict[str, dict] = {}
+    for n in nets:
+        if not n["ssid"]:
+            continue   # hidden network
+        cur = best.get(n["ssid"])
+        if cur is None or n["signal"] > cur["signal"]:
+            best[n["ssid"]] = n
+    return sorted(best.values(), key=lambda n: -n["signal"])
+
+
+def _scan_linux() -> list[dict]:
+    # nmcli -t: terse, ':'-separated, ':' inside a field escaped as '\:'. SIGNAL is 0-100.
+    out = subprocess.run(
+        ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY", "device", "wifi", "list"],
+        capture_output=True, text=True, timeout=20, check=True)
+    nets = []
+    for line in out.stdout.splitlines():
+        fields = [f.replace("\\:", ":") for f in re.split(r"(?<!\\):", line)]
+        if len(fields) < 3:
+            continue
+        ssid, signal, security = fields[0], fields[1], fields[2]
+        nets.append({"ssid": ssid, "signal": int(signal) if signal.isdigit() else 0,
+                     "security": security or "OPEN"})
+    return _dedup_strongest(nets)
+
+
+def _scan_windows() -> list[dict]:
+    # `netsh wlan show networks mode=bssid` groups: "SSID N : name", then "Authentication :
+    # ...", then per-BSSID "Signal : NN%". Take the strongest Signal seen under each SSID.
+    out = subprocess.run(["netsh", "wlan", "show", "networks", "mode=bssid"],
+                         capture_output=True, text=True, timeout=20, check=True)
+    nets, cur = [], None
+    for raw in out.stdout.splitlines():
+        line = raw.strip()
+        if line.startswith("SSID ") and " : " in line:
+            cur = {"ssid": line.split(" : ", 1)[1].strip(), "signal": 0, "security": "OPEN"}
+            nets.append(cur)
+        elif cur is not None and line.startswith("Authentication"):
+            cur["security"] = line.split(":", 1)[1].strip()
+        elif cur is not None and line.startswith("Signal"):
+            pct = line.split(":", 1)[1].strip().rstrip("%")
+            cur["signal"] = max(cur["signal"], int(pct) if pct.isdigit() else 0)
+    return _dedup_strongest(nets)
+
+
+def _scan_macos() -> list[dict]:
+    # The private `airport -s` CLI was removed in macOS 14+, so parse
+    # `system_profiler SPAirPortDataType` (no sudo). Under "Other Local Wi-Fi Networks:"
+    # each network is an indented "SSID:" block with "Security:" and "Signal / Noise:".
+    out = subprocess.run(["system_profiler", "SPAirPortDataType"],
+                         capture_output=True, text=True, timeout=25, check=True)
+    lines = out.stdout.splitlines()
+    start = next((i for i, ln in enumerate(lines)
+                  if ln.strip() == "Other Local Wi-Fi Networks:"), None)
+    if start is None:
+        return []
+    base = len(lines[start]) - len(lines[start].lstrip())
+    nets, cur = [], None
+    for line in lines[start + 1:]:
+        if not line.strip():
+            continue
+        if len(line) - len(line.lstrip()) <= base:
+            break   # dedented out of the section
+        s = line.strip()
+        if s.endswith(":") and ": " not in s:            # a network name ("MySSID:")
+            cur = {"ssid": s[:-1], "signal": 0, "security": "OPEN"}
+            nets.append(cur)
+        elif cur is not None and s.startswith("Security:"):
+            cur["security"] = s.split(":", 1)[1].strip()
+        elif cur is not None and s.startswith("Signal / Noise:"):
+            m = re.search(r"(-?\d+)\s*dBm", s)
+            if m:
+                cur["signal"] = max(0, min(100, 2 * (int(m.group(1)) + 100)))   # dBm→~%
+    return _dedup_strongest(nets)
 
 
 def _open_deep_link(url: str) -> bool:
@@ -169,6 +378,7 @@ class BridgeManager:
         self._cmd_lock = threading.Lock()
         self._command_seq = 0
         self._pending: dict[int, dict] = {}   # command_id -> {event, result}
+        self._cmd_sink = _CommandResultSink(self._deliver_result)   # in the run_bridge fan-out
 
     @property
     def ws_url(self) -> str:
@@ -244,9 +454,13 @@ class BridgeManager:
                                           # backed-up inbox can never swallow the disconnect
 
         def on_inbound(msg, _ep) -> None:
-            if msg.stream_id == COMMAND:      # an inbound CommandResult reply
-                self._deliver_result(msg)
-                return
+            # The native reader hands out a ZERO-COPY memoryview payload valid only for
+            # THIS callback (its buffer is reused for the next frame), and Foxglove's
+            # channel.log rejects a memoryview outright. Materialize to bytes before the
+            # message crosses the queue to the reader thread or reaches a sink. (Command
+            # replies are demuxed downstream by _CommandResultSink, not here — they ride a
+            # data channel, not the COMMAND stream.)
+            msg.payload = bytes(msg.payload)
             with contextlib.suppress(queue.Full):
                 inbox.put_nowait(msg)         # streaming is lossy-ok under backpressure
 
@@ -268,7 +482,7 @@ class BridgeManager:
 
         try:
             source = ChannelRegistry().resolved(raw_frames())
-            run_bridge(source, [self._sink, self._status], derive_tf=True,
+            run_bridge(source, [self._sink, self._status, self._cmd_sink], derive_tf=True,
                        derive_bitrate=self._bitrate,
                        bitrate_window=self._bitrate_window, close_sinks=False)
         except Exception as exc:
@@ -312,15 +526,15 @@ class BridgeManager:
             return {"ok": False, "error": "timed out waiting for the device"}
         return slot["result"]
 
-    def _deliver_result(self, msg) -> None:
-        """Match an inbound CommandResult to its waiter by command_id and hand it over.
-        Runs on the endpoint's reader thread. On a point-to-point link every inbound
-        COMMAND frame IS this device's reply, so a decode failure is a real anomaly
-        (corruption / version skew) — log it and drop rather than crash the reader; the
-        waiter falls back to its timeout."""
+    def _deliver_result(self, payload) -> None:
+        """Match a CommandResult payload to its waiter by command_id and hand it over.
+        Called from the streaming reader thread by :class:`_CommandResultSink` for each row
+        on the command_result channel. A decode failure is a real anomaly (corruption /
+        version skew) — log and drop rather than crash the reader; the waiter falls back to
+        its timeout."""
         res = command_result_pb2.CommandResult()
         try:
-            res.ParseFromString(msg.payload)
+            res.ParseFromString(payload)
         except DecodeError as exc:
             print(f"visio-display: undecodable CommandResult dropped: {exc}", file=sys.stderr)
             return
@@ -495,7 +709,15 @@ async def _config_identify(request: web.Request) -> web.Response:
 
 
 async def _config_wifi_scan(request: web.Request) -> web.Response:
-    return await _send_command(request, command_pb2.Command(scan_wifi=command_pb2.ScanWifi()))
+    # Scan HOST-side (see _scan_host_wifi) — the device usually can't scan while it's in
+    # AP-fallback, and the PC sees the same nearby networks the device could join. No device
+    # round-trip; the operator picks an SSID here, then Connect provisions it to the device.
+    try:
+        nets = await asyncio.get_running_loop().run_in_executor(None, _scan_host_wifi)
+    except Exception as exc:
+        return web.json_response(
+            {"ok": False, "error": f"Wi-Fi scan unavailable on this computer: {exc}"}, status=502)
+    return web.json_response({"ok": True, "scan": nets})
 
 
 async def _config_wifi(request: web.Request) -> web.Response:

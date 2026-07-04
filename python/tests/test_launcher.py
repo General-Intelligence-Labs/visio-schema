@@ -445,18 +445,27 @@ def test_status_idle_after_disconnect(monkeypatch) -> None:
 # device config — send_command correlation + config HTTP routes                #
 # --------------------------------------------------------------------------- #
 def _scripted_device(monkeypatch, on_cmd):
-    """A bridge whose endpoint answers Commands via ``on_cmd(Command)->CommandResult``."""
+    """A bridge whose endpoint announces a ``/dev/command_result`` channel and answers each
+    Command via ``on_cmd(Command)->CommandResult`` published on it — the real reply path
+    (the device publishes replies on that data channel, not the COMMAND control stream)."""
     s = _serve()
-    from visio_schema import COMMAND
+    from visio_schema import make_channel
     from visio_schema.v1.control import command_pb2
+    from visio_schema.v1.service.device_info.device_info_pb2 import DeviceInfo
+    from visio_schema.wire.control import DEVICE_INFO
+
+    cr_id = 100
+    cr_ch = make_channel("/dev/command_result", s._COMMAND_RESULT_SCHEMA, stream_id=cr_id)
+    di = DeviceInfo(device_name="dev", channels=[cr_ch]).SerializeToString()
+    announce = _vd().Message(stream_id=DEVICE_INFO, payload=di)
 
     def open_endpoint(dto):
         def reply(sent_msg):
             cmd = command_pb2.Command()
             cmd.ParseFromString(sent_msg.payload)
             res = on_cmd(cmd)
-            return _vd().Message(stream_id=COMMAND, payload=res.SerializeToString())
-        return _FakeEndpoint(on_cmd=reply)
+            return _vd().Message(stream_id=cr_id, payload=res.SerializeToString())
+        return _FakeEndpoint(frames=[announce], on_cmd=reply)
 
     monkeypatch.setattr(s, "FoxgloveSink", _FakeFox)
     monkeypatch.setattr(s, "_open_deep_link", lambda url: True)
@@ -613,6 +622,80 @@ def test_result_to_dict_all_payloads() -> None:
 
     r4 = command_result_pb2.CommandResult(command_id=4, ok=False, error_message="boom")
     assert s._result_to_dict(r4) == {"ok": False, "command_id": 4, "error": "boom"}
+
+
+def test_win_endpoint_deframes_and_sends() -> None:
+    # The Windows endpoint's platform wiring (pyserial / socket) is build-validated only,
+    # but its read-loop de-framing + send framing are cross-platform and tested here.
+    from visio_schema.transport import frame_bytes
+    s, vd = _serve(), _vd()
+
+    m_in = vd.Message(stream_id=7, payload=b"hello", seq=1)
+    m_in.timestamp.FromNanoseconds(1)
+    reads = [frame_bytes(m_in), b"", None]   # one frame, an idle tick, then EOF
+
+    def read_chunk(_n):
+        return reads.pop(0) if reads else None
+
+    sent: list = []
+    closed: list = []
+    got: list = []
+    ready = threading.Event()
+
+    ep = s._WinEndpoint(read_chunk, sent.append, lambda: closed.append(True))
+    ep.start(lambda msg, _e: (got.append(msg), ready.set()), None)
+    assert ready.wait(2)
+    assert got[0].stream_id == 7 and got[0].payload == b"hello"
+
+    m_out = vd.Message(stream_id=4, payload=b"cmd", seq=2)
+    m_out.timestamp.FromNanoseconds(2)
+    ep.send(m_out)
+    assert sent == [frame_bytes(m_out)]      # send frames + writes
+
+    ep.stop()
+    assert closed == [True]                   # stop closes the underlying stream
+
+
+def test_scan_linux_parses_nmcli(monkeypatch) -> None:
+    s = _serve()
+    sample = (
+        "GILABS-x:100:\n"          # open network (empty SECURITY)
+        "TP\\:LINK:80:WPA2\n"      # ':' inside the SSID, nmcli-escaped as '\:'
+        ":90:WPA2\n"               # hidden SSID -> skipped
+        "TP\\:LINK:60:WPA2\n"      # duplicate, weaker -> dropped
+        "Home:70:WPA1 WPA2\n"
+    )
+    monkeypatch.setattr(s.subprocess, "run",
+                        lambda *a, **k: types.SimpleNamespace(stdout=sample, returncode=0))
+    nets = s._scan_linux()
+    assert [n["ssid"] for n in nets] == ["GILABS-x", "TP:LINK", "Home"]   # deduped, strongest-first
+    assert nets[0] == {"ssid": "GILABS-x", "signal": 100, "security": "OPEN"}
+    assert nets[1] == {"ssid": "TP:LINK", "signal": 80, "security": "WPA2"}
+
+
+def test_config_wifi_scan_route_is_host_side(monkeypatch) -> None:
+    s = _serve()
+    # the route scans the HOST, not the device — no bridge/send involved
+    monkeypatch.setattr(s, "_scan_host_wifi",
+                        lambda: [{"ssid": "Net", "signal": 90, "security": "WPA2"}])
+    app = s._build_app(_StubBridge(), _StubDiscovery())
+    resp = _post(s._config_wifi_scan, app, {})
+    assert resp.status == 200
+    body = json.loads(resp.body)
+    assert body["ok"] is True and body["scan"][0]["ssid"] == "Net"
+
+
+def test_config_wifi_scan_route_reports_unavailable(monkeypatch) -> None:
+    s = _serve()
+
+    def boom():
+        raise FileNotFoundError("nmcli")
+
+    monkeypatch.setattr(s, "_scan_host_wifi", boom)
+    app = s._build_app(_StubBridge(), _StubDiscovery())
+    resp = _post(s._config_wifi_scan, app, {})
+    assert resp.status == 502
+    assert "unavailable" in json.loads(resp.body)["error"]
 
 
 # --------------------------------------------------------------------------- #

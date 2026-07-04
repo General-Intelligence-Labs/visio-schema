@@ -132,13 +132,13 @@
 
         <div class="cfg-card">
           <div class="cfg-head"><span data-i18n="cfgState">Current settings</span>
-            <button class="secondary sm" id="cfg-refresh" data-i18n="cfgRefresh">Refresh</button></div>
+            <span class="cfg-note" style="margin:0" data-i18n="cfgLive">live</span></div>
           <dl class="cfg-state" id="cfg-state-dl"></dl>
         </div>
 
         <div class="cfg-card">
           <div class="cfg-head"><span data-i18n="cfgWifi">Wi-Fi</span>
-            <button class="secondary sm" id="cfg-wifi-scan" data-i18n="cfgScan">Scan</button></div>
+            <span class="cfg-note" style="margin:0" data-i18n="cfgScanNote">scanned on this computer</span></div>
           <select class="cfg-full" id="cfg-wifi-ssid"><option value="" data-i18n="cfgPickNet">Pick a network…</option></select>
           <div class="cfg-row">
             <input id="cfg-wifi-ssid-manual" data-i18n-ph="cfgSsid" placeholder="SSID (or pick above)" autocomplete="off" />
@@ -212,8 +212,9 @@
         emptyAp: "join the device AP, then add it below",
         stopped: "Launcher stopped — you can close this tab.",
         connectFailed: "connect failed", unreachable: "could not reach device",
-        cfgTitle: "Configure device", cfgState: "Current settings", cfgRefresh: "Refresh",
-        cfgWifi: "Wi-Fi", cfgScan: "Scan", cfgPickNet: "Pick a network…",
+        cfgTitle: "Configure device", cfgState: "Current settings", cfgLive: "live",
+        cfgWifi: "Wi-Fi", cfgScanNote: "scanned on this computer", cfgPickNet: "Pick a network…",
+        cfgScanning: "Scanning this computer…",
         cfgSsid: "SSID (or pick above)", cfgPass: "Passphrase", cfgConnect: "Connect",
         cfgSyncTime: "Sync clock to this computer", cfgIdentify: "Identify",
         cfgBitrate: "Camera bitrate", cfgNextBoot: "applies next boot", cfgApply: "Apply",
@@ -245,8 +246,9 @@
         emptyAp: "先连接设备热点，再在下方添加",
         stopped: "启动器已停止 —— 可以关闭此标签页。",
         connectFailed: "连接失败", unreachable: "无法连接到设备",
-        cfgTitle: "配置设备", cfgState: "当前设置", cfgRefresh: "刷新",
-        cfgWifi: "Wi-Fi", cfgScan: "扫描", cfgPickNet: "选择网络…",
+        cfgTitle: "配置设备", cfgState: "当前设置", cfgLive: "实时",
+        cfgWifi: "Wi-Fi", cfgScanNote: "在本机扫描", cfgPickNet: "选择网络…",
+        cfgScanning: "正在扫描本机…",
         cfgSsid: "网络名称（或在上方选择）", cfgPass: "密码", cfgConnect: "连接",
         cfgSyncTime: "将设备时间同步为本机时间", cfgIdentify: "识别设备",
         cfgBitrate: "相机码率", cfgNextBoot: "重启后生效", cfgApply: "应用",

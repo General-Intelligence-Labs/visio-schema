@@ -4,6 +4,29 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.3.2 — 2026-07-04
+
+### Launcher UX (no wire-contract change)
+
+- **`visio-display --serve` "Current settings" auto-refresh** — the DeviceState header now
+  polls `GetState` on a timer (DeviceState is pull-only, not streamed), so it stays live
+  without the manual Refresh button, which is removed. The editable form fields are left
+  untouched by the refresh so an in-progress edit isn't clobbered.
+
+## 0.3.1 — 2026-07-04
+
+### Tooling + fixes (no wire-contract change)
+
+- **`visio-display --serve` device config** — configure a discovered device from the
+  launcher: Wi-Fi (scanned host-side, then provisioned to the device), set clock, camera
+  bitrate, default recording metadata, identify, and format SD; plus a current-state
+  header. Config commands ride the same bidirectional connection as the live stream, with
+  a Windows-compatible endpoint.
+- **Recording MCAP parts open `O_CLOEXEC`** so their fds don't leak into forked child
+  processes (fixes SD reformat aborting with the card still busy).
+
+No `.proto`/schema change — existing readers are unaffected.
+
 ## 0.3.0 — 2026-07-02
 
 ### Cross-device exposure-grid sync (additive)

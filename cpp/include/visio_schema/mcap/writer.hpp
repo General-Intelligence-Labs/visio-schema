@@ -34,6 +34,7 @@
 
 namespace mcap {
 class McapWriter;
+class IWritable;
 }
 
 namespace visio_schema::mcap {
@@ -79,6 +80,14 @@ class McapWriter {
   const std::int64_t max_duration_ns_;
   const bool rotating_;
 
+  // The IWritable backing writer_'s current part. We own the underlying fd
+  // (opened with O_CLOEXEC) rather than letting upstream mcap fopen() it, so a
+  // recording fd is never inherited by a child we fork+exec (the long-lived
+  // Wi-Fi AP daemons). A leaked recording fd would pin /mnt/sdcard busy and make
+  // a later `umount` (and thus the "format SD card" command) fail with EBUSY.
+  // Declared before writer_ so it is destroyed *after* it: ~McapWriter()/close()
+  // flush through this writable on teardown.
+  std::unique_ptr<::mcap::IWritable> file_;
   std::unique_ptr<::mcap::McapWriter> writer_;
   bool closed_ = false;
   std::size_t part_index_ = 0;

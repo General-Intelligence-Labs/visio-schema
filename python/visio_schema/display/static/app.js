@@ -3,7 +3,7 @@
 // list over SSE (/api/devices), and connect/disconnect/status/viewer JSON endpoints.
 
 const state = { devices: [], connectedId: null, urls: null, pollTimer: null,
-                status: { state: "idle" } };
+                stateTimer: null, status: { state: "idle" } };
 
 const $ = (id) => document.getElementById(id);
 
@@ -96,6 +96,7 @@ async function connect(id) {
   startPolling();
   resetConfigMessages();
   loadConfigState();      // populate the current-state header + pre-fill the forms
+  scanWifi(true);         // pre-scan host Wi-Fi so the dropdown has networks on first open
 }
 
 async function disconnect() {
@@ -138,10 +139,12 @@ async function refreshStatus() {
 
 function startPolling() {
   stopPolling();
-  state.pollTimer = setInterval(refreshStatus, 1000);
+  state.pollTimer = setInterval(refreshStatus, 1000);   // stream liveness (passive)
+  state.stateTimer = setInterval(pollState, 4000);      // DeviceState header (pull-only)
 }
 function stopPolling() {
   if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
+  if (state.stateTimer) { clearInterval(state.stateTimer); state.stateTimer = null; }
 }
 
 // ---- wiring --------------------------------------------------------------- //
@@ -203,7 +206,7 @@ async function cfgPost(url, body, msgEl, okKey) {
     if (good) setMsg(msgEl, "ok", okKey || "cfgDone");
     else setErr(msgEl, data.error || tr("cfgConnErr"));
   }
-  if (good && data.state) fillState(data.state);
+  if (good && data.state) renderStateHeader(data.state);   // header only — don't clobber edits
   return { ok: good, data };
 }
 
@@ -211,7 +214,9 @@ function resetConfigMessages() {
   document.querySelectorAll(".cfg-msg").forEach((el) => setMsg(el, "", null));
 }
 
-function fillState(st) {
+// The read-only "Current settings" header. Safe to call on every poll — it never touches
+// the editable fields, so a background refresh can't clobber what the operator is typing.
+function renderStateHeader(st) {
   if (!st) return;
   // DeviceState.WifiState enum: 0 DISABLED, 1 STA (connected), 2 AP_FALLBACK.
   const wifi = st.wifi_state === 1
@@ -233,6 +238,11 @@ function fillState(st) {
     const dd = document.createElement("dd"); dd.textContent = v;
     dl.append(dt, dd);
   }
+}
+
+// Pre-fill the EDITABLE fields — only on connect and right after a save, never on the poll.
+function prefillForms(st) {
+  if (!st) return;
   if (st.video_bitrate_kbps) $("cfg-bitrate-kbps").value = String(st.video_bitrate_kbps);
   $("cfg-meta-task").value = st.recording_meta_task || "";
   $("cfg-meta-location").value = st.recording_meta_location || "";
@@ -240,35 +250,65 @@ function fillState(st) {
   $("cfg-meta-message").value = st.recording_meta_message || "";
 }
 
+function fillState(st) { renderStateHeader(st); prefillForms(st); }
+
 async function loadConfigState() {
   const { data } = await postJSON("/api/config/state", {});
   if (data && data.state) fillState(data.state);
 }
 
-$("cfg-refresh").onclick = loadConfigState;
+// DeviceState is pull-only (no periodic stream), so poll GetState to keep the header live —
+// header only, so the form fields stay editable. Guarded so slow replies don't stack.
+let _stateInFlight = false;
+async function pollState() {
+  if (_stateInFlight) return;
+  _stateInFlight = true;
+  try {
+    const { data } = await postJSON("/api/config/state", {});
+    if (data && data.state) renderStateHeader(data.state);
+  } catch (e) { /* transient — the next tick retries */ }
+  finally { _stateInFlight = false; }
+}
 
-$("cfg-wifi-scan").onclick = async () => {
+// Wi-Fi networks are scanned on THIS computer (host-side), server sorts them strongest
+// first. There's no manual scan button: the list refreshes automatically when the operator
+// opens the dropdown (debounced) and once on connect so the first open already has data.
+let _wifiScanning = false;
+let _wifiScanAt = 0;
+async function scanWifi(force) {
+  if (_wifiScanning) return;
+  if (!force && Date.now() - _wifiScanAt < 2000) return;   // already fresh
+  _wifiScanning = true;
   const msg = $("cfg-wifi-msg");
-  setMsg(msg, "busy", "cfgBusy");
-  const { ok, data } = await postJSON("/api/config/wifi/scan", {});
   const sel = $("cfg-wifi-ssid");
-  sel.textContent = "";
-  const first = document.createElement("option");
-  first.value = ""; first.textContent = tr("cfgPickNet"); sel.append(first);
-  const nets = (ok && data.ok && data.scan) ? data.scan.slice() : [];
-  if (!nets.length) {
-    setErr(msg, (data && data.error) || tr("cfgNoNets"));
-    return;
+  setMsg(msg, "busy", "cfgScanning");
+  try {
+    const { ok, data } = await postJSON("/api/config/wifi/scan", {});
+    const keep = sel.value;                     // preserve any current pick across a refresh
+    sel.textContent = "";
+    const first = document.createElement("option");
+    first.value = ""; first.textContent = tr("cfgPickNet"); sel.append(first);
+    const nets = (ok && data.ok && data.scan) ? data.scan : [];
+    if (!nets.length) { setErr(msg, (data && data.error) || tr("cfgNoNets")); return; }
+    for (const n of nets) {
+      const o = document.createElement("option");
+      o.value = n.ssid;
+      o.textContent = `${n.ssid} — ${n.security || "OPEN"} · ${n.signal}%`;
+      sel.append(o);
+    }
+    if (keep) sel.value = keep;
+    setMsg(msg, "", null);
+  } catch (e) {
+    setErr(msg, tr("cfgConnErr"));
+  } finally {
+    _wifiScanning = false;
+    _wifiScanAt = Date.now();
   }
-  nets.sort((a, b) => (b.rssi || -999) - (a.rssi || -999));
-  for (const n of nets) {
-    const o = document.createElement("option");
-    o.value = n.ssid;
-    o.textContent = `${n.ssid} (${n.security || "?"}, ${n.rssi} dBm)`;
-    sel.append(o);
-  }
-  setMsg(msg, "", null);
-};
+}
+// auto-scan when the dropdown is opened (mousedown precedes the native popup; focus covers
+// keyboard) — the list may show the previous scan this open and the fresh one on the next.
+$("cfg-wifi-ssid").addEventListener("mousedown", () => scanWifi(false));
+$("cfg-wifi-ssid").addEventListener("focus", () => scanWifi(false));
 
 $("cfg-wifi-ssid").onchange = () => {
   if ($("cfg-wifi-ssid").value) $("cfg-wifi-ssid-manual").value = $("cfg-wifi-ssid").value;
