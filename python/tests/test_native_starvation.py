@@ -37,6 +37,9 @@ def _spin_holding_gil(seconds: float) -> None:
         x = (x * 1103515245 + 12345) & 0xFFFFFFFF
 
 
+pytestmark = pytest.mark.pty  # reads a live pty via the native reader — see tests/conftest.py
+
+
 def test_reader_does_not_drop_under_gil_starvation() -> None:
     master, slave = os.openpty()
     tty.setraw(slave)

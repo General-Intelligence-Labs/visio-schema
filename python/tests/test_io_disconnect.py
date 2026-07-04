@@ -7,8 +7,14 @@ from __future__ import annotations
 import threading
 import time
 
+import pytest
+
 from visio_schema.transport import SerialEndpoint, close_fd, make_fd_pair
 from visio_schema.wire.message import Message
+
+# Both tests drive a SerialEndpoint over a pty (EOF/readability via select) — see
+# tests/conftest.py for why that's skipped on macOS.
+pytestmark = pytest.mark.pty
 
 
 def test_eof_reports_closed() -> None:

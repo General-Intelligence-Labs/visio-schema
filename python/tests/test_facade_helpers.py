@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 
+import pytest
 from google.protobuf.descriptor_pb2 import FileDescriptorSet
 
 from visio_schema import COMMAND, command_message, make_channel, message_class, read_serial
@@ -48,6 +49,7 @@ def test_make_channel_is_self_describing_and_writable():
     assert message_class(ch.schema_name) is not None
 
 
+@pytest.mark.pty  # waits on pty readability via read_serial's select loop — see tests/conftest.py
 def test_read_serial_resolves_announced_topics():
     """read_serial yields resolved (message, channel) rows: a DeviceInfo announce is
     learned and absorbed, then a data message on that stream comes through with its

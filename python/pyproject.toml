@@ -85,6 +85,7 @@ namespaces = true
 testpaths = ["tests"]
 markers = [
     "integration: cross-boundary tests (serial/pty, cross-language)",
+    "pty: drives a serial device over a pseudo-terminal; auto-skipped on macOS (see tests/conftest.py)",
 ]
 
 [tool.ruff]
