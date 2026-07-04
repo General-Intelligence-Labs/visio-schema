@@ -405,19 +405,27 @@ def _read_sock_win(sock, stop: threading.Event | None = None) -> Iterator[Messag
         sock.close()
 
 
+def dial_tcp(host: str, port: int, *, timeout: float = 5.0):
+    """Dial a device's TCP bus listener and return the connected socket (caller owns it —
+    ``detach()`` the fd or ``close()`` it). ``TCP_NODELAY`` + ``SO_KEEPALIVE`` mirror the
+    C++ ``DialTcpFd`` dialer so small frames aren't Nagle-batched and a silently-dropped
+    peer is eventually detected. Shared by the read-only :func:`read_tcp` and the
+    launcher's bidirectional endpoint."""
+    import socket
+
+    sock = socket.create_connection((host, port), timeout=timeout)
+    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    return sock
+
+
 def read_tcp(host: str, port: int, stop: threading.Event | None = None) -> Iterator[Message]:
     """Yield Messages from a live TCP connection to a device's preview listener
     (``host:port``). The device runs a ``TcpAcceptor`` (transport/tcp.hpp) that
-    speaks the same COBS-delimited core frames as the serial link, so the read
-    path is identical — only the fd source differs. ``TCP_NODELAY`` +
-    ``SO_KEEPALIVE`` mirror the C++ ``DialTcpFd`` dialer so small frames aren't
-    Nagle-batched and a silently-dropped peer is eventually detected. ``detach()``
-    hands the connected fd to the shared :func:`_read_fd_frames`, which owns it."""
-    import socket
-
-    sock = socket.create_connection((host, port), timeout=5.0)
-    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    speaks the same COBS-delimited core frames as the serial link, so the read path is
+    identical — only the fd source differs. ``detach()`` hands the connected fd to the
+    shared :func:`_read_fd_frames`, which owns it."""
+    sock = dial_tcp(host, port)
     if sys.platform == "win32":     # os.read() can't read a Windows socket handle
         yield from _read_sock_win(sock, stop)
         return
@@ -478,6 +486,9 @@ class FoxgloveSink:
         self._fg = foxglove
         self._server = foxglove.start_server(port=port)
         self._channels: dict[int, object] = {}
+        # write() (reader thread) and reset() (a device switch) both touch _channels; a
+        # bounded overlap is possible mid-switch, so guard it. See BridgeManager.
+        self._lock = threading.Lock()
         print(f"Foxglove WebSocket server on ws://localhost:{port}", file=sys.stderr)
         print(f"open Foxglove Studio at:\n  {self._server.app_url()}", file=sys.stderr)
         print(f"load the matching layout:\n"
@@ -490,19 +501,20 @@ class FoxgloveSink:
         return self._server.port
 
     def write(self, msg: Message, ch: Channel) -> None:
-        channel = self._channels.get(msg.stream_id)
-        if channel is None:
-            channel = self._fg.Channel(
-                ch.topic,
-                message_encoding=ch.encoding or "protobuf",
-                schema=self._fg.Schema(
-                    name=ch.schema_name,
-                    encoding=ch.schema_encoding or "protobuf",
-                    data=ch.schema,
-                ),
-            )
-            self._channels[msg.stream_id] = channel
-        channel.log(msg.payload, log_time=_ns(msg.timestamp))
+        with self._lock:
+            channel = self._channels.get(msg.stream_id)
+            if channel is None:
+                channel = self._fg.Channel(
+                    ch.topic,
+                    message_encoding=ch.encoding or "protobuf",
+                    schema=self._fg.Schema(
+                        name=ch.schema_name,
+                        encoding=ch.schema_encoding or "protobuf",
+                        data=ch.schema,
+                    ),
+                )
+                self._channels[msg.stream_id] = channel
+            channel.log(msg.payload, log_time=_ns(msg.timestamp))
 
     def reset(self) -> None:
         """Drop the current device's channels so the next device starts clean —
@@ -512,9 +524,10 @@ class FoxgloveSink:
         schemas, so each must be closed and the table cleared (``write`` lazily
         recreates them for the new device). ``clear_session()`` then bumps the
         Foxglove session id so connected viewers reset their advertised topics."""
-        for channel in self._channels.values():
-            channel.close()
-        self._channels.clear()
+        with self._lock:
+            for channel in self._channels.values():
+                channel.close()
+            self._channels.clear()
         self._server.clear_session()
 
     def close(self) -> None:

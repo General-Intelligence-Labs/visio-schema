@@ -250,6 +250,42 @@ def test_viewer_urls_encode_ws(monkeypatch) -> None:
 # --------------------------------------------------------------------------- #
 # BridgeManager lifecycle — single-reader invariant across a device switch     #
 # --------------------------------------------------------------------------- #
+class _FakeEndpoint:
+    """Fake bidirectional Endpoint for the bridge tests. Feeds ``frames`` (raw Messages)
+    to the bridge on start() to drive the streaming path, answers a sent Command via
+    ``on_cmd(msg)->reply`` to script CommandResult replies, and (with ``live``) tracks
+    that it's alive only between start() and stop() — the single-reader invariant."""
+
+    def __init__(self, *, frames=(), on_cmd=None, live=None, lock=None, started=None):
+        self._frames = list(frames)
+        self._on_cmd = on_cmd
+        self._live = live
+        self._lock = lock
+        self._started = started
+        self._cb = None
+
+    def start(self, on_inbound, on_closed) -> None:
+        self._cb = on_inbound
+        if self._live is not None:
+            with self._lock:
+                self._live["n"] += 1
+                self._live["max"] = max(self._live["max"], self._live["n"])
+        for m in self._frames:
+            on_inbound(m, self)
+        if self._started is not None:
+            self._started.set()
+
+    def send(self, msg) -> None:
+        reply = self._on_cmd(msg) if self._on_cmd is not None else None
+        if reply is not None:
+            self._cb(reply, self)      # simulate the device's CommandResult
+
+    def stop(self) -> None:
+        if self._live is not None:
+            with self._lock:
+                self._live["n"] -= 1
+
+
 def test_bridge_manager_switch_keeps_single_reader(monkeypatch) -> None:
     s = _serve()
 
@@ -275,23 +311,10 @@ def test_bridge_manager_switch_keeps_single_reader(monkeypatch) -> None:
     live = {"n": 0, "max": 0}
     started = threading.Event()
 
-    def fake_source(*args, **kwargs):
-        stop = args[-1]                      # read_*_resolved(..., stop) — last positional
-        with lock:
-            live["n"] += 1
-            live["max"] = max(live["max"], live["n"])
-        started.set()
-        try:
-            while not stop.is_set():         # a live source blocks until stopped
-                time.sleep(0.005)
-        finally:
-            with lock:
-                live["n"] -= 1
-        return
-        yield  # unreachable: this makes fake_source a generator (never yields a pair)
-
-    monkeypatch.setattr(s, "read_serial_resolved", fake_source)
-    monkeypatch.setattr(s, "read_tcp_resolved", fake_source)
+    # a fresh live endpoint per connect; alive start()..stop(), and it never feeds EOF, so
+    # the bridge's drain loop blocks until the per-bridge stop event fires on a switch.
+    monkeypatch.setattr(s, "_open_endpoint", lambda dto: _FakeEndpoint(
+        live=live, lock=lock, started=started))
 
     mgr = s.BridgeManager(ws_port=0, viewer="desktop")
     try:
@@ -352,33 +375,33 @@ class _FakeFox:
         self.closed = True
 
 
-def _bridge_env(monkeypatch, source_factory):
+def _install_bridge(monkeypatch, open_endpoint):
     s = _serve()
     monkeypatch.setattr(s, "FoxgloveSink", _FakeFox)
     monkeypatch.setattr(s, "_open_deep_link", lambda url: True)
-    monkeypatch.setattr(s, "read_serial_resolved", source_factory)
-    monkeypatch.setattr(s, "read_tcp_resolved", source_factory)
+    monkeypatch.setattr(s, "_open_endpoint", open_endpoint)
     return s
 
 
 def test_status_streaming_once_messages_flow(monkeypatch) -> None:
     vd = _vd()
+    from visio_schema.v1.service.device_info.device_info_pb2 import DeviceInfo
+    from visio_schema.wire.control import DEVICE_INFO
+
+    # the device announces a channel, then sends one data frame on it → one resolved row,
+    # which flips status to "streaming". _quat_pair gives a valid quat msg + its channel.
     m, ch = _quat_pair(vd)
-    ready = threading.Event()
+    announce = vd.Message(stream_id=DEVICE_INFO,
+                          payload=DeviceInfo(device_name="t", channels=[ch]).SerializeToString())
 
-    def src(*args):
-        stop = args[-1]
-        yield (m, ch)          # one real pair → status flips to "streaming"
-        ready.set()
-        while not stop.is_set():
-            time.sleep(0.005)
-
-    s = _bridge_env(monkeypatch, src)
+    s = _install_bridge(monkeypatch, lambda dto: _FakeEndpoint(frames=[announce, m]))
     mgr = s.BridgeManager(ws_port=0, viewer="desktop")
     try:
         mgr.connect({"id": "usb:/dev/a", "label": "A",
                      "transport": "usb", "device": "/dev/a"})
-        assert ready.wait(2)
+        deadline = time.time() + 2
+        while mgr.status()["state"] != "streaming" and time.time() < deadline:
+            time.sleep(0.01)
         st = mgr.status()
         assert st["state"] == "streaming"
         assert st["messages"] >= 1
@@ -386,12 +409,11 @@ def test_status_streaming_once_messages_flow(monkeypatch) -> None:
         mgr.shutdown()
 
 
-def test_status_error_on_source_failure(monkeypatch) -> None:
-    def src(*args):
+def test_status_error_on_open_failure(monkeypatch) -> None:
+    def boom(dto):
         raise ConnectionRefusedError("no route to host")
-        yield  # unreachable — makes src a generator
 
-    s = _bridge_env(monkeypatch, src)
+    s = _install_bridge(monkeypatch, boom)
     mgr = s.BridgeManager(ws_port=0, viewer="desktop")
     try:
         mgr.connect({"id": "tcp:h:1", "label": "B",
@@ -407,14 +429,7 @@ def test_status_error_on_source_failure(monkeypatch) -> None:
 
 
 def test_status_idle_after_disconnect(monkeypatch) -> None:
-    def src(*args):
-        stop = args[-1]
-        while not stop.is_set():
-            time.sleep(0.005)
-        return
-        yield
-
-    s = _bridge_env(monkeypatch, src)
+    s = _install_bridge(monkeypatch, lambda dto: _FakeEndpoint())
     mgr = s.BridgeManager(ws_port=0, viewer="desktop")
     try:
         mgr.connect({"id": "usb:/dev/a", "label": "A",
@@ -424,6 +439,180 @@ def test_status_idle_after_disconnect(monkeypatch) -> None:
         assert st["connected_id"] is None
     finally:
         mgr.shutdown()
+
+
+# --------------------------------------------------------------------------- #
+# device config — send_command correlation + config HTTP routes                #
+# --------------------------------------------------------------------------- #
+def _scripted_device(monkeypatch, on_cmd):
+    """A bridge whose endpoint answers Commands via ``on_cmd(Command)->CommandResult``."""
+    s = _serve()
+    from visio_schema import COMMAND
+    from visio_schema.v1.control import command_pb2
+
+    def open_endpoint(dto):
+        def reply(sent_msg):
+            cmd = command_pb2.Command()
+            cmd.ParseFromString(sent_msg.payload)
+            res = on_cmd(cmd)
+            return _vd().Message(stream_id=COMMAND, payload=res.SerializeToString())
+        return _FakeEndpoint(on_cmd=reply)
+
+    monkeypatch.setattr(s, "FoxgloveSink", _FakeFox)
+    monkeypatch.setattr(s, "_open_deep_link", lambda url: True)
+    monkeypatch.setattr(s, "_open_endpoint", open_endpoint)
+    return s
+
+
+def _connected(mgr) -> None:
+    mgr.connect({"id": "usb:/dev/a", "label": "A", "transport": "usb", "device": "/dev/a"})
+    for _ in range(200):
+        if mgr._endpoint is not None:
+            return
+        time.sleep(0.005)
+    raise AssertionError("endpoint never came up")
+
+
+def test_send_command_matches_reply_by_id(monkeypatch) -> None:
+    from visio_schema.v1.control import command_pb2, command_result_pb2
+
+    def on_cmd(cmd):
+        res = command_result_pb2.CommandResult(command_id=cmd.command_id, ok=True)
+        if cmd.WhichOneof("body") == "scan_wifi":
+            w = res.scan.results.add()
+            w.ssid, w.rssi, w.security = "GiLabs", -42, "WPA2"
+        return res
+
+    s = _scripted_device(monkeypatch, on_cmd)
+    mgr = s.BridgeManager(ws_port=0, viewer="desktop")
+    try:
+        _connected(mgr)
+        r = mgr.send_command(command_pb2.Command(scan_wifi=command_pb2.ScanWifi()))
+        assert r["ok"] is True
+        assert r["scan"] == [{"ssid": "GiLabs", "rssi": -42, "security": "WPA2"}]
+    finally:
+        mgr.shutdown()
+
+
+def test_send_command_surfaces_device_error(monkeypatch) -> None:
+    from visio_schema.v1.control import command_pb2, command_result_pb2
+
+    def on_cmd(cmd):
+        return command_result_pb2.CommandResult(
+            command_id=cmd.command_id, ok=False, error_message="no such fs")
+
+    s = _scripted_device(monkeypatch, on_cmd)
+    mgr = s.BridgeManager(ws_port=0, viewer="desktop")
+    try:
+        _connected(mgr)
+        r = mgr.send_command(command_pb2.Command(format_storage=command_pb2.FormatStorage()))
+        assert r["ok"] is False and r["error"] == "no such fs"
+    finally:
+        mgr.shutdown()
+
+
+def test_send_command_without_device_is_graceful() -> None:
+    s = _serve()
+    from visio_schema.v1.control import command_pb2
+    mgr = s.BridgeManager(ws_port=0, viewer="desktop")
+    # never connected → no endpoint; must return an error, not raise
+    r = mgr.send_command(command_pb2.Command(identify=command_pb2.Identify()))
+    assert r == {"ok": False, "error": "no device connected"}
+    mgr.shutdown()
+
+
+# _post / _StubBridge / _StubDiscovery are defined in the HTTP-handlers section below;
+# Python resolves them at call time, so these config-route tests can use them here.
+def test_config_wifi_requires_ssid() -> None:
+    s = _serve()
+    app = s._build_app(_StubBridge(), _StubDiscovery())
+    resp = _post(s._config_wifi, app, {"ssid": "  "})
+    assert resp.status == 400
+    assert "ssid required" in json.loads(resp.body)["error"]
+
+
+def test_config_bitrate_rejects_non_numeric() -> None:
+    s = _serve()
+    app = s._build_app(_StubBridge(), _StubDiscovery())
+    resp = _post(s._config_bitrate, app, {"bitrate_kbps": "fast"})
+    assert resp.status == 400
+
+
+def test_config_state_calls_bridge_send() -> None:
+    s = _serve()
+    sent = {}
+
+    class _Bridge:
+        def send_command(self, cmd, **kw):
+            sent["body"] = cmd.WhichOneof("body")
+            return {"ok": True, "state": {"wifi_ssid": "GiLabs"}}
+
+    app = s._build_app(_Bridge(), _StubDiscovery())
+    resp = _post(s._config_state, app, {})
+    assert resp.status == 200
+    assert sent["body"] == "get_state"
+    assert json.loads(resp.body)["state"]["wifi_ssid"] == "GiLabs"
+
+
+def test_send_command_times_out_and_cleans_up(monkeypatch) -> None:
+    from visio_schema.v1.control import command_pb2
+    # a silent endpoint (default on_cmd=None → send() never replies)
+    s = _install_bridge(monkeypatch, lambda dto: _FakeEndpoint())
+    mgr = s.BridgeManager(ws_port=0, viewer="desktop")
+    try:
+        _connected(mgr)
+        r = mgr.send_command(command_pb2.Command(identify=command_pb2.Identify()), timeout=0.05)
+        assert r == {"ok": False, "error": "timed out waiting for the device"}
+        assert mgr._pending == {}            # slot cleaned up — no leak
+    finally:
+        mgr.shutdown()
+
+
+def test_disconnect_releases_in_flight_command(monkeypatch) -> None:
+    from visio_schema.v1.control import command_pb2
+    s = _install_bridge(monkeypatch, lambda dto: _FakeEndpoint())
+    mgr = s.BridgeManager(ws_port=0, viewer="desktop")
+    try:
+        _connected(mgr)
+        holder: dict = {}
+        t = threading.Thread(target=lambda: holder.update(
+            r=mgr.send_command(command_pb2.Command(identify=command_pb2.Identify()), timeout=5)))
+        t.start()
+        for _ in range(400):                 # wait until the command is registered + waiting
+            if mgr._pending:
+                break
+            time.sleep(0.005)
+        assert mgr._pending
+        mgr.disconnect()                     # _stop_current → _fail_pending releases the waiter
+        t.join(2)
+        assert holder["r"] == {"ok": False, "error": "device disconnected"}
+        assert mgr._pending == {}
+    finally:
+        mgr.shutdown()
+
+
+def test_result_to_dict_all_payloads() -> None:
+    s = _serve()
+    from visio_schema.v1.control import command_result_pb2
+
+    r = command_result_pb2.CommandResult(command_id=1, ok=True)
+    r.state.wifi_ssid = "GiLabs"
+    r.state.disk_free_pct = 42
+    assert s._result_to_dict(r) == {
+        "ok": True, "command_id": 1, "state": {"wifi_ssid": "GiLabs", "disk_free_pct": 42}}
+
+    r2 = command_result_pb2.CommandResult(command_id=2, ok=True)
+    w = r2.scan.results.add()
+    w.ssid, w.rssi, w.security = "AP", -30, "OPEN"
+    assert s._result_to_dict(r2)["scan"] == [{"ssid": "AP", "rssi": -30, "security": "OPEN"}]
+
+    r3 = command_result_pb2.CommandResult(command_id=3, ok=True)
+    e = r3.recordings.recordings.add()   # double-nested field
+    e.name, e.size_bytes = "sess1", 100
+    assert s._result_to_dict(r3)["recordings"] == [{"name": "sess1", "size_bytes": "100"}]
+
+    r4 = command_result_pb2.CommandResult(command_id=4, ok=False, error_message="boom")
+    assert s._result_to_dict(r4) == {"ok": False, "command_id": 4, "error": "boom"}
 
 
 # --------------------------------------------------------------------------- #
