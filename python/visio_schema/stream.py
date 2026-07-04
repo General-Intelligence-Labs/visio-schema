@@ -7,7 +7,7 @@ path (sending commands back), use `serial_endpoint` and its ``send``.
 """
 from __future__ import annotations
 
-import selectors
+import select
 from collections.abc import Iterator
 
 from visio_schema.routing import Channel, ChannelRegistry
@@ -18,21 +18,24 @@ _READ_CHUNK = 65536
 
 
 def _read_chunks(fd: int) -> Iterator[bytes]:
-    """Yield bytes from a non-blocking ``fd``, waiting on a selector so an idle link
-    doesn't busy-spin. Stops on EOF / a dead fd. The caller owns and closes ``fd``."""
-    sel = selectors.DefaultSelector()
-    sel.register(fd, selectors.EVENT_READ)
-    try:
-        while True:
-            if not sel.select(timeout=0.5):   # idle tick — lets KeyboardInterrupt land
-                continue
-            chunk = read_some(fd, _READ_CHUNK)
-            if chunk is None:                 # EOF / dead fd
-                return
-            if chunk:
-                yield chunk
-    finally:
-        sel.close()
+    """Yield bytes from a non-blocking ``fd``, waiting for readability so an idle link
+    doesn't busy-spin. Stops on EOF / a dead fd. The caller owns and closes ``fd``.
+
+    Uses ``select.select`` rather than ``selectors.DefaultSelector``: on macOS the
+    default selector is kqueue, whose ``EVFILT_READ`` does not fire for a pty/tty (a
+    documented BSD limitation) — a serial fd would then look permanently idle and the
+    reader would hang forever (the 0.5 s timeout keeps returning empty). ``select(2)``
+    reports tty/pty readability correctly on every platform (it's what the transport's
+    ``framed_fd`` writer loop already uses)."""
+    while True:
+        r, _w, _x = select.select([fd], [], [], 0.5)  # idle tick — lets KeyboardInterrupt land
+        if not r:
+            continue
+        chunk = read_some(fd, _READ_CHUNK)
+        if chunk is None:                 # EOF / dead fd
+            return
+        if chunk:
+            yield chunk
 
 
 def read_serial(port: str) -> Iterator[tuple[Message, Channel]]:

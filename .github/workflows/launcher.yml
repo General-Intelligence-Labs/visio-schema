@@ -1,0 +1,112 @@
+name: launcher
+
+# Build the self-contained `visio-display` launcher (PyInstaller) for Linux, macOS
+# (a clickable `.app`), and Windows. buf codegen runs once on Linux and is shared
+# across the OS matrix (the generated _pb2 is pure-Python), so the per-OS build jobs
+# need neither `make` nor buf. PyInstaller can't cross-compile, hence one build per
+# OS. This runs on the SAME `v*` release tag as the wheels/sdist (wheels.yml) and
+# attaches the launcher zips to that release as separate assets alongside them.
+# Unsigned for now — see packaging/README.md for the macOS Gatekeeper note.
+on:
+  push:
+    tags: ["v*"]   # the same release tag as the wheels/sdist (wheels.yml)
+  # Build on PRs that touch the launcher or its packaging, so a bundling
+  # regression (e.g. a missed dynamic import) is caught before release.
+  pull_request:
+    paths:
+      - "packaging/**"
+      - "python/visio_schema/display/**"
+      - ".github/workflows/launcher.yml"
+  workflow_dispatch:
+
+jobs:
+  codegen:
+    name: codegen (buf)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive   # nanopb + foxglove-sdk + mcap are submodules
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: install codegen toolchain
+        run: |
+          # `make gen` needs: protoc for the nanopb generator (without it nanopb
+          # compiles nothing and fails --error-on-unmatched), and the pure-Python deps
+          # that `import visio_schema` pulls — scripts/gen_schema_blobs.py imports the
+          # package to enumerate the payload schemas.
+          sudo apt-get update && sudo apt-get install -y protobuf-compiler
+          npm install -g @bufbuild/buf
+          python -m pip install protobuf cobs mcap pyserial
+      - name: make gen + vendor native sources
+        run: |
+          make gen
+          python python/_vendor_native.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pysrc
+          path: python
+          include-hidden-files: true
+
+  build:
+    name: launcher (${{ matrix.os }})
+    needs: codegen
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    steps:
+      - uses: actions/checkout@v4          # for packaging/ (the spec + entry script)
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: fetch generated python tree
+        uses: actions/download-artifact@v4
+        with:
+          name: pysrc
+          path: python                     # overlays the buf-generated _pb2 + vendored native sources
+      - name: install package + pyinstaller
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ./python pyinstaller
+      - name: build bundle
+        run: pyinstaller packaging/visio-display.spec --noconfirm --distpath dist
+      - name: smoke test
+        shell: bash
+        run: |
+          case "${{ runner.os }}" in
+            Linux)   ./dist/visio-display/visio-display --help ;;
+            macOS)   test -d dist/visio-display.app && echo "app bundle present" ;;
+            Windows) test -f dist/visio-display/visio-display.exe && echo "exe present" ;;
+          esac
+      - name: zip bundle
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            python -c "import shutil; shutil.make_archive('visio-display-macOS','zip','dist','visio-display.app')"
+          else
+            python -c "import shutil; shutil.make_archive('visio-display-${{ runner.os }}','zip','dist','visio-display')"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: visio-display-${{ runner.os }}
+          path: visio-display-${{ runner.os }}.zip
+
+  release_assets:
+    name: attach launcher zips to the release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: visio-display-*
+          merge-multiple: true
+          path: dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip

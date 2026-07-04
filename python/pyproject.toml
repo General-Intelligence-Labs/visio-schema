@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "visio-schema"
-version = "0.2.1"
+version = "0.3.0"
 description = "Visio wire contract — generated protobuf bindings + the framing codec"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -32,8 +32,9 @@ classifiers = [
 ]
 # Everything the package needs at runtime, installed by default (no feature
 # extras): the wire codec + generated bindings, MCAP read/write, and the
-# `visio-display` viewer's deps. The heavy viewer libs (rerun, av) are imported
-# lazily, so they cost nothing until the viewer is actually run.
+# `visio-display` viewer + `--serve` launcher deps. The heavy/serve-only libs
+# (rerun, av, aiohttp, zeroconf) are imported lazily, so they cost nothing until
+# the viewer or the launcher is actually run.
 dependencies = [
     "protobuf>=5.26",
     "cobs>=1.2",
@@ -42,6 +43,8 @@ dependencies = [
     "foxglove-sdk>=0.10",
     "rerun-sdk>=0.24",
     "av>=11",
+    "aiohttp>=3.9",     # `--serve` launcher web app
+    "zeroconf>=0.130",  # `--serve` mDNS device discovery
 ]
 
 [project.optional-dependencies]
@@ -82,6 +85,7 @@ namespaces = true
 testpaths = ["tests"]
 markers = [
     "integration: cross-boundary tests (serial/pty, cross-language)",
+    "pty: drives a serial device over a pseudo-terminal; auto-skipped on macOS (see tests/conftest.py)",
 ]
 
 [tool.ruff]
@@ -98,11 +102,22 @@ select = ["E", "F", "I", "B", "UP", "RUF"]
 # wheel falls back to the pure-Python reader.
 [tool.cibuildwheel]
 build = "cp310-* cp311-* cp312-* cp313-*"
+# rerun-sdk (a runtime dep) ships no musllinux wheel, so the in-wheel test install
+# fails there. We ship manylinux + macOS only.
+skip = "*-musllinux*"
+# Don't run the test suite for the x86_64 half of the macOS universal2 wheel: on the
+# arm64 runner that runs under Rosetta, which is slow and hung the build. The arm64
+# half is still tested natively; both halves are still built.
+test-skip = "*_universal2:x86_64"
 build-frontend = "build"
-test-requires = ["pytest>=8", "protobuf>=5.26", "cobs>=1.2", "mcap>=1.1"]
+test-requires = ["pytest>=8", "pytest-timeout>=2.3", "protobuf>=5.26", "cobs>=1.2", "mcap>=1.1"]
 # Run the in-wheel suite native-on, then forced onto the pure-Python fallback, so
 # both readers are exercised against the installed wheel.
-test-command = "pytest {package}/tests -q && VISIO_NO_NATIVE=1 pytest {package}/tests -q"
+# --timeout is a hard guard well above any real test time: it turns a platform-specific
+# hang (e.g. a blocked socket/native read that never sees EOF) into a fast failure that
+# dumps EVERY thread's stack (method=thread fires even when the main thread is stuck in
+# C) — naming the culprit instead of silently burning the 6 h job cap.
+test-command = "pytest {package}/tests -q --timeout=120 --timeout-method=thread && VISIO_NO_NATIVE=1 pytest {package}/tests -q --timeout=120 --timeout-method=thread"
 
 [tool.cibuildwheel.linux]
 archs = ["x86_64"]                       # the host fleet

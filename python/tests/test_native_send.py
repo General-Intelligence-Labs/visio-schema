@@ -31,6 +31,9 @@ def _read_for(fd: int, seconds: float) -> bytes:
     return bytes(buf)
 
 
+pytestmark = pytest.mark.pty  # reads a live pty via the native reader — see tests/conftest.py
+
+
 def test_native_send_matches_pure_framing_and_roundtrips() -> None:
     master, slave = os.openpty()
     tty.setraw(slave)  # raw line discipline governs both directions

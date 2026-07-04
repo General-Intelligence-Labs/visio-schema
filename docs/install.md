@@ -21,18 +21,26 @@ The native reader (`_creader`) is a faster, GIL-free serial reader. It is entire
 can't be built or loaded, the package transparently falls back to the pure-Python reader. Behavior
 is identical; only throughput differs.
 
-## Option A — install a release (recommended)
+## Option A — install from PyPI (recommended)
+
+Install from [PyPI](https://pypi.org/project/visio-schema/) with pip:
 
 ```bash
 pip install visio-schema
 ```
 
-One install includes the wire codec + generated bindings, MCAP read/write, and the `visio-display`
-viewer — no extras to choose. Released wheels (Linux `manylinux_2_28` x86_64, macOS `universal2`,
-CPython 3.10–3.13) bundle the optional native reader. If no wheel matches your platform, pip falls
-back to the sdist, which ships the generated bindings (no codegen toolchain required) and the
-pure-Python reader — correct, just slower; building the native reader from the sdist additionally
-needs a C/C++ compiler.
+This includes the wire codec + generated bindings, MCAP read/write, and the `visio-display` viewer —
+no extras to choose. Prebuilt wheels bundle the optional native reader for Linux `manylinux_2_28`
+x86_64 and macOS `universal2`, CPython 3.10–3.13; anywhere else pip falls back to the sdist, which
+ships the generated bindings (no codegen toolchain required) and installs the pure-Python reader,
+additionally building the native reader for higher throughput when a C/C++ compiler is present.
+
+Every release is also attached to the [GitHub releases page](https://github.com/General-Intelligence-Labs/visio-schema/releases)
+(sdist + wheels), so you can pin an exact artifact URL if you need to install without PyPI:
+
+```bash
+pip install https://github.com/General-Intelligence-Labs/visio-schema/releases/download/v0.3.0/visio_schema-0.3.0.tar.gz
+```
 
 The package installs the **`visio-display`** command (also runnable as
 `python -m visio_schema.display`):
@@ -43,13 +51,13 @@ visio-display --tcp my-device.local --foxglove  # live device -> Foxglove WebSoc
 visio-display --mcap-in run.mcap --rerun        # replay a recording
 ```
 
-### Install from a git tag (before a PyPI release)
+### Install from a git tag
 
-Release tags also ship the generated bindings, so a direct `git+…` install needs no codegen
-toolchain:
+To pin an unreleased commit or a tag directly (no PyPI), a `git+…` install works too — release tags
+ship the generated bindings, so it needs no codegen toolchain:
 
 ```bash
-pip install "visio-schema @ git+https://github.com/General-Intelligence-Labs/visio-schema@visio-schema-v0.2.0#subdirectory=python"
+pip install "visio-schema @ git+https://github.com/General-Intelligence-Labs/visio-schema@v0.3.0#subdirectory=python"
 ```
 
 A plain `git+…` install does not initialize submodules, so the native reader is skipped and you get

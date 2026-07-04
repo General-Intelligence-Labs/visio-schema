@@ -83,3 +83,18 @@ def test_rotation_into_self_contained_parts(tmp_path) -> None:
         assert all(c.schema_name == _IMU and c.schema for _, c in rows)
         total += len(rows)
     assert total == 10
+
+
+def test_part_names_are_4_digit_and_sort_past_999(tmp_path) -> None:
+    """Part names zero-pad to 4 digits (mirroring the C++ writer's NumberedPart) so
+    part 1000 sorts *after* 999. The 3-digit pad this replaced broke the lexical order
+    the uploader and playback rely on once a session exceeds 999 parts — glob+sort would
+    put ``_1000`` before ``_999``. A white-box check on the name (no need to spill 1000
+    real parts): the rotation test above already covers the 0..N happy path."""
+    with McapWriter(tmp_path / "run.mcap", max_bytes=40) as w:
+        w._part_index = 999
+        p999 = w._part_path().name
+        w._part_index = 1000
+        p1000 = w._part_path().name
+    assert (p999, p1000) == ("run_0999.mcap", "run_1000.mcap")
+    assert sorted([p1000, p999]) == [p999, p1000]   # 999 lexically precedes 1000

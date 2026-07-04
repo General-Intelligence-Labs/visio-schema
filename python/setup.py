@@ -16,9 +16,31 @@ import os
 import sys
 
 from setuptools import Extension, setup
+from setuptools.command.build_ext import build_ext as _build_ext
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 VENDOR = os.path.join(HERE, "_native_build")
+
+
+class build_ext(_build_ext):
+    """The ext mixes C++ (the codec/transport `.cc`) with C (the nanopb `.c`) sources,
+    but ``extra_compile_args`` applies to every source. gcc merely warns when
+    ``-std=c++17`` reaches a C file; clang **errors** (`not allowed with 'C'`), which
+    broke the macOS wheel. Strip any C++ ``-std`` flag when compiling C sources so the
+    mixed ext builds on gcc and clang alike."""
+
+    def build_extensions(self):
+        if hasattr(self.compiler, "_compile"):
+            base = self.compiler._compile
+
+            def _compile(obj, src, ext, cc_args, extra_postargs, pp_opts):
+                if src.endswith(".c"):
+                    extra_postargs = [a for a in extra_postargs
+                                      if not a.startswith("-std=c++")]
+                return base(obj, src, ext, cc_args, extra_postargs, pp_opts)
+
+            self.compiler._compile = _compile
+        super().build_extensions()
 
 
 def _ext_modules():
@@ -75,4 +97,4 @@ def _ext_modules():
     ]
 
 
-setup(ext_modules=_ext_modules())
+setup(ext_modules=_ext_modules(), cmdclass={"build_ext": build_ext})

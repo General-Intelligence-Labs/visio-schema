@@ -58,6 +58,9 @@ visio_schema.v1.control.SetRecordingMeta.location     max_size:128
 visio_schema.v1.control.SetRecordingMeta.message      max_size:256
 visio_schema.v1.control.SetRecordingMeta.capturer     max_size:64
 
+# FormatStorage: target filesystem name ("", "ext4", "exfat", "vfat").
+visio_schema.v1.control.FormatStorage.fs_type         max_size:8
+
 # ---- Control: CommandResult ack + DeviceState snapshot (bounded inline so the
 #      ack is a static struct; the two list payloads below are FT_POINTER) -----
 visio_schema.v1.control.CommandResult.error_code               max_size:32
@@ -107,6 +110,10 @@ visio_schema.v1.calibration.ImuCalibration.gyro_misalignment    max_count:9
 
 # ---- Geometry: short frame id ---------------------------------------------
 visio_schema.v1.geometry.Twist.frame_id   max_size:32
+
+# ---- Exposure-sync: bounded source device name so ExposureGrid decodes into a
+#      fully FT_STATIC struct (no malloc on the per-hop control path). -----------
+visio_schema.v1.service.exposure_sync.ExposureGrid.source_device   max_size:32
 
 # ---- OTA: the host->device control message. OtaBegin is the only body the
 #      normal-mode firmware decodes, so bound everything in it to keep the whole

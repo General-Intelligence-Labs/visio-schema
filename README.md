@@ -6,8 +6,8 @@ third-party client all share. This repo is the single source of truth for *what 
 like on the wire* — it is not a transport, bus, or recording stack (those live in a separate layer).
 
 It ships as one Python package, `visio-schema`, that bundles the generated protobuf bindings next
-to a small, hand-written framing codec, so you can read a live device or a recording with one
-`pip install`.
+to a small, hand-written framing codec — plus a ready-to-run **device launcher** you can download
+and run with no Python at all (below).
 
 ## What you can do with it
 
@@ -22,26 +22,41 @@ With this package you can:
 3. **Integrate + command** — write your own client that reads streams *and* sends control commands
    back to the device (start/stop recording, calibrate, configure Wi-Fi/storage, …).
 
-The quickest way to see your data is the ready-to-run viewer below; to build your own tooling, jump
-to [Write your own code](#write-your-own-code).
+**Just want to see a device in Foxglove?** Use the download-and-run launcher below — no Python. To
+build your own tooling, install the [Python library](#python-library) instead.
 
-## Install
+## View a device in Foxglove Studio — download & run (no install)
+
+Download the ready-to-run **`visio-display` launcher** for your OS from the
+[v0.3.0 release](https://github.com/General-Intelligence-Labs/visio-schema/releases/tag/v0.3.0),
+unzip it, and **double-click** it — **macOS** `visio-display.app`, **Windows**
+`visio-display\visio-display.exe`, or **Linux** `visio-display/visio-display`.
+
+A page opens in your browser — pick your connected device (over **USB**, **Wi-Fi**, or a **manual AP
+address**) and it streams live into **[Foxglove Studio](https://foxglove.dev)**. The launcher opens
+Foxglove for you: the **desktop app** (works offline — install it from
+[foxglove.dev/download](https://foxglove.dev/download) first) or a **browser tab** as a fallback. No
+Python, no setup, no code — the page's **Quit** button stops it.
+
+## Python library
+
+Install from [PyPI](https://pypi.org/project/visio-schema/) with pip:
 
 ```bash
 pip install visio-schema
 ```
 
-One install includes MCAP read/write (`read_mcap` / `McapWriter`) and the ready-to-run
-`visio-display` viewer (next section). Wheels (Linux `manylinux_2_28` x86_64, macOS `universal2`,
-CPython 3.10–3.13) bundle an optional native reader for higher throughput; if no wheel matches your
-platform the sdist installs a pure-Python reader with identical behavior. For a development checkout
-(building bindings from source, the optional native reader, troubleshooting) or how releases are
-published to PyPI, see **[docs/install.md](docs/install.md)**.
+This includes MCAP read/write (`read_mcap` / `McapWriter`), the `visio-display` CLI viewer (next
+section), and an optional native reader for higher throughput (prebuilt wheels for Linux
+`manylinux_2_28` x86_64 and macOS `universal2`, CPython 3.10–3.13; identical pure-Python fallback
+otherwise). For a development checkout building the bindings from source, see
+**[docs/install.md](docs/install.md)**.
 
-## Quickstart — view a device or recording (no code)
+## CLI viewer — `visio-display`
 
-The ready-to-run viewer — the **`visio-display`** command (included with `pip install visio-schema`) —
-streams a live device (or replays a recording) to a viewer, no code required. We recommend
+Installed with the [Python library](#python-library), the **`visio-display`** command streams a live
+device (or replays a recording) from the command line — the launcher's `--serve` above is the
+friendly front-end to it. We recommend
 **[Foxglove Studio](https://foxglove.dev)**: it has rich panels for video, IMU plots, and 3D, and
 opens both live connections and recorded `.mcap` files.
 

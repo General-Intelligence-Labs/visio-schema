@@ -3,12 +3,12 @@ name: wheels
 # Build version-specific (cp310–cp313) wheels for the optional native `_creader`
 # reader on linux (manylinux_2_28 x86_64) + macOS (universal2), run the in-wheel
 # test suite both native-on and on the pure-Python fallback, run the C++↔Python
-# interop both ways, and build the sdist. On a `visio-schema-v*` tag, publish all
+# interop both ways, and build the sdist. On a `v*` tag, publish all
 # artifacts to PyPI via Trusted Publishing (OIDC — no stored token) and attach
 # them to the GitHub release. `workflow_dispatch` builds + tests without publishing.
 on:
   push:
-    tags: ["visio-schema-v*"]
+    tags: ["v*"]
   workflow_dispatch:
 
 jobs:
@@ -32,7 +32,17 @@ jobs:
       # compiles. Done on the HOST runner (buf via npm); cibuildwheel copies the
       # already-generated tree into the manylinux container.
       - name: make gen
+        shell: bash
         run: |
+          # make gen's nanopb step shells out to protoc; the nanopb generator +
+          # scripts/gen_schema_blobs.py also need the pure-Python deps that
+          # `import visio_schema` pulls.
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            brew list protobuf >/dev/null 2>&1 || brew install protobuf
+          else
+            sudo apt-get update && sudo apt-get install -y protobuf-compiler
+          fi
+          python -m pip install protobuf cobs mcap pyserial
           npm install -g @bufbuild/buf
           make gen
 
@@ -64,7 +74,17 @@ jobs:
       # The sdist must carry the generated _pb2 (gitignored at HEAD) + the native
       # sources, so generate + vendor on the host before building it.
       - name: make gen
+        shell: bash
         run: |
+          # make gen's nanopb step shells out to protoc; the nanopb generator +
+          # scripts/gen_schema_blobs.py also need the pure-Python deps that
+          # `import visio_schema` pulls.
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            brew list protobuf >/dev/null 2>&1 || brew install protobuf
+          else
+            sudo apt-get update && sudo apt-get install -y protobuf-compiler
+          fi
+          python -m pip install protobuf cobs mcap pyserial
           npm install -g @bufbuild/buf
           make gen
       - name: vendor native sources
@@ -106,7 +126,17 @@ jobs:
         with:
           python-version: "3.11"
       - name: make gen
+        shell: bash
         run: |
+          # make gen's nanopb step shells out to protoc; the nanopb generator +
+          # scripts/gen_schema_blobs.py also need the pure-Python deps that
+          # `import visio_schema` pulls.
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            brew list protobuf >/dev/null 2>&1 || brew install protobuf
+          else
+            sudo apt-get update && sudo apt-get install -y protobuf-compiler
+          fi
+          python -m pip install protobuf cobs mcap pyserial
           npm install -g @bufbuild/buf
           make gen
       - name: build + ctest
@@ -121,7 +151,7 @@ jobs:
   # The `pypi` environment also lets you require a manual approval before release.
   publish_pypi:
     name: publish to PyPI
-    needs: [build_wheels, build_sdist, cpp_tests]
+    needs: [build_wheels, build_sdist, cpp_tests]   # release waits on the C++ suite too (Backpressure is deterministic via the bulk-routed outbox)
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     environment:
@@ -144,7 +174,7 @@ jobs:
 
   release_assets:
     name: attach artifacts to the GitHub release
-    needs: [build_wheels, build_sdist, cpp_tests]
+    needs: [build_wheels, build_sdist, cpp_tests]   # release waits on the C++ suite too (Backpressure is deterministic via the bulk-routed outbox)
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
