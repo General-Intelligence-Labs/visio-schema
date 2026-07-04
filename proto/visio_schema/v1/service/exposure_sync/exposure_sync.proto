@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package visio_schema.v1.service.exposure_sync;
+
+// Cross-device exposure-grid sync on CONTROL_STREAM_EXPOSURE_SYNC (link-scoped).
+//
+// A hub-connected group aligns each device's camera exposures onto a shared
+// "grid" so multi-view capture is temporally coincident. One device is the grid
+// *source* (master); every other device is a *follower* that slews its own frame
+// period to land on the grid (see the firmware exposure_sync service).
+//
+// The grid is a periodic cadence: exposures should fall on edges at
+//   anchor_mono_ns + k * period_ns   (k integer).
+//
+// Clock frame: `anchor_mono_ns` is ALWAYS expressed in the HUB's monotonic clock
+// — the single reference every child can localize, since each child maintains
+// exactly one clock offset (to the hub) via the heartbeat NTP exchange. A child
+// grid-source converts its own capture time into hub clock before sending; every
+// follower converts hub→local with its own offset. The hub itself needs no
+// offset. This message therefore rides link-scoped: it only ever travels a single
+// hub↔child hop — when a child is the source, the hub relays its grid to the
+// other children at the application layer, not via bus auto-forwarding.
+
+message ExposureGrid {
+  // A grid edge, in the HUB's monotonic clock (ns). Any edge works — followers
+  // reduce modulo period_ns. Typically the source camera's most recent frame.
+  uint64 anchor_mono_ns = 1;
+
+  // Grid cadence (ns). Must be ≥ every follower's period floor + margin, so a
+  // follower can always slow down to match (it may not speed past its floor).
+  uint64 period_ns = 2;
+
+  // Which device owns the grid (the source/master). Informational, and lets the
+  // hub tag a relayed grid; "" when the hub's own camera is the source.
+  string source_device = 3;
+}

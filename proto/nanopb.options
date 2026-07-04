@@ -111,6 +111,10 @@ visio_schema.v1.calibration.ImuCalibration.gyro_misalignment    max_count:9
 # ---- Geometry: short frame id ---------------------------------------------
 visio_schema.v1.geometry.Twist.frame_id   max_size:32
 
+# ---- Exposure-sync: bounded source device name so ExposureGrid decodes into a
+#      fully FT_STATIC struct (no malloc on the per-hop control path). -----------
+visio_schema.v1.service.exposure_sync.ExposureGrid.source_device   max_size:32
+
 # ---- OTA: the host->device control message. OtaBegin is the only body the
 #      normal-mode firmware decodes, so bound everything in it to keep the whole
 #      OtaMessage a fully FT_STATIC struct (no malloc on the inbound decode) —
