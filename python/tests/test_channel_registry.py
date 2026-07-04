@@ -19,6 +19,7 @@ from visio_schema.v1.service.device_info.device_info_pb2 import Channel
 from visio_schema.wire.control import (
     COMMAND,
     DEVICE_INFO,
+    EXPOSURE_SYNC,
     HEARTBEAT,
     LINK_LOCAL_CONTROL,
 )
@@ -160,8 +161,9 @@ def test_well_known_device_info_channel_resolves() -> None:
 
 
 def test_link_local_control_membership() -> None:
-    # Disposition is structural: heartbeat is link-scoped (dropped at a hop);
-    # device_info/command are end-to-end (forwarded).
-    assert LINK_LOCAL_CONTROL == {HEARTBEAT}
+    # Disposition is structural: heartbeat + exposure-sync are link-scoped (dropped at
+    # a hop — exposure-sync is single-hop hub↔child, re-emitted by the hub's service,
+    # not bus-forwarded); device_info/command are end-to-end (forwarded).
+    assert LINK_LOCAL_CONTROL == {HEARTBEAT, EXPOSURE_SYNC}
     assert DEVICE_INFO not in LINK_LOCAL_CONTROL
     assert COMMAND not in LINK_LOCAL_CONTROL
