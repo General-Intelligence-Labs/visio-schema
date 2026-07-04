@@ -70,6 +70,7 @@ import argparse
 import collections
 import json
 import os
+import select
 import selectors
 import signal
 import sys
@@ -322,12 +323,16 @@ def _read_fd_frames(fd: int, stop: threading.Event | None = None) -> Iterator[Me
     ``fd`` — closes it on exit."""
     stop = _STOP if stop is None else stop
     set_nonblocking(fd)
-    sel = selectors.DefaultSelector()
-    sel.register(fd, selectors.EVENT_READ)
+    # select.select, not selectors.DefaultSelector: on macOS the default selector is
+    # kqueue, whose EVFILT_READ never fires for a pty/tty (a documented BSD limitation),
+    # so a serial fd would look permanently idle and this loop would hang. select(2)
+    # reports tty/pty readability on every platform. (This path is POSIX-only — the
+    # Windows serial/TCP reads take the pyserial / _read_sock_win branches instead.)
     rx = bytearray()
     try:
         while not stop.is_set():
-            if not sel.select(timeout=0.2):
+            r, _w, _x = select.select([fd], [], [], 0.2)
+            if not r:
                 continue  # idle tick: re-check stop
             chunk = read_some(fd, 4096)
             if chunk is None:
@@ -335,7 +340,6 @@ def _read_fd_frames(fd: int, stop: threading.Event | None = None) -> Iterator[Me
             rx.extend(chunk)  # b"" on EAGAIN is harmless
             yield from extract_frames(rx)
     finally:
-        sel.close()
         close_fd(fd)
 
 
