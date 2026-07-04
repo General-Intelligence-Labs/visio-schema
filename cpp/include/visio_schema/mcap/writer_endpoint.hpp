@@ -57,6 +57,10 @@ class McapWriterEndpoint : public transport::Endpoint {
   std::size_t pending_frames() const;
   std::size_t pending_bytes() const;
   std::uint64_t dropped_frames() const { return dropped_.load(std::memory_order_relaxed); }
+  // Lifetime total of payload bytes written to disk (passthrough to the inner
+  // McapWriter; monotonic across part rotation). 0 until the first message drains
+  // to the writer thread.
+  std::uint64_t bytes_written() const;
   McapWriterStats stats() const;
 
  private:

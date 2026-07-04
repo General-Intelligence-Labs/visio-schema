@@ -122,6 +122,13 @@ std::size_t McapWriterEndpoint::pending_bytes() const {
   return queue_bytes_;
 }
 
+std::uint64_t McapWriterEndpoint::bytes_written() const {
+  // writer_ is created in the ctor and only Close()d (never reset) in Stop(),
+  // so it stays valid for the endpoint's lifetime; bytes_written() reads an
+  // atomic, so polling it from another thread needs no lock.
+  return writer_ ? writer_->bytes_written() : 0;
+}
+
 McapWriterStats McapWriterEndpoint::stats() const {
   McapWriterStats s;
   s.writes = stat_writes_.load(std::memory_order_relaxed);

@@ -20,6 +20,7 @@
 // no MCAP include and the whole sink cross-compiles for the RV1106.
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -56,6 +57,15 @@ class McapWriter {
   void Write(const Channel& channel, const Message& msg);
   void Close();
 
+  // Total payload bytes written to disk over this writer's lifetime. Unlike
+  // part_bytes_ (which resets at each rotation) this is monotonic across parts,
+  // so a stall detector can watch it advance to tell "actively writing" from
+  // "recording but the pipeline is frozen". Read-only, safe to poll from
+  // another thread.
+  std::uint64_t bytes_written() const {
+    return bytes_written_.load(std::memory_order_relaxed);
+  }
+
  private:
   std::string PartPath() const;
   void OpenPart();          // throws on open failure
@@ -73,6 +83,8 @@ class McapWriter {
   bool closed_ = false;
   std::size_t part_index_ = 0;
   std::uint64_t part_bytes_ = 0;
+  // Lifetime total (never reset on rotation); see bytes_written().
+  std::atomic<std::uint64_t> bytes_written_{0};
   std::chrono::steady_clock::time_point part_start_;
 
   // Caches (reset per part): schema id per schema_name, channel id per Channel id.

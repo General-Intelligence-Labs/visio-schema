@@ -184,6 +184,9 @@ void McapWriter::Write(const Channel& channel, const Message& msg) {
   out.data = reinterpret_cast<const std::byte*>(msg.payload.data());
   writer_->write(out);
   part_bytes_ += msg.payload.size();
+  // Lifetime total — monotonic across part rotation (OpenPart resets part_bytes_
+  // but never this), so a poller can distinguish active writing from a stall.
+  bytes_written_.fetch_add(msg.payload.size(), std::memory_order_relaxed);
 }
 
 void McapWriter::Close() {

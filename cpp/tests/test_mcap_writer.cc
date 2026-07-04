@@ -89,3 +89,43 @@ TEST(McapWriter, RotatesByBytesIntoNumberedParts) {
   std::remove(p0.c_str());
   std::remove(p1.c_str());
 }
+
+TEST(McapWriter, BytesWrittenAdvancesByPayloadSize) {
+  const std::string path = TempPath("visio_schema_mcap_bytes.mcap");
+  std::remove(path.c_str());
+  const Channel ch = MakeChannel(kFirstDynamic, "/dev/imu/0/raw");
+  McapWriter w(path);
+  EXPECT_EQ(w.bytes_written(), 0u);
+  w.Write(ch, Data(kFirstDynamic, "hello"));       // 5 bytes
+  EXPECT_EQ(w.bytes_written(), 5u);
+  w.Write(ch, Data(kFirstDynamic, "world!"));       // +6 bytes
+  EXPECT_EQ(w.bytes_written(), 11u);
+  w.Close();
+  EXPECT_EQ(w.bytes_written(), 11u);                // Close doesn't reset it
+  std::remove(path.c_str());
+}
+
+TEST(McapWriter, BytesWrittenIsMonotonicAcrossRotation) {
+  const std::string path = TempPath("visio_schema_mcap_bytes_rot.mcap");
+  const std::string p0 = TempPath("visio_schema_mcap_bytes_rot_0000.mcap");
+  const std::string p1 = TempPath("visio_schema_mcap_bytes_rot_0001.mcap");
+  std::remove(p0.c_str());
+  std::remove(p1.c_str());
+  const Channel ch = MakeChannel(kFirstDynamic, "/dev/imu/0/raw");
+  {
+    // max_bytes=16 forces a roll partway through; bytes_written() must keep
+    // climbing across the part boundary even though part_bytes_ resets.
+    McapWriter w(path, /*max_bytes=*/16);
+    std::uint64_t last = 0;
+    for (int i = 0; i < 4; ++i) {
+      w.Write(ch, Data(kFirstDynamic, std::string(10, 'a')));  // +10 each
+      EXPECT_GT(w.bytes_written(), last);                       // strictly increasing
+      last = w.bytes_written();
+    }
+    EXPECT_EQ(w.bytes_written(), 40u);   // 4 × 10, no reset at the roll
+    w.Close();
+  }
+  ASSERT_TRUE(fs::exists(p1));           // confirm a rotation actually happened
+  std::remove(p0.c_str());
+  std::remove(p1.c_str());
+}
