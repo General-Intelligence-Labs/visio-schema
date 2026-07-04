@@ -45,7 +45,7 @@ from google.protobuf.json_format import MessageToDict
 from google.protobuf.message import DecodeError
 
 from visio_schema import ChannelRegistry, command_message
-from visio_schema.transport import serial_endpoint
+from visio_schema.transport import extract_frames, frame_bytes, serial_endpoint
 from visio_schema.transport.framed_fd import FramedFdEndpoint
 from visio_schema.v1.control import command_pb2, command_result_pb2
 
@@ -81,14 +81,104 @@ class _CommandResultSink:
         pass
 
 
+# CDC-ACM is a virtual UART, so the baud is ignored by the device — but pyserial (the
+# Windows read path) requires one.
+_WIN_BAUD = 921600
+
+
+class _WinEndpoint:
+    """A bidirectional endpoint for Windows, where the POSIX-fd transport
+    (:class:`FramedFdEndpoint`: ``os.pipe`` self-pipe + ``select``/``os.read`` on a raw fd,
+    and ``os.O_NOCTTY``) doesn't apply. A daemon thread reads + COBS-de-frames from a
+    blocking, timeout-bounded byte source; ``send`` frames + writes on the caller's thread.
+    Matches the Endpoint contract BridgeManager uses: ``start(on_inbound, on_closed)`` /
+    ``send(msg)`` / ``stop()``. ``read_chunk(n)`` returns bytes (``b""`` = idle tick to
+    re-check stop, ``None`` = EOF/link dropped)."""
+
+    def __init__(self, read_chunk, write_bytes, close) -> None:
+        self._read_chunk = read_chunk
+        self._write_bytes = write_bytes
+        self._close = close
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self, on_inbound, on_closed) -> None:
+        self._thread = threading.Thread(
+            target=self._run, args=(on_inbound, on_closed),
+            name="visio-win-ep", daemon=True)
+        self._thread.start()
+
+    def _run(self, on_inbound, on_closed) -> None:
+        rx = bytearray()
+        try:
+            while not self._stop.is_set():
+                chunk = self._read_chunk(4096)
+                if chunk is None:       # EOF: link dropped / device unplugged
+                    break
+                if not chunk:           # timeout tick
+                    continue
+                rx.extend(chunk)
+                for msg in extract_frames(rx):
+                    on_inbound(msg, self)
+        finally:
+            if on_closed is not None:
+                on_closed()
+
+    def send(self, msg) -> None:
+        self._write_bytes(frame_bytes(msg))
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1.5)
+        self._close()
+
+
 def _open_endpoint(dto: dict):
     """Open a bidirectional `Endpoint` to a discovered device — the same connection
     both streams to Foxglove and carries config commands (the bus is single-reader, so
-    there is exactly one). USB uses the (native-preferring) serial endpoint; sta/ap dial
-    a TCP socket (the same `dial_tcp` the read-only `read_tcp` uses) and wrap its fd."""
+    there is exactly one). On POSIX, USB uses the (native-preferring) serial endpoint and
+    sta/ap wrap a `dial_tcp` fd in a `FramedFdEndpoint`. On Windows those POSIX-fd paths
+    don't work (no select()-able serial fd, `os.read` can't read a socket handle), so we
+    read via pyserial / selectors+recv through a :class:`_WinEndpoint`."""
     if dto["transport"] == USB:
+        if sys.platform == "win32":
+            import serial
+            ser = serial.Serial(dto["device"], _WIN_BAUD, timeout=0.2)
+
+            def _read(n):
+                try:
+                    return ser.read(n)          # b"" on timeout, bytes on data
+                except serial.SerialException:
+                    return None                 # device gone
+            return _WinEndpoint(_read, ser.write, ser.close)
         return serial_endpoint(dto["device"])
-    return FramedFdEndpoint(dial_tcp(dto["host"], dto["port"]).detach())   # adopts + owns the fd
+
+    sock = dial_tcp(dto["host"], dto["port"])
+    if sys.platform != "win32":
+        return FramedFdEndpoint(sock.detach())   # POSIX: adopts + owns the fd
+    # Windows: os.read can't read a socket handle; poll with selectors + recv (which do
+    # support sockets on Windows), mirroring the read-only _read_sock_win path.
+    import selectors
+    sock.setblocking(False)
+    sel = selectors.DefaultSelector()
+    sel.register(sock, selectors.EVENT_READ)
+
+    def _read(n):
+        if not sel.select(timeout=0.2):
+            return b""                           # idle tick
+        try:
+            chunk = sock.recv(n)
+        except BlockingIOError:
+            return b""
+        except OSError:
+            return None
+        return chunk or None                     # recv returns b"" on EOF
+
+    def _close():
+        sel.close()
+        sock.close()
+    return _WinEndpoint(_read, sock.sendall, _close)
 
 
 def _md(m) -> dict:

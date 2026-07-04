@@ -624,6 +624,38 @@ def test_result_to_dict_all_payloads() -> None:
     assert s._result_to_dict(r4) == {"ok": False, "command_id": 4, "error": "boom"}
 
 
+def test_win_endpoint_deframes_and_sends() -> None:
+    # The Windows endpoint's platform wiring (pyserial / socket) is build-validated only,
+    # but its read-loop de-framing + send framing are cross-platform and tested here.
+    from visio_schema.transport import frame_bytes
+    s, vd = _serve(), _vd()
+
+    m_in = vd.Message(stream_id=7, payload=b"hello", seq=1)
+    m_in.timestamp.FromNanoseconds(1)
+    reads = [frame_bytes(m_in), b"", None]   # one frame, an idle tick, then EOF
+
+    def read_chunk(_n):
+        return reads.pop(0) if reads else None
+
+    sent: list = []
+    closed: list = []
+    got: list = []
+    ready = threading.Event()
+
+    ep = s._WinEndpoint(read_chunk, sent.append, lambda: closed.append(True))
+    ep.start(lambda msg, _e: (got.append(msg), ready.set()), None)
+    assert ready.wait(2)
+    assert got[0].stream_id == 7 and got[0].payload == b"hello"
+
+    m_out = vd.Message(stream_id=4, payload=b"cmd", seq=2)
+    m_out.timestamp.FromNanoseconds(2)
+    ep.send(m_out)
+    assert sent == [frame_bytes(m_out)]      # send frames + writes
+
+    ep.stop()
+    assert closed == [True]                   # stop closes the underlying stream
+
+
 # --------------------------------------------------------------------------- #
 # FoxgloveSink.reset() — real channel-close behavior (fake foxglove module)     #
 # --------------------------------------------------------------------------- #
