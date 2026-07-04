@@ -109,10 +109,14 @@ skip = "*-musllinux*"
 # half is still tested natively; both halves are still built.
 test-skip = "*_universal2:x86_64"
 build-frontend = "build"
-test-requires = ["pytest>=8", "protobuf>=5.26", "cobs>=1.2", "mcap>=1.1"]
+test-requires = ["pytest>=8", "pytest-timeout>=2.3", "protobuf>=5.26", "cobs>=1.2", "mcap>=1.1"]
 # Run the in-wheel suite native-on, then forced onto the pure-Python fallback, so
 # both readers are exercised against the installed wheel.
-test-command = "pytest {package}/tests -q && VISIO_NO_NATIVE=1 pytest {package}/tests -q"
+# --timeout is a hard guard well above any real test time: it turns a platform-specific
+# hang (e.g. a blocked socket/native read that never sees EOF) into a fast failure that
+# dumps EVERY thread's stack (method=thread fires even when the main thread is stuck in
+# C) — naming the culprit instead of silently burning the 6 h job cap.
+test-command = "pytest {package}/tests -q --timeout=120 --timeout-method=thread && VISIO_NO_NATIVE=1 pytest {package}/tests -q --timeout=120 --timeout-method=thread"
 
 [tool.cibuildwheel.linux]
 archs = ["x86_64"]                       # the host fleet

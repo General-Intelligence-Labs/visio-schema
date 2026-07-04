@@ -570,7 +570,14 @@ def test_discovery_stop_joins_serial_thread(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "serial", fake_serial)
     monkeypatch.setitem(sys.modules, "serial.tools", fake_tools)
 
-    svc.start()                          # zeroconf absent → mDNS degrades cleanly
+    # This test is about the serial-poll thread's start/join, NOT mDNS. Stub out
+    # _start_mdns so start() never constructs a real Zeroconf: zeroconf IS installed
+    # (it's a base dep), and binding real multicast on a locked-down CI runner (e.g.
+    # GitHub's macOS hosts) can block indefinitely in Zeroconf()/close() — which has
+    # no join timeout — hanging the whole wheel-test job. Keep the unit hermetic.
+    monkeypatch.setattr(svc, "_start_mdns", lambda: None)
+
+    svc.start()
     assert svc._serial_thread.is_alive()
     svc.stop()
     assert not svc._serial_thread.is_alive()
