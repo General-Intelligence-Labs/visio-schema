@@ -3,7 +3,7 @@
 // list over SSE (/api/devices), and connect/disconnect/status/viewer JSON endpoints.
 
 const state = { devices: [], connectedId: null, urls: null, pollTimer: null,
-                status: { state: "idle" } };
+                stateTimer: null, status: { state: "idle" } };
 
 const $ = (id) => document.getElementById(id);
 
@@ -139,10 +139,12 @@ async function refreshStatus() {
 
 function startPolling() {
   stopPolling();
-  state.pollTimer = setInterval(refreshStatus, 1000);
+  state.pollTimer = setInterval(refreshStatus, 1000);   // stream liveness (passive)
+  state.stateTimer = setInterval(pollState, 4000);      // DeviceState header (pull-only)
 }
 function stopPolling() {
   if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
+  if (state.stateTimer) { clearInterval(state.stateTimer); state.stateTimer = null; }
 }
 
 // ---- wiring --------------------------------------------------------------- //
@@ -204,7 +206,7 @@ async function cfgPost(url, body, msgEl, okKey) {
     if (good) setMsg(msgEl, "ok", okKey || "cfgDone");
     else setErr(msgEl, data.error || tr("cfgConnErr"));
   }
-  if (good && data.state) fillState(data.state);
+  if (good && data.state) renderStateHeader(data.state);   // header only — don't clobber edits
   return { ok: good, data };
 }
 
@@ -212,7 +214,9 @@ function resetConfigMessages() {
   document.querySelectorAll(".cfg-msg").forEach((el) => setMsg(el, "", null));
 }
 
-function fillState(st) {
+// The read-only "Current settings" header. Safe to call on every poll — it never touches
+// the editable fields, so a background refresh can't clobber what the operator is typing.
+function renderStateHeader(st) {
   if (!st) return;
   // DeviceState.WifiState enum: 0 DISABLED, 1 STA (connected), 2 AP_FALLBACK.
   const wifi = st.wifi_state === 1
@@ -234,6 +238,11 @@ function fillState(st) {
     const dd = document.createElement("dd"); dd.textContent = v;
     dl.append(dt, dd);
   }
+}
+
+// Pre-fill the EDITABLE fields — only on connect and right after a save, never on the poll.
+function prefillForms(st) {
+  if (!st) return;
   if (st.video_bitrate_kbps) $("cfg-bitrate-kbps").value = String(st.video_bitrate_kbps);
   $("cfg-meta-task").value = st.recording_meta_task || "";
   $("cfg-meta-location").value = st.recording_meta_location || "";
@@ -241,12 +250,25 @@ function fillState(st) {
   $("cfg-meta-message").value = st.recording_meta_message || "";
 }
 
+function fillState(st) { renderStateHeader(st); prefillForms(st); }
+
 async function loadConfigState() {
   const { data } = await postJSON("/api/config/state", {});
   if (data && data.state) fillState(data.state);
 }
 
-$("cfg-refresh").onclick = loadConfigState;
+// DeviceState is pull-only (no periodic stream), so poll GetState to keep the header live —
+// header only, so the form fields stay editable. Guarded so slow replies don't stack.
+let _stateInFlight = false;
+async function pollState() {
+  if (_stateInFlight) return;
+  _stateInFlight = true;
+  try {
+    const { data } = await postJSON("/api/config/state", {});
+    if (data && data.state) renderStateHeader(data.state);
+  } catch (e) { /* transient — the next tick retries */ }
+  finally { _stateInFlight = false; }
+}
 
 // Wi-Fi networks are scanned on THIS computer (host-side), server sorts them strongest
 // first. There's no manual scan button: the list refreshes automatically when the operator

@@ -39,7 +39,7 @@ Every release is also attached to the [GitHub releases page](https://github.com/
 (sdist + wheels), so you can pin an exact artifact URL if you need to install without PyPI:
 
 ```bash
-pip install https://github.com/General-Intelligence-Labs/visio-schema/releases/download/v0.3.1/visio_schema-0.3.1.tar.gz
+pip install https://github.com/General-Intelligence-Labs/visio-schema/releases/download/v0.3.2/visio_schema-0.3.2.tar.gz
 ```
 
 The package installs the **`visio-display`** command (also runnable as
@@ -57,7 +57,7 @@ To pin an unreleased commit or a tag directly (no PyPI), a `git+…` install wor
 ship the generated bindings, so it needs no codegen toolchain:
 
 ```bash
-pip install "visio-schema @ git+https://github.com/General-Intelligence-Labs/visio-schema@v0.3.1#subdirectory=python"
+pip install "visio-schema @ git+https://github.com/General-Intelligence-Labs/visio-schema@v0.3.2#subdirectory=python"
 ```
 
 A plain `git+…` install does not initialize submodules, so the native reader is skipped and you get
