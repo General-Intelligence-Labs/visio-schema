@@ -96,6 +96,7 @@ async function connect(id) {
   startPolling();
   resetConfigMessages();
   loadConfigState();      // populate the current-state header + pre-fill the forms
+  scanWifi(true);         // pre-scan host Wi-Fi so the dropdown has networks on first open
 }
 
 async function disconnect() {
@@ -247,28 +248,45 @@ async function loadConfigState() {
 
 $("cfg-refresh").onclick = loadConfigState;
 
-$("cfg-wifi-scan").onclick = async () => {
+// Wi-Fi networks are scanned on THIS computer (host-side), server sorts them strongest
+// first. There's no manual scan button: the list refreshes automatically when the operator
+// opens the dropdown (debounced) and once on connect so the first open already has data.
+let _wifiScanning = false;
+let _wifiScanAt = 0;
+async function scanWifi(force) {
+  if (_wifiScanning) return;
+  if (!force && Date.now() - _wifiScanAt < 2000) return;   // already fresh
+  _wifiScanning = true;
   const msg = $("cfg-wifi-msg");
-  setMsg(msg, "busy", "cfgBusy");
-  const { ok, data } = await postJSON("/api/config/wifi/scan", {});
   const sel = $("cfg-wifi-ssid");
-  sel.textContent = "";
-  const first = document.createElement("option");
-  first.value = ""; first.textContent = tr("cfgPickNet"); sel.append(first);
-  const nets = (ok && data.ok && data.scan) ? data.scan.slice() : [];
-  if (!nets.length) {
-    setErr(msg, (data && data.error) || tr("cfgNoNets"));
-    return;
+  setMsg(msg, "busy", "cfgScanning");
+  try {
+    const { ok, data } = await postJSON("/api/config/wifi/scan", {});
+    const keep = sel.value;                     // preserve any current pick across a refresh
+    sel.textContent = "";
+    const first = document.createElement("option");
+    first.value = ""; first.textContent = tr("cfgPickNet"); sel.append(first);
+    const nets = (ok && data.ok && data.scan) ? data.scan : [];
+    if (!nets.length) { setErr(msg, (data && data.error) || tr("cfgNoNets")); return; }
+    for (const n of nets) {
+      const o = document.createElement("option");
+      o.value = n.ssid;
+      o.textContent = `${n.ssid} — ${n.security || "OPEN"} · ${n.signal}%`;
+      sel.append(o);
+    }
+    if (keep) sel.value = keep;
+    setMsg(msg, "", null);
+  } catch (e) {
+    setErr(msg, tr("cfgConnErr"));
+  } finally {
+    _wifiScanning = false;
+    _wifiScanAt = Date.now();
   }
-  nets.sort((a, b) => (b.rssi || -999) - (a.rssi || -999));
-  for (const n of nets) {
-    const o = document.createElement("option");
-    o.value = n.ssid;
-    o.textContent = `${n.ssid} (${n.security || "?"}, ${n.rssi} dBm)`;
-    sel.append(o);
-  }
-  setMsg(msg, "", null);
-};
+}
+// auto-scan when the dropdown is opened (mousedown precedes the native popup; focus covers
+// keyboard) — the list may show the previous scan this open and the fresh one on the next.
+$("cfg-wifi-ssid").addEventListener("mousedown", () => scanWifi(false));
+$("cfg-wifi-ssid").addEventListener("focus", () => scanWifi(false));
 
 $("cfg-wifi-ssid").onchange = () => {
   if ($("cfg-wifi-ssid").value) $("cfg-wifi-ssid-manual").value = $("cfg-wifi-ssid").value;

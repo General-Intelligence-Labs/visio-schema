@@ -656,6 +656,48 @@ def test_win_endpoint_deframes_and_sends() -> None:
     assert closed == [True]                   # stop closes the underlying stream
 
 
+def test_scan_linux_parses_nmcli(monkeypatch) -> None:
+    s = _serve()
+    sample = (
+        "GILABS-x:100:\n"          # open network (empty SECURITY)
+        "TP\\:LINK:80:WPA2\n"      # ':' inside the SSID, nmcli-escaped as '\:'
+        ":90:WPA2\n"               # hidden SSID -> skipped
+        "TP\\:LINK:60:WPA2\n"      # duplicate, weaker -> dropped
+        "Home:70:WPA1 WPA2\n"
+    )
+    monkeypatch.setattr(s.subprocess, "run",
+                        lambda *a, **k: types.SimpleNamespace(stdout=sample, returncode=0))
+    nets = s._scan_linux()
+    assert [n["ssid"] for n in nets] == ["GILABS-x", "TP:LINK", "Home"]   # deduped, strongest-first
+    assert nets[0] == {"ssid": "GILABS-x", "signal": 100, "security": "OPEN"}
+    assert nets[1] == {"ssid": "TP:LINK", "signal": 80, "security": "WPA2"}
+
+
+def test_config_wifi_scan_route_is_host_side(monkeypatch) -> None:
+    s = _serve()
+    # the route scans the HOST, not the device — no bridge/send involved
+    monkeypatch.setattr(s, "_scan_host_wifi",
+                        lambda: [{"ssid": "Net", "signal": 90, "security": "WPA2"}])
+    app = s._build_app(_StubBridge(), _StubDiscovery())
+    resp = _post(s._config_wifi_scan, app, {})
+    assert resp.status == 200
+    body = json.loads(resp.body)
+    assert body["ok"] is True and body["scan"][0]["ssid"] == "Net"
+
+
+def test_config_wifi_scan_route_reports_unavailable(monkeypatch) -> None:
+    s = _serve()
+
+    def boom():
+        raise FileNotFoundError("nmcli")
+
+    monkeypatch.setattr(s, "_scan_host_wifi", boom)
+    app = s._build_app(_StubBridge(), _StubDiscovery())
+    resp = _post(s._config_wifi_scan, app, {})
+    assert resp.status == 502
+    assert "unavailable" in json.loads(resp.body)["error"]
+
+
 # --------------------------------------------------------------------------- #
 # FoxgloveSink.reset() — real channel-close behavior (fake foxglove module)     #
 # --------------------------------------------------------------------------- #
