@@ -40,15 +40,15 @@ Python, no setup, no code — the page's **Quit** button stops it.
 
 ## Python library
 
-Install a released build straight from the GitHub release with pip — grab the newest sdist URL from
-the [releases page](https://github.com/General-Intelligence-Labs/visio-schema/releases):
+Install from [PyPI](https://pypi.org/project/visio-schema/) with pip:
 
 ```bash
-pip install https://github.com/General-Intelligence-Labs/visio-schema/releases/download/v0.3.0/visio_schema-0.3.0.tar.gz
+pip install visio-schema
 ```
 
 This includes MCAP read/write (`read_mcap` / `McapWriter`), the `visio-display` CLI viewer (next
-section), and an optional native reader for higher throughput (identical pure-Python fallback
+section), and an optional native reader for higher throughput (prebuilt wheels for Linux
+`manylinux_2_28` x86_64 and macOS `universal2`, CPython 3.10–3.13; identical pure-Python fallback
 otherwise). For a development checkout building the bindings from source, see
 **[docs/install.md](docs/install.md)**.
 
