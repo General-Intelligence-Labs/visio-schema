@@ -4,6 +4,8 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
@@ -26,6 +28,61 @@ namespace {
   opts.compression = ::mcap::Compression::None;
   return opts;
 }
+
+// A drop-in for upstream mcap's FileWriter that opens the part file with
+// O_CLOEXEC. Upstream FileWriter uses fopen(path, "wb"), whose fd is NOT
+// close-on-exec, so it leaks into every child this process fork+execs — notably
+// the long-lived Wi-Fi AP daemons (hostapd/udhcpd/mdnsd) spawned via
+// posix_spawn. An inherited recording fd keeps /mnt/sdcard busy for that
+// daemon's entire lifetime, so a subsequent `umount` returns EBUSY and the
+// "format SD card" command aborts with "still mounted". O_CLOEXEC is the
+// race-free fix (marking the fd atomically at open); closing fds in the child
+// after posix_spawn is not, in a multithreaded process. Semantics otherwise
+// mirror FileWriter exactly (buffered fwrite via fdopen, fclose on end()).
+class CloexecFileWriter final : public ::mcap::IWritable {
+ public:
+  ~CloexecFileWriter() override { end(); }
+
+  ::mcap::Status open(const std::string& filename) {
+    end();
+    const int fd =
+        ::open(filename.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (fd < 0) {
+      return ::mcap::Status(::mcap::StatusCode::OpenFailed,
+                            "failed to open file \"" + filename +
+                                "\" for writing: " + std::strerror(errno));
+    }
+    file_ = ::fdopen(fd, "wb");
+    if (!file_) {
+      const std::string msg = "fdopen failed for \"" + filename +
+                              "\": " + std::strerror(errno);
+      ::close(fd);
+      return ::mcap::Status(::mcap::StatusCode::OpenFailed, msg);
+    }
+    return ::mcap::StatusCode::Success;
+  }
+
+  void handleWrite(const std::byte* data, uint64_t size) override {
+    if (file_) {
+      std::fwrite(data, 1, size, file_);
+      size_ += size;
+    }
+  }
+
+  void end() override {
+    if (file_) {
+      std::fclose(file_);
+      file_ = nullptr;
+    }
+    size_ = 0;
+  }
+
+  uint64_t size() const override { return size_; }
+
+ private:
+  std::FILE* file_ = nullptr;
+  uint64_t size_ = 0;
+};
 
 // Insert "_NNNN" before the file extension: run.mcap -> run_0000.mcap.
 // 4-digit zero-pad: parts stay lexicographically ordered through 9999. (At 3
@@ -113,13 +170,22 @@ void McapWriter::OpenPart() {
   channel_ids_.clear();
   part_bytes_ = 0;
   part_start_ = std::chrono::steady_clock::now();
-  writer_ = std::make_unique<::mcap::McapWriter>();
   const std::string p = PartPath();
-  const ::mcap::Status status = writer_->open(p, MakeOptions());
+
+  // Own the fd (O_CLOEXEC) via our IWritable instead of upstream's fopen(),
+  // then hand it to the writer through the open(IWritable&) overload. See
+  // CloexecFileWriter for why (recording fds must not leak into forked Wi-Fi
+  // daemons). The writable is stored in file_ (declared before writer_) so it
+  // outlives the writer that holds a raw pointer to it.
+  auto fw = std::make_unique<CloexecFileWriter>();
+  const ::mcap::Status status = fw->open(p);
   if (!status.ok()) {
     throw std::runtime_error("McapWriter: cannot open " + p + ": " +
                              status.message);
   }
+  writer_ = std::make_unique<::mcap::McapWriter>();
+  writer_->open(*fw, MakeOptions());
+  file_ = std::move(fw);
 }
 
 bool McapWriter::ShouldRoll() const {
