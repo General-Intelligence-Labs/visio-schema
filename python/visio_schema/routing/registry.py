@@ -66,9 +66,11 @@ class ChannelRegistry:
         serial: str = "",
         boot_unix_seconds: int = 0,
         *,
+        equipment_type: str = "",
         channels: Iterable = (),
     ) -> None:
         self._device_name = device_name
+        self._equipment_type = equipment_type
         self._firmware_version = firmware_version
         self._hardware_revision = hardware_revision
         self._serial = serial
@@ -249,6 +251,7 @@ class ChannelRegistry:
         ids remapped), not by recombining them here."""
         return DeviceInfo(
             device_name=self._device_name,
+            equipment_type=self._equipment_type,
             channels=self.own_channels(),
             firmware_version=self._firmware_version,
             hardware_revision=self._hardware_revision,

@@ -127,7 +127,7 @@ TEST(GoldenVectors, DeviceInfo) {
   c.schema_name = kChSchema;
   // encoding + schema_encoding default to "protobuf"; schema left empty.
   std::vector<Channel> chans{c};
-  std::string di = ChannelRegistry::Encode(kDevice, kFirmware, "", "", 0, chans);
+  std::string di = ChannelRegistry::Encode(kDevice, "", kFirmware, "", "", 0, chans);
   EXPECT_EQ(Hex(di), Hex(vec["device_info"]));
 
   ChannelRegistry::DeviceView view;
@@ -148,7 +148,7 @@ TEST(GoldenVectors, DeviceInfoWithInlineSchema) {
   c.schema_name = kChSchema;
   c.schema = std::string("\x01\x02\x03", 3);  // non-empty bytes field
   std::vector<Channel> chans{c};
-  std::string di = ChannelRegistry::Encode(kDevice, kFirmware, "", "", 0, chans);
+  std::string di = ChannelRegistry::Encode(kDevice, "", kFirmware, "", "", 0, chans);
   EXPECT_EQ(Hex(di), Hex(vec["device_info_with_schema"]));
 
   ChannelRegistry::DeviceView view;

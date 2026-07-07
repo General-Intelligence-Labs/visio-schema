@@ -32,7 +32,7 @@ Channel MakeChannel(std::uint32_t id, const std::string& topic) {
 Message Announce(std::uint32_t id, const std::string& topic) {
   Message m;
   m.stream_id = kDeviceInfo;
-  m.payload = ChannelRegistry::Encode("dev", "", "", "", 0, {MakeChannel(id, topic)});
+  m.payload = ChannelRegistry::Encode("dev", "", "", "", "", 0, {MakeChannel(id, topic)});
   return m;
 }
 
@@ -116,10 +116,12 @@ TEST(ChannelRegistry, AcceptPassesOtherControl) {
 TEST(ChannelRegistry, EncodeDecodeRoundTrip) {
   std::vector<Channel> chans = {MakeChannel(kFirstDynamic, "/g/imus/0/raw")};
   chans[0].schema = std::string(8, '\x01');
-  std::string payload = ChannelRegistry::Encode("dev", "fw", "hw", "sn", 42, chans);
+  std::string payload =
+      ChannelRegistry::Encode("dev", "glove_left", "fw", "hw", "sn", 42, chans);
   ChannelRegistry::DeviceView view;
   ASSERT_TRUE(ChannelRegistry::Decode(payload, &view));
   EXPECT_EQ(view.device_name, "dev");
+  EXPECT_EQ(view.equipment_type, "glove_left");  // role round-trips (Decode)
   EXPECT_EQ(view.firmware_version, "fw");        // identity round-trips (Decode)
   EXPECT_EQ(view.hardware_revision, "hw");
   EXPECT_EQ(view.serial, "sn");

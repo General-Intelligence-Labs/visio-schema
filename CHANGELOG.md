@@ -4,6 +4,42 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.4.1 — 2026-07-07
+
+### Added `DeviceInfo.equipment_type` (wire-compatible)
+
+- **New field `DeviceInfo.equipment_type` (tag 7, `string`).** Carries the device's
+  logical role — `ego`, `glove_left`, `glove_right`, `gripper_left`, `gripper_right` —
+  the leading topic segment for its channels. This was formerly implicit in
+  `device_name`, but the Visio firmware repurposed `device_name` to the per-unit
+  `GILABS-<code8>` label (the addressable name the app shows / targets via
+  `Command.target_device` + OTA), leaving no explicit field for the role. `equipment_type`
+  restores it: hubs forward it end-to-end alongside the other identity metadata.
+- Threaded through the C++ `ChannelRegistry` (`DeviceView`, `Encode`/`Decode`,
+  `SetMetadata`, `SelfInfo`) and the Python registry (`ChannelRegistry(... , equipment_type=...)`,
+  `self_info()`). Empty by default, so a device that omits it is unchanged on the wire.
+
+New optional field with a new tag number — wire-compatible in both directions, so a
+**PATCH** bump per [`versioning.md`](docs/protocol/versioning.md). Old peers ignore the
+field; new peers read empty when it is absent.
+
+## 0.4.0 — 2026-07-07
+
+### Removed cross-device exposure-grid sync (breaking)
+
+- **Removed `service/exposure_sync/ExposureGrid`** and its `.proto`. Cross-device
+  exposure alignment no longer rides a published/relayed grid; each device now follows a
+  statically-configured phase on its heartbeat-synced clock independently, so no wire
+  message is needed. (Added in 0.3.0; had no production users.)
+- **Reserved `CONTROL_STREAM_EXPOSURE_SYNC = 6`** (number + name) in `wire.ControlStream`,
+  mirroring the retired-`TIMESYNC` precedent. `FIRST_DYNAMIC` and all other ids are
+  unchanged. `EXPOSURE_SYNC` is dropped from the `visio_schema.wire.control` facade and
+  from `LINK_LOCAL_CONTROL`.
+
+Deleting the `ExposureGrid` message trips `buf breaking` (message removal); pre-1.0 that
+is a MINOR bump per [`versioning.md`](docs/protocol/versioning.md). Old peers never emitted
+the stream, so nothing on the wire changes for them.
+
 ## 0.3.2 — 2026-07-04
 
 ### Launcher UX (no wire-contract change)

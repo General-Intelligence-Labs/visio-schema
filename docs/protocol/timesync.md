@@ -82,15 +82,17 @@ own recent sends, the initiator computes (all in **its own** clock except
 
 ```
 rtt    = now - echo_tx_mono_ns
-offset = echo_rx_mono_ns - (echo_tx_mono_ns + rtt / 2)
+offset = (echo_tx_mono_ns + rtt / 2) - echo_rx_mono_ns
 ```
 
 - `rtt` is the full round trip (the responder replies immediately, so its
   processing time is folded into the RTT — kept small by the immediate
   reply).
-- `offset` is the responder's clock minus ours at the RTT **midpoint** —
-  the classic two-timestamp NTP estimate assuming a symmetric path. Add it
-  to a timestamp from that peer to convert it into our clock.
+- `offset` is **ours minus the responder's** clock at the RTT **midpoint** —
+  the classic two-timestamp NTP estimate assuming a symmetric path. `Add` it
+  to a timestamp from that peer to convert it into our clock (§4): a peer
+  timestamp `T` maps to `T + offset = T + (ours - peer) = ours`. (The reverse
+  sign, `peer - ours`, would move the rewrite the wrong direction.)
 
 ### Sliding-window outlier filter
 

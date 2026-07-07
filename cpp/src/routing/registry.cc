@@ -31,6 +31,7 @@ char* OrNull(const std::string& s) {
 // ── DeviceInfo encode / decode (nanopb FT_POINTER) ──────────────────────────
 
 std::string ChannelRegistry::Encode(const std::string& device_name,
+                                    const std::string& equipment_type,
                                     const std::string& firmware_version,
                                     const std::string& hardware_revision,
                                     const std::string& serial,
@@ -66,6 +67,7 @@ std::string ChannelRegistry::Encode(const std::string& device_name,
   visio_schema_v1_service_device_info_DeviceInfo di =
       visio_schema_v1_service_device_info_DeviceInfo_init_zero;
   di.device_name = const_cast<char*>(device_name.c_str());
+  di.equipment_type = OrNull(equipment_type);
   di.firmware_version = OrNull(firmware_version);
   di.hardware_revision = OrNull(hardware_revision);
   di.serial = OrNull(serial);
@@ -98,6 +100,7 @@ bool ChannelRegistry::Decode(const std::string& payload, DeviceView* out) {
       &is, visio_schema_v1_service_device_info_DeviceInfo_fields, &di);
   if (ok) {
     if (di.device_name) out->device_name = di.device_name;
+    if (di.equipment_type) out->equipment_type = di.equipment_type;
     if (di.firmware_version) out->firmware_version = di.firmware_version;
     if (di.hardware_revision) out->hardware_revision = di.hardware_revision;
     if (di.serial) out->serial = di.serial;
@@ -256,8 +259,8 @@ Routed ChannelRegistry::Accept(Message msg) {
 std::string ChannelRegistry::SelfInfo() const {
   // Own outputs only; learned channels propagate by the bus forwarding each
   // leaf's announce (with the ids remapped), not by recombining them here.
-  return Encode(device_name_, firmware_version_, hardware_revision_, serial_,
-                boot_unix_seconds_, OwnChannels());
+  return Encode(device_name_, equipment_type_, firmware_version_,
+                hardware_revision_, serial_, boot_unix_seconds_, OwnChannels());
 }
 
 void ChannelRegistry::OnAnnounce(const std::string& payload) {
