@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <termios.h>
 #include <unistd.h>
@@ -102,7 +103,7 @@ int OpenSerialFd(const char* path) {
   return fd;
 }
 
-int DialTcpFd(const char* host, std::uint16_t port) {
+int DialTcpFd(const char* host, std::uint16_t port, int timeout_ms) {
   sockaddr_in addr{};
   addr.sin_family = AF_INET;
   addr.sin_port = htons(port);
@@ -112,17 +113,33 @@ int DialTcpFd(const char* host, std::uint16_t port) {
   if (fd < 0) return -1;
   SetCloexec(fd);
   SetNoSigpipe(fd);
-  if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
-    ::close(fd);
-    return -1;
+
+  if (timeout_ms > 0) {
+    // Bounded connect: go non-blocking first, then poll(POLLOUT) up to timeout_ms —
+    // a dropped SYN (peer not yet accepting) fails fast instead of blocking the
+    // caller for the kernel SYN-retry window (~127 s).
+    if (!SetNonblocking(fd)) { ::close(fd); return -1; }
+    if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+      if (errno != EINPROGRESS) { ::close(fd); return -1; }
+      pollfd pfd{fd, POLLOUT, 0};
+      if (::poll(&pfd, 1, timeout_ms) <= 0) { ::close(fd); return -1; }
+      int err = 0;
+      socklen_t len = sizeof(err);
+      if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) != 0 || err != 0) {
+        ::close(fd);
+        return -1;
+      }
+    }
+  } else {
+    if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+      ::close(fd);
+      return -1;
+    }
+    if (!SetNonblocking(fd)) { ::close(fd); return -1; }
   }
   int one = 1;
   ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
   ::setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &one, sizeof(one));
-  if (!SetNonblocking(fd)) {
-    ::close(fd);
-    return -1;
-  }
   return fd;
 }
 
