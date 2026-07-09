@@ -90,6 +90,7 @@ from visio_schema import (
     make_channel,
     read_mcap,
 )
+from visio_schema.foxglove.CompressedImage_pb2 import CompressedImage
 from visio_schema.foxglove.CompressedVideo_pb2 import CompressedVideo
 from visio_schema.foxglove.FrameTransform_pb2 import FrameTransform
 
@@ -102,13 +103,23 @@ from visio_schema.v1.sensor.system_health_pb2 import SystemHealth
 # Payload schema names dispatched on (== the protobuf full names on the wire).
 _QUAT_SCHEMA = "visio_schema.v1.ros.geometry_msgs.Quaternion"
 _VIDEO_SCHEMA = "foxglove.CompressedVideo"
+_IMAGE_SCHEMA = "foxglove.CompressedImage"
 _IMU_RAW_SCHEMA = "visio_schema.v1.sensor.ImuRaw"
 _HEALTH_SCHEMA = "visio_schema.v1.sensor.SystemHealth"
+# CompressedVideo.format (lowercased) -> PyAV decoder name. Shared by RerunSink (renders
+# to rr.Image) and VideoDecodeSink (transcodes to JPEG for HEVC-less browsers).
+_AV_CODEC: dict[str, str] = {
+    "h265": "hevc", "hevc": "hevc", "h264": "h264", "avc": "h264", "av1": "av1",
+}
 # Starter Foxglove layout shipped beside this script (panels mirror the Rerun view).
 _LAYOUT_PATH = Path(__file__).resolve().parent / "ego_layout.json"
 # Synthetic stream id for the derived /tf channel — outside the wire id space so
 # it can't collide with an announced stream.
 _TF_STREAM_ID = 0x7F000001
+# Base for VideoDecodeSink's host-decoded JPEG channels: one per source video stream,
+# at base + the source's stream_id. A reserved high range distinct from _TF_STREAM_ID
+# and the bitrate base so it can't collide with an announced id.
+_JPEG_STREAM_BASE = 0x7F020000
 # The device's live-preview TCP listener port — matches the `_umi-protocol._tcp`
 # mDNS service and `port=9000` in the ego/glove .conf. Used when --tcp omits one.
 _DEFAULT_TCP_PORT = 9000
@@ -534,6 +545,97 @@ class FoxgloveSink:
         self._server.stop()
 
 
+class VideoDecodeSink:
+    """Wraps a downstream sink so H.265 is viewable in browsers that can't decode HEVC.
+
+    Foxglove renders ``foxglove.CompressedVideo`` through the browser's WebCodecs, which on
+    Chrome/Edge has no software HEVC path. This decodes each frame with PyAV (software) and
+    forwards a ``foxglove.CompressedImage`` (JPEG) on the same topic, which Foxglove decodes
+    everywhere. Non-video messages pass through. The launcher inserts it in front of its
+    ``FoxgloveSink`` only for sessions whose browser reported no HEVC support. A decoder is kept
+    per source stream — Annex-B parameter sets ride in-band, so the context must persist."""
+
+    def __init__(self, downstream: Sink) -> None:
+        import av  # lazy: only this path needs ffmpeg, and it's excluded from lean bundles
+        self._av = av
+        self._down = downstream
+        self._decoders: dict[int, object] = {}    # source stream_id -> av decoder context
+        self._channels: dict[int, Channel] = {}   # source stream_id -> derived JPEG Channel
+        self._unsupported: set[int] = set()        # streams whose codec we can't decode
+        self._failing: set[int] = set()            # streams currently dropping (warned once)
+
+    def write(self, msg: Message, ch: Channel) -> None:
+        if ch.schema_name != _VIDEO_SCHEMA:
+            self._down.write(msg, ch)              # /tf, /stats/bitrate, control — untouched
+            return
+        cv = CompressedVideo()
+        try:
+            cv.ParseFromString(msg.payload)
+            dec = self._decoder_for(msg.stream_id, cv, ch.topic)
+            if dec is None:                        # codec we can't decode → let Foxglove try raw
+                self._down.write(msg, ch)
+                return
+            chan = self._channels[msg.stream_id]
+            for frame in dec.decode(self._av.Packet(cv.data)):
+                self._down.write(self._jpeg_message(cv, frame, msg), chan)
+        except Exception as exc:
+            # Video is a best-effort preview: a bad frame (partial NAL before the first IDR,
+            # corrupt payload, encode failure) must NEVER take down the bridge, which also
+            # carries IMU/TF/control on this thread. Drop it; warn once per stream so a
+            # persistent failure is visible without spamming warmup, and clear on recovery.
+            if msg.stream_id not in self._failing:
+                self._failing.add(msg.stream_id)
+                print(f"visio-display: {ch.topic}: dropping video frames ({exc})",
+                      file=sys.stderr)
+            return
+        self._failing.discard(msg.stream_id)       # a clean pass ⇒ recovered
+
+    def _decoder_for(self, stream_id: int, cv: CompressedVideo, topic: str):
+        """The cached PyAV decoder for a source stream, created on first sight along with its
+        derived JPEG channel. Returns ``None`` for a codec we can't decode (warned once)."""
+        dec = self._decoders.get(stream_id)
+        if dec is not None:
+            return dec
+        codec = _AV_CODEC.get(cv.format.lower())
+        if codec is None:
+            if stream_id not in self._unsupported:
+                self._unsupported.add(stream_id)
+                print(f"visio-display: {topic}: can't host-decode video format "
+                      f"{cv.format!r}; forwarding as-is", file=sys.stderr)
+            return None
+        dec = self._av.CodecContext.create(codec, "r")
+        self._decoders[stream_id] = dec
+        self._channels[stream_id] = make_channel(
+            topic, _IMAGE_SCHEMA, stream_id=_JPEG_STREAM_BASE + stream_id)
+        return dec
+
+    def _jpeg_message(self, cv: CompressedVideo, frame, msg: Message) -> Message:
+        ci = CompressedImage()
+        ci.timestamp.CopyFrom(cv.timestamp)
+        ci.frame_id = cv.frame_id
+        ci.format = "jpeg"
+        ci.data = self._encode_jpeg(frame)
+        out = Message(stream_id=_JPEG_STREAM_BASE + msg.stream_id,
+                      payload=ci.SerializeToString(), seq=msg.seq)
+        out.timestamp.CopyFrom(cv.timestamp)
+        return out
+
+    def _encode_jpeg(self, frame) -> bytes:
+        # mjpeg is intra-only, so one frame -> one standalone JPEG; a fresh (stateless) encoder
+        # per frame avoids flush bookkeeping and is cheap next to the HEVC decode.
+        enc = self._av.CodecContext.create("mjpeg", "w")
+        enc.width, enc.height = frame.width, frame.height
+        enc.pix_fmt = "yuvj420p"                    # mjpeg wants full-range YUV
+        packets = list(enc.encode(frame.reformat(format="yuvj420p")))
+        packets += list(enc.encode(None))
+        return b"".join(bytes(p) for p in packets)
+
+    def close(self) -> None:
+        # The wrapped FoxgloveSink is owned by BridgeManager (reset on switch, closed on
+        # shutdown) — never close it here. Our decoders free on GC when this sink is dropped.
+        pass
+
+
 class RerunSink:
     """Visualize Visio streams in a live Rerun viewer — a faithful port of
     an earlier Rerun renderer's rendering. Only the
@@ -559,9 +661,6 @@ class RerunSink:
         [100, 255, 180], [255, 100, 180], [180, 255, 100], [100, 180, 180],
         [200, 200, 100], [200, 100, 200], [100, 200, 200], [200, 200, 200],
     ]
-    _AV_CODEC: ClassVar[dict[str, str]] = {
-        "h265": "hevc", "hevc": "hevc", "h264": "h264", "avc": "h264", "av1": "av1",
-    }
 
     def __init__(self, memory_limit: str = "2GB") -> None:
         import av
@@ -612,7 +711,7 @@ class RerunSink:
         cv.ParseFromString(msg.payload)
         dec = self._decoders.get(ent)
         if dec is None:
-            codec = self._AV_CODEC.get(cv.format.lower())
+            codec = _AV_CODEC.get(cv.format.lower())
             if codec is None:
                 if ent not in self._unsupported:
                     self._unsupported.add(ent)
@@ -787,9 +886,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--baud", type=int, default=921600, help="serial baud (default 921600)")
     p.add_argument("--out", metavar="OUT.mcap", help="also record messages to an MCAP file")
     p.add_argument("--foxglove", action="store_true", help="serve live to Foxglove Studio")
-    p.add_argument("--port", type=int, default=8765, help="Foxglove WS port (default 8765)")
-    p.add_argument("--serve-port", type=int, default=8770,
-                   help="--serve only: launcher web-UI port (default 8770)")
+    p.add_argument("--port", type=int, default=8765,
+                   help="--foxglove only: Foxglove WS port (default 8765). --serve always "
+                        "auto-picks a free WS port.")
+    p.add_argument("--serve-port", type=int, default=0,
+                   help="--serve only: launcher web-UI port (default: auto-pick a free one)")
     p.add_argument("--viewer", choices=("desktop", "browser", "both"), default="both",
                    help="--serve only: which Foxglove to open on device select — the "
                         "desktop app (foxglove:// deep link, works offline), a browser tab "
@@ -812,7 +913,7 @@ def main(argv: list[str] | None = None) -> int:
         from visio_schema.display import serve
         serve.run_serve(
             serve_port=args.serve_port,
-            ws_port=args.port,
+            ws_port=0,   # launcher wires the ws:// URL itself → always auto-pick a free port
             viewer=args.viewer,
             baud=args.baud,
             bitrate=args.bitrate,

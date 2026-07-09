@@ -354,7 +354,7 @@ def test_serve_dispatches_to_run_serve(monkeypatch) -> None:
     assert vd.main(["--serve", "--serve-port", "9999", "--viewer", "browser"]) == 0
     assert captured["serve_port"] == 9999
     assert captured["viewer"] == "browser"
-    assert captured["ws_port"] == 8765        # reuses --port default
+    assert captured["ws_port"] == 0           # --serve always auto-picks a free WS port
 
 
 # --------------------------------------------------------------------------- #
@@ -889,9 +889,11 @@ def test_discovery_mdns_rebind_replaces_stale_address() -> None:
 class _StubBridge:
     def __init__(self):
         self.connected = None
+        self.decode = None
 
-    def connect(self, dto):
+    def connect(self, dto, decode=False):
         self.connected = dto
+        self.decode = decode
         return {"connected_id": dto["id"], "state": "connecting"}
 
     def disconnect(self):
@@ -940,6 +942,16 @@ def test_http_connect_known_id_calls_bridge() -> None:
     resp = _post(s._connect, app, {"id": "usb:/dev/a"})
     assert resp.status == 200
     assert bridge.connected == dto
+    assert bridge.decode is False       # absent flag → no host decode
+
+
+def test_http_connect_forwards_decode_flag() -> None:
+    s = _serve()
+    dto = {"id": "usb:/dev/a", "label": "A", "transport": "usb", "device": "/dev/a"}
+    bridge = _StubBridge()
+    app = s._build_app(bridge, _StubDiscovery(devices=[dto]))
+    _post(s._connect, app, {"id": "usb:/dev/a", "decode": True})
+    assert bridge.decode is True        # the page's HEVC-can't-decode signal reaches connect()
 
 
 def test_http_manual_empty_host_returns_400() -> None:
@@ -1072,3 +1084,142 @@ def test_run_bridge_derives_bitrate() -> None:
     vd.run_bridge(iter([_vid(0, 0), _vid(6 * S // 10, 1)]), [sink], derive_bitrate=True)
     topics = {c.topic for _, c in sink.writes}
     assert any(t.startswith("/stats/bitrate") for t in topics)
+
+
+# --------------------------------------------------------------------------- #
+# Free ports — the launcher always auto-picks, so startup never collides with a #
+# stale launcher (or anything else) on a fixed port.                            #
+# --------------------------------------------------------------------------- #
+def test_free_port_is_bindable() -> None:
+    s = _serve()
+    port = s._free_port("127.0.0.1")
+    assert port > 0
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as t:
+        t.bind(("127.0.0.1", port))    # the returned port must actually be free to bind
+
+
+def test_free_port_gives_distinct_ports() -> None:
+    s = _serve()
+    # A second request, while the first is held, must not hand back the same in-use port.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as held:
+        held.bind(("127.0.0.1", s._free_port("127.0.0.1")))
+        assert s._free_port("127.0.0.1") != held.getsockname()[1]
+
+
+# --------------------------------------------------------------------------- #
+# Host-side H.265 → JPEG decode (VideoDecodeSink) for HEVC-less browsers        #
+# --------------------------------------------------------------------------- #
+def test_bridge_manager_wraps_foxglove_when_decode(monkeypatch) -> None:
+    pytest.importorskip("av")   # decode=True builds a real VideoDecodeSink (imports av)
+    s = _serve()
+    captured: dict = {}
+    started = threading.Event()
+
+    def fake_run_bridge(source, sinks, **kw):
+        captured["sinks"] = sinks
+        started.set()
+
+    monkeypatch.setattr(s, "run_bridge", fake_run_bridge)
+    monkeypatch.setattr(s, "FoxgloveSink", _fake_fox_factory())
+    monkeypatch.setattr(s, "_open_deep_link", lambda url: True)
+    monkeypatch.setattr(s, "_open_endpoint", lambda dto: _FakeEndpoint())
+
+    mgr = s.BridgeManager(ws_port=0, viewer="desktop")
+    dto = {"id": "usb:/dev/a", "label": "A", "transport": "usb", "device": "/dev/a"}
+    try:
+        mgr.connect(dto, decode=True)
+        assert started.wait(2)
+        assert type(captured["sinks"][0]).__name__ == "VideoDecodeSink"   # decode ⇒ wrapped
+        assert mgr.status()["decoding"] is True                           # surfaced to the UI
+        started.clear()
+        captured.clear()
+        mgr.connect(dto, decode=False)
+        assert started.wait(2)
+        assert captured["sinks"][0] is mgr._sink                          # else raw sink
+        assert mgr.status()["decoding"] is False
+        assert mgr.disconnect()["decoding"] is False                      # cleared on disconnect
+    finally:
+        mgr.shutdown()
+
+
+def _load_hevc_fixture():
+    """The committed fixture is a length-prefixed run of serialized CompressedVideo payloads
+    (an IDR + following frames from stream /ego/camera/1 of aa.mcap) — enough to decode."""
+    import struct
+    from pathlib import Path
+
+    data = (Path(__file__).parent / "data" / "hevc_run.bin").read_bytes()
+    (count,) = struct.unpack_from("<I", data, 0)
+    off, payloads = 4, []
+    for _ in range(count):
+        (ln,) = struct.unpack_from("<I", data, off)
+        off += 4
+        payloads.append(data[off:off + ln])
+        off += ln
+    return payloads
+
+
+def test_video_decode_sink_replaces_video_with_jpeg() -> None:
+    pytest.importorskip("av")
+    vd = _vd()
+    from visio_schema import make_channel
+    from visio_schema.foxglove.CompressedImage_pb2 import CompressedImage
+
+    fake = _FakeSink()
+    sink = vd.VideoDecodeSink(fake)
+    video_ch = make_channel("/ego/camera/1", vd._VIDEO_SCHEMA, stream_id=16)
+    for i, payload in enumerate(_load_hevc_fixture()):
+        m = vd.Message(stream_id=16, payload=payload, seq=i)
+        m.timestamp.FromNanoseconds((i + 1) * 1_000_000)
+        sink.write(m, video_ch)
+
+    schemas = [c.schema_name for _, c in fake.writes]
+    assert vd._VIDEO_SCHEMA not in schemas               # raw H.265 is suppressed
+    imgs = [(m, c) for m, c in fake.writes if c.schema_name == vd._IMAGE_SCHEMA]
+    assert imgs, "expected decoded JPEG frames"
+    m0, c0 = imgs[0]
+    assert c0.topic == "/ego/camera/1"                    # same topic name preserved
+    assert m0.stream_id == vd._JPEG_STREAM_BASE + 16      # derived synthetic stream id
+    ci = CompressedImage()
+    ci.ParseFromString(m0.payload)
+    assert ci.format == "jpeg" and ci.data[:2] == b"\xff\xd8"   # a real JPEG
+
+    # Non-video messages pass straight through untouched.
+    quat_ch = make_channel("/g/imu/0/quat", vd._QUAT_SCHEMA, stream_id=20)
+    qm = vd.Message(stream_id=20, payload=b"", seq=0)
+    qm.timestamp.FromNanoseconds(1)
+    sink.write(qm, quat_ch)
+    assert fake.writes[-1][1].schema_name == vd._QUAT_SCHEMA
+
+
+def test_video_decode_sink_passes_through_unknown_codec() -> None:
+    pytest.importorskip("av")
+    vd = _vd()
+    from visio_schema import make_channel
+    from visio_schema.foxglove.CompressedVideo_pb2 import CompressedVideo
+
+    cv = CompressedVideo()
+    cv.format = "vp8"                    # not in _AV_CODEC → can't host-decode
+    cv.data = b"\x00\x01\x02"
+    fake = _FakeSink()
+    sink = vd.VideoDecodeSink(fake)
+    ch = make_channel("/ego/camera/1", vd._VIDEO_SCHEMA, stream_id=16)
+    m = vd.Message(stream_id=16, payload=cv.SerializeToString(), seq=0)
+    m.timestamp.FromNanoseconds(1)
+    sink.write(m, ch)
+    assert len(fake.writes) == 1                          # fail open: forward the raw frame
+    assert fake.writes[0][1].schema_name == vd._VIDEO_SCHEMA
+
+
+def test_video_decode_sink_drops_bad_frame_without_crashing() -> None:
+    pytest.importorskip("av")
+    vd = _vd()
+    from visio_schema import make_channel
+
+    fake = _FakeSink()
+    sink = vd.VideoDecodeSink(fake)
+    ch = make_channel("/ego/camera/1", vd._VIDEO_SCHEMA, stream_id=16)
+    bad = vd.Message(stream_id=16, payload=b"\xff\xff\xff\xff", seq=0)   # not a valid proto
+    bad.timestamp.FromNanoseconds(1)
+    sink.write(bad, ch)          # must NOT raise — a bad video frame can't be allowed to kill
+    assert fake.writes == []     # the bridge; the frame is dropped, raw not forwarded

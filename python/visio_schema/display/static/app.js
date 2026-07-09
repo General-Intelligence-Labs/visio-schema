@@ -3,7 +3,15 @@
 // list over SSE (/api/devices), and connect/disconnect/status/viewer JSON endpoints.
 
 const state = { devices: [], connectedId: null, urls: null, pollTimer: null,
-                stateTimer: null, status: { state: "idle" } };
+                stateTimer: null, status: { state: "idle" }, hevcOk: null,
+                decodeOverride: null };
+
+// Whether to ask the launcher to decode H.265 → JPEG on this PC. Auto = on when the browser
+// can't decode HEVC (see checkHevc); the toggle lets the operator override either way (e.g.
+// Foxglove Desktop can decode where this page's browser can't, or vice-versa).
+function effectiveDecode() {
+  return state.decodeOverride !== null ? state.decodeOverride : state.hevcOk === false;
+}
 
 const $ = (id) => document.getElementById(id);
 
@@ -87,7 +95,7 @@ async function postJSON(url, body) {
 }
 
 async function connect(id) {
-  const { ok, data } = await postJSON("/api/connect", { id });
+  const { ok, data } = await postJSON("/api/connect", { id, decode: effectiveDecode() });
   if (!ok) { alert(data.error || tr("connectFailed")); return; }
   state.connectedId = data.connected_id;
   state.urls = data;
@@ -125,6 +133,16 @@ function applyStatus(s) {
   $("btn-desktop").disabled = !connected;
   $("btn-browser").disabled = !connected || !(state.urls && state.urls.browser_url);
   $("btn-disconnect").disabled = !connected;
+  // Video-compatibility UI. The Ego streams H.265; Foxglove decodes via the browser's
+  // WebCodecs, which on Chrome/Edge has no software HEVC fallback. The toggle reflects the
+  // effective decode preference; when the launcher is decoding on this PC (server-confirmed
+  // via s.decoding) show a calm info note; only when a device is connected, the browser
+  // can't do HEVC, and decode is off do we surface the red install warning (→ a red ✕).
+  $("decode-toggle").checked = effectiveDecode();
+  $("decode-note").hidden = !s.decoding;
+  const showWarn = connected && !s.decoding && state.hevcOk === false;
+  if (showWarn) renderHevcWarn();     // OS-tailored native-decode guidance (content is computed)
+  $("hevc-warn").hidden = !showWarn;
   // The config panel needs a live bus connection to send commands, so hide it once the
   // link errors out (the device's reader thread is gone; commands would just fail).
   $("config").hidden = !connected || s.state === "error";
@@ -147,6 +165,47 @@ function stopPolling() {
   if (state.stateTimer) { clearInterval(state.stateTimer); state.stateTimer = null; }
 }
 
+// ---- HEVC / H.265 decode capability --------------------------------------- //
+// Foxglove renders the device's H.265 video through the browser's WebCodecs VideoDecoder.
+// Ask the browser whether it can decode HEVC at all; Chrome/Edge on Windows only can with
+// a hardware decoder + the OS "HEVC Video Extensions". A definitive "no" reveals the banner
+// (see applyStatus). Anything uncertain (no WebCodecs, probe throws) leaves hevcOk null so
+// we don't cry wolf, but WebCodecs-less browsers can't decode HEVC anyway → treat as false.
+async function checkHevc() {
+  if (typeof VideoDecoder === "undefined" || !VideoDecoder.isConfigSupported) {
+    state.hevcOk = false;
+    applyStatus(state.status);
+    return;
+  }
+  // HEVC Main profile at a couple of representative levels, both common codec-string forms.
+  const codecs = ["hev1.1.6.L120.90", "hvc1.1.6.L120.90", "hev1.1.6.L93.90"];
+  let ok = false;
+  for (const codec of codecs) {
+    try {
+      const r = await VideoDecoder.isConfigSupported({ codec });
+      if (r && r.supported) { ok = true; break; }
+    } catch (e) { /* unrecognized config → try the next form */ }
+  }
+  state.hevcOk = ok;
+  applyStatus(state.status);
+}
+
+// Best-effort OS family, used ONLY to pick which native-decode tip to show in the warning
+// (the decode-capability check itself is the cross-platform WebCodecs probe above, so auto
+// software-decode already works on every OS). Linux/macOS get their own guidance, not Windows'.
+function osFamily() {
+  const uad = navigator.userAgentData;
+  const p = ((uad && uad.platform) || navigator.platform || navigator.userAgent || "").toLowerCase();
+  if (p.includes("win")) return "Win";
+  if (p.includes("mac")) return "Mac";
+  if (p.includes("linux") || p.includes("x11") || p.includes("android")) return "Linux";
+  return "Other";
+}
+
+function renderHevcWarn() {
+  $("hevc-warn").innerHTML = tr("hevcWarnLead") + " " + tr("hevcWarn" + osFamily());
+}
+
 // ---- wiring --------------------------------------------------------------- //
 $("btn-lang").onclick = () => {
   lang = lang === "zh" ? "en" : "zh";
@@ -165,6 +224,13 @@ $("btn-browser").onclick = () => {
   }
 };
 $("btn-disconnect").onclick = disconnect;
+
+// Flipping the compatibility toggle overrides the auto decision; if a device is live, reconnect
+// so the new mode takes effect (connect() tears down the old reader first, so this is clean).
+$("decode-toggle").onchange = () => {
+  state.decodeOverride = $("decode-toggle").checked;
+  if (state.connectedId) connect(state.connectedId);
+};
 
 $("btn-quit").onclick = async () => {
   await postJSON("/api/shutdown");
@@ -344,3 +410,4 @@ $("cfg-format-go").onclick = () => {
 applyI18n();
 subscribeDevices();
 refreshStatus();
+checkHevc();

@@ -63,6 +63,17 @@
     .status dt { color: var(--muted); } .status dd { margin: 0; }
     .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
     .hint { color: var(--muted); font-size: 12px; margin-top: 14px; }
+    .decode-opt { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px; cursor: pointer; }
+    .decode-opt input { width: 15px; height: 15px; cursor: pointer; }
+    .decode-note {
+      font-size: 12px; margin-top: 10px; padding: 9px 12px; border-radius: 8px;
+      background: rgba(69, 192, 122, .12); border: 1px solid var(--ok); color: var(--fg);
+    }
+    .hevc-warn {
+      font-size: 12px; margin-top: 12px; padding: 10px 12px; border-radius: 8px;
+      background: rgba(224, 176, 74, .12); border: 1px solid var(--warn); color: var(--fg);
+    }
+    .hevc-warn a { color: var(--accent); }
     .err { color: var(--err); }
     code { background: var(--panel2); padding: 1px 5px; border-radius: 5px; }
     /* config panel */
@@ -120,11 +131,17 @@
           <button id="btn-browser" class="secondary" data-i18n="btnBrowser" disabled>Open in browser</button>
           <button id="btn-disconnect" class="secondary" data-i18n="btnDisconnect" disabled>Disconnect</button>
         </div>
+        <label class="decode-opt">
+          <input type="checkbox" id="decode-toggle" />
+          <span data-i18n="decodeToggle">Decode video on this PC (compatibility)</span>
+        </label>
+        <p class="decode-note" id="decode-note" data-i18n-html="decodeActive" hidden></p>
         <p class="hint" data-i18n-html="hint">
           <b>Desktop</b> opens Foxglove Studio via a <code>foxglove://</code> link &mdash; works offline.
           If nothing opens, install Foxglove Studio or use <b>Open in browser</b>
           (<code>app.foxglove.dev</code>, needs internet + a Foxglove account).
         </p>
+        <p class="hevc-warn" id="hevc-warn" hidden></p>
       </div>
 
       <div class="config" id="config" hidden>
@@ -206,6 +223,25 @@
         hint: "<b>Desktop</b> opens Foxglove Studio via a <code>foxglove://</code> link — works offline. " +
               "If nothing opens, install Foxglove Studio or use <b>Open in browser</b> " +
               "(<code>app.foxglove.dev</code>, needs internet + a Foxglove account).",
+        hevcWarnLead: "⚠ This browser can't decode the device's <b>H.265</b> video, so Foxglove " +
+              "shows a red ✕. Easiest fix: turn on <b>Use software decoding</b> above — it decodes " +
+              "on this PC and works in any browser.",
+        hevcWarnWin: "To decode natively instead, Windows needs (no software fallback) a GPU that " +
+              "hardware-decodes HEVC <b>and</b> Microsoft's " +
+              "<a href=\"https://apps.microsoft.com/detail/9nmzlz57r3t7\" target=\"_blank\" rel=\"noopener\">" +
+              "HEVC Video Extensions</a>; install both + update the GPU driver, then reload.",
+        hevcWarnLinux: "To decode natively instead (Intel GPU only; no software fallback), enable " +
+              "VAAPI HEVC in Chrome/Chromium — install <code>intel-media-driver</code>/<code>libva</code> " +
+              "and turn on the VAAPI flags at <code>chrome://flags</code>, then reload. Otherwise just " +
+              "keep software decoding on.",
+        hevcWarnMac: "On macOS, Chrome/Safari usually decode HEVC natively — reload, or update macOS " +
+              "and your GPU driver. Otherwise keep software decoding on.",
+        hevcWarnOther: "To decode natively instead, enable HEVC support in your browser/OS and reload; " +
+              "otherwise keep software decoding on.",
+        decodeToggle: "Use software decoding",
+        decodeActive: "⚙ Video is being software-decoded on your PC (H.265 → JPEG) so it displays " +
+              "in any browser — no codec install needed. Turn this off if your Foxglove can decode " +
+              "H.265 itself (lower CPU).",
         stateIdle: "No device selected", stateConnecting: "Connecting…",
         stateStreaming: "Streaming", stateError: "Error",
         emptyUsb: "no USB device", emptySta: "no device on this network",
@@ -240,6 +276,21 @@
         hint: "<b>桌面版</b>：通过 <code>foxglove://</code> 链接打开 Foxglove Studio —— 可离线使用。" +
               "若无反应，请先安装 Foxglove Studio，或使用<b>在浏览器中打开</b>" +
               "（<code>app.foxglove.dev</code>，需要联网 + Foxglove 账号）。",
+        hevcWarnLead: "⚠ 当前浏览器无法解码设备的 <b>H.265</b> 视频，Foxglove 会显示红色 ✕。" +
+              "最简单的解决办法：打开上方的<b>使用软件解码</b> —— 在本机解码，任意浏览器都能显示。",
+        hevcWarnWin: "若想改用原生硬件解码，Windows 需要两样东西（没有软件解码回退）：支持 HEVC " +
+              "硬件解码的显卡，以及 Microsoft " +
+              "<a href=\"https://apps.microsoft.com/detail/9nmzlz57r3t7\" target=\"_blank\" rel=\"noopener\">" +
+              "HEVC 视频扩展</a>；都装好并更新显卡驱动后刷新页面。",
+        hevcWarnLinux: "若想改用原生解码（仅 Intel 核显，没有软件解码回退）：在 Chrome/Chromium 中启用 " +
+              "VAAPI HEVC —— 安装 <code>intel-media-driver</code>/<code>libva</code> 并在 " +
+              "<code>chrome://flags</code> 打开 VAAPI 相关开关，然后刷新。否则直接保持软件解码即可。",
+        hevcWarnMac: "在 macOS 上，Chrome/Safari 通常可原生解码 HEVC —— 刷新页面，或更新系统与显卡驱动；" +
+              "否则保持软件解码即可。",
+        hevcWarnOther: "若想改用原生解码，请在浏览器/系统中启用 HEVC 支持后刷新；否则保持软件解码即可。",
+        decodeToggle: "使用软件解码（软解）",
+        decodeActive: "⚙ 正在本机软件解码视频（H.265 → JPEG），任意浏览器都能显示，无需安装编解码器。" +
+              "如果你的 Foxglove 本身能解码 H.265，可关闭此项以降低 CPU 占用。",
         stateIdle: "未选择设备", stateConnecting: "连接中…",
         stateStreaming: "正在接收数据", stateError: "错误",
         emptyUsb: "未检测到 USB 设备", emptySta: "此网络中没有设备",

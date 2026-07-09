@@ -48,8 +48,10 @@ code-signing cert as CI secrets).
 
 ## Notes
 
-- The bundle **excludes** the Rerun/PyAV sink (`--rerun`) to stay small; it's the
-  launcher distribution. For the full CLI, install the package (see the repo
-  [README](../README.md#python-library)).
+- The bundle **includes PyAV** (ffmpeg, ~35 MB) so the `--serve` launcher can decode
+  H.265 → JPEG on the host for browsers that can't render HEVC (`VideoDecodeSink`). It
+  still **excludes** the Rerun viewer (`--rerun`, a ~211 MB native binary) to stay lean;
+  the launcher only ever renders in Foxglove. For the full CLI (incl. `--rerun`), install
+  the package (see the repo [README](../README.md#python-library)).
 - If a frozen run hits a `ModuleNotFoundError`, extend the `collect_all` /
   `hiddenimports` lists in `visio-display.spec` — the usual PyInstaller tuning.
