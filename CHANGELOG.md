@@ -4,6 +4,16 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.4.2 — 2026-07-09
+
+### Added `Command.set_notice_lang` (wire-compatible)
+
+- **New Command body `SetNoticeLang` (tag 26, `lang` string).** Selects the
+  language of a device's spoken voice notices (boards with a speaker). Applied
+  immediately and persisted device-side; unknown languages fall back to the
+  device default (English). Speakerless boards accept and ignore it. Sent by
+  the companion app with the phone locale after connecting.
+
 ## 0.4.1 — 2026-07-07
 
 ### Added `DeviceInfo.equipment_type` (wire-compatible)

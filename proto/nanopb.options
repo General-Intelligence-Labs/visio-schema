@@ -61,6 +61,9 @@ visio_schema.v1.control.SetRecordingMeta.capturer     max_size:64
 # FormatStorage: target filesystem name ("", "ext4", "exfat", "vfat").
 visio_schema.v1.control.FormatStorage.fs_type         max_size:8
 
+# SetNoticeLang: ISO 639-1 code, possibly with a region subtag ("zh-CN").
+visio_schema.v1.control.SetNoticeLang.lang            max_size:16
+
 # ---- Control: CommandResult ack + DeviceState snapshot (bounded inline so the
 #      ack is a static struct; the two list payloads below are FT_POINTER) -----
 visio_schema.v1.control.CommandResult.error_code               max_size:32

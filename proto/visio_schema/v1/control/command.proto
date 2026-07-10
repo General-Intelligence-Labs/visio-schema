@@ -43,6 +43,7 @@ message Command {
     SetVideoStreaming set_video_streaming = 23;
     SetBitrate     set_bitrate     = 24;
     FormatStorage  format_storage  = 25;
+    SetNoticeLang  set_notice_lang = 26;
   }
 }
 
@@ -191,6 +192,18 @@ message FormatStorage {
   // the on-disk superblock; a blank card or an unsupported filesystem falls
   // back to FAT32/vfat). Explicit "ext4" / "exfat" / "vfat" forces a type.
   string fs_type = 1;
+}
+
+// Select the language of the device's spoken voice notices (boards with a
+// speaker, e.g. audio_ego_v3; speakerless boards accept and ignore it).
+// Applied immediately AND persisted to a device-side sidecar
+// (/root/umi_embedded.notice_lang.json). The app typically sends its phone
+// locale right after connecting. An unknown/unshipped language falls back to
+// the device default (English). Answered by a CommandResult (ok + DeviceState).
+message SetNoticeLang {
+  // Lowercase ISO 639-1 code of the primary language ("en", "zh"). Region
+  // subtags are ignored by the device ("zh-CN" -> "zh").
+  string lang = 1;
 }
 
 // Persist one piece of sensor calibration (effective on next boot). The target
