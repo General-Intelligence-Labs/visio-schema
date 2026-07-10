@@ -375,9 +375,10 @@ class BridgeManager:
         self._current: dict | None = None
         self._error: str | None = None
         self._viewer_opened = False
-        # Per-session: decode H.265 → JPEG on this PC so browsers without HEVC support can
-        # still see video (set from the page's WebCodecs probe on each connect).
-        self._decode = False
+        # Per-session: transcode H.265 → JPEG on this PC so browsers without HEVC support can still
+        # see video (from the page's WebCodecs probe on each connect). ``_video_sink`` is the live
+        # transcode sink, kept so status() can report hardware-vs-software decode.
+        self._video_sink: VideoDecodeSink | None = None
         # Command/reply plumbing for device config. The active bridge's Endpoint is
         # bidirectional, so config commands ride the SAME connection as the stream;
         # replies (CommandResult) are matched to their request by command_id.
@@ -425,7 +426,7 @@ class BridgeManager:
             with self._lock:
                 self._error = None
                 self._current = dto
-                self._decode = decode
+                self._video_sink = None
                 self._stop = threading.Event()
                 self._thread = threading.Thread(
                     target=self._run, args=(dto, self._stop, decode),
@@ -439,7 +440,7 @@ class BridgeManager:
             self._stop_current()
             with self._lock:
                 self._current = None
-                self._decode = False
+                self._video_sink = None
         return self.status()
 
     def _run(self, dto: dict, stop: threading.Event, decode: bool) -> None:
@@ -489,12 +490,14 @@ class BridgeManager:
                         return
                     # else idle tick: re-check stop / EOF
 
-        # When the operator's browser can't decode HEVC, decode video to JPEG on the way to
-        # Foxglove (raw H.265 is dropped, JPEG rides the same topic). The wrapper only fronts
-        # the Foxglove sink; _status/bitrate still see the raw video for correct link stats.
-        # Decode runs inline on this reader thread, so a slow frame adds head-of-line latency
-        # to other topics — bounded by the lossy inbox (frames drop, never stall the link).
+        # When the operator's browser can't decode HEVC, transcode video (H.265 → JPEG) on the way
+        # to Foxglove — the raw H.265 is dropped and the JPEG rides the same topic. The wrapper only
+        # fronts the Foxglove sink; _status/bitrate still see the raw video for correct link stats.
+        # It does the decode+encode on its own per-camera worker threads, so this reader thread
+        # stays free to keep draining the USB link.
         fox = VideoDecodeSink(self._sink) if decode else self._sink
+        with self._lock:
+            self._video_sink = fox if decode else None
         try:
             source = ChannelRegistry().resolved(raw_frames())
             run_bridge(source, [fox, self._status, self._cmd_sink], derive_tf=True,
@@ -510,6 +513,8 @@ class BridgeManager:
                 if self._endpoint is ep:   # don't clobber a superseding connect's endpoint
                     self._endpoint = None
             ep.stop()
+            if fox is not self._sink:      # a transcode wrapper: stop its worker threads (they
+                fox.close()                # hold decoders + write to the shared FoxgloveSink)
 
     # -- device config: send a Command, await its CommandResult ------------- #
     def send_command(self, cmd: command_pb2.Command, *,
@@ -599,6 +604,7 @@ class BridgeManager:
         if dto is not None:
             ident = {"connected_id": dto["id"], "label": dto["label"],
                      "transport": dto["transport"]}
+        sink = self._video_sink
         return {
             **ident,
             "state": state,
@@ -606,7 +612,9 @@ class BridgeManager:
             "topics": topics,
             "error": error,
             "ws_url": self.ws_url,
-            "decoding": dto is not None and self._decode,
+            # Host-side transcode status: None = not transcoding (browser decodes the raw H.265),
+            # else "hardware"/"software" once the first video frame has opened a decoder.
+            "decode_hw": sink.decode_mode() if (dto is not None and sink is not None) else None,
         }
 
     def shutdown(self) -> None:
@@ -663,8 +671,8 @@ async def _connect(request: web.Request) -> web.Response:
     dto = next((d for d in request.app[_DISCOVERY].snapshot() if d["id"] == dev_id), None)
     if dto is None:
         return web.json_response({"error": f"unknown device {dev_id!r}"}, status=404)
-    # `decode` (from the page's HEVC probe): decode video → JPEG on this PC for browsers that
-    # can't render H.265. connect() blocks (stop+join the old reader, then a subprocess to open
+    # `decode` (from the page's WebCodecs probe): when the browser can't render H.265, transcode
+    # it to JPEG on this PC. connect() blocks (stop+join the old reader, then a subprocess to open
     # Foxglove) — keep it off the event loop so SSE + status stay responsive during a switch.
     decode = bool(body.get("decode"))
     bridge = request.app[_BRIDGE]
