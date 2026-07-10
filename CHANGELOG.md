@@ -4,7 +4,7 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
-## 0.4.2 — 2026-07-09
+## 0.4.2 — 2026-07-10
 
 ### Added `Command.set_notice_lang` (wire-compatible)
 
@@ -13,6 +13,23 @@ bump the MINOR version.
   immediately and persisted device-side; unknown languages fall back to the
   device default (English). Speakerless boards accept and ignore it. Sent by
   the companion app with the phone locale after connecting.
+
+### Launcher host-side video decode (no wire-contract change)
+
+- **`visio-display --serve` now decodes the device's H.265 on the host** so browsers that
+  can't render HEVC (e.g. Edge/Chrome on Windows without the HEVC extension) still show
+  video. It auto-detects a GPU decoder (D3D11VA/DXVA2/VideoToolbox/NVDEC/QSV/VAAPI/…) with
+  a slice-threaded software fallback and re-encodes each frame to JPEG on per-camera worker
+  threads, off the transport reader. Chain: browser WebCodecs H.265 → PyAV hardware decode
+  + JPEG → PyAV software decode + JPEG.
+- **Honest "slow video" UI.** Host-side decode — hardware *or* software — is not real-time,
+  so the page flags it in red while transcoding and points to a plain, per-OS guide to
+  install the browser's native HEVC support (Windows → the free Microsoft Store HEVC Video
+  Extensions) for smooth, live video. en + zh.
+- **Free-port launcher** — the server always auto-picks free WebSocket/HTTP ports, so a new
+  launch never collides with a stale one on a fixed port.
+
+No `.proto`/schema change from the launcher work — existing readers are unaffected.
 
 ## 0.4.1 — 2026-07-07
 
