@@ -43,6 +43,7 @@ message Command {
     SetVideoStreaming set_video_streaming = 23;
     SetBitrate     set_bitrate     = 24;
     FormatStorage  format_storage  = 25;
+    SetAutoUpload  set_auto_upload = 26;
   }
 }
 
@@ -94,6 +95,16 @@ message SetVideoStreaming {
 // does not toggle the current session). Replaces POST /recording/auto_start.
 message SetAutoStart {
   bool auto_start = 1;
+}
+
+// Enable/disable automatic S3 upload of finished recordings. Persisted to a
+// device-side sidecar (/userdata/.../auto_upload.json) and applied without a
+// reboot: while disabled the uploader starts no new uploads and stays idle (an
+// in-flight upload finishes; the stored creds + queue are NOT cleared), so
+// re-enabling resumes. Default is enabled. The current value is reported in
+// DeviceState.auto_upload_enabled.
+message SetAutoUpload {
+  bool enabled = 1;
 }
 
 // Persist the camera H.265 target bitrate to a device-side sidecar
