@@ -20,8 +20,10 @@
 // no MCAP include and the whole sink cross-compiles for the RV1106.
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -33,6 +35,7 @@
 
 namespace mcap {
 class McapWriter;
+class IWritable;
 }
 
 namespace visio_schema::mcap {
@@ -56,6 +59,22 @@ class McapWriter {
   void Write(const Channel& channel, const Message& msg);
   void Close();
 
+  // Carry an MCAP Metadata record (`name` + key/values) in the file — e.g. the
+  // capture metadata (task/location/…). Call once after construction; it's
+  // written into the current part immediately and re-emitted on each rotation so
+  // every part is self-describing. Not thread-safe vs Write; call before the
+  // first Write / before a writer thread starts draining.
+  void SetMetadata(std::string name, std::map<std::string, std::string> kv);
+
+  // Total payload bytes written to disk over this writer's lifetime. Unlike
+  // part_bytes_ (which resets at each rotation) this is monotonic across parts,
+  // so a stall detector can watch it advance to tell "actively writing" from
+  // "recording but the pipeline is frozen". Read-only, safe to poll from
+  // another thread.
+  std::uint64_t bytes_written() const {
+    return bytes_written_.load(std::memory_order_relaxed);
+  }
+
  private:
   std::string PartPath() const;
   void OpenPart();          // throws on open failure
@@ -63,16 +82,31 @@ class McapWriter {
   void Roll();
   // Close the current part and fsync it to physical media before moving on.
   void CloseCurrentPart();
+  // Emit the stored Metadata record into the current part (no-op if none set).
+  void WriteStoredMetadata();
+
+  std::string meta_name_;
+  std::map<std::string, std::string> meta_;
 
   const std::string base_path_;
   const std::uint64_t max_bytes_;
   const std::int64_t max_duration_ns_;
   const bool rotating_;
 
+  // The IWritable backing writer_'s current part. We own the underlying fd
+  // (opened with O_CLOEXEC) rather than letting upstream mcap fopen() it, so a
+  // recording fd is never inherited by a child we fork+exec (the long-lived
+  // Wi-Fi AP daemons). A leaked recording fd would pin /mnt/sdcard busy and make
+  // a later `umount` (and thus the "format SD card" command) fail with EBUSY.
+  // Declared before writer_ so it is destroyed *after* it: ~McapWriter()/close()
+  // flush through this writable on teardown.
+  std::unique_ptr<::mcap::IWritable> file_;
   std::unique_ptr<::mcap::McapWriter> writer_;
   bool closed_ = false;
   std::size_t part_index_ = 0;
   std::uint64_t part_bytes_ = 0;
+  // Lifetime total (never reset on rotation); see bytes_written().
+  std::atomic<std::uint64_t> bytes_written_{0};
   std::chrono::steady_clock::time_point part_start_;
 
   // Caches (reset per part): schema id per schema_name, channel id per Channel id.

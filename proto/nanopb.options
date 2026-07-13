@@ -77,6 +77,7 @@ visio_schema.v1.control.DeviceState.wifi_last_error            max_size:128
 visio_schema.v1.control.DeviceState.storage_endpoint           max_size:128
 visio_schema.v1.control.DeviceState.storage_bucket             max_size:64
 visio_schema.v1.control.DeviceState.storage_prefix             max_size:128
+visio_schema.v1.control.DeviceState.storage_access_key_id      max_size:32
 visio_schema.v1.control.DeviceState.upload_last_error          max_size:128
 
 # ---- Control: variable-length result lists — FT_POINTER (mirror DeviceInfo):

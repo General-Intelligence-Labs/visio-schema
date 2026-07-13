@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string_view>
@@ -44,7 +45,8 @@ class McapWriterEndpoint : public transport::Endpoint {
  public:
   McapWriterEndpoint(std::string_view path, StreamResolver resolve,
                      std::uint64_t max_bytes = 0, double max_duration_s = 0.0,
-                     transport::WritePolicy policy = transport::WritePolicy::lossless());
+                     transport::WritePolicy policy = transport::WritePolicy::lossless(),
+                     std::map<std::string, std::string> metadata = {});
   ~McapWriterEndpoint() override;
 
   McapWriterEndpoint(const McapWriterEndpoint&) = delete;
@@ -57,6 +59,10 @@ class McapWriterEndpoint : public transport::Endpoint {
   std::size_t pending_frames() const;
   std::size_t pending_bytes() const;
   std::uint64_t dropped_frames() const { return dropped_.load(std::memory_order_relaxed); }
+  // Lifetime total of payload bytes written to disk (passthrough to the inner
+  // McapWriter; monotonic across part rotation). 0 until the first message drains
+  // to the writer thread.
+  std::uint64_t bytes_written() const;
   McapWriterStats stats() const;
 
  private:

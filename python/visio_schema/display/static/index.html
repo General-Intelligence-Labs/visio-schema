@@ -65,6 +65,22 @@
     .hint { color: var(--muted); font-size: 12px; margin-top: 14px; }
     .err { color: var(--err); }
     code { background: var(--panel2); padding: 1px 5px; border-radius: 5px; }
+    /* config panel */
+    .config { margin-top: 18px; }
+    .cfg-card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 10px; }
+    .cfg-card.danger { border-color: #5a2b2b; }
+    .cfg-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-weight: 600; }
+    .cfg-note { color: var(--muted); font-size: 12px; font-weight: 400; margin: 6px 0 0; }
+    .cfg-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+    .cfg-row > input, .cfg-row > select { flex: 1; }
+    .cfg-full { width: 100%; margin-top: 8px; }
+    select { background: var(--panel); border: 1px solid var(--line); color: var(--fg); border-radius: 8px; padding: 8px 10px; }
+    .cfg-state { display: grid; grid-template-columns: max-content 1fr; gap: 3px 14px; margin: 8px 0 0; font-size: 13px; }
+    .cfg-state dt { color: var(--muted); } .cfg-state dd { margin: 0; }
+    button.sm { padding: 4px 10px; font-size: 12px; }
+    button.danger-btn { background: var(--err); color: #1a0808; }
+    .cfg-msg { font-size: 12px; margin-top: 8px; min-height: 1em; }
+    .cfg-msg.ok { color: var(--ok); } .cfg-msg.err { color: var(--err); } .cfg-msg.busy { color: var(--muted); }
   </style>
 </head>
 <body>
@@ -110,6 +126,69 @@
           (<code>app.foxglove.dev</code>, needs internet + a Foxglove account).
         </p>
       </div>
+
+      <div class="config" id="config" hidden>
+        <h2 data-i18n="cfgTitle">Configure device</h2>
+
+        <div class="cfg-card">
+          <div class="cfg-head"><span data-i18n="cfgState">Current settings</span>
+            <span class="cfg-note" style="margin:0" data-i18n="cfgLive">live</span></div>
+          <dl class="cfg-state" id="cfg-state-dl"></dl>
+        </div>
+
+        <div class="cfg-card">
+          <div class="cfg-head"><span data-i18n="cfgWifi">Wi-Fi</span>
+            <span class="cfg-note" style="margin:0" data-i18n="cfgScanNote">scanned on this computer</span></div>
+          <select class="cfg-full" id="cfg-wifi-ssid"><option value="" data-i18n="cfgPickNet">Pick a network…</option></select>
+          <div class="cfg-row">
+            <input id="cfg-wifi-ssid-manual" data-i18n-ph="cfgSsid" placeholder="SSID (or pick above)" autocomplete="off" />
+            <input id="cfg-wifi-pass" type="password" data-i18n-ph="cfgPass" placeholder="Passphrase" autocomplete="off" />
+            <button id="cfg-wifi-connect" data-i18n="cfgConnect">Connect</button>
+          </div>
+          <div class="cfg-msg" id="cfg-wifi-msg"></div>
+        </div>
+
+        <div class="cfg-card">
+          <div class="cfg-row">
+            <button class="secondary" id="cfg-time" data-i18n="cfgSyncTime">Sync clock to this computer</button>
+            <button class="secondary" id="cfg-identify" data-i18n="cfgIdentify">Identify</button>
+          </div>
+          <div class="cfg-msg" id="cfg-quick-msg"></div>
+        </div>
+
+        <div class="cfg-card">
+          <div class="cfg-head"><span data-i18n="cfgBitrate">Camera bitrate</span>
+            <span class="cfg-note" style="margin:0" data-i18n="cfgNextBoot">applies next boot</span></div>
+          <div class="cfg-row">
+            <select id="cfg-bitrate-kbps">
+              <option value="4000">4 Mbps</option><option value="8000">8 Mbps</option>
+              <option value="12000">12 Mbps</option><option value="16000">16 Mbps</option>
+            </select>
+            <button id="cfg-bitrate-set" data-i18n="cfgApply">Apply</button>
+          </div>
+          <div class="cfg-msg" id="cfg-bitrate-msg"></div>
+        </div>
+
+        <div class="cfg-card">
+          <div class="cfg-head"><span data-i18n="cfgMeta">Default recording info</span></div>
+          <input class="cfg-full" id="cfg-meta-task" data-i18n-ph="cfgTask" placeholder="Task" autocomplete="off" />
+          <input class="cfg-full" id="cfg-meta-location" data-i18n-ph="cfgLocation" placeholder="Location" autocomplete="off" />
+          <input class="cfg-full" id="cfg-meta-capturer" data-i18n-ph="cfgCapturer" placeholder="Operator" autocomplete="off" />
+          <input class="cfg-full" id="cfg-meta-message" data-i18n-ph="cfgNote" placeholder="Note" autocomplete="off" />
+          <div class="cfg-row"><button id="cfg-meta-save" data-i18n="cfgSave">Save</button></div>
+          <div class="cfg-msg" id="cfg-meta-msg"></div>
+        </div>
+
+        <div class="cfg-card danger">
+          <div class="cfg-head"><span data-i18n="cfgFormat">Format SD card</span></div>
+          <p class="cfg-note" data-i18n="cfgFormatWarn">Erases ALL recordings on the card. Type FORMAT to confirm.</p>
+          <div class="cfg-row">
+            <input id="cfg-format-confirm" data-i18n-ph="cfgTypeFormat" placeholder="FORMAT" autocomplete="off" />
+            <button class="danger-btn" id="cfg-format-go" data-i18n="cfgFormatGo">Format</button>
+          </div>
+          <div class="cfg-msg" id="cfg-format-msg"></div>
+        </div>
+      </div>
     </section>
   </main>
 
@@ -133,6 +212,23 @@
         emptyAp: "join the device AP, then add it below",
         stopped: "Launcher stopped — you can close this tab.",
         connectFailed: "connect failed", unreachable: "could not reach device",
+        cfgTitle: "Configure device", cfgState: "Current settings", cfgLive: "live",
+        cfgWifi: "Wi-Fi", cfgScanNote: "scanned on this computer", cfgPickNet: "Pick a network…",
+        cfgScanning: "Scanning this computer…",
+        cfgSsid: "SSID (or pick above)", cfgPass: "Passphrase", cfgConnect: "Connect",
+        cfgSyncTime: "Sync clock to this computer", cfgIdentify: "Identify",
+        cfgBitrate: "Camera bitrate", cfgNextBoot: "applies next boot", cfgApply: "Apply",
+        cfgMeta: "Default recording info", cfgTask: "Task", cfgLocation: "Location",
+        cfgCapturer: "Operator", cfgNote: "Note", cfgSave: "Save",
+        cfgFormat: "Format SD card",
+        cfgFormatWarn: "Erases ALL recordings on the card. Type FORMAT to confirm.",
+        cfgTypeFormat: "FORMAT", cfgFormatGo: "Format",
+        cfgBusy: "Working…", cfgDone: "Done", cfgSaved: "Saved",
+        cfgConnErr: "command failed", cfgConfirmFormat: "Type FORMAT to confirm.",
+        cfgNoNets: "no networks found",
+        cfgStWifi: "Wi-Fi", cfgStIp: "IP", cfgStDisk: "Disk free",
+        cfgStBitrate: "Bitrate", cfgStRecording: "Recording", cfgStNoCard: "no SD card",
+        cfgWifiConnected: "connected", cfgWifiAp: "AP fallback", cfgWifiOff: "off",
       },
       zh: {
         tagline: "发现设备 → 在 Foxglove 中查看",
@@ -150,6 +246,23 @@
         emptyAp: "先连接设备热点，再在下方添加",
         stopped: "启动器已停止 —— 可以关闭此标签页。",
         connectFailed: "连接失败", unreachable: "无法连接到设备",
+        cfgTitle: "配置设备", cfgState: "当前设置", cfgLive: "实时",
+        cfgWifi: "Wi-Fi", cfgScanNote: "在本机扫描", cfgPickNet: "选择网络…",
+        cfgScanning: "正在扫描本机…",
+        cfgSsid: "网络名称（或在上方选择）", cfgPass: "密码", cfgConnect: "连接",
+        cfgSyncTime: "将设备时间同步为本机时间", cfgIdentify: "识别设备",
+        cfgBitrate: "相机码率", cfgNextBoot: "重启后生效", cfgApply: "应用",
+        cfgMeta: "默认录制信息", cfgTask: "任务", cfgLocation: "地点",
+        cfgCapturer: "操作人", cfgNote: "备注", cfgSave: "保存",
+        cfgFormat: "格式化 SD 卡",
+        cfgFormatWarn: "将清除卡上所有录制内容。输入 FORMAT 以确认。",
+        cfgTypeFormat: "FORMAT", cfgFormatGo: "格式化",
+        cfgBusy: "处理中…", cfgDone: "完成", cfgSaved: "已保存",
+        cfgConnErr: "命令失败", cfgConfirmFormat: "请输入 FORMAT 以确认。",
+        cfgNoNets: "未发现网络",
+        cfgStWifi: "Wi-Fi", cfgStIp: "IP 地址", cfgStDisk: "剩余空间",
+        cfgStBitrate: "码率", cfgStRecording: "录制中", cfgStNoCard: "无 SD 卡",
+        cfgWifiConnected: "已连接", cfgWifiAp: "热点回退", cfgWifiOff: "未开启",
       },
     };
   </script>

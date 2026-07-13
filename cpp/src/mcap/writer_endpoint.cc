@@ -17,11 +17,16 @@ std::uint64_t SteadyNs() {
 
 McapWriterEndpoint::McapWriterEndpoint(std::string_view path, StreamResolver resolve,
                                        std::uint64_t max_bytes, double max_duration_s,
-                                       transport::WritePolicy policy)
+                                       transport::WritePolicy policy,
+                                       std::map<std::string, std::string> metadata)
     : resolve_(std::move(resolve)),
       writer_(std::make_unique<visio_schema::mcap::McapWriter>(
           path, max_bytes, max_duration_s)),
-      policy_(policy) {}
+      policy_(policy) {
+  // Written on this (constructing) thread, before Start() spawns the writer
+  // thread — so it lands in the file ahead of any message, no locking needed.
+  if (!metadata.empty()) writer_->SetMetadata("visio.capture", std::move(metadata));
+}
 
 McapWriterEndpoint::~McapWriterEndpoint() { Stop(); }
 
@@ -120,6 +125,13 @@ std::size_t McapWriterEndpoint::pending_frames() const {
 std::size_t McapWriterEndpoint::pending_bytes() const {
   std::lock_guard<std::mutex> lk(mu_);
   return queue_bytes_;
+}
+
+std::uint64_t McapWriterEndpoint::bytes_written() const {
+  // writer_ is created in the ctor and only Close()d (never reset) in Stop(),
+  // so it stays valid for the endpoint's lifetime; bytes_written() reads an
+  // atomic, so polling it from another thread needs no lock.
+  return writer_ ? writer_->bytes_written() : 0;
 }
 
 McapWriterStats McapWriterEndpoint::stats() const {

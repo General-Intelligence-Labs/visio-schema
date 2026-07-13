@@ -133,6 +133,56 @@ TEST(McapWriterEndpoint, DropsUntilMapped) {
   std::remove(path.c_str());
 }
 
+TEST(McapWriterEndpoint, BytesWrittenPassesThroughInnerWriter) {
+  // The byte counter crosses the enqueue → writer-thread boundary, so it only
+  // reflects sends that have drained. Assert after Stop() (drain+join complete,
+  // Close() doesn't reset the counter) to keep it race-free.
+  const std::string path = TempPath("visio_mcap_test_bytes.mcap");
+  std::remove(path.c_str());
+  std::unordered_map<std::uint32_t, Channel> table{
+      {kFirstDynamic, MakeChannel(kFirstDynamic, "/dev/imu/0/raw")}};
+  auto resolve = [&](std::uint32_t id) -> const Channel* {
+    auto it = table.find(id);
+    return it == table.end() ? nullptr : &it->second;
+  };
+  {
+    McapWriterEndpoint ep(path, resolve);
+    EXPECT_EQ(ep.bytes_written(), 0u);          // nothing sent yet
+    ep.Start(nullptr, nullptr);
+    ep.Send(Data(kFirstDynamic, "hello"));       // 5 bytes
+    ep.Send(Data(kFirstDynamic, "world!"));       // +6 bytes
+    ep.Stop();                                    // drain + join + Close
+    EXPECT_EQ(ep.bytes_written(), 11u);          // passthrough survives Stop
+  }
+  std::remove(path.c_str());
+}
+
+TEST(McapWriterEndpoint, BytesWrittenMonotonicAcrossRotation) {
+  // With rotation, the inner McapWriter's per-part counter resets each roll but
+  // bytes_written() must stay monotonic — the passthrough reads the lifetime total.
+  const std::string path = TempPath("visio_mcap_test_bytes_rot.mcap");
+  const std::string p0 = TempPath("visio_mcap_test_bytes_rot_0000.mcap");
+  const std::string p1 = TempPath("visio_mcap_test_bytes_rot_0001.mcap");
+  std::remove(p0.c_str());
+  std::remove(p1.c_str());
+  std::unordered_map<std::uint32_t, Channel> table{
+      {kFirstDynamic, MakeChannel(kFirstDynamic, "/dev/imu/0/raw")}};
+  auto resolve = [&](std::uint32_t id) -> const Channel* {
+    auto it = table.find(id);
+    return it == table.end() ? nullptr : &it->second;
+  };
+  {
+    McapWriterEndpoint ep(path, resolve, /*max_bytes=*/16);
+    ep.Start(nullptr, nullptr);
+    for (int i = 0; i < 4; ++i) ep.Send(Data(kFirstDynamic, std::string(10, 'a')));  // +10 each
+    ep.Stop();
+    EXPECT_EQ(ep.bytes_written(), 40u);   // 4 × 10, no reset at the roll
+  }
+  ASSERT_TRUE(fs::exists(p1));             // confirm a rotation actually happened
+  std::remove(p0.c_str());
+  std::remove(p1.c_str());
+}
+
 TEST(McapWriterEndpoint, RotatesByBytes) {
   const std::string path = TempPath("visio_mcap_test_rot.mcap");
   std::unordered_map<std::uint32_t, Channel> table{
