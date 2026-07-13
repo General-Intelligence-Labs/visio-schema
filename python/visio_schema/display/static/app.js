@@ -223,6 +223,20 @@ $("btn-lang").onclick = () => {
   applyI18n();
 };
 
+// Foxglove can't be handed a layout over the wire, so the page offers the ready-to-import
+// file on demand — an explicit button + on-page steps. Deliberately NOT auto-downloaded on
+// open: page state resets on reload, so an auto-download would pop up every reopen, and after
+// the first import the user doesn't need the file again (Foxglove remembers the layout).
+function downloadLayout() {
+  const a = document.createElement("a");
+  a.href = "/ego_layout.json";
+  a.download = "visio-ego-layout.json";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+$("btn-layout").onclick = downloadLayout;
 $("btn-desktop").onclick = async () => {
   const { data } = await postJSON("/api/open-viewer");
   if (data) state.urls = { ...state.urls, ...data };

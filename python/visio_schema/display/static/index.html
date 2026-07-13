@@ -146,6 +146,17 @@
           If nothing opens, install Foxglove Studio or use <b>Open in browser</b>
           (<code>app.foxglove.dev</code>, needs internet + a Foxglove account).
         </p>
+        <div class="layout-help">
+          <div class="actions">
+            <button id="btn-layout" class="secondary" data-i18n="btnLayout">Download Foxglove layout</button>
+          </div>
+          <p class="hint" data-i18n-html="layoutSteps">
+            <b>Load the panel layout (first time only):</b>
+            ① Click <b>Download Foxglove layout</b> to save <code>visio-ego-layout.json</code>.
+            ② In Foxglove: <b>Layouts</b> (top-left) &rarr; <b>Import from file…</b> &rarr; pick that
+            file from your Downloads. Foxglove keeps it, so this is once per computer.
+          </p>
+        </div>
         <p class="hevc-warn" id="hevc-warn" data-i18n-html="hevcWarn" hidden></p>
         <p class="hw-guide" id="hw-guide" hidden></p>
       </div>
@@ -229,6 +240,11 @@
         hint: "<b>Desktop</b> opens Foxglove Studio via a <code>foxglove://</code> link — works offline. " +
               "If nothing opens, install Foxglove Studio or use <b>Open in browser</b> " +
               "(<code>app.foxglove.dev</code>, needs internet + a Foxglove account).",
+        btnLayout: "Download Foxglove layout",
+        layoutSteps: "<b>Load the panel layout (first time only):</b> " +
+              "① Click <b>Download Foxglove layout</b> to save <code>visio-ego-layout.json</code>. " +
+              "② In Foxglove: <b>Layouts</b> (top-left) → <b>Import from file…</b> → pick that " +
+              "file from your Downloads. Foxglove keeps it, so this is once per computer.",
         hevcWarn: "⚠ The camera video isn't showing. Turn on <b>Use software decoding</b> above and " +
               "it will play. (Updating your computer's video support can also fix it.)",
         decodeToggle: "Use software decoding",
@@ -276,6 +292,11 @@
         hint: "<b>桌面版</b>：通过 <code>foxglove://</code> 链接打开 Foxglove Studio —— 可离线使用。" +
               "若无反应，请先安装 Foxglove Studio，或使用<b>在浏览器中打开</b>" +
               "（<code>app.foxglove.dev</code>，需要联网 + Foxglove 账号）。",
+        btnLayout: "下载 Foxglove 布局",
+        layoutSteps: "<b>加载面板布局（仅首次）：</b>" +
+              "① 点击<b>下载 Foxglove 布局</b>，保存 <code>visio-ego-layout.json</code>。" +
+              "② 在 Foxglove 中：左上角 <b>Layouts</b> → <b>Import from file…</b> → " +
+              "从下载文件夹中选择该文件。Foxglove 会记住它，因此每台电脑只需一次。",
         hevcWarn: "⚠ 摄像头视频没有显示。请打开上方的<b>使用软件解码</b>，视频就能播放。" +
               "（更新电脑的视频组件也可以解决。）",
         decodeToggle: "使用软件解码（软解）",

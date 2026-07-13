@@ -13,7 +13,7 @@ import time
 import types
 
 import pytest
-from aiohttp.test_utils import make_mocked_request
+from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
 
 
 def _vd():
@@ -932,6 +932,27 @@ def _post(handler, app, body):
     req.json = _json
     import asyncio
     return asyncio.run(handler(req))
+
+
+def test_layout_download_serves_named_attachment() -> None:
+    # End-to-end through the router (covers route registration): GET /ego_layout.json
+    # returns the starter layout as a named attachment the page drops into Downloads —
+    # Foxglove has no API to inject a layout, so the operator imports this file once.
+    s = _serve()
+
+    async def _run():
+        app = s._build_app(_StubBridge(), _StubDiscovery())
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/ego_layout.json")
+            assert resp.status == 200
+            assert resp.content_type == "application/json"
+            disp = resp.headers["Content-Disposition"]
+            assert "attachment" in disp and 'filename="visio-ego-layout.json"' in disp
+            layout = await resp.json()             # served the layout itself, not an error page
+            assert "configById" in layout
+
+    import asyncio
+    asyncio.run(_run())
 
 
 def test_http_connect_unknown_id_returns_404() -> None:

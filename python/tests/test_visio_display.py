@@ -299,12 +299,17 @@ def test_help_exits_zero() -> None:
 
 def test_layout_data_is_shipped() -> None:
     """The Foxglove starter layout ships as package data beside the module, so the
-    installed command can point users at its absolute path."""
+    installed command can point users at its absolute path. Also pin the panels
+    wired to live device topics — the layout binds to the ego (``/ego/...``), and
+    a mismatched topic here silently renders an empty panel in Foxglove."""
     import json
 
     vd = _vd()
     assert vd._LAYOUT_PATH.exists()
-    json.loads(vd._LAYOUT_PATH.read_text())  # parses as JSON
+    panels = json.loads(vd._LAYOUT_PATH.read_text())["configById"]  # parses as JSON
+    assert panels["Image!cam0"]["imageMode"]["imageTopic"] == "/ego/camera/0"
+    assert panels["Audio!mic"]["topic"] == "/ego/audio/0"
+    assert panels["RawMessages!health"]["topicPath"] == "/ego/system_health"
 
 
 def test_pyproject_declares_console_script_and_default_deps() -> None:

@@ -1,13 +1,13 @@
 {
   "configById": {
-    "Image!cam0": { "imageMode": { "imageTopic": "/gripper/camera/0" } },
-    "Image!cam1": { "imageMode": { "imageTopic": "/gripper/camera/1" } },
+    "Image!cam0": { "imageMode": { "imageTopic": "/ego/camera/0" } },
+    "Image!cam1": { "imageMode": { "imageTopic": "/ego/camera/1" } },
     "3D!orientation": {
       "followTf": "world",
       "scene": { "enableStats": false },
       "transforms": {
         "frame:world": { "visible": true },
-        "frame:gripper/imu/0": { "visible": true }
+        "frame:ego/imu/0": { "visible": true }
       },
       "topics": { "/tf": { "visible": true } },
       "layers": {},
@@ -23,53 +23,17 @@
         "far": 5000
       }
     },
-    "Plot!quat": {
-      "title": "IMU orientation (quat)",
-      "paths": [
-        { "value": "/gripper/imu/0/quat.x", "enabled": true, "timestampMethod": "receiveTime" },
-        { "value": "/gripper/imu/0/quat.y", "enabled": true, "timestampMethod": "receiveTime" },
-        { "value": "/gripper/imu/0/quat.z", "enabled": true, "timestampMethod": "receiveTime" },
-        { "value": "/gripper/imu/0/quat.w", "enabled": true, "timestampMethod": "receiveTime" }
-      ],
-      "showLegend": true, "legendDisplay": "floating",
-      "isSynced": true, "xAxisVal": "timestamp"
+    "Audio!mic": {
+      "topic": "/ego/audio/0",
+      "volume": 1,
+      "muted": true,
+      "slidingViewWidth": 10,
+      "foxglovePanelTitle": "Mic (PCM-S16)"
     },
-    "Plot!accel": {
-      "title": "IMU accel (m/s^2)",
-      "paths": [
-        { "value": "/gripper/imu/0/raw.samples[0].linear_acceleration.x", "enabled": true, "timestampMethod": "receiveTime" },
-        { "value": "/gripper/imu/0/raw.samples[0].linear_acceleration.y", "enabled": true, "timestampMethod": "receiveTime" },
-        { "value": "/gripper/imu/0/raw.samples[0].linear_acceleration.z", "enabled": true, "timestampMethod": "receiveTime" }
-      ],
-      "showLegend": true, "legendDisplay": "floating",
-      "isSynced": true, "xAxisVal": "timestamp"
-    },
-    "Plot!gyro": {
-      "title": "IMU gyro (rad/s)",
-      "paths": [
-        { "value": "/gripper/imu/0/raw.samples[0].angular_velocity.x", "enabled": true, "timestampMethod": "receiveTime" },
-        { "value": "/gripper/imu/0/raw.samples[0].angular_velocity.y", "enabled": true, "timestampMethod": "receiveTime" },
-        { "value": "/gripper/imu/0/raw.samples[0].angular_velocity.z", "enabled": true, "timestampMethod": "receiveTime" }
-      ],
-      "showLegend": true, "legendDisplay": "floating",
-      "isSynced": true, "xAxisVal": "timestamp"
-    },
-    "Plot!bitrate": {
-      "title": "Bitrate (Mbps)",
-      "paths": [
-        { "value": "/stats/bitrate/_total.mbps", "label": "link total", "enabled": true, "timestampMethod": "receiveTime" },
-        { "value": "/stats/bitrate/_total.video_mbps", "label": "video", "enabled": true, "timestampMethod": "receiveTime" }
-      ],
-      "showLegend": true, "legendDisplay": "floating",
-      "isSynced": true, "xAxisVal": "timestamp"
-    },
-    "Plot!framedrops": {
-      "title": "Frame drops (% lost) — spikes here = link-limited, not scene complexity",
-      "paths": [
-        { "value": "/stats/bitrate/_total.drop_pct", "label": "% frames lost", "enabled": true, "timestampMethod": "receiveTime" }
-      ],
-      "showLegend": true, "legendDisplay": "floating",
-      "isSynced": true, "xAxisVal": "timestamp"
+    "RawMessages!health": {
+      "topicPath": "/ego/system_health",
+      "expansion": "all",
+      "foxglovePanelTitle": "System health"
     }
   },
   "globalVariables": {},
@@ -83,32 +47,17 @@
       "splitPercentage": 50
     },
     "second": {
-      "first": {
-        "first": "3D!orientation",
-        "second": "Plot!quat",
-        "direction": "row",
-        "splitPercentage": 50
-      },
+      "first": "3D!orientation",
       "second": {
-        "first": "Plot!accel",
-        "second": {
-          "first": "Plot!gyro",
-          "second": {
-            "first": "Plot!bitrate",
-            "second": "Plot!framedrops",
-            "direction": "column",
-            "splitPercentage": 60
-          },
-          "direction": "row",
-          "splitPercentage": 50
-        },
-        "direction": "row",
-        "splitPercentage": 34
+        "first": "Audio!mic",
+        "second": "RawMessages!health",
+        "direction": "column",
+        "splitPercentage": 55
       },
-      "direction": "column",
+      "direction": "row",
       "splitPercentage": 55
     },
     "direction": "column",
-    "splitPercentage": 40
+    "splitPercentage": 50
   }
 }

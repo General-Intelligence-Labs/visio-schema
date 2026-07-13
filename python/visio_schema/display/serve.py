@@ -55,6 +55,9 @@ from . import FoxgloveSink, VideoDecodeSink, dial_tcp, run_bridge
 from .discovery import DEFAULT_BUS_PORT, USB, DiscoveryService
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
+# The starter Foxglove layout, served for one-click download (see _layout_download).
+_LAYOUT_PATH = Path(__file__).resolve().parent / "ego_layout.json"
+_LAYOUT_DOWNLOAD_NAME = "visio-ego-layout.json"
 
 # A CommandResult reply times out if the device doesn't answer within this window.
 # ScanWifi is the slow one (the device scans for a couple seconds), so keep it roomy.
@@ -642,6 +645,20 @@ async def _index(request: web.Request) -> web.StreamResponse:
     return web.FileResponse(_STATIC_DIR / "index.html")
 
 
+async def _layout_download(request: web.Request) -> web.StreamResponse:
+    """Serve the starter Foxglove layout as a browser download.
+
+    Foxglove has no API to inject a layout over the WebSocket connection or the
+    ``foxglove://`` deep link (``layoutId`` only selects a layout already saved in
+    that Foxglove instance), so the launcher can't push it — instead it hands the
+    operator a ready-to-import file to load once via Foxglove ▸ Layouts ▸ Import
+    from file (Foxglove then remembers it across sessions)."""
+    return web.FileResponse(
+        _LAYOUT_PATH,
+        headers={"Content-Disposition": f'attachment; filename="{_LAYOUT_DOWNLOAD_NAME}"'},
+    )
+
+
 async def _devices_sse(request: web.Request) -> web.StreamResponse:
     discovery = request.app[_DISCOVERY]
     subscribers = request.app[_SUBSCRIBERS]
@@ -815,6 +832,7 @@ def _build_app(bridge: BridgeManager, discovery: DiscoveryService) -> web.Applic
     app[_DISCOVERY] = discovery
     app[_SUBSCRIBERS] = set()
     app.router.add_get("/", _index)
+    app.router.add_get("/ego_layout.json", _layout_download)
     app.router.add_get("/api/devices", _devices_sse)
     app.router.add_post("/api/connect", _connect)
     app.router.add_post("/api/disconnect", _disconnect)
