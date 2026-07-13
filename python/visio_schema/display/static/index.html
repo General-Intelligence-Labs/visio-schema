@@ -59,6 +59,7 @@
     .status .state .dot { width: 10px; height: 10px; border-radius: 50%; }
     .s-idle .dot { background: var(--muted); } .s-connecting .dot { background: var(--warn); }
     .s-streaming .dot { background: var(--ok); } .s-error .dot { background: var(--err); }
+    .s-ended .dot { background: var(--accent); }
     .status dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 14px 0; }
     .status dt { color: var(--muted); } .status dd { margin: 0; }
     .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
@@ -81,6 +82,17 @@
     .hw-guide a { color: var(--accent); font-weight: 600; }
     .err { color: var(--err); }
     code { background: var(--panel2); padding: 1px 5px; border-radius: 5px; }
+    /* mcap replay: path form + server-side file browser */
+    form.mcap-form { display: flex; gap: 8px; margin-top: 6px; }
+    form.mcap-form input { flex: 1; }
+    .fs { margin-top: 8px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+    .fs-path { font-size: 11px; color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--line); word-break: break-all; }
+    .fs-list { max-height: 240px; overflow-y: auto; }
+    .fs-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; cursor: pointer; border-bottom: 1px solid var(--line); }
+    .fs-item:last-child { border-bottom: none; }
+    .fs-item:hover { background: var(--panel2); }
+    .fs-item .ic { width: 16px; text-align: center; flex: none; }
+    .fs-item .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     /* config panel */
     .config { margin-top: 18px; }
     .cfg-card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 10px; }
@@ -118,6 +130,21 @@
         <button type="submit" class="secondary" data-i18n="add">Add</button>
       </form>
       <div class="empty err" id="manual-err"></div>
+
+      <h2 data-i18n="mcapTitle">Recording / MCAP file</h2>
+      <div id="grp-mcap"></div>
+      <form class="mcap-form" id="mcap-form">
+        <input id="mcap-path" data-i18n-ph="mcapPathPh" placeholder="/path/to/recording.mcap" autocomplete="off" />
+        <button type="button" id="btn-browse" class="secondary" data-i18n="mcapBrowse">Browse…</button>
+      </form>
+      <p class="hint" data-i18n-html="mcapHint" style="margin-top:8px">
+        Pick a recording, then <b>Play in browser</b> to watch it (plays from the start).
+      </p>
+      <div class="fs" id="fs" hidden>
+        <div class="fs-path" id="fs-path"></div>
+        <div class="fs-list" id="fs-list"></div>
+      </div>
+      <div class="empty err" id="mcap-err"></div>
     </section>
 
     <section class="col right">
@@ -222,6 +249,13 @@
       en: {
         tagline: "discover a device → open it in Foxglove",
         quit: "Quit", usb: "USB", wifi: "Wi-Fi", ap: "Access Point / Manual", add: "Add",
+        mcapTitle: "Recording / MCAP file", mcapPathPh: "/path/to/recording.mcap",
+        mcapBrowse: "Browse…", mcapUp: "⬆ parent folder",
+        mcapHint: "Pick a recording, then <b>Play in browser</b> to watch it (plays from the start).",
+        mcapPlayBrowser: "Play in browser", mcapPlayDesktop: "Play in Foxglove Desktop",
+        mcapEmptyDir: "no folders or .mcap files here", mcapTransport: "Recording",
+        mcapErr: "could not open recording", emptyMcap: "browse or paste a .mcap path to replay",
+        stateEnded: "Stream ended",
         stDevice: "Device", stTransport: "Transport", stMessages: "Messages",
         stTopics: "Topics", stWebSocket: "WebSocket",
         btnDesktop: "Open in Foxglove Desktop", btnBrowser: "Open in browser",
@@ -269,6 +303,13 @@
       zh: {
         tagline: "发现设备 → 在 Foxglove 中查看",
         quit: "退出", usb: "USB", wifi: "Wi-Fi", ap: "接入点 / 手动添加", add: "添加",
+        mcapTitle: "录制文件 / MCAP", mcapPathPh: "/路径/到/recording.mcap",
+        mcapBrowse: "浏览…", mcapUp: "⬆ 上级目录",
+        mcapHint: "选择一个录制文件，然后点击<b>在浏览器中播放</b>观看（从头播放）。",
+        mcapPlayBrowser: "在浏览器中播放", mcapPlayDesktop: "在 Foxglove 桌面版中播放",
+        mcapEmptyDir: "此文件夹中没有文件夹或 .mcap 文件", mcapTransport: "录制回放",
+        mcapErr: "无法打开录制文件", emptyMcap: "浏览或粘贴 .mcap 路径以回放",
+        stateEnded: "数据流已结束",
         stDevice: "设备", stTransport: "连接方式", stMessages: "消息数",
         stTopics: "主题数", stWebSocket: "WebSocket",
         btnDesktop: "在 Foxglove 桌面版中打开", btnBrowser: "在浏览器中打开",

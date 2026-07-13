@@ -13,7 +13,7 @@ import time
 import types
 
 import pytest
-from aiohttp.test_utils import make_mocked_request
+from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
 
 
 def _vd():
@@ -414,12 +414,13 @@ class _FakeEndpoint:
     ``on_cmd(msg)->reply`` to script CommandResult replies, and (with ``live``) tracks
     that it's alive only between start() and stop() — the single-reader invariant."""
 
-    def __init__(self, *, frames=(), on_cmd=None, live=None, lock=None, started=None):
+    def __init__(self, *, frames=(), on_cmd=None, live=None, lock=None, started=None, eof=False):
         self._frames = list(frames)
         self._on_cmd = on_cmd
         self._live = live
         self._lock = lock
         self._started = started
+        self._eof = eof            # fire one-arg on_closed(self) after frames (EOF, like a replay)
         self._cb = None
 
     def start(self, on_inbound, on_closed) -> None:
@@ -432,6 +433,8 @@ class _FakeEndpoint:
             on_inbound(m, self)
         if self._started is not None:
             self._started.set()
+        if self._eof and on_closed is not None:
+            on_closed(self)        # the arity (endpoint arg) that serve.py's fix must absorb
 
     def send(self, msg) -> None:
         reply = self._on_cmd(msg) if self._on_cmd is not None else None
@@ -1622,3 +1625,181 @@ def test_make_decoder_software_when_hwaccel_disabled() -> None:
     vd = _vd()   # VISIO_NO_HWACCEL is set by the autouse fixture → skip the GPU probe entirely
     dec, hw = vd._make_decoder(_FakeAv(available={"cuda"}, hw_ok={"cuda"}), "hevc")
     assert hw is False and dec.thread_type == "SLICE"
+
+
+# --------------------------------------------------------------------------- #
+# MCAP replay source — a local recording played into the same Foxglove bridge   #
+# --------------------------------------------------------------------------- #
+def _make_mcap(path, *, topic="/ego/system_health",
+               schema="visio_schema.v1.sensor.SystemHealth", n=3, stream_id=5,
+               payloads=None):
+    """Write a tiny MCAP for replay tests. ``payloads`` (raw bytes per message)
+    overrides the default all-defaults messages — used to embed real HEVC frames."""
+    from visio_schema import McapWriter, Message, make_channel
+
+    ch = make_channel(topic, schema, stream_id=stream_id)
+    with McapWriter(str(path)) as w:
+        blobs = payloads if payloads is not None else [b""] * n
+        for i, blob in enumerate(blobs):
+            m = Message(stream_id=stream_id, payload=blob, seq=i)
+            m.timestamp.FromNanoseconds((i + 1) * 1_000_000)   # 1 ms apart
+            w.write(m, ch)
+    return str(path)
+
+
+def _mcap_dto(path):
+    import os
+    return {"id": f"mcap:{path}", "label": os.path.basename(path), "transport": "mcap",
+            "host": None, "port": None, "device": None, "path": str(path)}
+
+
+def test_replay_eof_reaches_ended_state(monkeypatch) -> None:
+    # Covers the on_closed-arity fix AND the terminal "ended" state: a source that ends
+    # on_closed(self) must not TypeError, and status must flip off "streaming".
+    vd = _vd()
+    from visio_schema.v1.service.device_info.device_info_pb2 import DeviceInfo
+    from visio_schema.wire.control import DEVICE_INFO
+
+    m, ch = _quat_pair(vd)
+    announce = vd.Message(stream_id=DEVICE_INFO,
+                          payload=DeviceInfo(device_name="t", channels=[ch]).SerializeToString())
+    s = _install_bridge(monkeypatch, lambda dto: _FakeEndpoint(frames=[announce, m], eof=True))
+    mgr = s.BridgeManager(ws_port=0, viewer="desktop")
+    try:
+        mgr.connect({"id": "x", "label": "L", "transport": "usb", "device": "/dev/a"})
+        deadline = time.time() + 2
+        while mgr.status()["state"] != "ended" and time.time() < deadline:
+            time.sleep(0.01)
+        st = mgr.status()
+        assert st["state"] == "ended"      # not stuck on "streaming"; no crash in the reader
+        assert st["messages"] >= 1
+    finally:
+        mgr.shutdown()
+
+
+def test_open_endpoint_mcap_returns_replay(tmp_path) -> None:
+    s = _serve()
+    ep = s._open_endpoint(_mcap_dto(_make_mcap(tmp_path / "r.mcap")))
+    assert isinstance(ep, s.McapReaderEndpoint)
+
+
+def test_send_command_on_replay_fails_fast(monkeypatch, tmp_path) -> None:
+    # A replay has no device to command: send_command must return immediately, not block
+    # the full timeout waiting for a CommandResult that will never come.
+    s = _serve()
+    monkeypatch.setattr(s, "FoxgloveSink", _fake_fox_factory())
+    mgr = s.BridgeManager(ws_port=0, viewer="desktop")
+    try:
+        mgr._endpoint = s.McapReaderEndpoint(_make_mcap(tmp_path / "r.mcap"))   # a connected replay
+        res = mgr.send_command(s.command_pb2.Command())
+        assert res == {"ok": False, "error": "replay has no device"}
+    finally:
+        mgr.shutdown()
+
+
+def test_api_mcap_and_fs(tmp_path) -> None:
+    import asyncio
+
+    s = _serve()
+    mp = _make_mcap(tmp_path / "run.mcap")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "aaa").mkdir()
+    (tmp_path / ".hidden").mkdir()               # dotfiles are hidden
+    (tmp_path / "note.txt").write_text("x")      # non-.mcap files are excluded
+
+    async def run():
+        app = s._build_app(_StubBridge(), s.DiscoveryService())
+        async with TestClient(TestServer(app)) as c:
+            r = await c.get("/api/fs", params={"path": str(tmp_path)})
+            j = await r.json()
+            assert r.status == 200 and j["parent"]
+            entries = j["entries"]
+            # sub-dirs first (alpha), then .mcap files; .hidden + note.txt excluded
+            assert [e["name"] for e in entries] == ["aaa", "sub", "run.mcap"]
+            by_name = {e["name"]: e for e in entries}
+            assert by_name["sub"]["is_dir"] is True and by_name["run.mcap"]["is_dir"] is False
+            assert by_name["run.mcap"]["path"].endswith("run.mcap")   # full path per entry
+            r = await c.get("/api/fs", params={"path": mp})
+            assert r.status == 400                       # a file is not a directory
+            r = await c.post("/api/mcap", json={"path": mp})
+            j = await r.json()
+            assert r.status == 200 and j["transport"] == "mcap" and j["path"] == mp
+            r = await c.post("/api/mcap", json={"path": str(tmp_path / "note.txt")})
+            assert r.status == 400                       # not an MCAP file
+            assert (await c.post("/api/mcap", json={"path": ""})).status == 400
+
+    asyncio.run(run())
+
+
+def test_replay_mcap_end_to_end(monkeypatch, tmp_path) -> None:
+    # Real McapReaderEndpoint through the real _open_endpoint: plays the recording once,
+    # then reaches the terminal "ended" state (no TypeError on the EOF on_closed).
+    s = _serve()
+    monkeypatch.setattr(s, "FoxgloveSink", _FakeFox)
+    monkeypatch.setattr(s, "_open_deep_link", lambda url: True)
+    mgr = s.BridgeManager(ws_port=0, viewer="desktop")
+    try:
+        mgr.connect(_mcap_dto(_make_mcap(tmp_path / "run.mcap", n=3)))
+        deadline = time.time() + 3
+        while mgr.status()["state"] != "ended" and time.time() < deadline:
+            time.sleep(0.01)
+        st = mgr.status()
+        assert st["state"] == "ended" and st["messages"] >= 1 and st["transport"] == "mcap"
+    finally:
+        mgr.shutdown()
+
+
+def test_decode_wraps_replay(monkeypatch, tmp_path) -> None:
+    pytest.importorskip("av")
+    s = _serve()
+    captured: dict = {}
+    started = threading.Event()
+
+    def fake_run_bridge(source, sinks, **kw):
+        captured["sinks"] = sinks
+        started.set()
+
+    monkeypatch.setattr(s, "run_bridge", fake_run_bridge)
+    monkeypatch.setattr(s, "FoxgloveSink", _fake_fox_factory())
+    monkeypatch.setattr(s, "_open_deep_link", lambda url: True)
+    mgr = s.BridgeManager(ws_port=0, viewer="desktop")
+    try:
+        mgr.connect(_mcap_dto(_make_mcap(tmp_path / "run.mcap")), decode=True)
+        assert started.wait(2)
+        assert type(captured["sinks"][0]).__name__ == "VideoDecodeSink"   # decode wraps the replay
+    finally:
+        mgr.shutdown()
+
+
+def test_hevc_transcodes_on_replay(monkeypatch, tmp_path) -> None:
+    pytest.importorskip("av")
+    vd = _vd()
+    s = _serve()
+    seen: list[str] = []
+
+    class RecFox:
+        def __init__(self, port):
+            self.port = port
+
+        def write(self, m, c):
+            seen.append(c.schema_name)
+
+        def reset(self):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(s, "FoxgloveSink", RecFox)
+    monkeypatch.setattr(s, "_open_deep_link", lambda url: True)
+    mp = _make_mcap(tmp_path / "vid.mcap", topic="/ego/camera/1",
+                    schema=vd._VIDEO_SCHEMA, stream_id=16, payloads=_load_hevc_fixture())
+    mgr = s.BridgeManager(ws_port=0, viewer="desktop")
+    try:
+        mgr.connect(_mcap_dto(mp), decode=True)
+        deadline = time.time() + 8
+        while vd._IMAGE_SCHEMA not in seen and time.time() < deadline:
+            time.sleep(0.02)
+        assert vd._IMAGE_SCHEMA in seen        # replayed H.265 was transcoded to JPEG
+    finally:
+        mgr.shutdown()
