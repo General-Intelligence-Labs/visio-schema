@@ -4,7 +4,7 @@
 
 const state = { devices: [], connectedId: null, urls: null, pollTimer: null,
                 stateTimer: null, status: { state: "idle" }, hevcOk: null,
-                decodeOverride: null, lastTranscoding: null };
+                decodeOverride: null, lastTranscoding: null, fsPath: null };
 
 // Whether to ask the launcher to decode the H.265 on this PC (→ JPEG) so the browser can show it.
 // Auto = on when the browser can't decode HEVC itself (see checkHevc); the toggle overrides.
@@ -49,27 +49,32 @@ function deviceRow(d) {
   const row = document.createElement("div");
   row.className = "device" + (d.id === state.connectedId ? " active" : "");
   const meta = d.transport === "usb" ? (d.device || "")
+             : d.transport === "mcap" ? ""
              : d.host ? `${d.host}:${d.port}` : "";
+  const badge = d.transport === "mcap" ? "replay" : d.transport;
   row.innerHTML =
     `<span class="dot"></span>` +
     `<span class="info"><span class="label"></span>` +
     `<span class="meta"></span></span>` +
-    `<span class="badge">${d.transport}</span>`;
+    `<span class="badge"></span>`;
+  row.querySelector(".badge").textContent = badge;
   row.querySelector(".label").textContent = d.label || d.id;
   row.querySelector(".meta").textContent = meta;
   row.onclick = () => connect(d.id);
   return row;
 }
 
+const EMPTY_KEY = { usb: "emptyUsb", sta: "emptySta", ap: "emptyAp", mcap: "emptyMcap" };
+
 function render() {
-  for (const tp of ["usb", "sta", "ap"]) {
+  for (const tp of Object.keys(EMPTY_KEY)) {
     const grp = $("grp-" + tp);
     grp.textContent = "";
     const items = state.devices.filter((d) => d.transport === tp);
     if (!items.length) {
       const e = document.createElement("div");
       e.className = "empty";
-      e.textContent = tp === "ap" ? tr("emptyAp") : tp === "usb" ? tr("emptyUsb") : tr("emptySta");
+      e.textContent = tr(EMPTY_KEY[tp]);
       grp.appendChild(e);
     } else {
       items.forEach((d) => grp.appendChild(deviceRow(d)));
@@ -101,10 +106,15 @@ async function connect(id) {
   state.urls = data;
   render();
   applyStatus(data);
-  startPolling();
-  resetConfigMessages();
-  loadConfigState();      // populate the current-state header + pre-fill the forms
-  scanWifi(true);         // pre-scan host Wi-Fi so the dropdown has networks on first open
+  // A replayed recording is not a device: it has no config/Wi-Fi and can't take
+  // commands, so skip the config polling + pre-scans that would just time out.
+  const isReplay = data.transport === "mcap";
+  startPolling(!isReplay);
+  if (!isReplay) {
+    resetConfigMessages();
+    loadConfigState();      // populate the current-state header + pre-fill the forms
+    scanWifi(true);         // pre-scan host Wi-Fi so the dropdown has networks on first open
+  }
 }
 
 async function disconnect() {
@@ -121,15 +131,21 @@ function applyStatus(s) {
   const box = $("status").querySelector(".state");
   box.className = "state s-" + (s.state || "idle");
   const key = { idle: "stateIdle", connecting: "stateConnecting",
-                streaming: "stateStreaming", error: "stateError" }[s.state];
+                streaming: "stateStreaming", error: "stateError",
+                ended: "stateEnded" }[s.state];
   $("state-text").textContent = key ? tr(key) : (s.state || "");
   $("st-label").textContent = s.label || "—";
-  $("st-transport").textContent = s.transport || "—";
+  $("st-transport").textContent =
+    s.transport === "mcap" ? tr("mcapTransport") : (s.transport || "—");
   $("st-messages").textContent = s.messages != null ? s.messages : "—";
   $("st-topics").textContent = s.topics && s.topics.length ? s.topics.length : "—";
   $("st-ws").textContent = s.ws_url || "—";
   $("st-error").textContent = s.error || "";
   const connected = !!s.connected_id;
+  // For a recording the viewer buttons ARE the play action (they restart it), so relabel.
+  const isMcap = s.transport === "mcap";
+  $("btn-desktop").textContent = tr(isMcap ? "mcapPlayDesktop" : "btnDesktop");
+  $("btn-browser").textContent = tr(isMcap ? "mcapPlayBrowser" : "btnBrowser");
   $("btn-desktop").disabled = !connected;
   $("btn-browser").disabled = !connected || !(state.urls && state.urls.browser_url);
   $("btn-disconnect").disabled = !connected;
@@ -155,10 +171,11 @@ function applyStatus(s) {
   $("hevc-warn").hidden = !(connected && !transcoding && state.hevcOk === false);
   $("hw-guide").hidden = !transcoding;
   // The config panel needs a live bus connection to send commands, so hide it once the
-  // link errors out (the device's reader thread is gone; commands would just fail).
-  $("config").hidden = !connected || s.state === "error";
-  // "error" is terminal until the next connect — stop the 1 Hz poll.
-  if (s.state === "error") stopPolling();
+  // link errors out (the device's reader thread is gone; commands would just fail) — and
+  // for a replay, which is a file, not a commandable device.
+  $("config").hidden = !connected || s.state === "error" || s.transport === "mcap";
+  // "error"/"ended" are terminal until the next connect — stop the 1 Hz poll.
+  if (s.state === "error" || s.state === "ended") stopPolling();
 }
 
 async function refreshStatus() {
@@ -166,10 +183,11 @@ async function refreshStatus() {
   if (r.ok) applyStatus(await r.json());
 }
 
-function startPolling() {
+function startPolling(configPoll = true) {
   stopPolling();
   state.pollTimer = setInterval(refreshStatus, 1000);   // stream liveness (passive)
-  state.stateTimer = setInterval(pollState, 4000);      // DeviceState header (pull-only)
+  // The DeviceState pull only applies to a live device — a replay has none.
+  if (configPoll) state.stateTimer = setInterval(pollState, 4000);
 }
 function stopPolling() {
   if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
@@ -236,12 +254,23 @@ function downloadLayout() {
   a.remove();
 }
 
+// A recording is finite and starts playing on load, so "Play in browser/desktop" (re)starts
+// it from the top — pressing Play actually plays from the beginning, and re-watching works.
+// connect() tears down + reopens the source cleanly; live devices aren't restarted.
+async function restartIfReplay() {
+  if (state.status && state.status.transport === "mcap" && state.connectedId) {
+    await connect(state.connectedId);
+  }
+}
+
 $("btn-layout").onclick = downloadLayout;
 $("btn-desktop").onclick = async () => {
+  await restartIfReplay();
   const { data } = await postJSON("/api/open-viewer");
   if (data) state.urls = { ...state.urls, ...data };
 };
-$("btn-browser").onclick = () => {
+$("btn-browser").onclick = async () => {
+  await restartIfReplay();
   if (state.urls && state.urls.browser_url) {
     // Named target reuses one tab across device switches.
     window.open(state.urls.browser_url, "foxglove");
@@ -273,6 +302,72 @@ $("manual-form").onsubmit = async (e) => {
   $("host").value = ""; $("port").value = "";
   // The device now shows up via the SSE list; the operator clicks it to connect.
 };
+
+// ---- MCAP replay: server-side file browser + play ------------------------- //
+// A browser can't hand the server a local path (the C:\fakepath sandbox), so the page
+// navigates the SERVER's own filesystem via /api/fs and posts the chosen path to
+// /api/mcap. The file is opened in place — nothing is uploaded.
+function fsRow(icon, name, onclick) {
+  const row = document.createElement("div");
+  row.className = "fs-item";
+  row.innerHTML = `<span class="ic"></span><span class="nm"></span>`;
+  row.querySelector(".ic").textContent = icon;
+  row.querySelector(".nm").textContent = name;
+  row.onclick = onclick;
+  return row;
+}
+
+function renderFs(data) {
+  state.fsPath = data.path;
+  $("fs-path").textContent = data.path;
+  const list = $("fs-list");
+  list.textContent = "";
+  if (data.parent) list.appendChild(fsRow("⬆", tr("mcapUp"), () => fsBrowse(data.parent)));
+  for (const ent of data.entries) {
+    list.appendChild(ent.is_dir
+      ? fsRow("📁", ent.name, () => fsBrowse(ent.path))
+      : fsRow("🎬", ent.name, () => pickMcap(ent.path)));
+  }
+  if (!data.entries.length) {
+    const e = document.createElement("div");
+    e.className = "empty"; e.style.padding = "8px 10px";
+    e.textContent = tr("mcapEmptyDir");
+    list.appendChild(e);
+  }
+}
+
+async function fsBrowse(path) {
+  $("mcap-err").textContent = "";
+  const q = path ? "?path=" + encodeURIComponent(path) : "";
+  const r = await fetch("/api/fs" + q);
+  const data = await r.json();
+  if (!r.ok) { $("mcap-err").textContent = data.error || ""; return; }
+  renderFs(data);
+  $("fs").hidden = false;
+}
+
+// Clicking a recording in the browser loads it as the current source (its replay
+// starts feeding the WS); the operator then hits "Play in browser" to watch from the top.
+function pickMcap(path) {
+  $("mcap-path").value = path;
+  $("fs").hidden = true;
+  loadMcap();
+}
+
+async function loadMcap() {
+  const path = $("mcap-path").value.trim();
+  if (!path) return;
+  $("mcap-err").textContent = "";
+  const { ok, data } = await postJSON("/api/mcap", { path });
+  if (!ok) { $("mcap-err").textContent = data.error || tr("mcapErr"); return; }
+  connect(data.id);   // load it — decode fallback threads through /api/connect
+}
+
+$("btn-browse").onclick = () => {
+  if (!$("fs").hidden) { $("fs").hidden = true; return; }   // toggle closed
+  fsBrowse(state.fsPath || null);                            // resume last dir, else home
+};
+$("mcap-form").onsubmit = (e) => { e.preventDefault(); loadMcap(); };
 
 // ---- device config (right, below status) --------------------------------- //
 // Every config action sends a Command over the connected device's bridge and shows the

@@ -47,12 +47,13 @@ from google.protobuf.json_format import MessageToDict
 from google.protobuf.message import DecodeError
 
 from visio_schema import ChannelRegistry, command_message
+from visio_schema.mcap import McapReaderEndpoint
 from visio_schema.transport import extract_frames, frame_bytes, serial_endpoint
 from visio_schema.transport.framed_fd import FramedFdEndpoint
 from visio_schema.v1.control import command_pb2, command_result_pb2
 
 from . import FoxgloveSink, VideoDecodeSink, dial_tcp, run_bridge
-from .discovery import DEFAULT_BUS_PORT, USB, DiscoveryService
+from .discovery import DEFAULT_BUS_PORT, MCAP, USB, DiscoveryService
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 # The starter Foxglove layout, served for one-click download (see _layout_download).
@@ -145,7 +146,11 @@ def _open_endpoint(dto: dict):
     there is exactly one). On POSIX, USB uses the (native-preferring) serial endpoint and
     sta/ap wrap a `dial_tcp` fd in a `FramedFdEndpoint`. On Windows those POSIX-fd paths
     don't work (no select()-able serial fd, `os.read` can't read a socket handle), so we
-    read via pyserial / selectors+recv through a :class:`_WinEndpoint`."""
+    read via pyserial / selectors+recv through a :class:`_WinEndpoint`. An
+    :data:`MCAP` source is a local recording replayed through the same pipeline via a
+    (read-only, timestamp-paced) :class:`McapReaderEndpoint`."""
+    if dto["transport"] == MCAP:
+        return McapReaderEndpoint(dto["path"])
     if dto["transport"] == USB:
         if sys.platform == "win32":
             import serial
@@ -377,6 +382,10 @@ class BridgeManager:
         self._stop: threading.Event | None = None
         self._current: dict | None = None
         self._error: str | None = None
+        # Set when a source reaches a natural end-of-stream (a finished replay, or a
+        # live link that closed) so status() can report "ended" instead of a stale
+        # "streaming". Cleared on the next connect().
+        self._ended = False
         self._viewer_opened = False
         # Per-session: transcode H.265 → JPEG on this PC so browsers without HEVC support can still
         # see video (from the page's WebCodecs probe on each connect). ``_video_sink`` is the live
@@ -428,6 +437,7 @@ class BridgeManager:
             self._status.reset()
             with self._lock:
                 self._error = None
+                self._ended = False
                 self._current = dto
                 self._video_sink = None
                 self._stop = threading.Event()
@@ -477,7 +487,10 @@ class BridgeManager:
             with contextlib.suppress(queue.Full):
                 inbox.put_nowait(msg)         # streaming is lossy-ok under backpressure
 
-        ep.start(on_inbound, link_closed.set)
+        # on_closed arity varies: _WinEndpoint calls it zero-arg, FramedFdEndpoint /
+        # McapReaderEndpoint call it with the endpoint. A replay hits EOF on every run
+        # (and TCP-unplug does too), so absorb the arg — link_closed.set takes none.
+        ep.start(on_inbound, lambda *_: link_closed.set())
         with self._lock:
             if self._stop is not stop:        # a newer connect() already superseded us
                 ep.stop()
@@ -506,6 +519,12 @@ class BridgeManager:
             run_bridge(source, [fox, self._status, self._cmd_sink], derive_tf=True,
                        derive_bitrate=self._bitrate,
                        bitrate_window=self._bitrate_window, close_sinks=False)
+            # run_bridge returned without being stopped → the source ended on its own
+            # (a finished replay, or a live link that closed). Report "ended", not a
+            # stale "streaming". A supersede/disconnect sets stop, so guard on it.
+            with self._lock:
+                if self._stop is stop and not stop.is_set():
+                    self._ended = True
         except Exception as exc:
             traceback.print_exc(file=sys.stderr)
             with self._lock:
@@ -531,6 +550,10 @@ class BridgeManager:
             ep = self._endpoint
         if ep is None:
             return {"ok": False, "error": "no device connected"}
+        if isinstance(ep, McapReaderEndpoint):
+            # A replay has no device to command; its send() is a no-op, so a config
+            # request would otherwise just burn the full timeout. Fail fast.
+            return {"ok": False, "error": "replay has no device"}
         with self._cmd_lock:
             self._command_seq += 1
             cid = self._command_seq
@@ -594,11 +617,14 @@ class BridgeManager:
         with self._lock:
             dto = self._current
             error = self._error
+            ended = self._ended
         messages, topics = self._status.snapshot()
         if dto is None:
             state = "idle"
         elif error is not None:
             state = "error"
+        elif ended:
+            state = "ended"
         elif messages > 0:
             state = "streaming"
         else:
@@ -724,6 +750,60 @@ async def _manual(request: web.Request) -> web.Response:
     return web.json_response(dto)
 
 
+async def _open_mcap(request: web.Request) -> web.Response:
+    """Add a local ``.mcap`` recording as a replay source (the page then /api/connect's
+    it by id, exactly like a discovered device). Mirrors :func:`_manual`."""
+    body = await request.json()
+    path_in = (body.get("path") or "").strip()
+    if not path_in:
+        return web.json_response({"error": "path required"}, status=400)
+    discovery = request.app[_DISCOVERY]
+    loop = asyncio.get_running_loop()
+    try:
+        # add_mcap() stats + reads the file header — off the loop.
+        dto = await loop.run_in_executor(None, discovery.add_mcap, path_in)
+    except OSError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    return web.json_response(dto)
+
+
+def _scan_dir(path: str | None) -> dict:
+    """List a directory for the server-side file browser — sub-directories (to descend
+    into) plus ``.mcap`` files (to pick); returns
+    ``{path, parent, entries:[{name, is_dir, path}]}``. Defaults to the home directory."""
+    base = (Path(path).expanduser() if path else Path.home()).resolve()
+    if not base.is_dir():
+        raise ValueError(f"not a directory: {base}")
+    entries = []
+    with os.scandir(base) as it:
+        for e in it:
+            if e.name.startswith("."):
+                continue
+            try:
+                is_dir = e.is_dir()
+            except OSError:
+                continue                      # unreadable child — skip
+            if is_dir or e.name.lower().endswith(".mcap"):
+                # Full path per entry so the browser never has to join paths (which
+                # would get the separator wrong cross-platform).
+                entries.append({"name": e.name, "is_dir": is_dir, "path": e.path})
+    entries.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
+    parent = str(base.parent) if base.parent != base else None
+    return {"path": str(base), "parent": parent, "entries": entries}
+
+
+async def _list_dir(request: web.Request) -> web.Response:
+    """Server-side file-browser backend for picking a local recording (Gradio/Jupyter
+    pattern): the browser can't hand us a filesystem path, so it navigates the server's
+    own directories through this and posts the chosen path to /api/mcap."""
+    loop = asyncio.get_running_loop()
+    try:
+        listing = await loop.run_in_executor(None, _scan_dir, request.query.get("path"))
+    except (OSError, ValueError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    return web.json_response(listing)
+
+
 async def _open_viewer(request: web.Request) -> web.Response:
     bridge = request.app[_BRIDGE]
     result = await asyncio.get_running_loop().run_in_executor(
@@ -837,6 +917,8 @@ def _build_app(bridge: BridgeManager, discovery: DiscoveryService) -> web.Applic
     app.router.add_post("/api/connect", _connect)
     app.router.add_post("/api/disconnect", _disconnect)
     app.router.add_post("/api/manual", _manual)
+    app.router.add_post("/api/mcap", _open_mcap)
+    app.router.add_get("/api/fs", _list_dir)
     app.router.add_post("/api/open-viewer", _open_viewer)
     app.router.add_post("/api/shutdown", _shutdown)
     app.router.add_get("/api/status", _status)
