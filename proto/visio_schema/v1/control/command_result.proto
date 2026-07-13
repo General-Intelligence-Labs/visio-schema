@@ -96,11 +96,14 @@ message DeviceState {
   string    wifi_ip         = 8;
   string    wifi_last_error = 9;
 
-  // ── storage (config only; never secret keys) ──
+  // ── storage (config only; never the secret key) ──
   bool   storage_configured = 10;
   string storage_endpoint   = 11;
   string storage_bucket     = 12;
   string storage_prefix     = 13;
+  // Access key ID is an identifier (not a secret), echoed back so the app can
+  // show which credential is configured. The secret access key is NEVER echoed.
+  string storage_access_key_id = 26;
 
   // ── upload queue ──
   uint32 upload_pending             = 14;

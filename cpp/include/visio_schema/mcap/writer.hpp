@@ -23,6 +23,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -58,6 +59,13 @@ class McapWriter {
   void Write(const Channel& channel, const Message& msg);
   void Close();
 
+  // Carry an MCAP Metadata record (`name` + key/values) in the file — e.g. the
+  // capture metadata (task/location/…). Call once after construction; it's
+  // written into the current part immediately and re-emitted on each rotation so
+  // every part is self-describing. Not thread-safe vs Write; call before the
+  // first Write / before a writer thread starts draining.
+  void SetMetadata(std::string name, std::map<std::string, std::string> kv);
+
   // Total payload bytes written to disk over this writer's lifetime. Unlike
   // part_bytes_ (which resets at each rotation) this is monotonic across parts,
   // so a stall detector can watch it advance to tell "actively writing" from
@@ -74,6 +82,11 @@ class McapWriter {
   void Roll();
   // Close the current part and fsync it to physical media before moving on.
   void CloseCurrentPart();
+  // Emit the stored Metadata record into the current part (no-op if none set).
+  void WriteStoredMetadata();
+
+  std::string meta_name_;
+  std::map<std::string, std::string> meta_;
 
   const std::string base_path_;
   const std::uint64_t max_bytes_;
