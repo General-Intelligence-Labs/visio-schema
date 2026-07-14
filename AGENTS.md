@@ -51,7 +51,7 @@ languages have separate idioms.)
 
 Proto entry points consumers rely on: `v1.control.command_pb2` (`Command` + its oneof bodies +
 `StartRecording`/`StopRecording`/`Identify`/`SetAutoStart`/`ConnectWifi`/`SetStorage`/
-`ListRecordings`/`GetState`/`SetCalibration`/`SetAutoUpload`/`SetNoticeLang`), `v1.control.command_result_pb2.CommandResult`,
+`ListRecordings`/`GetState`/`SetCalibration`/`SetAutoUpload`/`SetNoticeLang`/`SetResolution`), `v1.control.command_result_pb2.CommandResult`,
 `v1.wire.header_pb2` (`Header`, `ControlStream`), `v1.service.device_info.device_info_pb2`
 (`DeviceInfo`, `Channel`), `v1.sensor.*`, `v1.calibration.*`, `foxglove.*`.
 

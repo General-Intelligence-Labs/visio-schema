@@ -54,6 +54,7 @@ REQUIRED_COMMAND_BODIES = frozenset(
         "set_calibration",
         "set_auto_upload",
         "set_notice_lang",
+        "set_resolution",
     }
 )
 

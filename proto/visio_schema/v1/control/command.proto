@@ -45,6 +45,7 @@ message Command {
     FormatStorage  format_storage  = 25;
     SetAutoUpload  set_auto_upload = 26;
     SetNoticeLang  set_notice_lang = 27;
+    SetResolution  set_resolution  = 28;
   }
 }
 
@@ -116,6 +117,20 @@ message SetAutoUpload {
 // is echoed back in DeviceState.video_bitrate_kbps.
 message SetBitrate {
   uint32 bitrate_kbps = 1;  // target CBR bitrate (kbit/s) for all cameras
+}
+
+// Persist the camera capture resolution to a device-side sidecar
+// (resolution.json under the device state dir, a flat sibling of
+// bitrate.json), applied to EVERY camera. Like SetBitrate, this is persisted
+// but takes effect on the NEXT BOOT only — the running ISP/encoder pipeline is
+// not reconfigured live — so the app should tell the user to reboot the device
+// for the new resolution to apply. The sensor driver must support the
+// requested geometry (e.g. SC3336: 1920x1080, 1600x1296, 1600x1200); an
+// unsupported size is snapped to the sensor's default mode at boot. The
+// current persisted value is echoed back in DeviceState.video_width/height.
+message SetResolution {
+  uint32 width  = 1;  // capture width in pixels, for all cameras
+  uint32 height = 2;  // capture height in pixels, for all cameras
 }
 
 // Persist default recording metadata to a device-side sidecar

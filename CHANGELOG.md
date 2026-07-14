@@ -4,6 +4,17 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.5.1 — 2026-07-14
+
+### Added `Command.set_resolution` (wire-compatible)
+
+- **New Command body `SetResolution` (tag 28, `width`/`height` uint32).**
+  Persists the camera capture resolution (all cameras) to a device-side
+  sidecar; takes effect on the next boot, like `SetBitrate`. Unsupported
+  geometries snap to the sensor's default mode at boot.
+- **New `DeviceState.video_width`/`video_height` (tags 27/28).** Echo the
+  persisted resolution the same way `video_bitrate_kbps` echoes bitrate.
+
 ## 0.5.0 — 2026-07-14
 
 ### Merged main (S3/OSS auto-upload) into dev — `SetNoticeLang` retagged (BREAKING vs 0.4.2)

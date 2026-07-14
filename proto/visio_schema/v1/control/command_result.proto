@@ -120,6 +120,12 @@ message DeviceState {
   // SetBitrate sidecar, falling back to the per-camera config default). Echoed
   // so the app can show which preset is active. Takes effect on the next boot.
   uint32 video_bitrate_kbps = 23;
+
+  // Persisted camera capture resolution, shared by all cameras (the
+  // SetResolution sidecar, falling back to the per-camera config default).
+  // Echoed like video_bitrate_kbps; a pending change applies on next boot.
+  uint32 video_width  = 27;
+  uint32 video_height = 28;
 }
 
 // The single ack a device emits per Command on /<device>/command_result.
