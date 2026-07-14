@@ -39,8 +39,10 @@ for _py in glob.glob(os.path.join(_pkg, "**", "*.py"), recursive=True):
     hiddenimports.append(_mod)
 
 # Pull in everything these ship — foxglove-sdk carries a native lib; zeroconf/aiohttp
-# have submodules + C-extensions PyInstaller's static analysis can miss.
-for _mod in ("foxglove", "zeroconf", "aiohttp"):
+# have submodules + C-extensions PyInstaller's static analysis can miss; `av` bundles
+# ffmpeg (its shared libs), needed so the launcher can decode H.265 → JPEG on hosts whose
+# browser can't render HEVC (VideoDecodeSink).
+for _mod in ("foxglove", "zeroconf", "aiohttp", "av"):
     _d, _b, _h = collect_all(_mod)
     datas += _d
     binaries += _b
@@ -52,9 +54,9 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
-    # The --serve launcher only uses the Foxglove sink; drop the Rerun/PyAV sink deps
-    # (a large native viewer binary + ffmpeg) so the bundle stays lean.
-    excludes=["rerun", "rerun_sdk", "av", "matplotlib", "tkinter"],
+    # Keep PyAV (ffmpeg, ~35 MB) for host-side H.265→JPEG decode, but still drop the Rerun
+    # viewer (~211 MB native binary) — the launcher only ever renders in Foxglove.
+    excludes=["rerun", "rerun_sdk", "matplotlib", "tkinter"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

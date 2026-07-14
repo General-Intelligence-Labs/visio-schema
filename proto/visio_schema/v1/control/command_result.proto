@@ -56,6 +56,13 @@ message RecordingEntry {
   double latitude  = 13;  // 0 when unknown
   double longitude = 14;  // 0 when unknown
   string capturer  = 15;  // who operated the capture (user-entered)
+
+  // True when the session's recording data is truncated: a .mcap part that is
+  // not the active recording lacks the MCAP end magic (power was cut / the
+  // card was pulled mid-recording, so Stop never wrote the footer). Damaged
+  // parts are never auto-uploaded (delete-after-upload would destroy the only
+  // recoverable copy); recover them off-device with MCAP recovery tooling.
+  bool damaged = 16;
 }
 
 message RecordingsList {
@@ -120,6 +127,12 @@ message DeviceState {
   // SetBitrate sidecar, falling back to the per-camera config default). Echoed
   // so the app can show which preset is active. Takes effect on the next boot.
   uint32 video_bitrate_kbps = 23;
+
+  // Persisted camera capture resolution, shared by all cameras (the
+  // SetResolution sidecar, falling back to the per-camera config default).
+  // Echoed like video_bitrate_kbps; a pending change applies on next boot.
+  uint32 video_width  = 27;
+  uint32 video_height = 28;
 }
 
 // The single ack a device emits per Command on /<device>/command_result.

@@ -26,17 +26,13 @@ inline constexpr std::uint32_t kHeartbeat = static_cast<std::uint32_t>(
     visio_schema_v1_wire_ControlStream_CONTROL_STREAM_HEARTBEAT);
 inline constexpr std::uint32_t kCommand = static_cast<std::uint32_t>(
     visio_schema_v1_wire_ControlStream_CONTROL_STREAM_COMMAND);
-inline constexpr std::uint32_t kExposureSync = static_cast<std::uint32_t>(
-    visio_schema_v1_wire_ControlStream_CONTROL_STREAM_EXPOSURE_SYNC);
 
 // True for control streams that never cross a hop (the bus drops them rather than
 // relaying). The single source of truth for "link-scoped"; mirrors Python's
 // LINK_LOCAL_CONTROL. A new control stream belongs here iff it is link-scoped and
-// carries no device identity. Exposure-sync is single-hop hub↔child; a child
-// source's grid is re-emitted to the other children by the hub's service (an
-// explicit application-layer relay), never by bus auto-forwarding.
+// carries no device identity (e.g. heartbeat: per-hop RTT/clock-offset only).
 inline constexpr bool IsLinkLocalControl(std::uint32_t id) {
-  return id == kHeartbeat || id == kExposureSync;
+  return id == kHeartbeat;
 }
 
 }  // namespace visio_schema

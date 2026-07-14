@@ -61,6 +61,9 @@ visio_schema.v1.control.SetRecordingMeta.capturer     max_size:64
 # FormatStorage: target filesystem name ("", "ext4", "exfat", "vfat").
 visio_schema.v1.control.FormatStorage.fs_type         max_size:8
 
+# SetNoticeLang: ISO 639-1 code, possibly with a region subtag ("zh-CN").
+visio_schema.v1.control.SetNoticeLang.lang            max_size:16
+
 # ---- Control: CommandResult ack + DeviceState snapshot (bounded inline so the
 #      ack is a static struct; the two list payloads below are FT_POINTER) -----
 visio_schema.v1.control.CommandResult.error_code               max_size:32
@@ -112,10 +115,6 @@ visio_schema.v1.calibration.ImuCalibration.gyro_misalignment    max_count:9
 # ---- Geometry: short frame id ---------------------------------------------
 visio_schema.v1.geometry.Twist.frame_id   max_size:32
 
-# ---- Exposure-sync: bounded source device name so ExposureGrid decodes into a
-#      fully FT_STATIC struct (no malloc on the per-hop control path). -----------
-visio_schema.v1.service.exposure_sync.ExposureGrid.source_device   max_size:32
-
 # ---- OTA: the host->device control message. OtaBegin is the only body the
 #      normal-mode firmware decodes, so bound everything in it to keep the whole
 #      OtaMessage a fully FT_STATIC struct (no malloc on the inbound decode) —
@@ -148,6 +147,7 @@ visio_schema.v1.service.ota.OtaStatus.other_slot_version  max_size:32
 #      encode/decode function per field; FT_POINTER is plain struct assignment.)
 #      Channel mirrors the Foxglove channel; `schema` is the FileDescriptorSet.
 visio_schema.v1.service.device_info.DeviceInfo.device_name         type:FT_POINTER
+visio_schema.v1.service.device_info.DeviceInfo.equipment_type      type:FT_POINTER
 visio_schema.v1.service.device_info.DeviceInfo.firmware_version    type:FT_POINTER
 visio_schema.v1.service.device_info.DeviceInfo.hardware_revision   type:FT_POINTER
 visio_schema.v1.service.device_info.DeviceInfo.serial              type:FT_POINTER

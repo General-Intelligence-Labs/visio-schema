@@ -30,6 +30,7 @@ class ChannelRegistry {
  public:
   struct DeviceView {
     std::string device_name;
+    std::string equipment_type;
     std::string firmware_version;
     std::string hardware_revision;
     std::string serial;
@@ -74,8 +75,12 @@ class ChannelRegistry {
   // ── Discovery ─────────────────────────────────────────────────────────
   // Set the optional device metadata carried in the announce (the Bus creates
   // the registry with just a device_name; a producer sets the rest here).
-  void SetMetadata(std::string firmware_version, std::string hardware_revision,
-                   std::string serial, std::uint64_t boot_unix_seconds) {
+  // `equipment_type` is the logical role (e.g. "glove_left") — distinct from the
+  // per-unit `device_name` set at construction.
+  void SetMetadata(std::string equipment_type, std::string firmware_version,
+                   std::string hardware_revision, std::string serial,
+                   std::uint64_t boot_unix_seconds) {
+    equipment_type_ = std::move(equipment_type);
     firmware_version_ = std::move(firmware_version);
     hardware_revision_ = std::move(hardware_revision);
     serial_ = std::move(serial);
@@ -87,6 +92,7 @@ class ChannelRegistry {
   // DeviceInfo announce envelope (nanopb FT_POINTER). Public so the bus + tests
   // build/inspect announces.
   static std::string Encode(const std::string& device_name,
+                            const std::string& equipment_type,
                             const std::string& firmware_version,
                             const std::string& hardware_revision,
                             const std::string& serial,
@@ -96,6 +102,7 @@ class ChannelRegistry {
 
  private:
   std::string device_name_;
+  std::string equipment_type_;
   std::string firmware_version_;
   std::string hardware_revision_;
   std::string serial_;

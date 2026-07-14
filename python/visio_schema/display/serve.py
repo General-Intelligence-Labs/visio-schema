@@ -31,6 +31,7 @@ import json
 import os
 import queue
 import re
+import socket
 import subprocess
 import sys
 import threading
@@ -50,7 +51,7 @@ from visio_schema.transport import extract_frames, frame_bytes, serial_endpoint
 from visio_schema.transport.framed_fd import FramedFdEndpoint
 from visio_schema.v1.control import command_pb2, command_result_pb2
 
-from . import FoxgloveSink, dial_tcp, run_bridge
+from . import FoxgloveSink, VideoDecodeSink, dial_tcp, run_bridge
 from .discovery import DEFAULT_BUS_PORT, USB, DiscoveryService
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -358,7 +359,10 @@ class BridgeManager:
         self._baud = baud
         self._bitrate = bitrate
         self._bitrate_window = bitrate_window
-        self._sink = FoxgloveSink(ws_port)   # long-lived; started here
+        # long-lived; started here. ws_port=0 (the launcher default) lets foxglove pick a
+        # free port — the viewer is always pointed at self._sink.port, so nothing needs a
+        # fixed one and startup can never collide with a stale launcher.
+        self._sink = FoxgloveSink(ws_port)
         self._status = _StatusSink()
         # _connect_lock serializes connect/disconnect/shutdown (only ONE reader ever).
         # _lock guards the short state reads/writes. They are split so a transition can
@@ -371,6 +375,10 @@ class BridgeManager:
         self._current: dict | None = None
         self._error: str | None = None
         self._viewer_opened = False
+        # Per-session: transcode H.265 → JPEG on this PC so browsers without HEVC support can still
+        # see video (from the page's WebCodecs probe on each connect). ``_video_sink`` is the live
+        # transcode sink, kept so status() can report hardware-vs-software decode.
+        self._video_sink: VideoDecodeSink | None = None
         # Command/reply plumbing for device config. The active bridge's Endpoint is
         # bidirectional, so config commands ride the SAME connection as the stream;
         # replies (CommandResult) are matched to their request by command_id.
@@ -410,7 +418,7 @@ class BridgeManager:
             slot["result"] = {"ok": False, "error": reason}
             slot["event"].set()
 
-    def connect(self, dto: dict) -> dict:
+    def connect(self, dto: dict, decode: bool = False) -> dict:
         with self._connect_lock:
             self._stop_current()      # joins the old reader outside _lock
             self._sink.reset()        # drop the previous device's channels/session
@@ -418,9 +426,10 @@ class BridgeManager:
             with self._lock:
                 self._error = None
                 self._current = dto
+                self._video_sink = None
                 self._stop = threading.Event()
                 self._thread = threading.Thread(
-                    target=self._run, args=(dto, self._stop),
+                    target=self._run, args=(dto, self._stop, decode),
                     name="visio-bridge", daemon=True)
                 self._thread.start()
         opened = self.open_viewer(force=False)
@@ -431,9 +440,10 @@ class BridgeManager:
             self._stop_current()
             with self._lock:
                 self._current = None
+                self._video_sink = None
         return self.status()
 
-    def _run(self, dto: dict, stop: threading.Event) -> None:
+    def _run(self, dto: dict, stop: threading.Event, decode: bool) -> None:
         # Open the bidirectional endpoint here on the reader thread — never on the async
         # handler that called connect() — since the serial/TCP open blocks. on_inbound
         # runs on the endpoint's OWN thread: it peels off CommandResult replies (they
@@ -480,9 +490,17 @@ class BridgeManager:
                         return
                     # else idle tick: re-check stop / EOF
 
+        # When the operator's browser can't decode HEVC, transcode video (H.265 → JPEG) on the way
+        # to Foxglove — the raw H.265 is dropped and the JPEG rides the same topic. The wrapper only
+        # fronts the Foxglove sink; _status/bitrate still see the raw video for correct link stats.
+        # It does the decode+encode on its own per-camera worker threads, so this reader thread
+        # stays free to keep draining the USB link.
+        fox = VideoDecodeSink(self._sink) if decode else self._sink
+        with self._lock:
+            self._video_sink = fox if decode else None
         try:
             source = ChannelRegistry().resolved(raw_frames())
-            run_bridge(source, [self._sink, self._status, self._cmd_sink], derive_tf=True,
+            run_bridge(source, [fox, self._status, self._cmd_sink], derive_tf=True,
                        derive_bitrate=self._bitrate,
                        bitrate_window=self._bitrate_window, close_sinks=False)
         except Exception as exc:
@@ -495,6 +513,8 @@ class BridgeManager:
                 if self._endpoint is ep:   # don't clobber a superseding connect's endpoint
                     self._endpoint = None
             ep.stop()
+            if fox is not self._sink:      # a transcode wrapper: stop its worker threads (they
+                fox.close()                # hold decoders + write to the shared FoxgloveSink)
 
     # -- device config: send a Command, await its CommandResult ------------- #
     def send_command(self, cmd: command_pb2.Command, *,
@@ -584,6 +604,7 @@ class BridgeManager:
         if dto is not None:
             ident = {"connected_id": dto["id"], "label": dto["label"],
                      "transport": dto["transport"]}
+        sink = self._video_sink
         return {
             **ident,
             "state": state,
@@ -591,6 +612,9 @@ class BridgeManager:
             "topics": topics,
             "error": error,
             "ws_url": self.ws_url,
+            # Host-side transcode status: None = not transcoding (browser decodes the raw H.265),
+            # else "hardware"/"software" once the first video frame has opened a decoder.
+            "decode_hw": sink.decode_mode() if (dto is not None and sink is not None) else None,
         }
 
     def shutdown(self) -> None:
@@ -647,10 +671,13 @@ async def _connect(request: web.Request) -> web.Response:
     dto = next((d for d in request.app[_DISCOVERY].snapshot() if d["id"] == dev_id), None)
     if dto is None:
         return web.json_response({"error": f"unknown device {dev_id!r}"}, status=404)
-    # connect() blocks (stop+join the old reader, then a subprocess to open Foxglove)
-    # — keep it off the event loop so SSE + status stay responsive during a switch.
+    # `decode` (from the page's WebCodecs probe): when the browser can't render H.265, transcode
+    # it to JPEG on this PC. connect() blocks (stop+join the old reader, then a subprocess to open
+    # Foxglove) — keep it off the event loop so SSE + status stay responsive during a switch.
+    decode = bool(body.get("decode"))
     bridge = request.app[_BRIDGE]
-    result = await asyncio.get_running_loop().run_in_executor(None, bridge.connect, dto)
+    result = await asyncio.get_running_loop().run_in_executor(
+        None, lambda: bridge.connect(dto, decode))
     return web.json_response(result)
 
 
@@ -808,10 +835,24 @@ def _build_app(bridge: BridgeManager, discovery: DiscoveryService) -> web.Applic
     return app
 
 
-def run_serve(*, serve_port: int = 8770, ws_port: int = 8765, viewer: str = "both",
+def _free_port(host: str) -> int:
+    """An OS-assigned free port on ``host``. The launcher opens the browser itself, so its
+    web-UI port needn't be fixed — a free one just works and can't collide with a stale
+    launcher. We resolve a concrete number up front (rather than binding port 0 in run_app)
+    because we need it in the URL we open the browser at. Tiny TOCTOU window before the real
+    bind, fine for a local single-user tool."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind((host, 0))
+        return s.getsockname()[1]
+
+
+def run_serve(*, serve_port: int = 0, ws_port: int = 0, viewer: str = "both",
               baud: int = 921600, bitrate: bool = True, bitrate_window: float = 2.0,
               host: str = "127.0.0.1", open_browser: bool = True) -> None:
-    """Run the launcher web app (blocks until Ctrl-C / SIGTERM)."""
+    """Run the launcher web app (blocks until Ctrl-C / SIGTERM). Both ports default to 0
+    (auto): the web UI takes a free port and the Foxglove WS server (ws_port=0) lets foxglove
+    pick one. A caller can still pin either by passing an explicit port."""
+    serve_port = serve_port or _free_port(host)
     bridge = BridgeManager(ws_port=ws_port, viewer=viewer, baud=baud,
                            bitrate=bitrate, bitrate_window=bitrate_window)
     discovery = DiscoveryService()

@@ -28,7 +28,8 @@ fleet reflash to add a stream.
 
 `/<device>/<sensor-group>/<index>/<sub-field>` — e.g. `/glove_left/imus/3/raw`,
 `/glove_left/imus/3/quat`, `/gripper/cam/0/video`. The leading segment is the
-device's `device_name`.
+device's `equipment_type` (its logical role, e.g. `glove_left`) — not the
+per-unit `device_name`, which is a unique addressable label (e.g. `GILABS-<code8>`).
 
 ## Adding a stream
 

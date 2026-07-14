@@ -68,13 +68,16 @@ from __future__ import annotations
 
 import argparse
 import collections
+import contextlib
 import json
 import os
+import queue
 import select
 import selectors
 import signal
 import sys
 import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import ClassVar, Protocol
@@ -90,6 +93,7 @@ from visio_schema import (
     make_channel,
     read_mcap,
 )
+from visio_schema.foxglove.CompressedImage_pb2 import CompressedImage
 from visio_schema.foxglove.CompressedVideo_pb2 import CompressedVideo
 from visio_schema.foxglove.FrameTransform_pb2 import FrameTransform
 
@@ -102,13 +106,23 @@ from visio_schema.v1.sensor.system_health_pb2 import SystemHealth
 # Payload schema names dispatched on (== the protobuf full names on the wire).
 _QUAT_SCHEMA = "visio_schema.v1.ros.geometry_msgs.Quaternion"
 _VIDEO_SCHEMA = "foxglove.CompressedVideo"
+_IMAGE_SCHEMA = "foxglove.CompressedImage"
 _IMU_RAW_SCHEMA = "visio_schema.v1.sensor.ImuRaw"
 _HEALTH_SCHEMA = "visio_schema.v1.sensor.SystemHealth"
+# CompressedVideo.format (lowercased) -> PyAV decoder name. Shared by RerunSink (renders
+# to rr.Image) and VideoDecodeSink (transcodes to JPEG for HEVC-less browsers).
+_AV_CODEC: dict[str, str] = {
+    "h265": "hevc", "hevc": "hevc", "h264": "h264", "avc": "h264", "av1": "av1",
+}
 # Starter Foxglove layout shipped beside this script (panels mirror the Rerun view).
 _LAYOUT_PATH = Path(__file__).resolve().parent / "ego_layout.json"
 # Synthetic stream id for the derived /tf channel — outside the wire id space so
 # it can't collide with an announced stream.
 _TF_STREAM_ID = 0x7F000001
+# Base for the host-transcoded JPEG channels (one per source video stream, at base + the source's
+# stream_id). A reserved high range, distinct from _TF_STREAM_ID and the bitrate base, so it can't
+# collide with an announced id.
+_JPEG_STREAM_BASE = 0x7F020000
 # The device's live-preview TCP listener port — matches the `_umi-protocol._tcp`
 # mDNS service and `port=9000` in the ego/glove .conf. Used when --tcp omits one.
 _DEFAULT_TCP_PORT = 9000
@@ -534,6 +548,259 @@ class FoxgloveSink:
         self._server.stop()
 
 
+# GPU decode backends to try, best first. The OS-native APIs (D3D11VA/DXVA2 on Windows,
+# VideoToolbox on macOS) drive the GPU's HEVC decoder directly — NOT via Windows Media Foundation —
+# so they need no MS Store 'HEVC Video Extensions'; the vendor backends (NVDEC/QSV/VAAPI/AMF) cover
+# the rest. We try this whole ordered list intersected with what the ffmpeg build actually has,
+# rather than a fixed per-OS guess (which missed, e.g., an NVIDIA box whose only backend is cuda).
+_HWACCEL_PRIORITY = ("d3d11va", "dxva2", "videotoolbox", "cuda", "qsv", "vaapi", "drm", "amf")
+
+
+def _hwaccel_device_types() -> tuple[str, ...]:
+    """The GPU backends to attempt, best first — empty if ``VISIO_NO_HWACCEL`` is set (a safety
+    valve for a flaky GPU driver + test determinism)."""
+    return () if os.environ.get("VISIO_NO_HWACCEL") else _HWACCEL_PRIORITY
+
+
+def _make_decoder(av, codec: str):
+    """Return ``(decoder, hardware: bool)``. Try each available GPU backend (with software fallback
+    enabled) and keep the first that actually engages hardware (``is_hwaccel``); otherwise fall back
+    to a slice-threaded software decoder. Slice threading (not frame threading) parallelizes within
+    a frame without the multi-frame output buffering a live view can't afford."""
+    available = set(av.codec.hwaccel.hwdevices_available())
+    for dt in _hwaccel_device_types():
+        if dt not in available:
+            continue
+        try:
+            hw = av.codec.hwaccel.HWAccel(device_type=dt, allow_software_fallback=True)
+            dec = av.CodecContext.create(codec, "r", hwaccel=hw)
+        except Exception:      # GPU device couldn't be created — try the next backend / software
+            continue
+        if dec.is_hwaccel:                     # same PyAV (12+) that has HWAccel has this
+            return dec, True
+    dec = av.CodecContext.create(codec, "r")
+    dec.thread_count = 0
+    dec.thread_type = "SLICE"
+    return dec, False
+
+
+class _VideoStream:
+    """Per-source-stream transcode state: a persistent HEVC decoder (GPU or software) + a reused
+    mjpeg encoder + the derived JPEG channel, plus real-time pacing bookkeeping (``base_*`` maps
+    device time to wall time; ``skipping`` is keyframe-only catch-up mode)."""
+
+    __slots__ = ("base_pts", "base_wall", "channel", "dec", "enc", "hw", "last_emit",
+                 "reformat", "skipping")
+
+    def __init__(self, dec, hw: bool) -> None:
+        self.dec = dec
+        self.hw = hw                          # decoding on the GPU?
+        self.enc = None                       # mjpeg encoder (set by _open_stream)
+        self.reformat = None                  # reused VideoReformatter (set by _open_stream)
+        self.channel: Channel | None = None   # derived JPEG channel (set by _open_stream)
+        self.base_wall: float | None = None   # wall clock at the pacing baseline
+        self.base_pts = 0.0                   # device time at that baseline
+        self.last_emit = 0.0                  # wall clock of the last frame we published
+        self.skipping = False                 # decoding keyframes-only to catch up
+
+
+class _VideoWorker(threading.Thread):
+    """One decode+encode thread per source video stream, fed by the reader thread through a small
+    bounded queue. Keeps the heavy codec work OFF the transport reader thread — which would
+    otherwise starve the USB read and desync the framing (the ``COBS decode failed`` symptom) — and
+    lets multiple cameras transcode in parallel. Under backpressure the queue drops its OLDEST
+    frame: a live view prefers latency over completeness, and an H.265 reference gap self-heals at
+    the next keyframe. A bad frame is dropped and can never kill the thread (or the bridge)."""
+
+    def __init__(self, sink: VideoDecodeSink, sid: int, topic: str) -> None:
+        super().__init__(name=f"visio-transcode-{sid & 0xFFFF}", daemon=True)
+        self._sink = sink
+        self._sid = sid
+        self._topic = topic
+        self._q: queue.Queue = queue.Queue(maxsize=sink._QUEUE)
+        # NOT self._stop — that name shadows Thread._stop() and breaks join().
+        self._stopped = threading.Event()
+        self.hw = False                # set once the decoder opens (read by decode_mode)
+
+    def submit(self, msg: Message) -> None:
+        try:
+            self._q.put_nowait(msg)
+        except queue.Full:
+            with contextlib.suppress(queue.Empty):
+                self._q.get_nowait()   # drop the oldest queued frame to keep latency bounded
+            with contextlib.suppress(queue.Full):
+                self._q.put_nowait(msg)
+
+    def stop(self) -> None:
+        self._stopped.set()
+        self.join(timeout=1.5)
+
+    def run(self) -> None:
+        sink, st, failing = self._sink, None, False
+        while not self._stopped.is_set():
+            try:
+                msg = self._q.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            try:
+                cv = CompressedVideo()
+                cv.ParseFromString(msg.payload)
+                if st is None:
+                    st = sink._open_stream(self._sid, cv, self._topic)
+                    self.hw = st.hw
+                sink._process(st, cv, msg)
+                failing = False
+            except Exception as exc:
+                if not failing:
+                    failing = True
+                    print(f"visio-display: {self._topic}: dropping video frames ({exc})",
+                          file=sys.stderr)
+
+
+class VideoDecodeSink:
+    """Wraps a downstream sink so H.265 is viewable in browsers that can't decode HEVC. Decodes the
+    device's H.265 (GPU if available, else software — see :func:`_make_decoder`) and re-encodes each
+    frame to JPEG (``foxglove.CompressedImage``) on the SAME topic; the raw H.265 is dropped.
+    Non-video messages pass straight through. The launcher inserts one in front of its
+    ``FoxgloveSink`` only for sessions whose browser can't decode HEVC.
+
+    The transport reader thread only ROUTES here: each video stream gets its own
+    :class:`_VideoWorker` thread that owns the decoder+encoder, so the reader never blocks (no
+    USB-read starvation) and cameras transcode in parallel. This is a **live** view, not a complete
+    one — it keeps up with real time by dropping frames (rate cap ``_MIN_EMIT_INTERVAL``, plus
+    keyframe-only catch-up once decode falls ``_MAX_LAG_S`` behind), never by playing a backlog in
+    slow motion. (JPEG, not H.264: mjpeg is intra so it's low-latency and cheap to encode; a full
+    H.264 re-encode was tried and dropped — openh264, the only ship-able encoder, does 1080p at
+    ~2 fps.)"""
+
+    _MIN_EMIT_INTERVAL = 1 / 15       # cap published video; drop the rest (bounds encode cost)
+    _MAX_LAG_S = 0.5                   # behind real time by more than this → keyframe-only catch-up
+    _RESYNC_LAG_S = 0.2               # …until back within this, then resume full decode
+    _QUEUE = 8                         # per-stream frame backlog before dropping (gaps heal at IDR)
+
+    def __init__(self, downstream: Sink) -> None:
+        import av  # lazy: only this path needs ffmpeg, and it's excluded from lean bundles
+        self._av = av
+        self._down = downstream
+        self._workers: dict[int, _VideoWorker] = {}   # source stream_id -> decode/encode thread
+        self._raw_streams: set[int] = set()            # sids whose codec we can't decode
+        self._lock = threading.Lock()
+
+    # -- reader thread: route only (never decode here) --------------------- #
+    def write(self, msg: Message, ch: Channel) -> None:
+        if ch.schema_name != _VIDEO_SCHEMA:
+            self._down.write(msg, ch)              # /tf, /stats/bitrate, control — untouched
+            return
+        sid = msg.stream_id
+        if sid in self._raw_streams:
+            self._down.write(msg, ch)              # a codec we can't decode → forward raw
+            return
+        w = self._workers.get(sid)
+        if w is None:
+            w = self._route_new(sid, msg, ch)
+            if w is None:
+                return                             # forwarded raw (unknown/unparseable codec)
+        w.submit(msg)
+
+    def _route_new(self, sid: int, msg: Message, ch: Channel) -> _VideoWorker | None:
+        """First frame of a stream: if we can decode its codec, spawn a worker; otherwise forward
+        the raw frame and remember to keep forwarding it (never re-parse)."""
+        cv = CompressedVideo()
+        try:
+            cv.ParseFromString(msg.payload)
+            decodable = cv.format.lower() in _AV_CODEC
+        except Exception:
+            decodable = False
+        if not decodable:
+            self._raw_streams.add(sid)
+            print(f"visio-display: {ch.topic}: can't host-decode this video; forwarding as-is",
+                  file=sys.stderr)
+            self._down.write(msg, ch)
+            return None
+        with self._lock:
+            w = self._workers.get(sid)
+            if w is None:
+                w = _VideoWorker(self, sid, ch.topic)
+                self._workers[sid] = w
+                w.start()
+            return w
+
+    # -- worker thread: decode + rate-cap + JPEG-encode -------------------- #
+    def _open_stream(self, sid: int, cv: CompressedVideo, topic: str) -> _VideoStream:
+        """Create the per-stream decoder + encoder + channel (on the worker thread — PyAV contexts
+        are used from the one thread that owns them)."""
+        dec, hw = _make_decoder(self._av, _AV_CODEC[cv.format.lower()])
+        st = _VideoStream(dec=dec, hw=hw)
+        st.enc = self._av.CodecContext.create("mjpeg", "w")
+        st.reformat = self._av.video.reformatter.VideoReformatter()   # one sws context, reused
+        st.channel = make_channel(topic, _IMAGE_SCHEMA, stream_id=_JPEG_STREAM_BASE + sid)
+        print(f"visio-display: {topic}: transcoding "
+              f"({'hardware' if hw else 'software'} decode → JPEG)", file=sys.stderr)
+        return st
+
+    def _process(self, st: _VideoStream, cv: CompressedVideo, msg: Message) -> None:
+        now = time.monotonic()
+        self._pace(st, now, _ns(cv.timestamp) / 1e9)
+        for frame in st.dec.decode(self._av.Packet(cv.data)):
+            # Drop decoded frames we're not due to show yet (rate cap) — but never drop the
+            # scarce keyframes we're fast-forwarding to while catching up.
+            if st.skipping or now - st.last_emit >= self._MIN_EMIT_INTERVAL:
+                self._emit(st, cv, frame, msg)
+                st.last_emit = now
+
+    def _emit(self, st: _VideoStream, cv: CompressedVideo, frame, msg: Message) -> None:
+        enc = st.enc
+        if not enc.width:                          # mjpeg is intra + stateless; geometry set once
+            enc.width, enc.height = frame.width, frame.height
+            enc.pix_fmt = "yuvj420p"               # mjpeg wants full-range YUV
+        yuv = st.reformat.reformat(frame, format="yuvj420p")
+        data = b"".join(bytes(p) for p in enc.encode(yuv))
+        ci = CompressedImage()
+        ci.timestamp.CopyFrom(cv.timestamp)
+        ci.frame_id = cv.frame_id
+        ci.format = "jpeg"
+        ci.data = data
+        out = Message(stream_id=st.channel.id, payload=ci.SerializeToString(), seq=msg.seq)
+        out.timestamp.CopyFrom(cv.timestamp)
+        self._down.write(out, st.channel)
+
+    def _pace(self, st: _VideoStream, now: float, pts: float) -> None:
+        """Track how far decode has fallen behind real time and, when it can't keep up, tell the
+        decoder to skip to the next keyframe — so the viewer sees LIVE video (dropped frames)
+        rather than a growing backlog played in slow motion. ``lag`` is wall time elapsed minus
+        device time elapsed since the baseline; it grows when we decode slower than real time and
+        shrinks in keyframe-only mode (packets fly by), which is what pulls us back to live."""
+        if st.base_wall is None:
+            st.base_wall, st.base_pts = now, pts
+        lag = (now - st.base_wall) - (pts - st.base_pts)
+        if not st.skipping and lag > self._MAX_LAG_S:
+            st.dec.skip_frame = "NONKEY"           # decode only keyframes → cheap fast-forward
+            st.skipping = True
+        elif st.skipping and lag < self._RESYNC_LAG_S:
+            st.dec.skip_frame = "DEFAULT"
+            st.skipping = False
+            st.base_wall, st.base_pts = now, pts   # re-baseline once caught up
+
+    def decode_mode(self) -> str | None:
+        """``"hardware"`` if any stream is GPU-decoding, ``"software"`` if workers exist but none
+        are, ``None`` before any video has arrived. Read by the launcher for its status."""
+        with self._lock:
+            workers = list(self._workers.values())
+        if not workers:
+            return None
+        return "hardware" if any(w.hw for w in workers) else "software"
+
+    def close(self) -> None:
+        # Stop the per-stream worker threads (they hold PyAV decoders + write to the shared
+        # FoxgloveSink) BEFORE the launcher resets/closes that sink on a device switch. The wrapped
+        # FoxgloveSink itself is owned by BridgeManager — never close it here.
+        with self._lock:
+            workers = list(self._workers.values())
+            self._workers.clear()
+        for w in workers:
+            w.stop()
+
+
 class RerunSink:
     """Visualize Visio streams in a live Rerun viewer — a faithful port of
     an earlier Rerun renderer's rendering. Only the
@@ -559,9 +826,6 @@ class RerunSink:
         [100, 255, 180], [255, 100, 180], [180, 255, 100], [100, 180, 180],
         [200, 200, 100], [200, 100, 200], [100, 200, 200], [200, 200, 200],
     ]
-    _AV_CODEC: ClassVar[dict[str, str]] = {
-        "h265": "hevc", "hevc": "hevc", "h264": "h264", "avc": "h264", "av1": "av1",
-    }
 
     def __init__(self, memory_limit: str = "2GB") -> None:
         import av
@@ -612,7 +876,7 @@ class RerunSink:
         cv.ParseFromString(msg.payload)
         dec = self._decoders.get(ent)
         if dec is None:
-            codec = self._AV_CODEC.get(cv.format.lower())
+            codec = _AV_CODEC.get(cv.format.lower())
             if codec is None:
                 if ent not in self._unsupported:
                     self._unsupported.add(ent)
@@ -787,9 +1051,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--baud", type=int, default=921600, help="serial baud (default 921600)")
     p.add_argument("--out", metavar="OUT.mcap", help="also record messages to an MCAP file")
     p.add_argument("--foxglove", action="store_true", help="serve live to Foxglove Studio")
-    p.add_argument("--port", type=int, default=8765, help="Foxglove WS port (default 8765)")
-    p.add_argument("--serve-port", type=int, default=8770,
-                   help="--serve only: launcher web-UI port (default 8770)")
+    p.add_argument("--port", type=int, default=8765,
+                   help="--foxglove only: Foxglove WS port (default 8765). --serve always "
+                        "auto-picks a free WS port.")
+    p.add_argument("--serve-port", type=int, default=0,
+                   help="--serve only: launcher web-UI port (default: auto-pick a free one)")
     p.add_argument("--viewer", choices=("desktop", "browser", "both"), default="both",
                    help="--serve only: which Foxglove to open on device select — the "
                         "desktop app (foxglove:// deep link, works offline), a browser tab "
@@ -812,7 +1078,7 @@ def main(argv: list[str] | None = None) -> int:
         from visio_schema.display import serve
         serve.run_serve(
             serve_port=args.serve_port,
-            ws_port=args.port,
+            ws_port=0,   # launcher wires the ws:// URL itself → always auto-pick a free port
             viewer=args.viewer,
             baud=args.baud,
             bitrate=args.bitrate,

@@ -52,6 +52,9 @@ REQUIRED_COMMAND_BODIES = frozenset(
         "list_recordings",
         "get_state",
         "set_calibration",
+        "set_auto_upload",
+        "set_notice_lang",
+        "set_resolution",
     }
 )
 

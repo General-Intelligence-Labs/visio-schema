@@ -4,6 +4,103 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.5.2 — 2026-07-14
+
+### Added `RecordingEntry.damaged` (wire-compatible)
+
+- **New field `RecordingEntry.damaged` (tag 16, bool).** Marks a session whose
+  non-active `.mcap` part lacks the end magic (truncated by a power cut /
+  card removal mid-recording). Such parts are skipped by auto-upload; the app
+  lists them separately with recovery guidance.
+
+## 0.5.1 — 2026-07-14
+
+### Added `Command.set_resolution` (wire-compatible)
+
+- **New Command body `SetResolution` (tag 28, `width`/`height` uint32).**
+  Persists the camera capture resolution (all cameras) to a device-side
+  sidecar; takes effect on the next boot, like `SetBitrate`. Unsupported
+  geometries snap to the sensor's default mode at boot.
+- **New `DeviceState.video_width`/`video_height` (tags 27/28).** Echo the
+  persisted resolution the same way `video_bitrate_kbps` echoes bitrate.
+
+## 0.5.0 — 2026-07-14
+
+### Merged main (S3/OSS auto-upload) into dev — `SetNoticeLang` retagged (BREAKING vs 0.4.2)
+
+- **`Command.set_auto_upload` (tag 26, `SetAutoUpload`)** and the S3/OSS
+  auto-upload surface from main (`CommandResult.storage_access_key_id`,
+  MCAP capture-meta record) are now on dev. Tag 26 is owned by the shipped
+  `SetAutoUpload`.
+- **BREAKING: `Command.set_notice_lang` moved tag 26 → 27.** 0.4.2 assigned
+  `SetNoticeLang` tag 26, colliding with main's released `SetAutoUpload`.
+  Voice notices only exist on dev firmware, which must be rebuilt against
+  this version; shipped (main-line) devices are unaffected.
+
+## 0.4.2 — 2026-07-10
+
+### Added `Command.set_notice_lang` (wire-compatible)
+
+- **New Command body `SetNoticeLang` (tag 27, `lang` string; moved from 26
+  when merging main, whose shipped `SetAutoUpload` owns tag 26).** Selects the
+  language of a device's spoken voice notices (boards with a speaker). Applied
+  immediately and persisted device-side; unknown languages fall back to the
+  device default (English). Speakerless boards accept and ignore it. Sent by
+  the companion app with the phone locale after connecting.
+
+### Launcher host-side video decode (no wire-contract change)
+
+- **`visio-display --serve` now decodes the device's H.265 on the host** so browsers that
+  can't render HEVC (e.g. Edge/Chrome on Windows without the HEVC extension) still show
+  video. It auto-detects a GPU decoder (D3D11VA/DXVA2/VideoToolbox/NVDEC/QSV/VAAPI/…) with
+  a slice-threaded software fallback and re-encodes each frame to JPEG on per-camera worker
+  threads, off the transport reader. Chain: browser WebCodecs H.265 → PyAV hardware decode
+  + JPEG → PyAV software decode + JPEG.
+- **Honest "slow video" UI.** Host-side decode — hardware *or* software — is not real-time,
+  so the page flags it in red while transcoding and points to a plain, per-OS guide to
+  install the browser's native HEVC support (Windows → the free Microsoft Store HEVC Video
+  Extensions) for smooth, live video. en + zh.
+- **Free-port launcher** — the server always auto-picks free WebSocket/HTTP ports, so a new
+  launch never collides with a stale one on a fixed port.
+
+No `.proto`/schema change from the launcher work — existing readers are unaffected.
+
+## 0.4.1 — 2026-07-07
+
+### Added `DeviceInfo.equipment_type` (wire-compatible)
+
+- **New field `DeviceInfo.equipment_type` (tag 7, `string`).** Carries the device's
+  logical role — `ego`, `glove_left`, `glove_right`, `gripper_left`, `gripper_right` —
+  the leading topic segment for its channels. This was formerly implicit in
+  `device_name`, but the Visio firmware repurposed `device_name` to the per-unit
+  `GILABS-<code8>` label (the addressable name the app shows / targets via
+  `Command.target_device` + OTA), leaving no explicit field for the role. `equipment_type`
+  restores it: hubs forward it end-to-end alongside the other identity metadata.
+- Threaded through the C++ `ChannelRegistry` (`DeviceView`, `Encode`/`Decode`,
+  `SetMetadata`, `SelfInfo`) and the Python registry (`ChannelRegistry(... , equipment_type=...)`,
+  `self_info()`). Empty by default, so a device that omits it is unchanged on the wire.
+
+New optional field with a new tag number — wire-compatible in both directions, so a
+**PATCH** bump per [`versioning.md`](docs/protocol/versioning.md). Old peers ignore the
+field; new peers read empty when it is absent.
+
+## 0.4.0 — 2026-07-07
+
+### Removed cross-device exposure-grid sync (breaking)
+
+- **Removed `service/exposure_sync/ExposureGrid`** and its `.proto`. Cross-device
+  exposure alignment no longer rides a published/relayed grid; each device now follows a
+  statically-configured phase on its heartbeat-synced clock independently, so no wire
+  message is needed. (Added in 0.3.0; had no production users.)
+- **Reserved `CONTROL_STREAM_EXPOSURE_SYNC = 6`** (number + name) in `wire.ControlStream`,
+  mirroring the retired-`TIMESYNC` precedent. `FIRST_DYNAMIC` and all other ids are
+  unchanged. `EXPOSURE_SYNC` is dropped from the `visio_schema.wire.control` facade and
+  from `LINK_LOCAL_CONTROL`.
+
+Deleting the `ExposureGrid` message trips `buf breaking` (message removal); pre-1.0 that
+is a MINOR bump per [`versioning.md`](docs/protocol/versioning.md). Old peers never emitted
+the stream, so nothing on the wire changes for them.
+
 ## 0.3.2 — 2026-07-04
 
 ### Launcher UX (no wire-contract change)

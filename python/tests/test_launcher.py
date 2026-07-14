@@ -31,6 +31,14 @@ def _serve():
     return s
 
 
+@pytest.fixture(autouse=True)
+def _force_software_decode(monkeypatch):
+    # Deterministic decode across dev/CI machines regardless of GPU — the hardware path needs a real
+    # GPU decoder (unavailable in CI), and HW frame buffering could perturb the short-input tests.
+    # The one test that asserts the "hardware" branch injects stream state directly.
+    monkeypatch.setenv("VISIO_NO_HWACCEL", "1")
+
+
 # --------------------------------------------------------------------------- #
 # run_bridge                                                                   #
 # --------------------------------------------------------------------------- #
@@ -354,7 +362,7 @@ def test_serve_dispatches_to_run_serve(monkeypatch) -> None:
     assert vd.main(["--serve", "--serve-port", "9999", "--viewer", "browser"]) == 0
     assert captured["serve_port"] == 9999
     assert captured["viewer"] == "browser"
-    assert captured["ws_port"] == 8765        # reuses --port default
+    assert captured["ws_port"] == 0           # --serve always auto-picks a free WS port
 
 
 # --------------------------------------------------------------------------- #
@@ -889,9 +897,11 @@ def test_discovery_mdns_rebind_replaces_stale_address() -> None:
 class _StubBridge:
     def __init__(self):
         self.connected = None
+        self.decode = None
 
-    def connect(self, dto):
+    def connect(self, dto, decode=False):
         self.connected = dto
+        self.decode = decode
         return {"connected_id": dto["id"], "state": "connecting"}
 
     def disconnect(self):
@@ -940,6 +950,18 @@ def test_http_connect_known_id_calls_bridge() -> None:
     resp = _post(s._connect, app, {"id": "usb:/dev/a"})
     assert resp.status == 200
     assert bridge.connected == dto
+    assert bridge.decode is False       # absent flag → pass raw video through (no transcode)
+
+
+def test_http_connect_forwards_decode() -> None:
+    s = _serve()
+    dto = {"id": "usb:/dev/a", "label": "A", "transport": "usb", "device": "/dev/a"}
+    bridge = _StubBridge()
+    app = s._build_app(bridge, _StubDiscovery(devices=[dto]))
+    _post(s._connect, app, {"id": "usb:/dev/a", "decode": True})
+    assert bridge.decode is True        # the page's transcode request reaches connect()
+    _post(s._connect, app, {"id": "usb:/dev/a"})
+    assert bridge.decode is False       # absent flag → pass-through
 
 
 def test_http_manual_empty_host_returns_400() -> None:
@@ -1072,3 +1094,371 @@ def test_run_bridge_derives_bitrate() -> None:
     vd.run_bridge(iter([_vid(0, 0), _vid(6 * S // 10, 1)]), [sink], derive_bitrate=True)
     topics = {c.topic for _, c in sink.writes}
     assert any(t.startswith("/stats/bitrate") for t in topics)
+
+
+# --------------------------------------------------------------------------- #
+# Free ports — the launcher always auto-picks, so startup never collides with a #
+# stale launcher (or anything else) on a fixed port.                            #
+# --------------------------------------------------------------------------- #
+def test_free_port_is_bindable() -> None:
+    s = _serve()
+    port = s._free_port("127.0.0.1")
+    assert port > 0
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as t:
+        t.bind(("127.0.0.1", port))    # the returned port must actually be free to bind
+
+
+def test_free_port_gives_distinct_ports() -> None:
+    s = _serve()
+    # A second request, while the first is held, must not hand back the same in-use port.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as held:
+        held.bind(("127.0.0.1", s._free_port("127.0.0.1")))
+        assert s._free_port("127.0.0.1") != held.getsockname()[1]
+
+
+# --------------------------------------------------------------------------- #
+# Host-side transcode wiring (decode / pass-through) for HEVC-less browsers      #
+# --------------------------------------------------------------------------- #
+def test_bridge_manager_wires_sink_by_decode(monkeypatch) -> None:
+    pytest.importorskip("av")   # decode=True builds a real transcode sink (imports av)
+    s = _serve()
+    captured: dict = {}
+    started = threading.Event()
+
+    def fake_run_bridge(source, sinks, **kw):
+        captured["sinks"] = sinks
+        started.set()
+
+    monkeypatch.setattr(s, "run_bridge", fake_run_bridge)
+    monkeypatch.setattr(s, "FoxgloveSink", _fake_fox_factory())
+    monkeypatch.setattr(s, "_open_deep_link", lambda url: True)
+    monkeypatch.setattr(s, "_open_endpoint", lambda dto: _FakeEndpoint())
+
+    mgr = s.BridgeManager(ws_port=0, viewer="desktop")
+    dto = {"id": "usb:/dev/a", "label": "A", "transport": "usb", "device": "/dev/a"}
+
+    def first_sink_after(decode):
+        started.clear()
+        captured.clear()
+        mgr.connect(dto, decode=decode)
+        assert started.wait(2)
+        return captured["sinks"][0]
+
+    try:
+        assert type(first_sink_after(True)).__name__ == "VideoDecodeSink"   # transcode inserted
+        assert first_sink_after(False) is mgr._sink                         # pass-through: raw sink
+        assert mgr.status()["decode_hw"] is None                            # not transcoding
+        assert mgr.disconnect()["decode_hw"] is None                        # cleared on disconnect
+    finally:
+        mgr.shutdown()
+
+
+def _load_hevc_fixture():
+    """The committed fixture is a length-prefixed run of serialized CompressedVideo payloads
+    (an IDR + following frames from stream /ego/camera/1 of aa.mcap) — enough to decode."""
+    import struct
+    from pathlib import Path
+
+    data = (Path(__file__).parent / "data" / "hevc_run.bin").read_bytes()
+    (count,) = struct.unpack_from("<I", data, 0)
+    off, payloads = 4, []
+    for _ in range(count):
+        (ln,) = struct.unpack_from("<I", data, off)
+        off += 4
+        payloads.append(data[off:off + ln])
+        off += ln
+    return payloads
+
+
+def _feed_sync(sink, sid, topic, payloads, on_frame=None):
+    """Drive a transcode sink SYNCHRONOUSLY (open the stream once, then ``_process`` each frame),
+    bypassing the worker thread — deterministic for output/pacing assertions. ``on_frame(i)`` runs
+    just before each frame (e.g. to advance a fake clock). Returns the opened ``_VideoStream``."""
+    vd = _vd()
+    from visio_schema.foxglove.CompressedVideo_pb2 import CompressedVideo
+
+    st = None
+    for i, payload in enumerate(payloads):
+        cv = CompressedVideo()
+        cv.ParseFromString(payload)
+        if st is None:
+            st = sink._open_stream(sid, cv, topic)
+        if on_frame is not None:
+            on_frame(i)
+        m = vd.Message(stream_id=sid, payload=payload, seq=i)
+        m.timestamp.FromNanoseconds((i + 1) * 1_000_000)
+        sink._process(st, cv, m)
+    return st
+
+
+def _drain(sink, timeout=5.0):
+    """Wait for every worker's queue to empty, then let the last in-flight frame finish."""
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        with sink._lock:
+            workers = list(sink._workers.values())
+        if workers and all(w._q.empty() for w in workers):
+            time.sleep(0.2)
+            return
+        time.sleep(0.02)
+
+
+def test_jpeg_transcode_replaces_video_with_jpeg() -> None:
+    pytest.importorskip("av")
+    vd = _vd()
+    from visio_schema.foxglove.CompressedImage_pb2 import CompressedImage
+
+    fake = _FakeSink()
+    sink = vd.VideoDecodeSink(fake)
+    sink._MIN_EMIT_INTERVAL = 0     # every decoded frame (not rate-capped) for this check
+    _feed_sync(sink, 16, "/ego/camera/1", _load_hevc_fixture())
+
+    assert fake.writes                                    # frames came out
+    assert all(c.schema_name == vd._IMAGE_SCHEMA for _, c in fake.writes)   # only JPEG, no raw
+    m0, c0 = fake.writes[0]
+    assert c0.topic == "/ego/camera/1"                    # same topic name preserved
+    assert m0.stream_id == vd._JPEG_STREAM_BASE + 16      # derived synthetic stream id
+    ci = CompressedImage()
+    ci.ParseFromString(m0.payload)
+    assert ci.format == "jpeg" and ci.data[:2] == b"\xff\xd8"   # a real JPEG
+
+
+def test_transcode_forwards_non_video_and_unknown_codec() -> None:
+    pytest.importorskip("av")
+    vd = _vd()
+    from visio_schema import make_channel
+    from visio_schema.foxglove.CompressedVideo_pb2 import CompressedVideo
+
+    fake = _FakeSink()
+    sink = vd.VideoDecodeSink(fake)
+    # Non-video passes straight through on the reader thread (no worker).
+    quat_ch = make_channel("/g/imu/0/quat", vd._QUAT_SCHEMA, stream_id=20)
+    qm = vd.Message(stream_id=20, payload=b"", seq=0)
+    qm.timestamp.FromNanoseconds(1)
+    sink.write(qm, quat_ch)
+    assert fake.writes[-1][1].schema_name == vd._QUAT_SCHEMA
+
+    # A codec we can't decode → forwarded raw (fail open), no worker spawned.
+    cv = CompressedVideo()
+    cv.format = "vp8"
+    cv.data = b"\x00\x01\x02"
+    ch = make_channel("/ego/camera/1", vd._VIDEO_SCHEMA, stream_id=16)
+    m = vd.Message(stream_id=16, payload=cv.SerializeToString(), seq=0)
+    m.timestamp.FromNanoseconds(1)
+    sink.write(m, ch)
+    assert fake.writes[-1][1].schema_name == vd._VIDEO_SCHEMA
+    assert not sink._workers
+
+
+def test_transcode_forwards_unparseable_video_raw() -> None:
+    pytest.importorskip("av")
+    vd = _vd()
+    from visio_schema import make_channel
+
+    fake = _FakeSink()
+    sink = vd.VideoDecodeSink(fake)
+    ch = make_channel("/ego/camera/1", vd._VIDEO_SCHEMA, stream_id=16)
+    bad = vd.Message(stream_id=16, payload=b"\xff\xff\xff\xff", seq=0)   # not a valid proto
+    bad.timestamp.FromNanoseconds(1)
+    sink.write(bad, ch)          # must NOT raise; forwarded raw so the bridge stays up
+    assert fake.writes[-1][1].schema_name == vd._VIDEO_SCHEMA
+    assert not sink._workers
+
+
+def test_transcode_worker_survives_bad_data() -> None:
+    pytest.importorskip("av")
+    vd = _vd()
+    from visio_schema import make_channel
+    from visio_schema.foxglove.CompressedVideo_pb2 import CompressedVideo
+
+    # A well-formed CompressedVideo whose H.265 payload is garbage: the worker decodes it, the
+    # decode yields nothing / errors, and the frame is dropped — the worker (and bridge) survive.
+    cv = CompressedVideo()
+    cv.format = "h265"
+    cv.data = b"\x00\x00\x01\x26garbage"
+    fake = _FakeSink()
+    sink = vd.VideoDecodeSink(fake)
+    ch = make_channel("/ego/camera/1", vd._VIDEO_SCHEMA, stream_id=16)
+    try:
+        m = vd.Message(stream_id=16, payload=cv.SerializeToString(), seq=0)
+        m.timestamp.FromNanoseconds(1)
+        sink.write(m, ch)
+        _drain(sink)
+        assert not any(c.schema_name == vd._IMAGE_SCHEMA for _, c in fake.writes)  # nothing decoded
+        assert sink._workers[16].is_alive()                                        # worker survived
+    finally:
+        sink.close()
+
+
+def test_jpeg_transcode_caps_emit_rate(monkeypatch) -> None:
+    pytest.importorskip("av")
+    vd = _vd()
+    monkeypatch.setattr(vd.time, "monotonic", lambda: 1000.0)   # frozen wall clock → one interval
+    fake = _FakeSink()
+    sink = vd.VideoDecodeSink(fake)   # default ~15 fps cap
+    # Three decodable frames all inside a single emit interval: publish only the first, drop the
+    # rest (live, not slow-motion).
+    _feed_sync(sink, 16, "/ego/camera/1", _load_hevc_fixture())
+    imgs = [c for _, c in fake.writes if c.schema_name == vd._IMAGE_SCHEMA]
+    assert len(imgs) == 1
+
+
+def test_transcode_skips_to_keyframe_when_behind(monkeypatch) -> None:
+    pytest.importorskip("av")
+    vd = _vd()
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(vd.time, "monotonic", lambda: clock["t"])
+    fake = _FakeSink()
+    sink = vd.VideoDecodeSink(fake)
+    # pts advances ~1 ms/frame while wall time jumps 5 s/frame — decode is falling behind, so the
+    # sink must switch to keyframe-only catch-up.
+    st = _feed_sync(sink, 16, "/ego/camera/1", _load_hevc_fixture(),
+                    on_frame=lambda i: clock.__setitem__("t", clock["t"] + 5.0))
+    assert st.skipping is True
+    assert st.dec.skip_frame == "NONKEY"     # decoder actually told to fast-forward to keyframes
+
+
+def test_pace_returns_to_live_after_catching_up() -> None:
+    pytest.importorskip("av")
+    vd = _vd()
+    sink = vd.VideoDecodeSink(_FakeSink())
+    # A bare stream (no real decoder) is enough to exercise the pure pacing math.
+    st = vd._VideoStream(dec=types.SimpleNamespace(skip_frame="DEFAULT"), hw=False)
+
+    # Device time barely advances while wall time jumps > _MAX_LAG_S → fall behind → skip mode.
+    sink._pace(st, now=1000.0, pts=0.0)          # baseline
+    sink._pace(st, now=1000.0 + sink._MAX_LAG_S + 0.1, pts=0.01)
+    assert st.skipping is True and st.dec.skip_frame == "NONKEY"
+
+    # Now device time races ahead of wall time (keyframe-only catch-up) until lag < _RESYNC_LAG_S:
+    # the sink must resume full decode and re-baseline so it doesn't latch into skip forever.
+    sink._pace(st, now=1000.0 + sink._MAX_LAG_S + 0.2, pts=5.0)
+    assert st.skipping is False and st.dec.skip_frame == "DEFAULT"
+    assert (st.base_wall, st.base_pts) == (1000.0 + sink._MAX_LAG_S + 0.2, 5.0)   # re-baselined
+
+
+# --------------------------------------------------------------------------- #
+# async worker routing + decode-mode reporting                                 #
+# --------------------------------------------------------------------------- #
+def test_transcode_routes_per_stream_workers_and_closes() -> None:
+    pytest.importorskip("av")
+    vd = _vd()
+    from visio_schema import make_channel
+
+    fake = _FakeSink()
+    sink = vd.VideoDecodeSink(fake)
+    for sid in (16, 17):                                  # two camera streams
+        ch = make_channel(f"/ego/camera/{sid}", vd._VIDEO_SCHEMA, stream_id=sid)
+        for i, payload in enumerate(_load_hevc_fixture()):
+            m = vd.Message(stream_id=sid, payload=payload, seq=i)
+            m.timestamp.FromNanoseconds((i + 1) * 1_000_000)
+            sink.write(m, ch)
+    assert set(sink._workers) == {16, 17}                 # one worker per stream (run in parallel)
+    _drain(sink)
+    assert any(c.schema_name == vd._IMAGE_SCHEMA for _, c in fake.writes)   # frames came out
+
+    workers = list(sink._workers.values())
+    sink.close()
+    assert all(not w.is_alive() for w in workers)         # close() stopped every worker thread
+
+
+def test_decode_mode_reports_software_and_hardware() -> None:
+    pytest.importorskip("av")
+    vd = _vd()
+
+    sink = vd.VideoDecodeSink(_FakeSink())
+    assert sink.decode_mode() is None                     # no video yet
+    # Any GPU-decoding worker ⇒ "hardware"; else "software". (Workers created, not started.)
+    w1 = vd._VideoWorker(sink, 1, "/t")
+    w1.hw = False
+    sink._workers[1] = w1
+    assert sink.decode_mode() == "software"
+    w2 = vd._VideoWorker(sink, 2, "/t")
+    w2.hw = True
+    sink._workers[2] = w2
+    assert sink.decode_mode() == "hardware"
+
+
+def test_worker_queue_drops_oldest_under_backpressure() -> None:
+    pytest.importorskip("av")
+    vd = _vd()
+    sink = vd.VideoDecodeSink(_FakeSink())
+    w = vd._VideoWorker(sink, 16, "/ego/camera/1")   # not started → nothing drains the queue
+
+    overflow = 3
+    for seq in range(sink._QUEUE + overflow):
+        m = vd.Message(stream_id=16, payload=b"", seq=seq)
+        m.timestamp.FromNanoseconds(seq + 1)
+        w.submit(m)
+
+    drained = []
+    while not w._q.empty():
+        drained.append(w._q.get_nowait().seq)
+    assert len(drained) == sink._QUEUE                       # capped at the bound, never grows
+    assert drained == list(range(overflow, sink._QUEUE + overflow))   # oldest evicted, newest kept
+
+
+class _FakeAv:
+    """Minimal stand-in for the ``av`` module to drive ``_make_decoder``'s backend selection
+    without a GPU: ``available`` are the backends ffmpeg reports, ``hw_ok`` are those whose created
+    context actually engages hardware, and ``raises`` are those that blow up on create."""
+
+    def __init__(self, available, hw_ok=(), raises=()):
+        self._available, self._hw_ok, self._raises = set(available), set(hw_ok), set(raises)
+        outer = self
+
+        class _Ctx:
+            def __init__(self, device_type=None):
+                self.device_type = device_type
+                self.is_hwaccel = device_type in outer._hw_ok
+                self.thread_count = 1
+                self.thread_type = "NONE"
+
+        class _HWAccel:
+            def __init__(self, device_type, allow_software_fallback=True):
+                if device_type in outer._raises:
+                    raise RuntimeError(f"no {device_type} device")
+                self.device_type = device_type
+
+        class _CodecContext:
+            @staticmethod
+            def create(codec, mode, hwaccel=None):
+                return _Ctx(device_type=hwaccel.device_type if hwaccel else None)
+
+        self.CodecContext = _CodecContext
+        self.codec = types.SimpleNamespace(
+            hwaccel=types.SimpleNamespace(
+                HWAccel=_HWAccel, hwdevices_available=lambda: self._available))
+
+
+def test_make_decoder_picks_highest_priority_available_backend(monkeypatch) -> None:
+    vd = _vd()
+    monkeypatch.delenv("VISIO_NO_HWACCEL", raising=False)   # the autouse fixture forces software
+    # cuda + vaapi both present and both engage HW → priority order picks cuda (before vaapi).
+    av = _FakeAv(available={"cuda", "vaapi"}, hw_ok={"cuda", "vaapi"})
+    dec, hw = vd._make_decoder(av, "hevc")
+    assert hw is True and dec.device_type == "cuda"
+
+
+def test_make_decoder_skips_unavailable_and_failing_backends(monkeypatch) -> None:
+    vd = _vd()
+    monkeypatch.delenv("VISIO_NO_HWACCEL", raising=False)
+    # d3d11va isn't in the build; qsv is present but fails to open → fall through to vaapi.
+    av = _FakeAv(available={"qsv", "vaapi"}, hw_ok={"vaapi"}, raises={"qsv"})
+    dec, hw = vd._make_decoder(av, "hevc")
+    assert hw is True and dec.device_type == "vaapi"
+
+
+def test_make_decoder_falls_back_to_slice_threaded_software(monkeypatch) -> None:
+    vd = _vd()
+    monkeypatch.delenv("VISIO_NO_HWACCEL", raising=False)
+    # A backend is available but never engages hardware → software decoder, sliced for low latency.
+    dec, hw = vd._make_decoder(_FakeAv(available={"vaapi"}, hw_ok=set()), "hevc")
+    assert hw is False
+    assert dec.device_type is None and dec.thread_count == 0 and dec.thread_type == "SLICE"
+
+
+def test_make_decoder_software_when_hwaccel_disabled() -> None:
+    vd = _vd()   # VISIO_NO_HWACCEL is set by the autouse fixture → skip the GPU probe entirely
+    dec, hw = vd._make_decoder(_FakeAv(available={"cuda"}, hw_ok={"cuda"}), "hevc")
+    assert hw is False and dec.thread_type == "SLICE"

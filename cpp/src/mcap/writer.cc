@@ -201,7 +201,12 @@ void McapWriter::WriteStoredMetadata() {
   ::mcap::Metadata md;
   md.name = meta_name_;
   for (const auto& [k, v] : meta_) md.metadata[k] = v;
-  writer_->write(md);  // best-effort; a metadata-write failure never aborts a recording
+  // Best-effort; a metadata-write failure never aborts a recording — but it
+  // must not be silent either (the part would ship without capture meta).
+  const ::mcap::Status st = writer_->write(md);
+  if (!st.ok())
+    std::fprintf(stderr, "McapWriter: metadata record write failed: %s\n",
+                 st.message.c_str());
 }
 
 bool McapWriter::ShouldRoll() const {

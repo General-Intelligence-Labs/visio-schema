@@ -47,7 +47,11 @@ int OpenSerialFd(const char* path);
 
 // Dial a TCP client to host:port (TCP_NODELAY + SO_KEEPALIVE, non-blocking).
 // Returns the fd or -1 if the connect fails.
-int DialTcpFd(const char* host, std::uint16_t port);
+// Connect a TCP socket to host:port, returning a non-blocking fd (or -1). With
+// timeout_ms > 0 the connect itself is bounded (non-blocking connect + poll) so a
+// dropped SYN fails in timeout_ms instead of the ~127 s kernel SYN-retry; 0 (the
+// default) keeps the historical blocking connect.
+int DialTcpFd(const char* host, std::uint16_t port, int timeout_ms = 0);
 
 // A connected pair of raw, non-blocking fds (socketpair). For tests and the
 // cross-language interop harness: one end drives an endpoint, the other is

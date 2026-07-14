@@ -63,6 +63,22 @@
     .status dt { color: var(--muted); } .status dd { margin: 0; }
     .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
     .hint { color: var(--muted); font-size: 12px; margin-top: 14px; }
+    .decode-opt { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px; cursor: pointer; }
+    .decode-opt input { width: 15px; height: 15px; cursor: pointer; }
+    .decode-note {
+      font-size: 12px; margin-top: 10px; padding: 9px 12px; border-radius: 8px;
+      background: rgba(229, 106, 106, .12); border: 1px solid var(--err); color: var(--fg);
+    }
+    .hevc-warn {
+      font-size: 12px; margin-top: 12px; padding: 10px 12px; border-radius: 8px;
+      background: rgba(224, 176, 74, .12); border: 1px solid var(--warn); color: var(--fg);
+    }
+    .hevc-warn a { color: var(--accent); }
+    .hw-guide {
+      font-size: 12px; margin-top: 10px; padding: 9px 12px; border-radius: 8px;
+      background: rgba(79, 157, 255, .10); border: 1px solid var(--accent); color: var(--fg);
+    }
+    .hw-guide a { color: var(--accent); font-weight: 600; }
     .err { color: var(--err); }
     code { background: var(--panel2); padding: 1px 5px; border-radius: 5px; }
     /* config panel */
@@ -120,11 +136,18 @@
           <button id="btn-browser" class="secondary" data-i18n="btnBrowser" disabled>Open in browser</button>
           <button id="btn-disconnect" class="secondary" data-i18n="btnDisconnect" disabled>Disconnect</button>
         </div>
+        <label class="decode-opt">
+          <input type="checkbox" id="decode-toggle" />
+          <span data-i18n="decodeToggle">Use software decoding</span>
+        </label>
+        <p class="decode-note" id="decode-note" hidden></p>
         <p class="hint" data-i18n-html="hint">
           <b>Desktop</b> opens Foxglove Studio via a <code>foxglove://</code> link &mdash; works offline.
           If nothing opens, install Foxglove Studio or use <b>Open in browser</b>
           (<code>app.foxglove.dev</code>, needs internet + a Foxglove account).
         </p>
+        <p class="hevc-warn" id="hevc-warn" data-i18n-html="hevcWarn" hidden></p>
+        <p class="hw-guide" id="hw-guide" hidden></p>
       </div>
 
       <div class="config" id="config" hidden>
@@ -206,6 +229,19 @@
         hint: "<b>Desktop</b> opens Foxglove Studio via a <code>foxglove://</code> link — works offline. " +
               "If nothing opens, install Foxglove Studio or use <b>Open in browser</b> " +
               "(<code>app.foxglove.dev</code>, needs internet + a Foxglove account).",
+        hevcWarn: "⚠ The camera video isn't showing. Turn on <b>Use software decoding</b> above and " +
+              "it will play. (Updating your computer's video support can also fix it.)",
+        decodeToggle: "Use software decoding",
+        decodeActive: "⚠ Your computer is converting this video, so it plays slowly and isn't " +
+              "real-time. To get smooth, live video, turn on your computer's built-in video support " +
+              "(below) — then the video plays directly and this converting isn't needed.",
+        hwGuideWin: "💡 For smooth, live video, install the free " +
+              "<a href=\"https://apps.microsoft.com/detail/9n4wgh0z6vhq\" target=\"_blank\" rel=\"noopener\">" +
+              "HEVC Video Extensions</a> from the Microsoft Store, then close and reopen this page.",
+        hwGuideMac: "💡 For smooth, live video, update macOS to the latest version, then reopen this page.",
+        hwGuideLinux: "💡 Smooth, live video on Linux needs some setup — ask your IT/support team, " +
+              "or just keep software decoding on above.",
+        hwGuideOther: "💡 For smooth, live video, turn on your system's built-in video support, then reopen this page.",
         stateIdle: "No device selected", stateConnecting: "Connecting…",
         stateStreaming: "Streaming", stateError: "Error",
         emptyUsb: "no USB device", emptySta: "no device on this network",
@@ -240,6 +276,17 @@
         hint: "<b>桌面版</b>：通过 <code>foxglove://</code> 链接打开 Foxglove Studio —— 可离线使用。" +
               "若无反应，请先安装 Foxglove Studio，或使用<b>在浏览器中打开</b>" +
               "（<code>app.foxglove.dev</code>，需要联网 + Foxglove 账号）。",
+        hevcWarn: "⚠ 摄像头视频没有显示。请打开上方的<b>使用软件解码</b>，视频就能播放。" +
+              "（更新电脑的视频组件也可以解决。）",
+        decodeToggle: "使用软件解码（软解）",
+        decodeActive: "⚠ 视频正由您的电脑转码，因此画面较慢、非实时。要获得流畅的实时视频，" +
+              "请开启电脑的内置视频支持（见下方）——之后视频可直接播放，无需再转码。",
+        hwGuideWin: "💡 想要流畅的实时视频，可在 Microsoft 应用商店安装免费的 " +
+              "<a href=\"https://apps.microsoft.com/detail/9n4wgh0z6vhq\" target=\"_blank\" rel=\"noopener\">" +
+              "HEVC 视频扩展</a>，然后关闭并重新打开此页面。",
+        hwGuideMac: "💡 想要流畅的实时视频，请将 macOS 更新到最新版本，然后重新打开此页面。",
+        hwGuideLinux: "💡 Linux 上启用系统硬件视频解码需要一些设置——可联系 IT/技术支持，或直接使用上方的软件解码。",
+        hwGuideOther: "💡 想要流畅的实时视频，请在系统中启用内置视频支持，然后重新打开此页面。",
         stateIdle: "未选择设备", stateConnecting: "连接中…",
         stateStreaming: "正在接收数据", stateError: "错误",
         emptyUsb: "未检测到 USB 设备", emptySta: "此网络中没有设备",

@@ -3,7 +3,14 @@
 // list over SSE (/api/devices), and connect/disconnect/status/viewer JSON endpoints.
 
 const state = { devices: [], connectedId: null, urls: null, pollTimer: null,
-                stateTimer: null, status: { state: "idle" } };
+                stateTimer: null, status: { state: "idle" }, hevcOk: null,
+                decodeOverride: null, lastTranscoding: null };
+
+// Whether to ask the launcher to decode the H.265 on this PC (→ JPEG) so the browser can show it.
+// Auto = on when the browser can't decode HEVC itself (see checkHevc); the toggle overrides.
+function effectiveDecode() {
+  return state.decodeOverride !== null ? state.decodeOverride : state.hevcOk === false;
+}
 
 const $ = (id) => document.getElementById(id);
 
@@ -33,6 +40,7 @@ function applyI18n() {
   });
   $("btn-lang").textContent = lang === "zh" ? "EN" : "中文";
   render();                      // empty-state strings
+  state.lastTranscoding = null;    // force the imperatively-rendered decode note into the new lang
   applyStatus(state.status);     // state-label strings
 }
 
@@ -87,7 +95,7 @@ async function postJSON(url, body) {
 }
 
 async function connect(id) {
-  const { ok, data } = await postJSON("/api/connect", { id });
+  const { ok, data } = await postJSON("/api/connect", { id, decode: effectiveDecode() });
   if (!ok) { alert(data.error || tr("connectFailed")); return; }
   state.connectedId = data.connected_id;
   state.urls = data;
@@ -125,6 +133,27 @@ function applyStatus(s) {
   $("btn-desktop").disabled = !connected;
   $("btn-browser").disabled = !connected || !(state.urls && state.urls.browser_url);
   $("btn-disconnect").disabled = !connected;
+  // Video-compatibility UI. s.decode_hw: null = not transcoding (the browser plays the raw H.265
+  // itself — the only fluent path); else the launcher is converting on this PC. Converting is NOT
+  // real-time whether it lands on the GPU or software decoder, so while transcoding we show a red
+  // "this is slow" alert + the install-HEVC guide (both hidden once the browser can decode natively).
+  // The separate amber "turn it on" warning shows only when we're NOT transcoding and the browser
+  // can't play the raw video at all.
+  const transcoding = s.decode_hw != null;
+  $("decode-toggle").checked = effectiveDecode();
+  // The alert/guide text doesn't depend on hardware-vs-software, so only re-render on the
+  // transcoding on/off transition — this runs on the 1 Hz poll and would otherwise be a per-tick
+  // no-op that re-parses identical HTML.
+  if (transcoding !== state.lastTranscoding) {
+    if (transcoding) {
+      $("decode-note").innerHTML = tr("decodeActive");
+      renderHwGuide();
+    }
+    state.lastTranscoding = transcoding;
+  }
+  $("decode-note").hidden = !transcoding;
+  $("hevc-warn").hidden = !(connected && !transcoding && state.hevcOk === false);
+  $("hw-guide").hidden = !transcoding;
   // The config panel needs a live bus connection to send commands, so hide it once the
   // link errors out (the device's reader thread is gone; commands would just fail).
   $("config").hidden = !connected || s.state === "error";
@@ -147,6 +176,46 @@ function stopPolling() {
   if (state.stateTimer) { clearInterval(state.stateTimer); state.stateTimer = null; }
 }
 
+// ---- HEVC / H.265 decode capability --------------------------------------- //
+// Foxglove renders the device's H.265 video through the browser's WebCodecs VideoDecoder.
+// Ask the browser whether it can decode HEVC at all; Chrome/Edge on Windows only can with
+// a hardware decoder + the OS "HEVC Video Extensions". A definitive "no" reveals the banner
+// (see applyStatus). Anything uncertain (no WebCodecs, probe throws) leaves hevcOk null so
+// we don't cry wolf, but WebCodecs-less browsers can't decode HEVC anyway → treat as false.
+async function checkHevc() {
+  if (typeof VideoDecoder === "undefined" || !VideoDecoder.isConfigSupported) {
+    state.hevcOk = false;
+    applyStatus(state.status);
+    return;
+  }
+  // HEVC Main profile at a couple of representative levels, both common codec-string forms.
+  const codecs = ["hev1.1.6.L120.90", "hvc1.1.6.L120.90", "hev1.1.6.L93.90"];
+  let ok = false;
+  for (const codec of codecs) {
+    try {
+      const r = await VideoDecoder.isConfigSupported({ codec });
+      if (r && r.supported) { ok = true; break; }
+    } catch (e) { /* unrecognized config → try the next form */ }
+  }
+  state.hevcOk = ok;
+  applyStatus(state.status);
+}
+
+// Best-effort OS family — only picks which plain "install faster video" guide to show
+// (the decode-capability check itself is the cross-platform WebCodecs probe above).
+function osFamily() {
+  const uad = navigator.userAgentData;
+  const p = ((uad && uad.platform) || navigator.platform || navigator.userAgent || "").toLowerCase();
+  if (p.includes("win")) return "Win";
+  if (p.includes("mac")) return "Mac";
+  if (p.includes("linux") || p.includes("x11") || p.includes("android")) return "Linux";
+  return "Other";
+}
+
+function renderHwGuide() {
+  $("hw-guide").innerHTML = tr("hwGuide" + osFamily());
+}
+
 // ---- wiring --------------------------------------------------------------- //
 $("btn-lang").onclick = () => {
   lang = lang === "zh" ? "en" : "zh";
@@ -165,6 +234,13 @@ $("btn-browser").onclick = () => {
   }
 };
 $("btn-disconnect").onclick = disconnect;
+
+// Flipping the compatibility toggle overrides the auto decision; if a device is live, reconnect
+// so the new mode takes effect (connect() tears down the old reader first, so this is clean).
+$("decode-toggle").onchange = () => {
+  state.decodeOverride = $("decode-toggle").checked;
+  if (state.connectedId) connect(state.connectedId);
+};
 
 $("btn-quit").onclick = async () => {
   await postJSON("/api/shutdown");
@@ -344,3 +420,4 @@ $("cfg-format-go").onclick = () => {
 applyI18n();
 subscribeDevices();
 refreshStatus();
+checkHevc();
