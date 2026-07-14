@@ -4,11 +4,25 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.5.0 — 2026-07-14
+
+### Merged main (S3/OSS auto-upload) into dev — `SetNoticeLang` retagged (BREAKING vs 0.4.2)
+
+- **`Command.set_auto_upload` (tag 26, `SetAutoUpload`)** and the S3/OSS
+  auto-upload surface from main (`CommandResult.storage_access_key_id`,
+  MCAP capture-meta record) are now on dev. Tag 26 is owned by the shipped
+  `SetAutoUpload`.
+- **BREAKING: `Command.set_notice_lang` moved tag 26 → 27.** 0.4.2 assigned
+  `SetNoticeLang` tag 26, colliding with main's released `SetAutoUpload`.
+  Voice notices only exist on dev firmware, which must be rebuilt against
+  this version; shipped (main-line) devices are unaffected.
+
 ## 0.4.2 — 2026-07-10
 
 ### Added `Command.set_notice_lang` (wire-compatible)
 
-- **New Command body `SetNoticeLang` (tag 26, `lang` string).** Selects the
+- **New Command body `SetNoticeLang` (tag 27, `lang` string; moved from 26
+  when merging main, whose shipped `SetAutoUpload` owns tag 26).** Selects the
   language of a device's spoken voice notices (boards with a speaker). Applied
   immediately and persisted device-side; unknown languages fall back to the
   device default (English). Speakerless boards accept and ignore it. Sent by

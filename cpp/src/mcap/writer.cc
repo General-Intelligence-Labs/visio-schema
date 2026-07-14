@@ -186,6 +186,27 @@ void McapWriter::OpenPart() {
   writer_ = std::make_unique<::mcap::McapWriter>();
   writer_->open(*fw, MakeOptions());
   file_ = std::move(fw);
+  WriteStoredMetadata();  // re-emit capture metadata so each part stands alone
+}
+
+void McapWriter::SetMetadata(std::string name,
+                             std::map<std::string, std::string> kv) {
+  meta_name_ = std::move(name);
+  meta_ = std::move(kv);
+  WriteStoredMetadata();  // into the current (first) part now
+}
+
+void McapWriter::WriteStoredMetadata() {
+  if (!writer_ || meta_.empty()) return;
+  ::mcap::Metadata md;
+  md.name = meta_name_;
+  for (const auto& [k, v] : meta_) md.metadata[k] = v;
+  // Best-effort; a metadata-write failure never aborts a recording — but it
+  // must not be silent either (the part would ship without capture meta).
+  const ::mcap::Status st = writer_->write(md);
+  if (!st.ok())
+    std::fprintf(stderr, "McapWriter: metadata record write failed: %s\n",
+                 st.message.c_str());
 }
 
 bool McapWriter::ShouldRoll() const {
