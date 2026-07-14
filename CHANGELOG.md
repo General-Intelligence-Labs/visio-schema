@@ -4,6 +4,15 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.5.2 — 2026-07-14
+
+### Added `RecordingEntry.damaged` (wire-compatible)
+
+- **New field `RecordingEntry.damaged` (tag 16, bool).** Marks a session whose
+  non-active `.mcap` part lacks the end magic (truncated by a power cut /
+  card removal mid-recording). Such parts are skipped by auto-upload; the app
+  lists them separately with recovery guidance.
+
 ## 0.5.1 — 2026-07-14
 
 ### Added `Command.set_resolution` (wire-compatible)

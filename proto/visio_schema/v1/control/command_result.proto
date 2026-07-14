@@ -56,6 +56,13 @@ message RecordingEntry {
   double latitude  = 13;  // 0 when unknown
   double longitude = 14;  // 0 when unknown
   string capturer  = 15;  // who operated the capture (user-entered)
+
+  // True when the session's recording data is truncated: a .mcap part that is
+  // not the active recording lacks the MCAP end magic (power was cut / the
+  // card was pulled mid-recording, so Stop never wrote the footer). Damaged
+  // parts are never auto-uploaded (delete-after-upload would destroy the only
+  // recoverable copy); recover them off-device with MCAP recovery tooling.
+  bool damaged = 16;
 }
 
 message RecordingsList {
