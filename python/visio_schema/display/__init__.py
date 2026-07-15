@@ -103,6 +103,10 @@ from visio_schema.v1.ros.geometry_msgs.quaternion_pb2 import Quaternion
 from visio_schema.v1.sensor.imu_raw_pb2 import ImuRaw
 from visio_schema.v1.sensor.system_health_pb2 import SystemHealth
 
+# Reconnect-tolerant registry for the relay-multiplex consumer (TCP :50002 viewer
+# + foxglove bridge). A viewer-side policy, so it lives here in display/.
+from visio_schema.display.relay_registry import RelayRegistry
+
 # Payload schema names dispatched on (== the protobuf full names on the wire).
 _QUAT_SCHEMA = "visio_schema.v1.ros.geometry_msgs.Quaternion"
 _VIDEO_SCHEMA = "foxglove.CompressedVideo"
@@ -456,10 +460,12 @@ def read_serial_resolved(port: str, baud: int,
 
 def read_tcp_resolved(host: str, port: int,
                       stop: threading.Event | None = None) -> Iterator[tuple[Message, Channel]]:
-    """Live TCP source as resolved (Message, Channel) pairs. DeviceInfo announces
-    are end-to-end forwarded over the bus's TCP leg too, so the same
-    :class:`ChannelRegistry` resolution as serial applies."""
-    yield from ChannelRegistry().resolved(read_tcp(host, port, stop))
+    """Live TCP source as resolved (Message, Channel) pairs. The TCP leg is a
+    *relayed multiplex* (many devices on one link) with no per-device link-drop,
+    so a :class:`RelayRegistry` is used instead of the strict single-source
+    :class:`ChannelRegistry`: it adopts a reconnecting device's re-announced ids
+    while still surfacing genuine same-topic collisions. See relay_registry."""
+    yield from RelayRegistry().resolved(read_tcp(host, port, stop))
 
 
 def _parse_tcp(target: str) -> tuple[str, int]:
