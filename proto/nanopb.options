@@ -111,6 +111,8 @@ foxglove.FrameTransform.parent_frame_id       max_size:16
 foxglove.FrameTransform.child_frame_id        max_size:16
 visio_schema.v1.calibration.ImuCalibration.accel_misalignment   max_count:9
 visio_schema.v1.calibration.ImuCalibration.gyro_misalignment    max_count:9
+visio_schema.v1.calibration.ImuCalibration.gyro_g_sensitivity      max_count:9
+visio_schema.v1.calibration.ImuCalibration.gyro_to_accel_rotation  max_count:9
 
 # ---- Geometry: short frame id ---------------------------------------------
 visio_schema.v1.geometry.Twist.frame_id   max_size:32

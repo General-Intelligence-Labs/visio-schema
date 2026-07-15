@@ -24,6 +24,21 @@ def test_imu_calibration_noise_roundtrip():
     assert list(out.accel_misalignment) == [1, 0, 0, 0, 1, 0, 0, 0, 1]
 
 
+def test_imu_calibration_intrinsics_roundtrip():
+    """The extended kalibr scale-misalignment intrinsics: accel/gyro misalignment
+    (M), gyro g-sensitivity (A), and the gyro→accel rotation (C_gyro_i)."""
+    c = imu_pb2.ImuCalibration(
+        accel_misalignment=[1.002, 0.001, 0, 0, 0.999, 0.002, 0, 0, 1.001],
+        gyro_misalignment=[0.998, 0, 0.003, 0, 1.001, 0, -0.001, 0, 1.0],
+        gyro_g_sensitivity=[1e-4, 0, 0, 0, -2e-4, 0, 0, 0, 3e-4],
+        gyro_to_accel_rotation=[1, 0, 0, 0, 1, 0, 0, 0, 1],
+    )
+    out = imu_pb2.ImuCalibration.FromString(c.SerializeToString())
+    assert list(out.gyro_g_sensitivity) == [1e-4, 0, 0, 0, -2e-4, 0, 0, 0, 3e-4]
+    assert list(out.gyro_to_accel_rotation) == [1, 0, 0, 0, 1, 0, 0, 0, 1]
+    assert list(out.gyro_misalignment)[2] == 0.003
+
+
 def test_imu_calibration_mounting_pose_removed():
     """mounting_pose was retired (field 13 reserved) — it's no longer a field."""
     assert "mounting_pose" not in imu_pb2.ImuCalibration.DESCRIPTOR.fields_by_name

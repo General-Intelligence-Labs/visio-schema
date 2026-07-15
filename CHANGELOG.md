@@ -4,6 +4,21 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.5.3 — 2026-07-15
+
+### Added extended IMU intrinsics to `ImuCalibration` (wire-compatible)
+
+- **New `ImuCalibration.gyro_g_sensitivity` (tag 22, `repeated double`, row-major
+  3×3).** Gyroscope g-sensitivity — linear acceleration leaking into the gyro
+  output (kalibr `gyroscopes.A`, units (rad/s)/(m/s²)). Empty = none.
+- **New `ImuCalibration.gyro_to_accel_rotation` (tag 23, `repeated double`,
+  row-major 3×3).** Rotation of the gyro triad into the accel/IMU frame (kalibr
+  `gyroscopes.C_gyro_i`). Empty = identity.
+- Completes the `kalibr_calibrate_imu_camera --imu-models scale-misalignment`
+  output on the wire: accel/gyro scale+misalignment already rode on
+  `accel_misalignment`/`gyro_misalignment` (tags 19/20); these add the remaining
+  two matrices. Stored + reported by the device; not yet applied to samples.
+
 ## 0.5.1 — 2026-07-14
 
 ### Added `Command.set_resolution` (wire-compatible)

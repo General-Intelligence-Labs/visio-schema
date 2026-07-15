@@ -18,7 +18,11 @@ message ImuCalibration {
   double accel_bias_x = 1;
   double accel_bias_y = 2;
   double accel_bias_z = 3;
-  // Accelerometer per-axis scale (unitless; identity = no scaling).
+  // Accelerometer per-axis scale (unitless; identity = no scaling). This is the
+  // DIAGONAL of accel_misalignment (field 19) — the diagonal-only correction
+  // path. When the full 3×3 is present it carries the same diagonal plus the
+  // off-diagonal misalignment and SUPERSEDES this; apply one or the other, never
+  // both.
   double accel_scale_x = 4;
   double accel_scale_y = 5;
   double accel_scale_z = 6;
@@ -26,7 +30,8 @@ message ImuCalibration {
   double gyro_bias_x  = 7;
   double gyro_bias_y  = 8;
   double gyro_bias_z  = 9;
-  // Gyroscope per-axis scale.
+  // Gyroscope per-axis scale (diagonal of gyro_misalignment, field 20; see the
+  // accel_scale note above — the full 3×3 supersedes it).
   double gyro_scale_x = 10;
   double gyro_scale_y = 11;
   double gyro_scale_z = 12;
@@ -43,11 +48,22 @@ message ImuCalibration {
   double gyro_random_walk     = 17;  // rad/s²/√Hz
   double update_rate_hz       = 18;
 
-  // Optional full 3×3 scale-misalignment (row-major, length 9). Empty = use the
-  // per-axis scale above (identity misalignment). kalibr `Ta`/`Tw` equivalent.
+  // Optional full 3×3 scale-misalignment (row-major, length 9). Its diagonal is
+  // the per-axis scale (fields 4-6 / 10-12); when set it SUPERSEDES those. Empty
+  // = use the per-axis scale (identity misalignment). kalibr `Ta`/`Tw` equivalent.
   repeated double accel_misalignment = 19;
   repeated double gyro_misalignment  = 20;
 
   // Cam-IMU time offset (kalibr `timeshift_cam_imu`): t_imu = t_cam0 + offset.
   double time_offset_to_cam0_s = 21;
+
+  // ── Extended IMU intrinsics (kalibr `--imu-models scale-misalignment`) ──
+  // Both row-major 3×3, length 9; empty = not calibrated. accel/gyro scale +
+  // misalignment ride on accel_misalignment/gyro_misalignment (fields 19/20).
+  // Gyro g-sensitivity — accel leaking into the gyro (kalibr gyroscopes.A),
+  // units (rad/s)/(m/s²). Empty = none.
+  repeated double gyro_g_sensitivity = 22;
+  // Gyro-triad → accel/IMU-frame rotation (kalibr gyroscopes.C_gyro_i).
+  // Empty = identity (gyro and accel share the IMU frame).
+  repeated double gyro_to_accel_rotation = 23;
 }
