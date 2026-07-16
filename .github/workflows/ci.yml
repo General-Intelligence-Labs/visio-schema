@@ -1,0 +1,65 @@
+name: ci
+
+# PR gate. wheels.yml (v* tags) still owns publishing.
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proto:
+    name: buf lint + wire-compat
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive   # foxglove-sdk supplies the second buf module
+          fetch-depth: 0          # `make breaking` needs history for the merge-base
+
+      - uses: bufbuild/buf-setup-action@v1
+
+      - run: make lint
+
+      # BREAKING_STRICT: a missing baseline ref must fail the gate, not skip it.
+      - name: make breaking
+        run: make breaking BREAKING_REF=origin/${{ github.base_ref || 'main' }} BREAKING_STRICT=1
+
+  tests:
+    name: python + c++ suites
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - uses: bufbuild/buf-setup-action@v1
+
+      - name: Install toolchain + generate bindings
+        run: |
+          sudo apt-get update && sudo apt-get install -y protobuf-compiler
+          python -m pip install -U pip protobuf cobs mcap pyserial pytest
+          make gen
+
+      # Editable install builds the native _creader. Without it HAVE_NATIVE is
+      # False and the "native" and "fallback" runs below are the same code path —
+      # the shipped reader would get zero CI while looking covered.
+      - name: Install package (builds native _creader)
+        run: |
+          pip install -e python
+          python -c "from visio_schema.transport import HAVE_NATIVE; assert HAVE_NATIVE, 'native _creader not built'"
+
+      - run: make pytest
+
+      - name: pytest (pure-python fallback)
+        run: cd python && VISIO_NO_NATIVE=1 python -m pytest tests -q
+
+      - run: make cpp

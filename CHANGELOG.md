@@ -4,6 +4,37 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.6.0 — 2026-07-16
+
+### Slimmed `ImuCalibration` to noise-model + sync only (BREAKING)
+
+`ImuCalibration` now carries **only** what the system owns and a consumer's
+filter needs: `accel_noise_density` (14), `gyro_noise_density` (16),
+`update_rate_hz` (18), and `time_offset_to_cam0_s` (21). Everything else is
+**removed and its tag reserved**:
+
+- **Per-axis bias/scale (tags 1-12).** Scale is factory-trimmed per part and was
+  only the redundant diagonal of the misalignment matrix; bias is a runtime
+  *state* (re-randomized each power-up, drifting in-run), estimated online by the
+  consumer's filter — never a stored constant. Nothing ever applied these.
+- **Bias random walk (`accel_random_walk` 15, `gyro_random_walk` 17).** A
+  stochastic noise strength that depends on the host board / bandwidth /
+  vibration, not a per-unit constant — left to the consumer's process-noise
+  default (or an in-situ Allan run). Not on any MEMS datasheet.
+- **Scale-misalignment intrinsics (`accel_misalignment` 19, `gyro_misalignment`
+  20, `gyro_g_sensitivity` 22, `gyro_to_accel_rotation` 23).** Reverts the
+  0.5.x scale-misalignment work: for factory-trimmed parts the residual isn't
+  worth storing, and the on-device store never applied it.
+
+Removing fields trips `buf breaking` (`FIELD_NO_DELETE`); pre-1.0 that is a MINOR
+bump per [`versioning.md`](docs/protocol/versioning.md). Wire impact is benign:
+old readers decode the dropped scalars as their proto3 default (bias identity is
+0 — harmless; scale isn't 1, but nothing multiplies by it), and the device's JSON
+store ignores unknown/stale keys, so an old `calibration.json` still loads. Tags
+1-13, 15, 17, 19, 20, 22, 23 are reserved so nothing reuses them.
+
+(0.5.3 was never released — this supersedes it.)
+
 ## 0.5.2 — 2026-07-14
 
 ### Added `RecordingEntry.damaged` (wire-compatible)

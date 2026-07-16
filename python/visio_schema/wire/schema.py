@@ -47,6 +47,7 @@ _PAYLOAD_MODULES = (
     "visio_schema.foxglove.CompressedImage_pb2",
     "visio_schema.foxglove.RawImage_pb2",
     "visio_schema.foxglove.CameraCalibration_pb2",
+    "visio_schema.foxglove.ImageAnnotations_pb2",
     "visio_schema.foxglove.RawAudio_pb2",
     "visio_schema.foxglove.PoseInFrame_pb2",
     "visio_schema.foxglove.FrameTransform_pb2",

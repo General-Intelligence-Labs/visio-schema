@@ -63,6 +63,7 @@ FOXGLOVE_MODULES = [
     "visio_schema.foxglove.Vector3_pb2",
     "visio_schema.foxglove.Quaternion_pb2",
     "visio_schema.foxglove.CompressedVideo_pb2",
+    "visio_schema.foxglove.ImageAnnotations_pb2",
     "visio_schema.foxglove.PoseInFrame_pb2",
     "visio_schema.foxglove.FrameTransforms_pb2",
     "visio_schema.foxglove.JointStates_pb2",
