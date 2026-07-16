@@ -53,6 +53,7 @@ _PAYLOAD_MODULES = (
     "visio_schema.foxglove.FrameTransforms_pb2",
     "visio_schema.foxglove.JointStates_pb2",
     "visio_schema.foxglove.Log_pb2",
+    "visio_schema.foxglove.SceneUpdate_pb2",
 )
 
 
