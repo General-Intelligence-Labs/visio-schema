@@ -1,7 +1,19 @@
 {
   "configById": {
-    "Image!cam0": { "imageMode": { "imageTopic": "/ego/camera/0" } },
-    "Image!cam1": { "imageMode": { "imageTopic": "/ego/camera/1" } },
+    "Image!cam0": {
+      "imageMode": {
+        "imageTopic": "/ego/camera/0",
+        "annotations": { "/ego/camera/0/annotations": { "visible": true } },
+        "synchronize": false
+      }
+    },
+    "Image!cam1": {
+      "imageMode": {
+        "imageTopic": "/ego/camera/1",
+        "annotations": { "/ego/camera/1/annotations": { "visible": true } },
+        "synchronize": false
+      }
+    },
     "3D!orientation": {
       "followTf": "world",
       "scene": { "enableStats": false },
