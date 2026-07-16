@@ -19,12 +19,25 @@ to read its identity here, since that would starve the live bridge (a device's
 serial / name would need a connection to learn, so listing shows the mDNS/USB label
 only).
 
+**NCM preference.** A USB-tethered device that runs the ``ncm_enabled`` gadget exposes
+*both* a CDC-ACM serial leg (the lossy one) and a CDC-NCM USB-Ethernet leg carrying the
+same TCP bus, so raw discovery sees it twice: a :data:`USB` row and an :data:`STA` row on
+the per-device tether subnet (``10.<b0>.<b1>.2``; see the firmware's ``S41device-id``). Both
+carry the unit's ``GILABS-<code8>`` (the USB ``product`` string and the mDNS instance name
+are both the hostname), so they can be matched. The tether is a USB attachment, not Wi-Fi,
+so :meth:`DiscoveryService.ui_snapshot` presents it **as a USB row that replaces the
+CDC-ACM serial row** — the unit shows once, under USB, and connecting over it uses the
+lossless NCM leg (real TCP retransmission over the cable). :meth:`DiscoveryService.resolve`
+is the connect-side backstop: it maps a click on a still-listed serial row (a refresh race)
+onto the NCM leg too. Plain (non-tether) Wi-Fi rows are untouched.
+
 Discovery threads (zeroconf's own browser thread + our serial-poll thread) call
 ``on_change`` after any add/update/remove; a caller running an asyncio event loop
 should marshal that onto the loop (e.g. ``loop.call_soon_threadsafe``).
 """
 from __future__ import annotations
 
+import re
 import socket
 import sys
 import threading
@@ -62,6 +75,48 @@ def _device(*, dev_id: str, label: str, transport: str, host: str | None = None,
     legitimately appears as two rows, each describing one way to reach it."""
     return {"id": dev_id, "label": label, "transport": transport,
             "host": host, "port": port, "device": device}
+
+
+# A unit's stable identity token — ``GILABS-<code8>`` — is stamped into BOTH its USB
+# gadget ``product`` string and its mDNS instance name (both are the hostname; see the
+# firmware's S41device-id / S50usbdevice). It is what lets a CDC-ACM serial row be matched
+# to the same unit's NCM row. Match greedily to the token boundary so the USB label's
+# trailing " (/dev/ttyACM0)" is excluded.
+_DEVICE_KEY_RE = re.compile(r"GILABS-[0-9A-Za-z]+")
+
+
+def _device_key(dto: dict) -> str | None:
+    """The ``GILABS-<code8>`` identity shared by a unit's USB row and its mDNS row, or
+    ``None`` if the label carries no such token (e.g. a manual host:port entry)."""
+    m = _DEVICE_KEY_RE.search(dto.get("label") or "")
+    return m.group(0) if m else None
+
+
+def _local_source_ip(host: str) -> str | None:
+    """The local source address the OS would use to reach ``host`` — a pure route lookup
+    (a UDP ``connect`` sends no packet), so it's cheap and cross-platform. ``None`` if the
+    host can't be resolved/routed."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect((host, 9))          # discard port; UDP connect transmits nothing
+        return s.getsockname()[0]
+    except OSError:
+        return None
+    finally:
+        s.close()
+
+
+def _is_ncm_tether(host: str | None) -> bool:
+    """Is ``host`` a device reached over its CDC-NCM USB-Ethernet tether, as opposed to
+    Wi-Fi/LAN? S41device-id puts every NCM device on a private per-device /24
+    (``10.<b0>.<b1>.2``, the USB host taking ``.1``), so the tether is a 10/8 address our
+    own source address shares a /24 with — directly link-attached, not routed via a
+    gateway. That same-subnet test doubles as a reachability guarantee, so redirecting a
+    connect onto it can never strand us on an unreachable leg."""
+    if not host or not host.startswith("10."):
+        return False
+    src = _local_source_ip(host)
+    return bool(src) and src.rsplit(".", 1)[0] == host.rsplit(".", 1)[0]
 
 
 class DiscoveryService:
@@ -110,6 +165,63 @@ class DiscoveryService:
     def snapshot(self) -> list[dict]:
         with self._lock:
             return list(self._devices.values())
+
+    def ui_snapshot(self) -> list[dict]:
+        """The device list as the launcher UI should render it. An NCM USB-Ethernet tether
+        is a USB attachment, so it is presented as a :data:`USB` row that **replaces** the
+        same unit's CDC-ACM serial row (matched by :func:`_device_key`): the unit appears
+        once, under USB, and connecting over it uses the lossless NCM leg. The presented row
+        keeps its own id (the tether ``tcp:`` id) so a click connects over NCM directly, and
+        inherits the serial row's ``/dev/ttyACM*`` path so it still reads like the USB device
+        it stands in for. Plain (non-tether) Wi-Fi rows and everything else pass through
+        unchanged."""
+        devices = self.snapshot()
+        # key -> the tether STA dto (the leg to promote into the USB group). Test the cheap
+        # key regex before the socket-touching tether probe (as resolve() does), so a keyless
+        # STA row on the tether subnet doesn't pay a route lookup.
+        tethers = {k: d for d in devices if d["transport"] == STA
+                   and (k := _device_key(d)) is not None and _is_ncm_tether(d.get("host"))}
+        if not tethers:
+            return devices
+        # /dev path of each overridden CDC-ACM row, to keep the promoted row familiar.
+        acm_dev = {k: d.get("device") for d in devices
+                   if d["transport"] == USB and (k := _device_key(d)) in tethers}
+        out: list[dict] = []
+        for d in devices:
+            key = _device_key(d)
+            if d["transport"] == USB and key in tethers:
+                continue                                   # serial leg hidden — NCM stands in
+            if tethers.get(key) is d:                      # this exact tether row → promote
+                out.append({**d, "transport": USB, "device": acm_dev.get(key)})
+            else:
+                out.append(d)                              # Wi-Fi / other rows untouched
+        return out
+
+    def resolve(self, dev_id: str) -> dict | None:
+        """Resolve a clicked device id to the DTO to actually connect over, applying the
+        NCM preference: a CDC-ACM :data:`USB` row whose unit is *also* reachable over its
+        CDC-NCM USB-Ethernet tether (same :func:`_device_key`, on the per-device tether
+        subnet) resolves to that NCM row — the lossless TCP-over-USB leg in place of the
+        lossy serial one. Every other row (already TCP, or with no NCM companion) resolves
+        to itself. ``None`` if the id is unknown."""
+        with self._lock:
+            devices = list(self._devices.values())
+        clicked = next((d for d in devices if d["id"] == dev_id), None)
+        if clicked is None or clicked["transport"] != USB:
+            return clicked
+        key = _device_key(clicked)
+        if key is None:
+            return clicked
+        # `and` short-circuits, so the (socket-touching) tether probe runs only for a
+        # same-unit STA row — at most one.
+        ncm = next((d for d in devices
+                    if d["transport"] == STA and _device_key(d) == key
+                    and _is_ncm_tether(d.get("host"))), None)
+        if ncm is None:
+            return clicked
+        print(f"visio-display: {dev_id} → NCM tether {ncm['id']} "
+              "(preferring lossless USB-Ethernet over CDC-ACM serial)", file=sys.stderr)
+        return ncm
 
     # -- mutation ----------------------------------------------------------- #
     def _upsert(self, dto: dict) -> None:
