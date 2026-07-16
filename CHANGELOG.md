@@ -4,6 +4,18 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.5.3 — 2026-07-16
+
+### Added `Command.reset_to_ap` (wire-compatible)
+
+- **New Command body `ResetToAp` (tag 29, no fields).** Forgets the provisioned
+  Wi-Fi STA credentials and returns the device to its setup soft-AP. A one-shot
+  action, not a mode: the stored credentials are erased (no rejoin on the next
+  boot), any STA association is dropped, and the AP comes back up.
+- Like `ConnectWifi`, the result usually never reaches a caller on the STA link
+  — the device tears that link down to switch radios (single-radio RTL8821CS),
+  so a post-send transport drop means success, not failure.
+
 ## 0.5.2 — 2026-07-14
 
 ### Added `RecordingEntry.damaged` (wire-compatible)
