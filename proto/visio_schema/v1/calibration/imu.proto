@@ -1,69 +1,56 @@
 // visio_schema/v1/calibration/imu.proto
 //
-// Per-IMU intrinsic calibration — the "info" half of an IMU's calibration,
-// published on /<dev>/imu/<i>/info (typically 1 Hz). Mirrors a kalibr
-// `kalibr_imu_chain.yaml` entry: bias/scale + noise densities / random walks +
-// update rate, plus the cam-IMU time offset that foxglove can't carry. The
-// IMU's spatial pose is NOT here — it rides on /<dev>/imu/<i>/extrinsics as a
-// foxglove.FrameTransform (child "imu<i>" anchored to parent "cam0").
+// The "info" half of an IMU's calibration, published on /<dev>/imu/<i>/info
+// (typically 1 Hz). Carries only what the SYSTEM owns and a consumer's filter
+// needs: the white-noise densities (the datasheet noise model, refined by an
+// Allan run) + the IMU output rate, plus the cam-IMU time offset that foxglove
+// can't carry. Mirrors the essential fields of a kalibr `kalibr_imu_chain.yaml`
+// entry, consumed by OpenVINS / ORB-SLAM3.
 //
-// Apply as: `corrected = scale * (raw - bias)`.
+// Deliberately NOT here:
+//   - bias / scale / misalignment / g-sensitivity: deterministic intrinsics are
+//     factory-trimmed per part; the residual is not worth storing (and nothing
+//     applies it). Bias is a runtime STATE — re-randomized each power-up and
+//     drifting in-run — so it is estimated online by the consumer's filter, not
+//     stored. (See the 0.6.0 CHANGELOG.)
+//   - bias random walk: a stochastic noise strength that depends on the host
+//     board / bandwidth / vibration, not a per-unit constant; left to the
+//     consumer's process-noise default (or an in-situ Allan run).
+//   - the IMU's spatial pose: rides on /<dev>/imu/<i>/extrinsics as a
+//     foxglove.FrameTransform (child "imu<i>" anchored to parent "cam0").
 
 syntax = "proto3";
 
 package visio_schema.v1.calibration;
 
 message ImuCalibration {
-  // Accelerometer bias in m/s² (subtract from raw before scaling).
-  double accel_bias_x = 1;
-  double accel_bias_y = 2;
-  double accel_bias_z = 3;
-  // Accelerometer per-axis scale (unitless; identity = no scaling). This is the
-  // DIAGONAL of accel_misalignment (field 19) — the diagonal-only correction
-  // path. When the full 3×3 is present it carries the same diagonal plus the
-  // off-diagonal misalignment and SUPERSEDES this; apply one or the other, never
-  // both.
-  double accel_scale_x = 4;
-  double accel_scale_y = 5;
-  double accel_scale_z = 6;
-  // Gyroscope bias in rad/s.
-  double gyro_bias_x  = 7;
-  double gyro_bias_y  = 8;
-  double gyro_bias_z  = 9;
-  // Gyroscope per-axis scale (diagonal of gyro_misalignment, field 20; see the
-  // accel_scale note above — the full 3×3 supersedes it).
-  double gyro_scale_x = 10;
-  double gyro_scale_y = 11;
-  double gyro_scale_z = 12;
+  // 1-12 were the per-axis linear correction — accel_bias/accel_scale (1-6),
+  // gyro_bias/gyro_scale (7-12). Removed in 0.6.0: scale is factory-trimmed and
+  // was only ever the redundant diagonal of the misalignment matrix; bias is a
+  // runtime state, never a stored constant. Nothing applied them.
+  reserved 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12;
+  reserved "accel_bias_x", "accel_bias_y", "accel_bias_z",
+           "accel_scale_x", "accel_scale_y", "accel_scale_z",
+           "gyro_bias_x", "gyro_bias_y", "gyro_bias_z",
+           "gyro_scale_x", "gyro_scale_y", "gyro_scale_z";
 
   // 13 was `foxglove.Pose mounting_pose` — the IMU pose now rides on the
   // /<dev>/imu/<i>/extrinsics topic (foxglove.FrameTransform, anchored to cam0).
   reserved 13;
   reserved "mounting_pose";
 
-  // ── Noise model (kalibr_imu_chain.yaml; consumed by OpenVINS / ORB-SLAM3) ──
-  double accel_noise_density = 14;  // m/s²/√Hz
-  double accel_random_walk   = 15;  // m/s³/√Hz
-  double gyro_noise_density   = 16;  // rad/s/√Hz
-  double gyro_random_walk     = 17;  // rad/s²/√Hz
-  double update_rate_hz       = 18;
+  // 15/17 were accel/gyro_random_walk (bias random walk); 19/20/22/23 were the
+  // scale-misalignment intrinsics (accel/gyro misalignment, gyro g-sensitivity,
+  // gyro->accel rotation). Removed in 0.6.0 — see the header.
+  reserved 15, 17, 19, 20, 22, 23;
+  reserved "accel_random_walk", "gyro_random_walk", "accel_misalignment",
+           "gyro_misalignment", "gyro_g_sensitivity", "gyro_to_accel_rotation";
 
-  // Optional full 3×3 scale-misalignment (row-major, length 9). Its diagonal is
-  // the per-axis scale (fields 4-6 / 10-12); when set it SUPERSEDES those. Empty
-  // = use the per-axis scale (identity misalignment). kalibr `Ta`/`Tw` equivalent.
-  repeated double accel_misalignment = 19;
-  repeated double gyro_misalignment  = 20;
+  // White-noise densities (datasheet floor; refine per HW rev with an Allan run).
+  double accel_noise_density = 14;  // m/s²/√Hz
+  double gyro_noise_density   = 16;  // rad/s/√Hz
+  double update_rate_hz       = 18;  // IMU output rate
 
   // Cam-IMU time offset (kalibr `timeshift_cam_imu`): t_imu = t_cam0 + offset.
   double time_offset_to_cam0_s = 21;
-
-  // ── Extended IMU intrinsics (kalibr `--imu-models scale-misalignment`) ──
-  // Both row-major 3×3, length 9; empty = not calibrated. accel/gyro scale +
-  // misalignment ride on accel_misalignment/gyro_misalignment (fields 19/20).
-  // Gyro g-sensitivity — accel leaking into the gyro (kalibr gyroscopes.A),
-  // units (rad/s)/(m/s²). Empty = none.
-  repeated double gyro_g_sensitivity = 22;
-  // Gyro-triad → accel/IMU-frame rotation (kalibr gyroscopes.C_gyro_i).
-  // Empty = identity (gyro and accel share the IMU frame).
-  repeated double gyro_to_accel_rotation = 23;
 }

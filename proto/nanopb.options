@@ -109,10 +109,6 @@ foxglove.CameraCalibration.R                   max_count:9
 foxglove.CameraCalibration.P                   max_count:12
 foxglove.FrameTransform.parent_frame_id       max_size:16
 foxglove.FrameTransform.child_frame_id        max_size:16
-visio_schema.v1.calibration.ImuCalibration.accel_misalignment   max_count:9
-visio_schema.v1.calibration.ImuCalibration.gyro_misalignment    max_count:9
-visio_schema.v1.calibration.ImuCalibration.gyro_g_sensitivity      max_count:9
-visio_schema.v1.calibration.ImuCalibration.gyro_to_accel_rotation  max_count:9
 
 # ---- Geometry: short frame id ---------------------------------------------
 visio_schema.v1.geometry.Twist.frame_id   max_size:32
@@ -159,3 +155,28 @@ visio_schema.v1.service.device_info.Channel.encoding               type:FT_POINT
 visio_schema.v1.service.device_info.Channel.schema_name            type:FT_POINTER
 visio_schema.v1.service.device_info.Channel.schema_encoding        type:FT_POINTER
 visio_schema.v1.service.device_info.Channel.schema                 type:FT_POINTER
+
+# ---- ImageAnnotations: 2D detection overlays (palm boxes) -------------------
+#      Same treatment, and same justification, as CameraCalibration above: bound
+#      the repeated fields so the whole message is FT_STATIC — no malloc, no
+#      hand-written encode callbacks on the device publish path. Unlike the
+#      video/audio `data` blobs this is tiny and fixed-shape (a handful of boxes
+#      at 10 Hz), so a fixed array costs ~1.3 KB of struct and buys simplicity.
+#
+#      FT_IGNORE (first use in this file) drops the fields we never populate
+#      from the C struct entirely. It affects nanopb codegen ONLY — the Python
+#      bindings and the FileDescriptorSet we ship to Foxglove still carry the
+#      full message, so a consumer sees a complete schema. Revert an entry to a
+#      max_count if we later want circles (keypoints) or texts (score labels).
+#
+#      Geometry: one box = one PointsAnnotation with type=LINE_LOOP and 4
+#      corner Point2s. ImageAnnotations.timestamp is set once at the top level
+#      ("When set, individual annotation timestamps will be ignored" per the
+#      upstream .proto), so the per-annotation timestamps stay unset.
+foxglove.ImageAnnotations.points              max_count:8
+foxglove.ImageAnnotations.circles             type:FT_IGNORE
+foxglove.ImageAnnotations.texts               type:FT_IGNORE
+foxglove.ImageAnnotations.metadata            type:FT_IGNORE
+foxglove.PointsAnnotation.points              max_count:4
+foxglove.PointsAnnotation.outline_colors      type:FT_IGNORE
+foxglove.PointsAnnotation.metadata            type:FT_IGNORE
