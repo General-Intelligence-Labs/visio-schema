@@ -148,8 +148,12 @@ message SetRecordingMeta {
   string capturer = 8;  // who operated the capture (user-entered)
   // GPS + host time/zone, mirroring StartRecording — persisted so auto-started
   // boot recordings (no app input) still carry them. All optional; 0 = unknown.
-  double latitude              = 4;  // GPS; 0 when unknown
-  double longitude             = 5;  // GPS; 0 when unknown
+  // Unlike the text fields (where empty CLEARS the stored value), a 0 fix
+  // KEEPS the stored coordinates — hosts without a fix send 0, and wiping the
+  // last known position (also pushed via SetTime) would lose data. Coordinates
+  // are machine-owned, not user-cleared.
+  double latitude              = 4;  // GPS; 0 when unknown (keeps stored value)
+  double longitude             = 5;  // GPS; 0 when unknown (keeps stored value)
   int64  client_unix_us        = 6;  // host reference timestamp (us since epoch)
   sint32 client_utc_offset_min = 7;  // minutes east of UTC (+480 = UTC+8)
 }
@@ -158,9 +162,18 @@ message SetRecordingMeta {
 // to 1970-01-01, so a host pushes the real time (typically right after it
 // connects, before recording) so session timestamps are correct. Answered by a
 // CommandResult (ok + DeviceState).
+//
+// The host's GPS fix rides the same push: the boards have no GNSS receiver, so
+// the phone is the only source of coordinates, and clock + position are both
+// "where/when is this rig right now" host references. A non-zero fix is
+// persisted into the recording-metadata sidecar (the same latitude/longitude
+// SetRecordingMeta carries) and stamped into every new session; 0 = no fix,
+// and the device keeps its last stored coordinates.
 message SetTime {
   int64  unix_us        = 1;  // wall-clock time, us since Unix epoch (UTC)
   sint32 utc_offset_min = 2;  // minutes east of UTC (+480 = UTC+8)
+  double latitude       = 3;  // GPS; 0 when unknown (keeps stored value)
+  double longitude      = 4;  // GPS; 0 when unknown (keeps stored value)
 }
 
 // Provision Wi-Fi STA credentials and (re)associate. Replaces POST /wifi.
