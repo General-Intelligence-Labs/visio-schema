@@ -66,6 +66,11 @@ lint:
 #  2. Compare against the MERGE-BASE, not main's tip: a field added on main after
 #     this branch diverged reads as a deletion here — a false "you broke the wire".
 #
+# buf's output is piped through scripts/breaking_waivers.py, which drops ONLY the
+# specific, reviewed field deletions enumerated there (e.g. the 0.6.0 IMU slim,
+# reserved by number + name) and fails on every other breaking change — so an
+# accepted deletion doesn't force relaxing the rule for all future ones.
+#
 # BREAKING_STRICT=1 turns a missing baseline ref into a failure instead of a
 # skip; CI sets it, so the gate can never pass vacuously on a bad checkout.
 BREAKING_REF    ?= origin/main
@@ -89,8 +94,13 @@ breaking:
 		git worktree remove --force "$$wt" >/dev/null 2>&1; exit 1; \
 	fi; \
 	echo "buf breaking proto --against merge-base $$(git rev-parse --short $$base)"; \
-	$(BUF) breaking proto --against "$$wt/proto"; \
-	rc=$$?; \
+	out=$$($(BUF) breaking proto --against "$$wt/proto" --error-format json); rc=$$?; \
+	: "buf exits 100 = violations found (annotations on stdout); other nonzero = operational error (msg on stderr)"; \
+	if [ $$rc -eq 100 ]; then \
+		printf '%s\n' "$$out" | $(PYTHON) scripts/breaking_waivers.py; rc=$$?; \
+	elif [ $$rc -ne 0 ]; then \
+		printf '%s\n' "$$out"; \
+	fi; \
 	git worktree remove --force "$$wt" >/dev/null 2>&1 || rm -rf "$$wt"; \
 	git worktree prune >/dev/null 2>&1; \
 	exit $$rc
