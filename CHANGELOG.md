@@ -4,6 +4,20 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.6.2 — 2026-07-17
+
+### `SetTime` carries the host GPS fix (wire-compatible)
+
+- **New `SetTime` fields `latitude` (3) / `longitude` (4).** The boards have no
+  GNSS receiver, so the phone's fix rides the same on-connect push as the wall
+  clock. A non-zero fix is persisted into the recording-metadata sidecar (the
+  same coordinates `SetRecordingMeta` carries) and stamped into every new
+  session's metadata; 0 = no fix, the device keeps its stored coordinates.
+- **Clarified `SetRecordingMeta.latitude/longitude` keep-on-zero semantics.**
+  A 0 coordinate keeps the stored value instead of clearing it (text fields
+  still clear on empty) — a host without a fix must not wipe the last known
+  position.
+
 ## 0.6.1 — 2026-07-17
 
 ### Added `Command.reset_to_ap` (wire-compatible)
