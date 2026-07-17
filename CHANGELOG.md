@@ -4,6 +4,18 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.6.1 — 2026-07-17
+
+### Added `Command.reset_to_ap` (wire-compatible)
+
+- **New Command body `ResetToAp` (tag 29, no fields).** Forgets the provisioned
+  Wi-Fi STA credentials and returns the device to its setup soft-AP. A one-shot
+  action, not a mode: the stored credentials are erased (no rejoin on the next
+  boot), any STA association is dropped, and the AP comes back up.
+- Like `ConnectWifi`, the result usually never reaches a caller on the STA link
+  — the device tears that link down to switch radios (single-radio RTL8821CS),
+  so a post-send transport drop means success, not failure.
+
 ## 0.6.0 — 2026-07-16
 
 ### Slimmed `ImuCalibration` to noise-model + sync only (BREAKING)
@@ -32,8 +44,6 @@ old readers decode the dropped scalars as their proto3 default (bias identity is
 0 — harmless; scale isn't 1, but nothing multiplies by it), and the device's JSON
 store ignores unknown/stale keys, so an old `calibration.json` still loads. Tags
 1-13, 15, 17, 19, 20, 22, 23 are reserved so nothing reuses them.
-
-(0.5.3 was never released — this supersedes it.)
 
 ## 0.5.2 — 2026-07-14
 

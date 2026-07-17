@@ -46,6 +46,7 @@ message Command {
     SetAutoUpload  set_auto_upload = 26;
     SetNoticeLang  set_notice_lang = 27;
     SetResolution  set_resolution  = 28;
+    ResetToAp      reset_to_ap     = 29;
   }
 }
 
@@ -171,6 +172,20 @@ message ConnectWifi {
 // Trigger a Wi-Fi scan; the CommandResult carries WifiScanResults. Replaces
 // GET /wifi/scan.
 message ScanWifi {
+}
+
+// Forget the provisioned Wi-Fi STA credentials and return to the setup soft-AP.
+//
+// A one-shot ACTION, not a mode: the device erases the stored credentials (so
+// it will not rejoin on the next boot), drops any STA association, and brings
+// the AP back up. Sending it while already on the AP is a no-op that still
+// clears the stored credentials.
+//
+// Like ConnectWifi, the CommandResult usually never reaches a caller that is
+// talking over the STA link, because the device tears that link down to switch
+// radios (the RTL8821CS is single-radio). Callers should treat a post-send
+// transport drop as success and rediscover the device on its AP.
+message ResetToAp {
 }
 
 // Persist S3 storage credentials. Replaces POST /storage.
