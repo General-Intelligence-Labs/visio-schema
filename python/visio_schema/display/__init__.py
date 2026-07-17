@@ -59,7 +59,11 @@ control stream (id CONTROL_STREAM_DEVICE_INFO); this reader keeps a local
 `stream_id -> Channel` table from those announces and resolves each data frame
 against it. A frame whose id hasn't been announced yet is dropped until it is
 (drop-until-mapped). Over a direct point-to-point link the announced channel
-ids are exactly the data-frame ids, so no remap is needed here.
+ids are exactly the data-frame ids, so no remap is needed here. The shared
+registry *absorbs* DeviceInfo once learned; this viewer additionally re-emits
+each announce on the well-known `/device_info` topic so device identity/firmware
+is recorded into the MCAP and visible in Foxglove (see
+`_resolved_with_device_info`).
 
 Deliberately minimal — one read loop, no bus, no threads. The heavier,
 bus-integrated transport lives in a separate bus/transport layer.
@@ -102,6 +106,10 @@ from visio_schema.transport import close_fd, extract_frames, read_some, set_nonb
 from visio_schema.v1.ros.geometry_msgs.quaternion_pb2 import Quaternion
 from visio_schema.v1.sensor.imu_raw_pb2 import ImuRaw
 from visio_schema.v1.sensor.system_health_pb2 import SystemHealth
+
+# Control stream id for DeviceInfo announces — so this tool can surface them on
+# the well-known /device_info channel (see _resolved_with_device_info).
+from visio_schema.wire.control import DEVICE_INFO as _DEVICE_INFO
 
 # Payload schema names dispatched on (== the protobuf full names on the wire).
 _QUAT_SCHEMA = "visio_schema.v1.ros.geometry_msgs.Quaternion"
@@ -446,20 +454,48 @@ def read_tcp(host: str, port: int, stop: threading.Event | None = None) -> Itera
     yield from _read_fd_frames(sock.detach(), stop)
 
 
+def _resolved_with_device_info(
+    reg: ChannelRegistry, messages: Iterator[Message]
+) -> Iterator[tuple[Message, Channel]]:
+    """:meth:`ChannelRegistry.resolved`, but also surfacing each DeviceInfo
+    announce on the well-known ``/device_info`` channel.
+
+    The shared ``resolved()`` *absorbs* DeviceInfo: it learns the announced
+    channels to build the ``stream_id -> Channel`` routing table and yields
+    nothing (it's a control stream, not data — that's the routing contract).
+    Right for a generic consumer, but it means this viewer's sinks never see
+    device identity / firmware. visio-display wants that visible — recorded into
+    the MCAP and shown in Foxglove on ``/device_info`` — so here, and only here,
+    we re-emit each announce after :meth:`~ChannelRegistry.accept` has learned
+    it. ``accept`` returns ``Routed(None, None)`` for an absorbed announce and a
+    dropped-unmapped data frame alike, so the announce is identified by its
+    control stream id. The registry's own behavior is unchanged."""
+    for m in messages:
+        message, channel = reg.accept(m)
+        if channel is not None:
+            yield message, channel
+        elif m.stream_id == _DEVICE_INFO:
+            # accept() learned + absorbed it; re-emit on the /device_info channel
+            # (reg.resolve maps the control id to the well-known channel).
+            yield m, reg.resolve(_DEVICE_INFO)
+
+
 def read_serial_resolved(port: str, baud: int,
                          stop: threading.Event | None = None) -> Iterator[tuple[Message, Channel]]:
     """Live serial source as resolved (Message, Channel) pairs: a
     :class:`ChannelRegistry` learns DeviceInfo announces and resolves each data
-    frame (drop-until-mapped) — the same routing the bus uses."""
-    yield from ChannelRegistry().resolved(read_serial(port, baud, stop))
+    frame (drop-until-mapped) — the same routing the bus uses, plus DeviceInfo
+    surfaced on /device_info for this viewer (see :func:`_resolved_with_device_info`)."""
+    yield from _resolved_with_device_info(ChannelRegistry(), read_serial(port, baud, stop))
 
 
 def read_tcp_resolved(host: str, port: int,
                       stop: threading.Event | None = None) -> Iterator[tuple[Message, Channel]]:
     """Live TCP source as resolved (Message, Channel) pairs. DeviceInfo announces
     are end-to-end forwarded over the bus's TCP leg too, so the same
-    :class:`ChannelRegistry` resolution as serial applies."""
-    yield from ChannelRegistry().resolved(read_tcp(host, port, stop))
+    :class:`ChannelRegistry` resolution as serial applies (and DeviceInfo is
+    likewise surfaced on /device_info)."""
+    yield from _resolved_with_device_info(ChannelRegistry(), read_tcp(host, port, stop))
 
 
 def _parse_tcp(target: str) -> tuple[str, int]:
