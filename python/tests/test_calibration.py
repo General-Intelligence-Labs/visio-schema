@@ -8,25 +8,30 @@ from visio_schema.v1.control import command_pb2
 from visio_schema.wire import schema
 
 
-def test_imu_calibration_noise_roundtrip():
-    """ImuCalibration carries bias/scale + the kalibr noise model + time offset."""
+def test_imu_calibration_noise_and_offset_roundtrip():
+    """ImuCalibration carries only the noise densities + rate + cam-IMU offset."""
     c = imu_pb2.ImuCalibration(
-        accel_bias_x=0.1, gyro_scale_z=1.01,
-        accel_noise_density=0.008, accel_random_walk=0.0004,
-        gyro_noise_density=0.0009, gyro_random_walk=2.0e-5,
+        accel_noise_density=0.00147, gyro_noise_density=0.000244,
         update_rate_hz=200.0, time_offset_to_cam0_s=-0.0123,
-        accel_misalignment=[1, 0, 0, 0, 1, 0, 0, 0, 1],
     )
     out = imu_pb2.ImuCalibration.FromString(c.SerializeToString())
-    assert out.accel_noise_density == 0.008
-    assert out.gyro_random_walk == 2.0e-5
+    assert out.accel_noise_density == 0.00147
+    assert out.gyro_noise_density == 0.000244
+    assert out.update_rate_hz == 200.0
     assert out.time_offset_to_cam0_s == -0.0123
-    assert list(out.accel_misalignment) == [1, 0, 0, 0, 1, 0, 0, 0, 1]
 
 
-def test_imu_calibration_mounting_pose_removed():
-    """mounting_pose was retired (field 13 reserved) — it's no longer a field."""
-    assert "mounting_pose" not in imu_pb2.ImuCalibration.DESCRIPTOR.fields_by_name
+def test_imu_calibration_is_noise_plus_sync_only():
+    """0.6.0 slimmed the message: bias/scale, random walks and the
+    scale-misalignment intrinsics are gone; only these four fields remain."""
+    fields = set(imu_pb2.ImuCalibration.DESCRIPTOR.fields_by_name)
+    assert fields == {"accel_noise_density", "gyro_noise_density",
+                      "update_rate_hz", "time_offset_to_cam0_s"}
+    for gone in ("accel_bias_x", "accel_scale_x", "gyro_bias_z", "gyro_scale_z",
+                 "accel_random_walk", "gyro_random_walk", "accel_misalignment",
+                 "gyro_misalignment", "gyro_g_sensitivity",
+                 "gyro_to_accel_rotation", "mounting_pose"):
+        assert gone not in fields
 
 
 def test_set_calibration_camera_intrinsics_roundtrip():

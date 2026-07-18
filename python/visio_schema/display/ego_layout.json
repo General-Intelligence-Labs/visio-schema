@@ -1,13 +1,25 @@
 {
   "configById": {
-    "Image!cam0": { "imageMode": { "imageTopic": "/gripper/camera/0" } },
-    "Image!cam1": { "imageMode": { "imageTopic": "/gripper/camera/1" } },
+    "Image!cam0": {
+      "imageMode": {
+        "imageTopic": "/ego/camera/0",
+        "annotations": { "/ego/camera/0/annotations": { "visible": true } },
+        "synchronize": false
+      }
+    },
+    "Image!cam1": {
+      "imageMode": {
+        "imageTopic": "/ego/camera/1",
+        "annotations": { "/ego/camera/1/annotations": { "visible": true } },
+        "synchronize": false
+      }
+    },
     "3D!orientation": {
       "followTf": "world",
       "scene": { "enableStats": false },
       "transforms": {
         "frame:world": { "visible": true },
-        "frame:gripper/imu/0": { "visible": true }
+        "frame:ego/imu/0": { "visible": true }
       },
       "topics": { "/tf": { "visible": true } },
       "layers": {},
@@ -26,10 +38,10 @@
     "Plot!quat": {
       "title": "IMU orientation (quat)",
       "paths": [
-        { "value": "/gripper/imu/0/quat.x", "enabled": true, "timestampMethod": "receiveTime" },
-        { "value": "/gripper/imu/0/quat.y", "enabled": true, "timestampMethod": "receiveTime" },
-        { "value": "/gripper/imu/0/quat.z", "enabled": true, "timestampMethod": "receiveTime" },
-        { "value": "/gripper/imu/0/quat.w", "enabled": true, "timestampMethod": "receiveTime" }
+        { "value": "/ego/imu/0/quat.x", "enabled": true, "timestampMethod": "receiveTime" },
+        { "value": "/ego/imu/0/quat.y", "enabled": true, "timestampMethod": "receiveTime" },
+        { "value": "/ego/imu/0/quat.z", "enabled": true, "timestampMethod": "receiveTime" },
+        { "value": "/ego/imu/0/quat.w", "enabled": true, "timestampMethod": "receiveTime" }
       ],
       "showLegend": true, "legendDisplay": "floating",
       "isSynced": true, "xAxisVal": "timestamp"
@@ -37,9 +49,9 @@
     "Plot!accel": {
       "title": "IMU accel (m/s^2)",
       "paths": [
-        { "value": "/gripper/imu/0/raw.samples[0].linear_acceleration.x", "enabled": true, "timestampMethod": "receiveTime" },
-        { "value": "/gripper/imu/0/raw.samples[0].linear_acceleration.y", "enabled": true, "timestampMethod": "receiveTime" },
-        { "value": "/gripper/imu/0/raw.samples[0].linear_acceleration.z", "enabled": true, "timestampMethod": "receiveTime" }
+        { "value": "/ego/imu/0/raw.samples[0].linear_acceleration.x", "enabled": true, "timestampMethod": "receiveTime" },
+        { "value": "/ego/imu/0/raw.samples[0].linear_acceleration.y", "enabled": true, "timestampMethod": "receiveTime" },
+        { "value": "/ego/imu/0/raw.samples[0].linear_acceleration.z", "enabled": true, "timestampMethod": "receiveTime" }
       ],
       "showLegend": true, "legendDisplay": "floating",
       "isSynced": true, "xAxisVal": "timestamp"
@@ -47,9 +59,9 @@
     "Plot!gyro": {
       "title": "IMU gyro (rad/s)",
       "paths": [
-        { "value": "/gripper/imu/0/raw.samples[0].angular_velocity.x", "enabled": true, "timestampMethod": "receiveTime" },
-        { "value": "/gripper/imu/0/raw.samples[0].angular_velocity.y", "enabled": true, "timestampMethod": "receiveTime" },
-        { "value": "/gripper/imu/0/raw.samples[0].angular_velocity.z", "enabled": true, "timestampMethod": "receiveTime" }
+        { "value": "/ego/imu/0/raw.samples[0].angular_velocity.x", "enabled": true, "timestampMethod": "receiveTime" },
+        { "value": "/ego/imu/0/raw.samples[0].angular_velocity.y", "enabled": true, "timestampMethod": "receiveTime" },
+        { "value": "/ego/imu/0/raw.samples[0].angular_velocity.z", "enabled": true, "timestampMethod": "receiveTime" }
       ],
       "showLegend": true, "legendDisplay": "floating",
       "isSynced": true, "xAxisVal": "timestamp"

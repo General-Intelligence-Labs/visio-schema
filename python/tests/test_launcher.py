@@ -214,6 +214,156 @@ def test_discovery_add_manual_raises_when_unreachable(monkeypatch) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# NCM preference (resolve): a CDC-ACM serial click connects over the unit's     #
+# lossless CDC-NCM USB-Ethernet tether when that leg is up.                     #
+# --------------------------------------------------------------------------- #
+def _seed(svc, *dtos):
+    for dto in dtos:
+        svc._upsert(dto)
+
+
+def _usb_dto(d, key="GILABS-a1b2c3d4"):
+    return d._device(dev_id="usb:/dev/ttyACM0", label=f"{key} (/dev/ttyACM0)",
+                     transport=d.USB, device="/dev/ttyACM0")
+
+
+def _ncm_dto(d, key="GILABS-a1b2c3d4", host="10.12.7.2"):
+    return d._device(dev_id=f"tcp:{host}:50001", label=key,
+                     transport=d.STA, host=host, port=50001)
+
+
+def test_resolve_redirects_usb_click_to_ncm_tether(monkeypatch) -> None:
+    d = _disc()
+    svc = d.DiscoveryService()
+    usb, ncm = _usb_dto(d), _ncm_dto(d)          # same GILABS-<code8> on both legs
+    _seed(svc, usb, ncm)
+    # This host holds 10.12.7.1 on the tether /24 → directly link-attached USB-Ethernet.
+    monkeypatch.setattr(d, "_local_source_ip", lambda host: "10.12.7.1")
+
+    assert svc.resolve("usb:/dev/ttyACM0") == ncm       # serial click → connect over NCM
+    assert svc.resolve("tcp:10.12.7.2:50001") == ncm    # clicking the NCM row is unchanged
+
+
+def test_resolve_keeps_serial_when_companion_is_wifi_not_tether() -> None:
+    d = _disc()
+    svc = d.DiscoveryService()
+    # Same unit also on Wi-Fi, but a routed LAN address — not the 10/8 USB tether. No socket
+    # probe even runs (the 10/8 guard short-circuits), so no monkeypatch needed.
+    _seed(svc, _usb_dto(d), _ncm_dto(d, host="192.168.0.50"))
+    assert svc.resolve("usb:/dev/ttyACM0")["transport"] == "usb"
+
+
+def test_resolve_rejects_tether_when_not_directly_attached(monkeypatch) -> None:
+    d = _disc()
+    svc = d.DiscoveryService()
+    _seed(svc, _usb_dto(d), _ncm_dto(d))
+    # A 10/8 address, but our source is a different /24 → reached via a gateway, not a direct
+    # tether (and not guaranteed reachable), so it is NOT redirected.
+    monkeypatch.setattr(d, "_local_source_ip", lambda host: "10.99.0.4")
+    assert svc.resolve("usb:/dev/ttyACM0")["transport"] == "usb"
+
+
+def test_resolve_keeps_serial_when_no_companion_and_none_when_unknown() -> None:
+    d = _disc()
+    svc = d.DiscoveryService()
+    _seed(svc, _usb_dto(d))
+    assert svc.resolve("usb:/dev/ttyACM0")["transport"] == "usb"
+    assert svc.resolve("tcp:nope:1") is None            # unknown id
+
+
+def test_ui_snapshot_promotes_tether_into_usb_and_hides_serial(monkeypatch) -> None:
+    d = _disc()
+    svc = d.DiscoveryService()
+    _seed(svc, _usb_dto(d), _ncm_dto(d))
+    monkeypatch.setattr(d, "_local_source_ip", lambda host: "10.12.7.1")
+
+    ui = svc.ui_snapshot()
+    assert len(ui) == 1                                  # the two legs collapse to one row
+    row = ui[0]
+    assert row["transport"] == "usb"                     # shown under USB, not Wi-Fi
+    assert row["id"] == "tcp:10.12.7.2:50001"            # keeps the tether id → click = NCM
+    assert row["device"] == "/dev/ttyACM0"               # inherits the serial /dev path
+    # raw snapshot is unchanged — presentation is non-destructive.
+    assert {x["transport"] for x in svc.snapshot()} == {"usb", "sta"}
+
+
+def test_ui_snapshot_leaves_plain_wifi_row_in_place() -> None:
+    d = _disc()
+    svc = d.DiscoveryService()
+    # Same unit on USB serial and on real Wi-Fi (routed LAN, not a tether) — no NCM leg, so
+    # both rows survive in their own sections.
+    _seed(svc, _usb_dto(d), _ncm_dto(d, host="192.168.0.50"))
+    ui = svc.ui_snapshot()
+    assert sorted(x["transport"] for x in ui) == ["sta", "usb"]
+
+
+def test_ui_snapshot_passthrough_when_no_tether() -> None:
+    d = _disc()
+    svc = d.DiscoveryService()
+    _seed(svc, _usb_dto(d))
+    assert svc.ui_snapshot() == svc.snapshot()
+
+
+def test_ui_snapshot_promotes_only_the_tether_leaving_wifi_row(monkeypatch) -> None:
+    d = _disc()
+    svc = d.DiscoveryService()
+    # One unit, THREE legs: CDC-ACM serial, the NCM tether, and a real Wi-Fi address.
+    _seed(svc, _usb_dto(d), _ncm_dto(d), _ncm_dto(d, host="192.168.0.50"))
+    monkeypatch.setattr(d, "_local_source_ip", lambda host: "10.12.7.1")
+
+    ui = svc.ui_snapshot()
+    assert len(ui) == 2                                          # serial hidden; 3 → 2
+    promoted = next(r for r in ui if r["id"] == "tcp:10.12.7.2:50001")
+    assert promoted["transport"] == "usb"                       # only the tether promoted
+    wifi = next(r for r in ui if r["id"] == "tcp:192.168.0.50:50001")
+    assert wifi["transport"] == "sta"                           # plain Wi-Fi row untouched
+
+
+def test_ui_snapshot_keeps_serial_when_source_ip_unavailable(monkeypatch) -> None:
+    d = _disc()
+    svc = d.DiscoveryService()
+    _seed(svc, _usb_dto(d), _ncm_dto(d))
+    # No route to the tether (getsockname path fails) → not promoted, serial stays visible.
+    monkeypatch.setattr(d, "_local_source_ip", lambda host: None)
+    assert sorted(x["transport"] for x in svc.ui_snapshot()) == ["sta", "usb"]
+
+
+def test_local_source_ip_returns_addr_for_routable_and_none_on_error() -> None:
+    d = _disc()
+    src = d._local_source_ip("127.0.0.1")                        # pure route lookup, no packet
+    assert src is not None and src.count(".") == 3              # getsockname → dotted quad
+    # AF_INET socket to an IPv6 literal fails in getaddrinfo (no DNS, no network) → OSError.
+    assert d._local_source_ip("::1") is None
+
+
+def test_snapshot_event_routes_through_ui_snapshot(monkeypatch) -> None:
+    # Pins the SSE wiring: an NCM tether must surface in the payload as a single USB row.
+    # (The _StubDiscovery used elsewhere is a passthrough and can't catch this.)
+    s, d = _serve(), _disc()
+    svc = d.DiscoveryService()
+    _seed(svc, _usb_dto(d), _ncm_dto(d))
+    monkeypatch.setattr(d, "_local_source_ip", lambda host: "10.12.7.1")
+
+    ev = s._snapshot_event(svc)
+    rows = json.loads(ev[len(b"data: "):-2])
+    assert [(r["transport"], r["id"]) for r in rows] == [("usb", "tcp:10.12.7.2:50001")]
+
+
+def test_http_connect_redirects_serial_click_to_ncm(monkeypatch) -> None:
+    # Pins the connect wiring: POSTing the ACM id reaches bridge.connect with the NCM dto.
+    s, d = _serve(), _disc()
+    svc = d.DiscoveryService()
+    _seed(svc, _usb_dto(d), _ncm_dto(d))
+    monkeypatch.setattr(d, "_local_source_ip", lambda host: "10.12.7.1")
+    bridge = _StubBridge()
+    app = s._build_app(bridge, svc)
+
+    resp = _post(s._connect, app, {"id": "usb:/dev/ttyACM0"})
+    assert resp.status == 200
+    assert bridge.connected["id"] == "tcp:10.12.7.2:50001"      # dialed NCM, not the serial fd
+
+
+# --------------------------------------------------------------------------- #
 # viewer opener + URLs                                                         #
 # --------------------------------------------------------------------------- #
 def test_open_deep_link_dispatch_per_platform(monkeypatch) -> None:
@@ -916,6 +1066,16 @@ class _StubDiscovery:
 
     def snapshot(self):
         return self._devices
+
+    def ui_snapshot(self):
+        # No NCM tethers in these fixtures, so presentation is a passthrough (the real
+        # ui_snapshot() override path is covered by its own unit tests above).
+        return self._devices
+
+    def resolve(self, dev_id):
+        # No NCM companions in these fixtures, so the real resolve() reduces to id lookup
+        # (its NCM-preference path is covered by the resolve unit tests above).
+        return next((d for d in self._devices if d["id"] == dev_id), None)
 
     def add_manual(self, host, port):
         if self._manual_raises:

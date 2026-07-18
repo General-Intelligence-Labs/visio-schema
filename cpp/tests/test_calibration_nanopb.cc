@@ -103,11 +103,9 @@ TEST(CalibrationNanopb, ImuCalibrationNoiseRoundTrip) {
   visio_schema_v1_calibration_ImuCalibration ic =
       visio_schema_v1_calibration_ImuCalibration_init_zero;
   ic.accel_noise_density = 0.008;
-  ic.gyro_random_walk = 2.0e-5;
+  ic.gyro_noise_density = 2.0e-5;
   ic.update_rate_hz = 200.0;
   ic.time_offset_to_cam0_s = -0.0123;
-  ic.accel_misalignment_count = 9;
-  for (int i = 0; i < 9; ++i) ic.accel_misalignment[i] = (i % 4 == 0) ? 1.0 : 0.0;
 
   std::string buf = Encode(visio_schema_v1_calibration_ImuCalibration_fields, ic);
   visio_schema_v1_calibration_ImuCalibration out =
@@ -115,10 +113,9 @@ TEST(CalibrationNanopb, ImuCalibrationNoiseRoundTrip) {
   ASSERT_TRUE(Decode(visio_schema_v1_calibration_ImuCalibration_fields, buf, &out));
 
   EXPECT_DOUBLE_EQ(out.accel_noise_density, 0.008);
-  EXPECT_DOUBLE_EQ(out.gyro_random_walk, 2.0e-5);
+  EXPECT_DOUBLE_EQ(out.gyro_noise_density, 2.0e-5);
+  EXPECT_DOUBLE_EQ(out.update_rate_hz, 200.0);
   EXPECT_DOUBLE_EQ(out.time_offset_to_cam0_s, -0.0123);
-  ASSERT_EQ(out.accel_misalignment_count, 9u);
-  EXPECT_DOUBLE_EQ(out.accel_misalignment[0], 1.0);
 }
 
 // A Command targeted at another device is still decodable here (filtering is the

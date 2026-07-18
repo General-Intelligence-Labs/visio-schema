@@ -182,6 +182,55 @@ def test_bitrate_deriver_throttles_before_emit_interval() -> None:
     assert d.feed(_bitrate_msg(vd, 16, 1000, 600_000_000), cam)        # 0.6 s -> emit
 
 
+def test_device_info_surfaced_on_well_known_channel() -> None:
+    """visio-display re-emits DeviceInfo announces on /device_info (so device
+    identity/firmware is recorded into the MCAP and shown in Foxglove), even
+    though the shared registry absorbs them. Data frames still resolve to their
+    learned channel, and a never-announced (unmapped) frame is dropped."""
+    vd = _vd()
+    from visio_schema.routing.registry import (
+        DEVICE_INFO_SCHEMA,
+        DEVICE_INFO_TOPIC,
+        ChannelRegistry,
+    )
+    from visio_schema.v1.sensor.imu_raw_pb2 import ImuRaw
+
+    # A producer-side registry declares one data output and emits its DeviceInfo
+    # announce — exactly what a device puts on the control stream.
+    producer = ChannelRegistry(device_name="ego-1", firmware_version="1.2.3")
+    sid = producer.declare_output("/ego/imu/0/raw", vd._IMU_RAW_SCHEMA)
+    announce = vd.Message(
+        stream_id=vd._DEVICE_INFO,
+        payload=producer.self_info().SerializeToString(),
+        seq=0,
+    )
+    announce.timestamp.FromNanoseconds(1_700_000_000_000_000_000)
+
+    data = vd.Message(stream_id=sid, payload=ImuRaw().SerializeToString(), seq=1)
+    data.timestamp.FromNanoseconds(1_700_000_000_000_000_001)
+    unmapped = vd.Message(stream_id=sid + 999, payload=b"x", seq=2)  # never announced
+    unmapped.timestamp.FromNanoseconds(1_700_000_000_000_000_002)
+
+    out = list(
+        vd._resolved_with_device_info(
+            ChannelRegistry(), iter([announce, data, unmapped])
+        )
+    )
+    by_topic = [(ch.topic, m.stream_id) for m, ch in out]
+
+    # The announce is surfaced on /device_info with its DeviceInfo schema and the
+    # original announce bytes intact...
+    assert (DEVICE_INFO_TOPIC, vd._DEVICE_INFO) in by_topic
+    di_msg, di_ch = next(p for p in out if p[1].topic == DEVICE_INFO_TOPIC)
+    assert di_ch.schema_name == DEVICE_INFO_SCHEMA
+    assert len(di_ch.schema) > 0  # self-describing
+    assert di_msg.payload == announce.payload
+    # ...the data frame still resolves to its learned channel...
+    assert ("/ego/imu/0/raw", sid) in by_topic
+    # ...and the unmapped frame is dropped (drop-until-mapped): only 2 rows out.
+    assert len(out) == 2
+
+
 def test_read_mcap_roundtrips(tmp_path) -> None:
     """A recording read back through read_mcap yields (Message, Channel) pairs
     with the topic, schema name + embedded FileDescriptorSet, payload and

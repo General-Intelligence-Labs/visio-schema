@@ -635,7 +635,9 @@ _SUBSCRIBERS: web.AppKey[set] = web.AppKey("subscribers", set)
 
 
 def _snapshot_event(discovery: DiscoveryService) -> bytes:
-    return b"data: " + json.dumps(discovery.snapshot()).encode() + b"\n\n"
+    # ui_snapshot(), not snapshot(): an NCM tether is shown as a USB row replacing the
+    # unit's CDC-ACM serial row (see DiscoveryService.ui_snapshot).
+    return b"data: " + json.dumps(discovery.ui_snapshot()).encode() + b"\n\n"
 
 
 async def _index(request: web.Request) -> web.StreamResponse:
@@ -668,7 +670,11 @@ async def _devices_sse(request: web.Request) -> web.StreamResponse:
 async def _connect(request: web.Request) -> web.Response:
     body = await request.json()
     dev_id = body.get("id")
-    dto = next((d for d in request.app[_DISCOVERY].snapshot() if d["id"] == dev_id), None)
+    # ui_snapshot() normally already presents an NCM-tethered unit as a single USB row
+    # carrying the tether id, so a click targets NCM directly. resolve() is the backstop for
+    # the refresh race where a client still shows (and clicks) the old CDC-ACM serial row:
+    # it maps that id onto the unit's lossless NCM leg (see DiscoveryService.resolve).
+    dto = request.app[_DISCOVERY].resolve(dev_id)
     if dto is None:
         return web.json_response({"error": f"unknown device {dev_id!r}"}, status=404)
     # `decode` (from the page's WebCodecs probe): when the browser can't render H.265, transcode

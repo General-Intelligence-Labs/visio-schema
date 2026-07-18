@@ -56,13 +56,54 @@ help:
 lint:
 	$(BUF) lint proto
 
+# Wire-compat gate: does THIS tree break the contract vs. where it branched off?
+# Two constraints the obvious one-liner gets wrong:
+#
+#  1. buf.yaml is a v2 WORKSPACE whose `foxglove` module is a git SUBMODULE, and
+#     buf's `.git#` input carries no submodule content — that module resolves to
+#     zero .proto and every `import "foxglove/*.proto"` fails. So the baseline
+#     must be a real worktree with the submodule initialised inside it.
+#  2. Compare against the MERGE-BASE, not main's tip: a field added on main after
+#     this branch diverged reads as a deletion here — a false "you broke the wire".
+#
+# buf's output is piped through scripts/breaking_waivers.py, which drops ONLY the
+# specific, reviewed field deletions enumerated there (e.g. the 0.6.0 IMU slim,
+# reserved by number + name) and fails on every other breaking change — so an
+# accepted deletion doesn't force relaxing the rule for all future ones.
+#
+# BREAKING_STRICT=1 turns a missing baseline ref into a failure instead of a
+# skip; CI sets it, so the gate can never pass vacuously on a bad checkout.
+BREAKING_REF    ?= origin/main
+BREAKING_STRICT ?=
+
 breaking:
-	@if git rev-parse --verify origin/main >/dev/null 2>&1 \
-	     || git rev-parse --verify main    >/dev/null 2>&1; then \
-		$(BUF) breaking proto --against '.git#branch=main,subdir=proto'; \
-	else \
-		echo "make breaking: skipped (no 'main' ref yet — first commit pending)"; \
-	fi
+	@if ! git rev-parse --verify $(BREAKING_REF) >/dev/null 2>&1; then \
+		if [ -n "$(BREAKING_STRICT)" ]; then \
+			echo "make breaking: '$(BREAKING_REF)' not found and BREAKING_STRICT is set — refusing to pass unchecked"; exit 1; \
+		fi; \
+		echo "make breaking: skipped (no '$(BREAKING_REF)' ref — fetch it, or set BREAKING_REF=)"; \
+		exit 0; \
+	fi; \
+	base=$$(git merge-base HEAD $(BREAKING_REF)) || exit 1; \
+	wt=$$(mktemp -d -t visio-schema-breaking-XXXXXX)/wt; \
+	git worktree add --detach "$$wt" "$$base" >/dev/null 2>&1 \
+		|| { echo "make breaking: could not check out merge-base $$base"; exit 1; }; \
+	git -C "$$wt" submodule update --init --depth 1 third_party/foxglove-sdk >/dev/null 2>&1; \
+	if [ -z "$$(ls -A "$$wt/third_party/foxglove-sdk" 2>/dev/null)" ]; then \
+		echo "make breaking: foxglove-sdk empty in the baseline worktree — buf would blame your protos"; \
+		git worktree remove --force "$$wt" >/dev/null 2>&1; exit 1; \
+	fi; \
+	echo "buf breaking proto --against merge-base $$(git rev-parse --short $$base)"; \
+	out=$$($(BUF) breaking proto --against "$$wt/proto" --error-format json); rc=$$?; \
+	: "buf exits 100 = violations found (annotations on stdout); other nonzero = operational error (msg on stderr)"; \
+	if [ $$rc -eq 100 ]; then \
+		printf '%s\n' "$$out" | $(PYTHON) scripts/breaking_waivers.py; rc=$$?; \
+	elif [ $$rc -ne 0 ]; then \
+		printf '%s\n' "$$out"; \
+	fi; \
+	git worktree remove --force "$$wt" >/dev/null 2>&1 || rm -rf "$$wt"; \
+	git worktree prune >/dev/null 2>&1; \
+	exit $$rc
 
 gen: lint
 	# ---- Python: generate into the package tree (python/visio_schema, python/foxglove)
