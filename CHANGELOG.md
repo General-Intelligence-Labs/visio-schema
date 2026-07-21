@@ -4,6 +4,25 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.6.3 — 2026-07-21
+
+### `SetAudioRecording` — turn mic capture off without a reboot (wire-compatible)
+
+- **New `SetAudioRecording` command (tag 30).** Enables/disables microphone
+  capture reaching recordings, persisted device-side and applied live. Both the
+  device's own MCAP and the phone-side MCAP record what reaches the bus, so the
+  one switch covers both; a recording made while disabled has no audio channel
+  at all rather than an empty one. Only mic-equipped boards accept it — every
+  other device rejects it, as with `SetNoticeLang`. Default enabled, so existing
+  units are unchanged by an upgrade.
+- **New `DeviceState.audio_recording` (tag 29), a tri-state enum.**
+  `UNSUPPORTED` (0) covers both "no mic on this board" and "firmware predating
+  the toggle", so a host can hide the control rather than guess. Deliberately
+  not a bool: proto3 would hand an old device's `false` to the host, which would
+  then show the switch OFF while that device was in fact recording audio.
+- Address `SetAudioRecording` to a specific device. An empty `target_device` is
+  a broadcast, which on a suit would flip every mic-equipped board at once.
+
 ## 0.6.2 — 2026-07-17
 
 ### `SetTime` carries the host GPS fix (wire-compatible)
