@@ -43,6 +43,7 @@ VISIO_MODULES = [
     "visio_schema.v1.sensor.system_health_pb2",
     "visio_schema.v1.sensor.audio_compressed_pb2",
     "visio_schema.v1.sensor.button_pb2",
+    "visio_schema.v1.sensor.tactile_raw_pb2",
     "visio_schema.v1.calibration.imu_pb2",
     "visio_schema.v1.calibration.encoder_pb2",
     "visio_schema.v1.calibration.tactile_pb2",
