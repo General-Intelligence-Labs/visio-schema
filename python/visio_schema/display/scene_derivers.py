@@ -42,6 +42,16 @@ _SCENE_SCHEMA = "foxglove.SceneUpdate"
 _TACTILE_SCENE_BASE = 30000
 _HAND_SCENE_BASE = 30100
 _UNIT_Q = Quaternion(x=0, y=0, z=0, w=1)
+# Building a scene (137 cubes / 26 spheres + serialize) costs a few ms — far
+# slower than the ~288 fps tactile stream. Deriving one per frame backs up the
+# bridge's read loop and stalls EVERY topic (raw data included). A scene at ~30 fps
+# is plenty for viewing, so throttle by capture time; the data itself still passes
+# through at full rate (the deriver only adds the .../scene twin).
+_SCENE_MIN_PERIOD_NS = 33_000_000  # ~30 fps
+
+
+def _ns(ts):
+    return ts.seconds * 1_000_000_000 + ts.nanos
 
 
 # --------------------------------------------------------------------------- #
@@ -55,6 +65,7 @@ class TactileSceneDeriver:
     def __init__(self):
         self._placement = {}   # data_topic -> [(index, taxel_id, x, y)]
         self._scene_ch = {}    # data_topic -> derived scene Channel
+        self._last_ns = {}     # data_topic -> capture ns of the last emitted scene
         self._next_stream = _TACTILE_SCENE_BASE
 
     def derive(self, msg, ch):
@@ -69,6 +80,10 @@ class TactileSceneDeriver:
             pl = self._placement.get(topic)
             if pl is None:
                 return None                    # no layout seen yet
+            ns = _ns(msg.timestamp)
+            if ns - self._last_ns.get(topic, 0) < _SCENE_MIN_PERIOD_NS:
+                return None                    # throttle scene to ~30 fps
+            self._last_ns[topic] = ns
             out_ch = self._scene_ch.get(topic)
             if out_ch is None:
                 out_ch = make_channel(topic + "/scene", _SCENE_SCHEMA, stream_id=self._next_stream)
@@ -142,6 +157,7 @@ class HandSkeletonDeriver:
 
     def __init__(self):
         self._scene_ch = {}
+        self._last_ns = {}
         self._next_stream = _HAND_SCENE_BASE
 
     def derive(self, msg, ch):
@@ -154,6 +170,10 @@ class HandSkeletonDeriver:
             idx, color, ent_id = _RH_IDX, (1.00, 0.60, 0.20), "hand_right"
         else:
             return None
+        ns = _ns(msg.timestamp)
+        if ns - self._last_ns.get(topic, 0) < _SCENE_MIN_PERIOD_NS:
+            return None                        # throttle scene to ~30 fps
+        self._last_ns[topic] = ns
         fts = FrameTransforms()
         fts.ParseFromString(msg.payload)
         joints = [None] * 26
