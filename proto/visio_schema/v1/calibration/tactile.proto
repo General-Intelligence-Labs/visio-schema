@@ -1,0 +1,71 @@
+// visio_schema/v1/calibration/tactile.proto
+//
+// Tactile-sensor layout — the geometry half of a fabric-e-skin tactile glove's
+// calibration, published on /<dev>/tactile/<i>/layout (typically 1 Hz, the same
+// periodic re-send foxglove.CameraCalibration / ImuCalibration use). It maps each
+// valid byte of the glove's raw pressure image (foxglove.RawImage on
+// /<dev>/tactile/<i>) to a place on the hand, so the recorded stream is
+// self-describing: a consumer can lay the readings onto a hand shape with no
+// external config. Sibling of imu.proto / encoder.proto.
+//
+// Structure: element layout lives at the GROUP level, position at the POINT level.
+// A Group declares its per-taxel element layout once as a list of
+// foxglove.PackedElementField (each field = a named readout channel + its numeric
+// type + its byte offset within the taxel's element); every Point in the group
+// shares it. 1 field = single-axis (fabric pressure, or a finger bend); >1 = a
+// multi-axis force taxel (normal + shear). A Point is one physical taxel: where it
+// sits on the hand, its opaque vendor label, and its base offset into
+// RawImage.data — a field's value is RawImage.data[Point.index + field.offset].
+// Stating the element layout once per group (instead of on every taxel) lets a
+// mixed glove (multi-axis fingertips + single-axis palm), even one whose bytes come
+// from several boards concatenated into one RawImage, be described by a few groups.
+//
+// LOGICAL layout: v1 emits precision=LOGICAL — x/y are nominal planar coordinates
+// derived mechanically from the vendor index map, no measured geometry. Real
+// physical coordinates arrive later under precision=MEASURED; a consumer renders
+// points at (x, y) and uses precision only to learn the units.
+
+syntax = "proto3";
+
+package visio_schema.v1.calibration;
+
+import "foxglove/PackedElementField.proto";
+
+message TactileLayout {
+  // Provenance of the x/y coordinates. v1 ships LOGICAL only.
+  enum Precision {
+    PRECISION_UNSPECIFIED = 0;
+    LOGICAL     = 1;  // nominal grid coords, mechanically derived; no real geometry
+    APPROXIMATE = 2;  // rough physical coords (e.g. from CAD)
+    MEASURED    = 3;  // real measured physical coords
+  }
+
+  Precision precision = 1;
+
+  // A set of taxels sharing one element layout. `fields` describes the taxel's
+  // readout channel(s): each field's `name` is the kind ("pressure"|"bend"|
+  // "normal"|"shear_x"|...), `type` its numeric type (UINT8 for the fabric ADC),
+  // and `offset` its byte position within the taxel's element (0 for single-axis;
+  // 0,1,2 for a 3-axis Fx/Fy/Fz taxel). A field's value is
+  // RawImage.data[Point.index + field.offset] — note `offset` is element-relative
+  // (base = Point.index), not foxglove's buffer-relative offset.
+  message Group {
+    repeated foxglove.PackedElementField fields = 1;
+  }
+
+  // One physical taxel: where it sits on the hand, plus a pointer to its group.
+  message Point {
+    uint32 group    = 1;  // index into groups[] — this taxel's element layout
+    uint32 taxel_id = 2;  // opaque vendor label (this glove: 1..256); a cross-ref
+                          // for debugging, NOT a data offset — never do arithmetic
+                          // on it; the payload offset is `index`
+    uint32 index    = 3;  // 0-based base offset into RawImage.data (element start)
+    string part = 4;      // "thumb"|"index"|"middle"|"ring"|"pinky"|"palm"
+    float  x    = 5;      // position; LOGICAL: nominal grid (x,y planar, z=0),
+    float  y    = 6;      //   MEASURED: real physical coords (physical units)
+    float  z    = 7;
+  }
+
+  repeated Group groups = 2;  // element-layout table (few entries)
+  repeated Point points = 3;  // one entry per taxel; references a group
+}

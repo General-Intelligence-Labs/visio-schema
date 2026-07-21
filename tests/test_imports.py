@@ -45,6 +45,7 @@ VISIO_MODULES = [
     "visio_schema.v1.sensor.button_pb2",
     "visio_schema.v1.calibration.imu_pb2",
     "visio_schema.v1.calibration.encoder_pb2",
+    "visio_schema.v1.calibration.tactile_pb2",
     "visio_schema.v1.ros.geometry_msgs.quaternion_pb2",
     "visio_schema.v1.input.quest_controller_state_pb2",
     "visio_schema.v1.geometry.twist_pb2",
