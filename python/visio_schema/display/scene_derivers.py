@@ -3,7 +3,7 @@
 Two derivers that synthesize a `foxglove.SceneUpdate` "viz twin" from a device's
 own data, so Foxglove / an MCAP shows a hand shape without any downstream code:
 
-- ``TactileSceneDeriver`` — JQ glove: join a ``foxglove.RawImage`` on
+- ``TactileSceneDeriver`` — JQ glove: join a ``visio_schema.v1.sensor.TactileRaw`` on
   ``/glove_*/tactile/*`` with its ``TactileLayout`` on ``.../layout`` and emit a
   bar-per-taxel scene on ``.../scene`` (height + blue->red = pressure).
 - ``HandSkeletonDeriver`` — Quest hand tracking: turn a 26-joint
@@ -26,16 +26,16 @@ from visio_schema.foxglove.LinePrimitive_pb2 import LinePrimitive
 from visio_schema.foxglove.Point3_pb2 import Point3
 from visio_schema.foxglove.Pose_pb2 import Pose
 from visio_schema.foxglove.Quaternion_pb2 import Quaternion
-from visio_schema.foxglove.RawImage_pb2 import RawImage
 from visio_schema.foxglove.SceneEntity_pb2 import SceneEntity
 from visio_schema.foxglove.SceneUpdate_pb2 import SceneUpdate
 from visio_schema.foxglove.SpherePrimitive_pb2 import SpherePrimitive
 from visio_schema.foxglove.TextPrimitive_pb2 import TextPrimitive
 from visio_schema.foxglove.Vector3_pb2 import Vector3
 from visio_schema.v1.calibration.tactile_pb2 import TactileLayout
+from visio_schema.v1.sensor.tactile_raw_pb2 import TactileRaw
 
 _LAYOUT_SCHEMA = "visio_schema.v1.calibration.TactileLayout"
-_IMAGE_SCHEMA = "foxglove.RawImage"
+_TACTILE_SCHEMA = "visio_schema.v1.sensor.TactileRaw"
 _TF_SCHEMA = "foxglove.FrameTransforms"
 _SCENE_SCHEMA = "foxglove.SceneUpdate"
 # Synthetic stream ids for derived scene channels — high, to clear device ids.
@@ -55,10 +55,10 @@ def _ns(ts):
 
 
 # --------------------------------------------------------------------------- #
-# JQ glove: tactile RawImage + TactileLayout -> hand-shaped SceneUpdate        #
+# JQ glove: tactile TactileRaw + TactileLayout -> hand-shaped SceneUpdate        #
 # --------------------------------------------------------------------------- #
 class TactileSceneDeriver:
-    """Join a glove's RawImage with its TactileLayout and emit a hand-shaped
+    """Join a glove's TactileRaw with its TactileLayout and emit a hand-shaped
     SceneUpdate on <data-topic>/scene (a cube per taxel: height + blue->red =
     pressure, labelled with the vendor taxel id)."""
 
@@ -76,7 +76,7 @@ class TactileSceneDeriver:
             data_topic = topic[: -len("/layout")]
             self._placement[data_topic] = hg.build_placement(lay, hg.side_is_left(data_topic))
             return None
-        if ch.schema_name == _IMAGE_SCHEMA and "/tactile/" in topic:
+        if ch.schema_name == _TACTILE_SCHEMA and "/tactile/" in topic:
             pl = self._placement.get(topic)
             if pl is None:
                 return None                    # no layout seen yet
@@ -89,10 +89,10 @@ class TactileSceneDeriver:
                 out_ch = make_channel(topic + "/scene", _SCENE_SCHEMA, stream_id=self._next_stream)
                 self._next_stream += 1
                 self._scene_ch[topic] = out_ch
-            img = RawImage()
-            img.ParseFromString(msg.payload)
+            tr = TactileRaw()
+            tr.ParseFromString(msg.payload)
             frame = topic.strip("/").split("/")[0]  # /glove_left/tactile/0 -> glove_left
-            scene = _tactile_scene(img.data, pl, frame, msg.timestamp)
+            scene = _tactile_scene(tr.data, pl, frame, msg.timestamp)
             out = Message(stream_id=out_ch.id, payload=scene.SerializeToString())
             out.timestamp.CopyFrom(msg.timestamp)
             return out, out_ch
