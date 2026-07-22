@@ -144,6 +144,17 @@ to the device), see [`examples/cpp/serial_consumer.cc`](../examples/cpp/serial_c
 
 ---
 
+## Timestamps: whose clock is this?
+
+Every `msg.timestamp` above is the payload's **capture time in the device's own monotonic clock**,
+which shares no epoch with yours. One device's streams are therefore already aligned with each
+other, but nothing lines up with your machine or with a second device until you measure the offset
+between the clocks. Visio carries that measurement in an NTP-style exchange on the heartbeat
+beacon; running it from a client like the ones on this page takes about 80 lines. Recipe + runnable
+example: **[timesync_client.md](timesync_client.md)**.
+
+---
+
 ## Going lower-level
 
 The framing codec, the concrete endpoint classes, the fd helpers, and the registry internals are
