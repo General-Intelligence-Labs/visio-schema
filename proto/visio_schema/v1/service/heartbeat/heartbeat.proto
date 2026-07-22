@@ -1,8 +1,8 @@
 // visio/service/heartbeat/v1/heartbeat.proto
 //
 // Liveness beacon AND NTP-style timesync in one message, on the
-// CONTROL_STREAM_HEARTBEAT control stream (hop-local — the bus never
-// relays it; each directly-connected peer runs its own liveness + sync).
+// CONTROL_STREAM_HEARTBEAT control stream (hop-local — never relayed;
+// each directly-connected peer runs its own liveness + sync).
 // Cadence ~1 Hz typical. The wire Header carries only stream_id/seq/
 // timestamp; a neighbour is identified by the endpoint its beacons arrive
 // on, so there is no device field here.
@@ -18,22 +18,25 @@
 //
 // The initiator, on receiving the echo, closes the loop:
 //     rtt    = now - echo_tx_mono_ns                  (our clock both ends)
-//     offset = echo_rx_mono_ns - (echo_tx_mono_ns + rtt/2)
-// i.e. the peer's clock minus our clock at the RTT midpoint. Per-peer
-// offset uses min-RTT selection over a sliding window.
+//     offset = (echo_tx_mono_ns + rtt/2) - echo_rx_mono_ns
+// i.e. OUR clock minus the peer's at the RTT midpoint — ADD it to a
+// timestamp from that peer to bring it into our clock (the rewrite
+// contract in docs/protocol/timesync.md §4; the reverse sign moves
+// timestamps the wrong way). Per-peer offset uses min-RTT selection over
+// a sliding window. Client recipe: docs/timesync_client.md.
 //
-// `tx_mono_ns` is stamped as close to the wire as possible via the bus's
-// priority send path (no outbox queueing), so it isn't biased by queue
-// latency. All three fields are bare uint64 in the producer's local
-// monotonic clock — immune to the Header.timestamp offset-rewrite.
+// `tx_mono_ns` is stamped as close to the wire as possible, bypassing any
+// send queue, so it isn't biased by queue latency. All three fields are
+// bare uint64 in the producer's local monotonic clock — immune to the
+// Header.timestamp offset-rewrite.
 
 syntax = "proto3";
 
 package visio_schema.v1.service.heartbeat;
 
 message Heartbeat {
-  // Sender's local monotonic clock (ns) at send, stamped at the wire by
-  // the bus's priority send path. Always set.
+  // Sender's local monotonic clock (ns) at send, stamped at the moment of
+  // the write, ahead of any send queue. Always set.
   uint64 tx_mono_ns = 1;
 
   // On a response beacon: the `tx_mono_ns` this sender is echoing back to
@@ -46,7 +49,7 @@ message Heartbeat {
   // initiating beacon.
   uint64 echo_rx_mono_ns = 3;
 
-  // Optional backpressure hint: instantaneous outbound queue depth on the
-  // sender's bus, in messages. 0 means "no backpressure" / "not reported."
+  // Optional backpressure hint: the sender's instantaneous outbound queue
+  // depth, in messages. 0 means "no backpressure" / "not reported."
   uint32 queue_depth = 4;
 }

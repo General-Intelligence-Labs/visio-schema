@@ -47,6 +47,7 @@ message Command {
     SetNoticeLang  set_notice_lang = 27;
     SetResolution  set_resolution  = 28;
     ResetToAp      reset_to_ap     = 29;
+    SetAudioRecording set_audio_recording = 30;
   }
 }
 
@@ -107,6 +108,29 @@ message SetAutoStart {
 // re-enabling resumes. Default is enabled. The current value is reported in
 // DeviceState.auto_upload_enabled.
 message SetAutoUpload {
+  bool enabled = 1;
+}
+
+// Enable/disable microphone capture reaching recordings. Persisted to a
+// device-side sidecar (audio_recording.json under the device state dir) and
+// applied WITHOUT a reboot: the capture thread keeps draining the ACODEC (so
+// re-enabling is sample-accurate and never replays a stale backlog) and simply
+// stops publishing. Because both the device's own MCAP and the phone-side MCAP
+// record what reaches the bus, this one switch covers both — a recording made
+// while disabled has no audio channel at all, not an empty one.
+//
+// Only boards with a mic accept this; every other device rejects it, which is
+// EXPECTED. Default is enabled, so existing units are unaffected by an upgrade.
+// The current value is reported in DeviceState.audio_recording, which also
+// tells the app whether to offer the control at all.
+//
+// ALWAYS address this to a specific device: an empty Command.target_device is
+// a broadcast, which on a suit would flip every mic-equipped board at once.
+//
+// Note on downgrade: the sidecar survives a rollback to firmware that predates
+// this command, and such firmware records audio unconditionally — so a device
+// downgraded while disabled resumes recording audio until re-upgraded.
+message SetAudioRecording {
   bool enabled = 1;
 }
 

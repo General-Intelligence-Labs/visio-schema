@@ -85,6 +85,20 @@ Add a **Plot** panel for `/glove_left/imu_raw/3`, a **3D**/orientation panel for
 
 Foxglove Studio can also open the written `.mcap` directly (File ▸ Open).
 
+## Python — sync your clock to a device (heartbeat NTP)
+
+`python/timesync_client.py` is the whole timesync exchange in one file: it answers the
+device's heartbeat beacons, beacons back on a timer, closes the NTP loop, filters the
+offset by lowest RTT, and shifts each inbound `Header.timestamp` onto your own clock —
+which is what makes device data comparable with your machine's, or with a second device.
+
+```bash
+python python/timesync_client.py /dev/ttyACM0        # prints offset, RTT, and message age
+```
+
+The how-to it accompanies is [../docs/timesync_client.md](../docs/timesync_client.md); the
+normative algorithm is [../docs/protocol/timesync.md](../docs/protocol/timesync.md).
+
 ## C++ — minimal embedded serial consumer
 
 `cpp/serial_consumer.cc` reads COBS-framed core frames from a serial port,

@@ -1,0 +1,32 @@
+// visio/sensor/v1/tactile_raw.proto
+//
+// One raw tactile frame — the flat readings buffer straight off the sensor,
+// published on STREAM_TACTILE_RAW with the wire Header's `stream_index`
+// identifying which tactile board.
+//
+// Vendor-neutral by design: the bytes are opaque here. How to slice them
+// (grid vs multi-axis fingertips, element dtype, per-taxel geometry) is
+// described out of band by visio_schema.v1.calibration.TactileLayout on the
+// sibling .../layout stream — one Point per taxel, referencing a Group's
+// PackedElementField layout.
+//
+// Why not foxglove.RawImage: RawImage forces a fixed width/height/encoding
+// image semantic onto every producer. A JQ 16x16 pressure grid and a PaXini
+// N-taxel x 3-axis fingertip payload are the same opaque bytes here,
+// disambiguated by the layout — no image assumption baked into the wire.
+// (Same rationale as AudioCompressed vs foxglove.RawAudio.)
+
+syntax = "proto3";
+
+package visio_schema.v1.sensor;
+
+import "google/protobuf/timestamp.proto";
+
+message TactileRaw {
+  // Acquisition time of this frame (producer's local monotonic clock).
+  google.protobuf.Timestamp timestamp = 1;
+
+  // Opaque flat readings straight off the sensor. Length is implicit in the
+  // bytes; the sibling TactileLayout says how to slice them into taxels/axes.
+  bytes data = 2;
+}
