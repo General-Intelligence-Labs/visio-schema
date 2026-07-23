@@ -1,0 +1,113 @@
+// visio_schema/v1/calibration/camera_tuning.proto
+//
+// Per-unit ISP tuning: what a camera's own optics measured, NOT what the ISP
+// should do about it. Set-only — pushed with SetCalibration and persisted on the
+// device's OTA-durable volume; deliberately never published on a topic (unlike
+// the imu/encoder/camera calibration artifacts, which ride /<dev>/.../info).
+// See SetCalibration in control/command.proto for what that costs a caller.
+//
+// A lens+IR-cut varies unit to unit, so a single per-model iqfile cannot be
+// correct for every part. The trim knobs that fix it (AWB gain offset / gain
+// adjust) sit OUTSIDE the iqfile's calibrated graph by design, so nothing here
+// implies patching the iqfile — moving a light source's gain without its
+// classification regions would desynchronise AWB from the gains it selects.
+//
+// What travels here is the MEASUREMENT only. The logic that turns it into
+// hardware values lives in the device image, so revising it fixes every fielded
+// unit by OTA with nothing re-pushed. Sending a derived correction instead would
+// create a staleness class: a unit carrying values computed by a model the
+// firmware no longer uses.
+//
+// Deliberately NOT here:
+//   - the derived correction (gain offsets, LUT nodes): device-side, see above.
+//   - `mired`: redundant with cct (mired = 1e6/cct). Carrying both invites a
+//     record whose two indices disagree. Consumers derive it; it is the
+//     interpolation axis because it is roughly linear in chromaticity, where
+//     Kelvin is not.
+//   - lens shading / black level / defect-pixel maps: the other genuinely
+//     per-unit ISP artifacts, but they need a flat-field / dark-frame fixture
+//     that does not exist yet. Add them to CameraTuning when it does.
+
+syntax = "proto3";
+
+package visio_schema.v1.calibration;
+
+// One illuminant's white point as this unit actually renders it.
+//
+// rg/bg are channel ratios (R/G, B/G) on a neutral target, measured with AWB
+// running — so they are the RESIDUAL error the running AWB failed to remove,
+// against the 1.0/1.0 a correct pipeline would have produced.
+message WbPoint {
+  double cct        = 1;  // K. The index. mired = 1e6/cct is the interpolation axis.
+  double rg         = 2;  // R/G on the neutral target
+  double bg         = 3;  // B/G on the neutral target
+
+  // Human label for the illuminant ("D65", "TL84"). A COMMENT — cct is the key.
+  // Indexing by name or by iqfile light-source slot would break the moment the
+  // iqfile's light-source list changes; cct is a physical constant.
+  string illuminant = 4;
+
+  // No light value: the correction is a spectral one, applied at every light
+  // level (camera_tuning_apply.cpp brackets the whole LV axis with one table),
+  // so nothing produces or consumes it. Add it when a fixture records LV and
+  // something varies with it.
+}
+
+// One unit's white-balance characterisation: only what was measured.
+message WbMeasurement {
+  // How AWB was configured during capture — an assertion about what `points`
+  // MEAN, not a formula switch. Only LIVE is defined, and UNKNOWN is rejected
+  // rather than guessed, so a sender cannot push raw frozen-AWB response values
+  // without saying so and have them silently read as residuals.
+  //
+  // A frozen-AWB capture is a different physical quantity (the sensor's raw
+  // spectral response) and needs an absolute reference target to interpret. When
+  // a lightbox makes that possible, it arrives as a new enum value plus the
+  // pinned gains beside it.
+  enum AwbMode {
+    AWB_MODE_UNKNOWN = 0;
+    AWB_MODE_LIVE    = 1;  // AWB running; points are its residual error
+  }
+  AwbMode awb_mode        = 1;
+
+  // POINTS ARE THE ONLY VOCABULARY, and at least one is required. There is no
+  // separate "apply this multiplier" field, because two ways of stating a
+  // correction can disagree and nothing would arbitrate. A chosen correction is
+  // a point: with AWB live a correct pipeline renders neutral at rg = 1.0, so
+  // asking for a x1.0565 red gain is the point rg = 1/1.0565 at the colour
+  // temperature the ratio was established at. A later fixture measurement then
+  // replaces it at the same cct without the record changing shape.
+  //
+  // Coverage is simply the span of these points; extending the correction
+  // beyond it is the device's job and its business.
+  repeated WbPoint points = 2;
+
+  // Provenance. Absolute measurements are only comparable across units and across
+  // months if they were taken the same way, so the fixture identity is part of
+  // the measurement, not decoration.
+  string fixture          = 3;  // fixture / rig identity
+  string utc              = 4;  // ISO-8601 capture time
+  string fw               = 5;  // firmware version at capture
+
+  // The optics this unit was measured with. Sent by the host because no device
+  // can sense the glass in front of its sensor — the one identity field that
+  // genuinely has to come from outside. Both are recorded and logged; neither
+  // gates, because correcting a unit built with a new lens batch is the entire
+  // purpose.
+  string lens_model       = 6;  // optical design, e.g. "RH180D14"
+  string lens_batch       = 7;  // production batch, e.g. "2"
+
+  // NOT here: the sensor, and the ISP tuning revision. A host tool can observe
+  // neither, so a value it sent would be an assertion about state it cannot see.
+  // The device stamps its own when it stores a record.
+}
+
+// Per-unit ISP tuning. ONE RECORD PER UNIT: `SetCalibration.sensor_index` is
+// required by the envelope but selects nothing here, because the ISP shares a
+// single AWB gain table across a rig's sensors. Measured on an RV1106 stereo
+// ego — a record naming cam0 alone moved BOTH cameras by the same factor, under
+// camgroup and under per-sensor free-run alike. A per-camera artifact would
+// promise what the hardware cannot do.
+message CameraTuning {
+  WbMeasurement wb = 1;
+}

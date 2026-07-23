@@ -4,6 +4,50 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.6.3 — 2026-07-23
+
+### Added `SetCalibration.camera_tuning` — per-unit ISP measurement (wire-compatible)
+
+- **New `visio_schema.v1.calibration.CameraTuning` (`WbMeasurement` + `WbPoint`)**,
+  carried on the `SetCalibration` artifact oneof at **tag 15**, `sensor_kind =
+  CAMERA`. A lens+IR-cut varies unit to unit, so one per-model iqfile cannot be
+  correct for every part; this is how a fixture tells a device what its own
+  optics measured.
+- **Set-only — the first `SetCalibration` artifact that is never re-published.**
+  Nothing downstream consumes it, so it is persisted and applied but has no
+  `/<dev>/...` topic. Consequence for callers: the `CommandResult` is the *only*
+  acknowledgement, with no 1 Hz re-broadcast to confirm against.
+- **Points are the only vocabulary.** There is no separate "apply this
+  multiplier" field, because two ways of stating a correction can disagree and
+  nothing would arbitrate. With `awb_mode = LIVE` a correct pipeline renders a
+  neutral target at `rg = bg = 1.0` — that is what AWB is for — so a point's
+  `rg` *is* the residual error, and a chosen ×1.0565 red gain is simply the point
+  `rg = 1/1.0565`. A later fixture measurement then replaces it at the same CCT
+  without the record changing shape. At least one point is required.
+- **Carries measurements and nothing else.** The model that extends a
+  measurement across colour temperature and the resulting ISP values live on the
+  device, so improving either is an OTA rather than a re-push of every unit.
+- **Indexed by CCT**, not by illuminant name or iqfile light-source slot, so
+  changing a sensor's light-source list does not reinterpret stored records.
+  `mired` is absent (derivable as `1e6/cct`; carrying both invites a record whose
+  two indices disagree).
+- **One record per unit, not per camera.** `sensor_index` is still required by
+  `SetCalibration` but selects nothing here: the ISP shares a single AWB gain
+  table across a rig's sensors, measured on an RV1106 stereo ego — a record
+  naming `cam0` alone moved *both* cameras by the same factor, under camgroup and
+  under per-sensor free-run alike. A per-camera artifact would have promised what
+  the hardware cannot do.
+- **`lens_model` / `lens_batch` are the only identity fields on the wire**,
+  because the lens is the one thing no device can sense. `lens_model` is required;
+  `lens_batch` is recorded and logged but **never gates**, since correcting a unit
+  from a new lens batch is the entire purpose.
+- **Deliberately NOT on the wire**: the sensor and the ISP tuning revision. A
+  host tool can observe neither, so a value it sent would be an assertion about
+  state it cannot see. The device stamps its own when it stores a record and
+  re-checks at apply, catching a reflash between calibration and use.
+- Field numbers 2-4 reserved on `CameraTuning` for lens-shading, black-level and
+  defect-pixel artifacts.
+
 ## 0.6.2 — 2026-07-17
 
 ### `SetTime` carries the host GPS fix (wire-compatible)

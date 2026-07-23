@@ -15,6 +15,7 @@ import "foxglove/CameraCalibration.proto";
 import "foxglove/FrameTransform.proto";
 import "visio_schema/v1/calibration/imu.proto";
 import "visio_schema/v1/calibration/encoder.proto";
+import "visio_schema/v1/calibration/camera_tuning.proto";
 
 message Command {
   // Intended recipient, by device name. A receiving peer MUST ignore
@@ -269,7 +270,14 @@ message SetNoticeLang {
 //                  (foxglove.FrameTransform, child posed in the cam0 frame)
 //   imu_info    -> /<dev>/imu/<i>/info           (ImuCalibration)
 //   encoder_info-> /<dev>/encoder/<i>/info       (EncoderCalibration)
+//   camera_tuning -> persisted only; NO topic    (CameraTuning)
 // Answered by a CommandResult (ok + DeviceState), correlated by command_id.
+//
+// camera_tuning is the one artifact that is not re-published. It is a per-unit
+// ISP measurement the device consumes to trim its own AWB — nothing downstream
+// consumes it, so it is stored and applied but never broadcast. That also means
+// the CommandResult is the ONLY acknowledgement: unlike the other artifacts,
+// there is no 1 Hz re-broadcast to confirm against.
 message SetCalibration {
   enum SensorKind {
     SENSOR_KIND_UNSPECIFIED = 0;
@@ -285,6 +293,7 @@ message SetCalibration {
     foxglove.FrameTransform    extrinsics = 12;  // CAMERA (i>0) or IMU, rel. cam0
     visio_schema.v1.calibration.ImuCalibration imu_info = 13;  // IMU
     visio_schema.v1.calibration.EncoderCalibration encoder_info = 14;  // ENCODER
+    visio_schema.v1.calibration.CameraTuning camera_tuning = 15;  // CAMERA, set-only
     // 10 reserved for a deferred magnetometer artifact.
   }
 }

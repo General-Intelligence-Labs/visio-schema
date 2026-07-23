@@ -118,6 +118,20 @@ visio_schema.v1.calibration.TactileLayout.points          max_count:160
 visio_schema.v1.calibration.TactileLayout.Group.fields    max_count:4
 visio_schema.v1.calibration.TactileLayout.Point.part      max_size:16
 foxglove.PackedElementField.name                          max_size:16
+# CameraTuning (per-unit ISP measurement, inbound on SetCalibration): bound
+# everything so it stays FT_STATIC like the artifacts above — this rides the same
+# Command decode path, and a pb_callback_t there would mean hand-written decode
+# callbacks on an inbound control message.
+# points headroom 8 > the 7-illuminant ladder (HZ/A/TL84/CWF/D50/D65/D75).
+# illuminant is a label only (cct is the key), sized to rkaiq's own
+# CALD_AWB_ILLUMINATION_NAME (20). utc holds an ISO-8601 stamp ("...T09:14:00Z").
+visio_schema.v1.calibration.WbMeasurement.points          max_count:8
+visio_schema.v1.calibration.WbMeasurement.fixture         max_size:24
+visio_schema.v1.calibration.WbMeasurement.utc             max_size:24
+visio_schema.v1.calibration.WbMeasurement.fw              max_size:16
+visio_schema.v1.calibration.WbMeasurement.lens_model      max_size:24
+visio_schema.v1.calibration.WbMeasurement.lens_batch      max_size:12
+visio_schema.v1.calibration.WbPoint.illuminant            max_size:20
 
 # ---- Geometry: short frame id ---------------------------------------------
 visio_schema.v1.geometry.Twist.frame_id   max_size:32
