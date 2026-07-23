@@ -133,6 +133,22 @@ message DeviceState {
   // Echoed like video_bitrate_kbps; a pending change applies on next boot.
   uint32 video_width  = 27;
   uint32 video_height = 28;
+
+  // ── audio ──
+  // Whether mic capture reaches recordings (SetAudioRecording).
+  //
+  // Deliberately tri-state rather than a bool: UNSUPPORTED covers both "this
+  // board has no mic" and "this firmware predates the toggle", and lets the app
+  // hide the control instead of guessing. A bool would default to false on old
+  // firmware, so the app would show the switch OFF while the device was in fact
+  // recording audio — worse than showing nothing. Same reason video_width == 0
+  // hides the resolution control.
+  enum AudioRecording {
+    AUDIO_RECORDING_UNSUPPORTED = 0;
+    AUDIO_RECORDING_ENABLED     = 1;
+    AUDIO_RECORDING_DISABLED    = 2;
+  }
+  AudioRecording audio_recording = 29;
 }
 
 // The single ack a device emits per Command on /<device>/command_result.

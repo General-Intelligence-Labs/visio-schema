@@ -32,6 +32,13 @@ struct Message {
   // ahead of video, so a reply isn't stuck behind seconds of buffered H.265 on a
   // bandwidth-limited link. Set by the producer (publish_video).
   bool bulk = false;
+
+  // In-memory only (NOT serialized): this bulk frame is a SYNC POINT — an H.265
+  // keyframe carrying VPS/SPS/PPS. A bounded outbox must never evict one: losing
+  // a P-frame costs a frame, losing a keyframe costs the decoder its reference
+  // chain and blanks the viewer until the next one (a whole GOP). Set by the
+  // producer alongside `bulk`.
+  bool keyframe = false;
 };
 
 }  // namespace visio_schema::wire

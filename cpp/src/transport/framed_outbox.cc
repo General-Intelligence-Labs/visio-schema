@@ -13,7 +13,8 @@ std::int64_t FramedOutbox::SteadyNowUs() {
 FramedOutbox::FramedOutbox(WritePolicy policy, NowFn now)
     : policy_(policy), now_(std::move(now)) {}
 
-bool FramedOutbox::Enqueue(const std::uint8_t* frame, std::size_t len) {
+bool FramedOutbox::Enqueue(const std::uint8_t* frame, std::size_t len,
+                           bool keyframe) {
   const std::int64_t enqueue_us = now_();
   std::lock_guard<std::mutex> lk(mu_);
   const std::size_t before = queue_.size();
@@ -25,7 +26,8 @@ bool FramedOutbox::Enqueue(const std::uint8_t* frame, std::size_t len) {
   if (const std::size_t evicted = before - queue_.size()) {
     dropped_.fetch_add(evicted, std::memory_order_relaxed);  // evicted-oldest
   }
-  queue_.push_back({std::vector<std::uint8_t>(frame, frame + len), enqueue_us});
+  queue_.push_back({std::vector<std::uint8_t>(frame, frame + len), enqueue_us,
+                    keyframe});
   queue_bytes_ += len;
   return true;
 }
@@ -60,12 +62,24 @@ bool FramedOutbox::Drain(const WriteFn& wr) {
       for (auto it = queue_.begin(); it != queue_.end();) {
         if ((now_us - it->enqueue_us) <= max_age_us) {
           ++it;
+        } else if (it->keyframe) {
+          // Never evict a sync point. Shedding stale P-frames bounds latency and
+          // costs a few frames; shedding the keyframe they reference costs the
+          // decoder its whole GOP — it renders NOTHING until the next one, which
+          // is what showed up as a camera staying black for seconds after a
+          // viewer joined. Keep it and let the stale run around it go.
+          ++it;
         } else if (policy_.protect_below_bytes > 0 &&
                    it->data.size() < policy_.protect_below_bytes) {
           ++it;  // keep this stale-but-small control frame
         } else {
           queue_bytes_ -= it->data.size();
           it = queue_.erase(it);
+          // Count it. Age eviction used to drop frames without touching
+          // dropped_, so a leg shedding hard still reported shed=0 and the only
+          // symptom was a viewer quietly missing frames — the counter has to see
+          // every drop or it is worse than no counter at all.
+          dropped_.fetch_add(1, std::memory_order_relaxed);
         }
       }
     }
