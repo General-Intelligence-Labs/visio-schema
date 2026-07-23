@@ -98,18 +98,42 @@ void FramedFdEndpoint::Pump() {
   const auto wr = [fd](const std::uint8_t* p, std::size_t n) {
     return WriteSome(fd, p, n);
   };
-  // Multiplex the two outboxes over the one fd WITHOUT splitting a frame: if
-  // either has a frame mid-write (bytes already on the wire), finish exactly
-  // that one — switching now would inject the other queue's bytes into a
-  // half-written COBS frame and desync the reader. Only at a frame boundary
-  // (neither in-flight) do we choose, and then control goes first so a reply
-  // never waits behind the video backlog. The video outbox is OneAtATime, so
-  // "finish the in-flight frame" is bounded to a single video frame.
-  FramedOutbox* pick = outbox_.InFlightActive()        ? &outbox_
-                       : ctrl_outbox_.InFlightActive()  ? &ctrl_outbox_
-                       : ctrl_outbox_.HasPending()      ? &ctrl_outbox_
-                                                        : &outbox_;
-  if (!pick->Drain(wr)) MarkLinkDead();
+  // Keep draining while the link keeps accepting. A OneAtATime Drain() promotes
+  // exactly ONE frame, so a single Drain() per poll wakeup caps this leg at one
+  // frame per wakeup. That is invisible on a fast link (writes never EAGAIN, so
+  // poll returns immediately and the loop spins), but on a real one it throttles
+  // the leg to the POLLOUT rate — and this device publishes ~550 messages/s
+  // (~60 video + ~467 IMU + audio), so the backlog grows, frames age past the
+  // outbox's max_age and are evicted. Measured symptom: the kernel send queue
+  // sat EMPTY in 94 of 100 samples while the viewer saw 0.4-0.6 s gaps and its
+  // decoder lost sync — we simply weren't feeding the socket.
+  //
+  // Each iteration re-picks, so control frames still interleave at frame
+  // boundaries; the loop stops the moment a write reports EAGAIN (bytes left
+  // in flight) or nothing is pending. Bounded so a saturating producer can't
+  // starve this thread's inbound reads.
+  constexpr int kMaxFramesPerPump = 64;
+  for (int i = 0; i < kMaxFramesPerPump; ++i) {
+    // Multiplex the two outboxes over the one fd WITHOUT splitting a frame: if
+    // either has a frame mid-write (bytes already on the wire), finish exactly
+    // that one — switching now would inject the other queue's bytes into a
+    // half-written COBS frame and desync the reader. Only at a frame boundary
+    // (neither in-flight) do we choose, and then control goes first so a reply
+    // never waits behind the video backlog. The video outbox is OneAtATime, so
+    // "finish the in-flight frame" is bounded to a single video frame.
+    FramedOutbox* pick = outbox_.InFlightActive()         ? &outbox_
+                         : ctrl_outbox_.InFlightActive()  ? &ctrl_outbox_
+                         : ctrl_outbox_.HasPending()      ? &ctrl_outbox_
+                                                          : &outbox_;
+    if (!pick->Drain(wr)) {
+      MarkLinkDead();
+      return;
+    }
+    // Bytes still in flight => the write hit EAGAIN; wait for the next POLLOUT
+    // rather than spinning on a socket that isn't taking data.
+    if (pick->InFlightActive()) return;
+    if (!ctrl_outbox_.HasPending() && !outbox_.HasPending()) return;
+  }
 }
 
 void FramedFdEndpoint::MarkLinkDead() {
