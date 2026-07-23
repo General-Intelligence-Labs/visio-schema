@@ -47,6 +47,13 @@ class FramedFdEndpoint : public Endpoint {
     bulk_paused_.store(paused, std::memory_order_relaxed);
   }
 
+  // Honoured by Pump() at a frame boundary (never mid-write, or the reader
+  // desyncs on a half-written COBS frame) — same discipline as the pause shed.
+  void RequestBulkFlush() override {
+    bulk_flush_.store(true, std::memory_order_relaxed);
+    Wake();
+  }
+
   // Diagnostics (thread-safe).
   std::size_t pending_bytes() const {
     return ctrl_outbox_.PendingBytes() + outbox_.PendingBytes();
@@ -81,7 +88,8 @@ class FramedFdEndpoint : public Endpoint {
   // between them only at a frame boundary (never mid-frame → no COBS desync).
   FramedOutbox ctrl_outbox_;       // non-bulk: control/sensor; near-lossless
   FramedOutbox outbox_;            // bulk: camera video; lossy backpressure
-  std::atomic<bool> bulk_paused_{false};  // per-client video-stream pause
+  std::atomic<bool> bulk_paused_{false};
+  std::atomic<bool> bulk_flush_{false};  // per-client video-stream pause
   std::int64_t reopen_backoff_ns_ = 0;
   std::int64_t next_reopen_ns_ = 0;
   std::vector<std::uint8_t> rx_buf_;

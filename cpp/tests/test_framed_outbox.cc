@@ -102,6 +102,37 @@ TEST(FramedOutbox, StaleEvictionDropsAgedFramesOnDrain) {
   EXPECT_EQ(sink.received, fresh);  // stale frame never reached the wire
 }
 
+// A keyframe is a SYNC POINT: every P-frame after it decodes only in its terms.
+// Evicting one to bound latency is a false economy — the viewer then renders
+// nothing until the next keyframe (a whole GOP), which on hardware showed up as
+// a camera staying black for seconds after someone opened the live view. Stale
+// P-frames around it are shed exactly as before, so latency stays bounded.
+TEST(FramedOutbox, StaleEvictionKeepsKeyframesAndShedsThePFramesAroundThem) {
+  FakeClock clk;
+  FramedOutbox ob(WritePolicy::stale_eviction(/*max_bytes=*/1 << 20,
+                                              std::chrono::microseconds(1000)),
+                  clk.fn());
+  auto stale_p = Frame(0x11, 4);
+  ob.Enqueue(stale_p.data(), stale_p.size(), /*keyframe=*/false);
+  auto stale_key = Frame(0x22, 4);
+  ob.Enqueue(stale_key.data(), stale_key.size(), /*keyframe=*/true);
+  auto stale_p2 = Frame(0x33, 4);
+  ob.Enqueue(stale_p2.data(), stale_p2.size(), /*keyframe=*/false);
+
+  clk.us = 5000;  // every frame above is now older than the 1 ms cap
+  auto fresh = Frame(0x44, 4);
+  ob.Enqueue(fresh.data(), fresh.size(), /*keyframe=*/false);
+
+  FakeSink sink;
+  while (ob.HasPending()) ASSERT_TRUE(ob.Drain(sink.fn()));
+
+  // The keyframe survived its own staleness; both stale P-frames did not.
+  std::vector<std::uint8_t> expected = stale_key;
+  expected.insert(expected.end(), fresh.begin(), fresh.end());
+  EXPECT_EQ(sink.received, expected);
+  EXPECT_EQ(ob.Dropped(), 2u);
+}
+
 // THE regression: a frame partially committed to the wire (in_flight_) must be
 // finished intact even when later enqueues overflow max_depth and force
 // eviction. Eviction may only shed the uncommitted queue. (Original H.265 bug.)

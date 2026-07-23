@@ -60,6 +60,13 @@ class Endpoint {
   // bulk while paused so a control reply isn't stuck behind buffered H.265; a
   // recording sink (MCAP) ignores this and keeps capturing. Default: no-op.
   virtual void SetBulkPaused(bool /*paused*/) {}
+
+  // Drop this sink's QUEUED bulk frames at the next frame boundary, keeping the
+  // link and all control traffic intact. For a viewer that has just started
+  // decoding: the backlog is pre-join video it can never use, and it only delays
+  // the keyframe the viewer is actually waiting for. A recording sink ignores
+  // this — it must keep every frame. Default: no-op.
+  virtual void RequestBulkFlush() {}
 };
 
 }  // namespace visio_schema::transport

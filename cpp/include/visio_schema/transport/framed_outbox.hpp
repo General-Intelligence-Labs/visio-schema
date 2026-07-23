@@ -38,7 +38,8 @@ class FramedOutbox {
 
   // Queue one already-framed payload. Applies the WritePolicy; never blocks.
   // Thread-safe. Returns false only when DropOnFail rejected this frame.
-  bool Enqueue(const std::uint8_t* frame, std::size_t len);
+  bool Enqueue(const std::uint8_t* frame, std::size_t len,
+               bool keyframe = false);
 
   // True iff a frame is committed to the wire but not yet fully written (a
   // partial in_flight_). The owning endpoint uses this to multiplex two outboxes
@@ -80,6 +81,7 @@ class FramedOutbox {
   struct Entry {
     std::vector<std::uint8_t> data;
     std::int64_t enqueue_us;
+    bool keyframe = false;  // never age-evicted: it is the decoder's sync point
   };
   void PromoteToInFlight();  // queue_ -> in_flight_, per DrainMode (caller holds mu_)
 

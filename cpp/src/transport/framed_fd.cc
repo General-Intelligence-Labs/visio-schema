@@ -80,7 +80,8 @@ void FramedFdEndpoint::Send(const Message& msg) {
   const auto framed = EncodeFramed(msg);
   // Bulk (camera video) -> lossy video queue; everything else -> the control
   // queue, which Pump() drains ahead of video. thread-safe; no I/O.
-  (msg.bulk ? outbox_ : ctrl_outbox_).Enqueue(framed.data(), framed.size());
+  (msg.bulk ? outbox_ : ctrl_outbox_)
+      .Enqueue(framed.data(), framed.size(), msg.keyframe);
   Wake();
 }
 
@@ -94,6 +95,13 @@ void FramedFdEndpoint::Pump() {
   // safe place to do it. Frees the AP within one drain cycle.
   if (bulk_paused_.load(std::memory_order_relaxed) && !outbox_.InFlightActive())
     outbox_.Clear();
+  // A viewer just (re)started decoding: drop the video it queued before that
+  // moment so the keyframe it is waiting for is next on the wire instead of a
+  // second deep. Frame boundary only — Clear() mid-write would splice a frame.
+  if (bulk_flush_.load(std::memory_order_relaxed) && !outbox_.InFlightActive()) {
+    outbox_.Clear();
+    bulk_flush_.store(false, std::memory_order_relaxed);
+  }
   const int fd = fd_;
   const auto wr = [fd](const std::uint8_t* p, std::size_t n) {
     return WriteSome(fd, p, n);
