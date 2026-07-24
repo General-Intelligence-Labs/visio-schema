@@ -18,10 +18,11 @@ std::uint64_t SteadyNs() {
 McapWriterEndpoint::McapWriterEndpoint(std::string_view path, StreamResolver resolve,
                                        std::uint64_t max_bytes, double max_duration_s,
                                        transport::WritePolicy policy,
-                                       std::map<std::string, std::string> metadata)
+                                       std::map<std::string, std::string> metadata,
+                                       bool rotate_on_keyframe, std::int64_t pair_guard_ns)
     : resolve_(std::move(resolve)),
       writer_(std::make_unique<visio_schema::mcap::McapWriter>(
-          path, max_bytes, max_duration_s)),
+          path, max_bytes, max_duration_s, rotate_on_keyframe, pair_guard_ns)),
       policy_(policy) {
   // Written on this (constructing) thread, before Start() spawns the writer
   // thread — so it lands in the file ahead of any message, no locking needed.

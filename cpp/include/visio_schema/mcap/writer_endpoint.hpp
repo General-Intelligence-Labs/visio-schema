@@ -44,10 +44,13 @@ struct McapWriterStats {
 
 class McapWriterEndpoint : public transport::Endpoint {
  public:
+  // rotate_on_keyframe + pair_guard_ns are forwarded to the inner McapWriter; see
+  // McapWriter's ctor for their contract (opt-in keyframe-aligned rotation).
   McapWriterEndpoint(std::string_view path, StreamResolver resolve,
                      std::uint64_t max_bytes = 0, double max_duration_s = 0.0,
                      transport::WritePolicy policy = transport::WritePolicy::lossless(),
-                     std::map<std::string, std::string> metadata = {});
+                     std::map<std::string, std::string> metadata = {},
+                     bool rotate_on_keyframe = false, std::int64_t pair_guard_ns = 0);
   ~McapWriterEndpoint() override;
 
   McapWriterEndpoint(const McapWriterEndpoint&) = delete;
