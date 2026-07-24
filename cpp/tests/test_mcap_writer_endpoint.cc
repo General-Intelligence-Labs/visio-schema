@@ -8,9 +8,13 @@
 
 #include <gtest/gtest.h>
 
+#include <unistd.h>
+
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <string>
+#include <thread>
 #include <unordered_map>
 
 #include "visio_schema/routing/channel.hpp"
@@ -65,6 +69,9 @@ TEST(McapWriterEndpoint, RecordsResolvedChannel) {
     ep.Send(Data(kFirstDynamic, "frame-0"));
     ep.Send(Data(kFirstDynamic, "frame-1"));
     ep.Stop();  // drains the queue, joins the writer, finalizes the file
+    // A healthy recording must never latch: the Close() catch in Stop() would
+    // otherwise fail a good session and the collector would kill recording.
+    EXPECT_FALSE(ep.write_failed());
   }
   ASSERT_TRUE(fs::exists(path));
   EXPECT_GT(fs::file_size(path), 0u);
@@ -177,6 +184,7 @@ TEST(McapWriterEndpoint, BytesWrittenMonotonicAcrossRotation) {
     for (int i = 0; i < 4; ++i) ep.Send(Data(kFirstDynamic, std::string(10, 'a')));  // +10 each
     ep.Stop();
     EXPECT_EQ(ep.bytes_written(), 40u);   // 4 × 10, no reset at the roll
+    EXPECT_FALSE(ep.write_failed());      // healthy rotation must not latch
   }
   ASSERT_TRUE(fs::exists(p1));             // confirm a rotation actually happened
   std::remove(p0.c_str());
@@ -205,4 +213,94 @@ TEST(McapWriterEndpoint, RotatesByBytes) {
   EXPECT_TRUE(fs::exists(p1));  // rolled into a second part
   std::remove(p0.c_str());
   std::remove(p1.c_str());
+}
+
+// A storage failure mid-recording must NOT escape the writer thread. It is the
+// thread's entry function, so an exception leaving it calls std::terminate and
+// kills the whole process — on a capture rig that means losing the bus and the
+// cameras too. Observed in the field: a corrupt FAT card was flipped read-only
+// by the kernel mid-recording, the next part rotation threw out of OpenPart,
+// and the firmware aborted. Here the directory is made unwritable AFTER the
+// first part opens, so the rotation fails exactly the same way.
+TEST(McapWriterEndpoint, StorageFailureMidRecordingIsLatchedNotThrown) {
+  if (::geteuid() == 0) GTEST_SKIP() << "perm bits don't block writes as root";
+  const fs::path dir = fs::temp_directory_path() / "visio_mcap_ro_test";
+  fs::remove_all(dir);
+  fs::create_directories(dir);
+  const std::string path = (dir / "rec.mcap").string();
+
+  std::unordered_map<std::uint32_t, Channel> table{
+      {kFirstDynamic, MakeChannel(kFirstDynamic, "/dev/imu/0/raw")}};
+  auto resolve = [&](std::uint32_t id) -> const Channel* {
+    auto it = table.find(id);
+    return it == table.end() ? nullptr : &it->second;
+  };
+
+  bool failed = false;
+  std::uint64_t dropped = 0;
+  {
+    McapWriterEndpoint ep(path, resolve, /*max_bytes=*/16);   // rotates fast
+    ep.Start(nullptr, nullptr);
+    EXPECT_FALSE(ep.write_failed());          // healthy before the card dies
+    ep.Send(Data(kFirstDynamic, std::string(10, 'a')));
+
+    // The card "goes read-only": part 0 is already open, the next OpenPart fails.
+    fs::permissions(dir, fs::perms::owner_read | fs::perms::owner_exec,
+                    fs::perm_options::replace);
+    for (int i = 0; i < 8; ++i) ep.Send(Data(kFirstDynamic, std::string(10, 'a')));
+
+    for (int i = 0; i < 200 && !failed; ++i) {   // writer thread is async
+      failed = ep.write_failed();
+      if (!failed) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    // Send() must stay well-behaved afterwards, and the latch must be sticky:
+    // frames offered to a dead endpoint are shed, not written, and not fatal.
+    for (int i = 0; i < 4; ++i) ep.Send(Data(kFirstDynamic, std::string(10, 'a')));
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    EXPECT_TRUE(ep.write_failed()) << "latch cleared";
+    dropped = ep.dropped_frames();
+    ep.Stop();
+  }
+  fs::permissions(dir, fs::perms::owner_all, fs::perm_options::replace);
+
+  EXPECT_TRUE(failed) << "storage failure was not latched";
+  EXPECT_GT(dropped, 0u) << "post-failure frames were not shed";
+  fs::remove_all(dir);
+}
+
+// The same failure, but torn down WITHOUT an explicit Stop(). Stop() early-outs
+// on its stop_ guard, so a test that calls it leaves the destructor's own
+// join+Close path — the one a noexcept destructor runs on dead storage —
+// completely unexercised.
+TEST(McapWriterEndpoint, StorageFailureSurvivesDestructorWithoutExplicitStop) {
+  if (::geteuid() == 0) GTEST_SKIP() << "perm bits don't block writes as root";
+  const fs::path dir = fs::temp_directory_path() / "visio_mcap_ro_dtor_test";
+  fs::remove_all(dir);
+  fs::create_directories(dir);
+  const std::string path = (dir / "rec.mcap").string();
+
+  std::unordered_map<std::uint32_t, Channel> table{
+      {kFirstDynamic, MakeChannel(kFirstDynamic, "/dev/imu/0/raw")}};
+  auto resolve = [&](std::uint32_t id) -> const Channel* {
+    auto it = table.find(id);
+    return it == table.end() ? nullptr : &it->second;
+  };
+
+  bool failed = false;
+  {
+    McapWriterEndpoint ep(path, resolve, /*max_bytes=*/16);
+    ep.Start(nullptr, nullptr);
+    ep.Send(Data(kFirstDynamic, std::string(10, 'a')));
+    fs::permissions(dir, fs::perms::owner_read | fs::perms::owner_exec,
+                    fs::perm_options::replace);
+    for (int i = 0; i < 8; ++i) ep.Send(Data(kFirstDynamic, std::string(10, 'a')));
+    for (int i = 0; i < 200 && !failed; ++i) {
+      failed = ep.write_failed();
+      if (!failed) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+  }  // <-- destructor runs Stop() for real here; must not terminate
+  fs::permissions(dir, fs::perms::owner_all, fs::perm_options::replace);
+
+  EXPECT_TRUE(failed);
+  fs::remove_all(dir);
 }

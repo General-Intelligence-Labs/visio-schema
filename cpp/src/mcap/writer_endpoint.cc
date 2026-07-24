@@ -46,7 +46,19 @@ void McapWriterEndpoint::Stop() {
   }
   cv_.notify_one();
   if (thread_.joinable()) thread_.join();  // drains the remaining queue
-  if (writer_) writer_->Close();
+  // Close() finalizes the part against the same storage that may have just
+  // died, and ~McapWriterEndpoint calls Stop() — a destructor is noexcept, so
+  // anything escaping here terminates the process during teardown. Catch(...)
+  // rather than std::exception: this is the last frame before noexcept, and
+  // NoteFailure is nothrow, so nothing can get past it. Losing the footer costs
+  // one part's index; the uploader's torn-part repair recovers it.
+  if (writer_) {
+    try {
+      writer_->Close();
+    } catch (...) {
+      NoteFailure("finalize failed");
+    }
+  }
 }
 
 void McapWriterEndpoint::NoteDrop(std::size_t n) {
@@ -96,7 +108,37 @@ void McapWriterEndpoint::WriterLoop() {
       queue_bytes_ = 0;
       if (batch.empty() && stop_) return;  // stopped + fully drained
     }
-    DrainBatch(batch);
+    // This is the thread's ENTRY function: an exception leaving it calls
+    // std::terminate and takes the whole process down. McapWriter throws when
+    // it cannot open the next part — a full card, or one the kernel flipped
+    // read-only under us — so latch that instead and keep the thread alive to
+    // shed what is queued, leaving Send()/Stop() well-behaved. The owner polls
+    // write_failed() and stops the recording.
+    if (failed_.load(std::memory_order_relaxed)) {
+      NoteDrop(batch.size());
+      batch.clear();
+      continue;
+    }
+    try {
+      DrainBatch(batch);
+    } catch (const std::exception& e) {
+      NoteFailure(e.what());
+      batch.clear();
+    } catch (...) {   // nothing may escape this frame; see above
+      NoteFailure("unknown exception");
+      batch.clear();
+    }
+  }
+}
+
+// nothrow: also reached from Stop(), which a noexcept destructor calls. The
+// reason is logged here and nowhere else — deliberately not stored, so no
+// allocation sits on the teardown path (a card dying and the heap failing are
+// the same bad day) and callers need only the latch.
+void McapWriterEndpoint::NoteFailure(const char* what) noexcept {
+  if (!failed_.exchange(true, std::memory_order_relaxed)) {
+    std::cerr << "McapWriterEndpoint: recording stopped — storage write failed: "
+              << what << "\n";
   }
 }
 
