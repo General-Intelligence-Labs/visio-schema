@@ -4,7 +4,8 @@
 #include <unistd.h>
 
 #include "visio_schema/transport/framing.hpp"
-#include "visio_schema/wire/time.hpp"  // MonotonicNs
+#include "visio_schema/transport/link.hpp"  // SetCurrentThreadName
+#include "visio_schema/wire/time.hpp"       // MonotonicNs
 
 namespace visio_schema::transport {
 
@@ -171,6 +172,7 @@ void FramedFdEndpoint::Tick(std::int64_t now_ns) {
 }
 
 void FramedFdEndpoint::Loop() {
+  SetCurrentThreadName("vs_ep_io");
   while (!stop_.load()) {
     const int fd = fd_;
     pollfd pfds[2];

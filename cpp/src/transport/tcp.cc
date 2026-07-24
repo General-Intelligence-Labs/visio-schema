@@ -1,5 +1,7 @@
 #include "visio_schema/transport/tcp.hpp"
 
+#include "visio_schema/transport/link.hpp"  // SetCurrentThreadName
+
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
@@ -48,6 +50,7 @@ void TcpAcceptor::Stop() {
 void TcpAcceptor::Wake() { wake_.Signal(); }
 
 void TcpAcceptor::Loop() {
+  SetCurrentThreadName("vs_tcp_accept");
   while (!stop_.load()) {
     pollfd pfds[2] = {{wake_.poll_fd(), POLLIN, 0}, {listen_fd_, POLLIN, 0}};
     ::poll(pfds, 2, kTickMs);

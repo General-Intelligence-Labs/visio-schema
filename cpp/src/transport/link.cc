@@ -2,6 +2,9 @@
 
 #include <arpa/inet.h>
 #include <fcntl.h>
+#if defined(__linux__)
+#include <sys/prctl.h>
+#endif
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
@@ -182,6 +185,14 @@ int AcceptCloexec(int listen_fd) {
     SetNoSigpipe(fd);
   }
   return fd;
+#endif
+}
+
+void SetCurrentThreadName(const char* name) {
+#if defined(__linux__)
+  ::prctl(PR_SET_NAME, name, 0, 0, 0);
+#else
+  (void)name;
 #endif
 }
 
