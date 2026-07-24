@@ -4,6 +4,43 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.6.5 — 2026-07-24
+
+Tooling and C++ library only — **no proto or wire change** (`make breaking` clean
+against `main`). Cut as the first tag since `v0.4.2`, so it also ships the
+accumulated `0.5.0`–`0.6.4` (see those entries), including the **breaking `0.6.0`
+`ImuCalibration` slim**.
+
+### `McapWriterEndpoint` survives a storage failure instead of terminating (C++)
+
+- The writer thread had no exception handling. `McapWriter` throws when it cannot
+  open the next part, so a card that fills up — or that the kernel flips read-only
+  after an integrity error — threw out of the thread's entry function, which is
+  `std::terminate`. Observed in the field: a FAT-corrupt SD card went read-only
+  mid-recording and the whole firmware died on the next part rotation, taking the
+  bus and the cameras with it.
+- The failure is now caught and **latched** behind a new `write_failed(reason)`
+  query; the thread stays alive to shed what is queued so `Send()`/`Stop()` stay
+  well-behaved, and the owner polls the latch and stops the recording. `Stop()`
+  guards `Close()` the same way — it runs from a `noexcept` destructor, and losing
+  a footer costs one part's index, which the uploader's torn-part repair recovers.
+- Not routed through `on_closed`: that contract means "fixed link hit EOF, detach
+  me", a different thing from "storage died, stop recording", and a write-only
+  sink ignores both callbacks.
+
+### `visio-display --serve`: load & replay a local MCAP file (launcher)
+
+- New "Recording / MCAP file" source replays a local recording into the same
+  Foxglove WebSocket bridge, reusing the existing H.265→JPEG decode fallback so
+  replayed video transcodes unchanged for browsers that can't decode HEVC. The
+  file is opened by path (nothing is uploaded); a server-side file browser
+  (`GET /api/fs`, `POST /api/mcap`) picks it, since a browser can't hand the
+  server a filesystem path.
+- Also fixes a latent launcher bug: `_run` passed a zero-arg `on_closed`, but the
+  fd and MCAP-reader endpoints call `on_closed(self)`, so a replay EOF (or a live
+  TCP unplug) would `TypeError`; a terminal "ended" state now replaces the stale
+  "streaming" a finished source reported.
+
 ## 0.6.4 — 2026-07-23
 
 ### Added `SetCalibration.camera_tuning` — per-unit ISP measurement (wire-compatible)
