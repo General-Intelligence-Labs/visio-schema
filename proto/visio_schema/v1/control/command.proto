@@ -49,6 +49,7 @@ message Command {
     SetResolution  set_resolution  = 28;
     ResetToAp      reset_to_ap     = 29;
     SetAudioRecording set_audio_recording = 30;
+    SetImuLiveRate set_imu_live_rate = 31;
   }
 }
 
@@ -87,6 +88,16 @@ message Identify {
 // persisted), so a reconnect auto-resumes.
 message SetVideoStreaming {
   bool enabled = 1;  // true = stream video to me; false = pause it
+}
+
+// Cap the live delivery rate of per-sample derived IMU streams (the fused
+// quaternions) to THE SENDING CONNECTION only — same per-endpoint scoping as
+// SetVideoStreaming. 0 (and a fresh connection) = full rate, so a client that
+// records from the live stream and never asks stays lossless; a preview-only
+// client requests e.g. 120 Hz to cut ~470 msg/s of per-message framing on the
+// device. Raw IMU bundles and on-device recordings are never affected.
+message SetImuLiveRate {
+  uint32 rate_hz = 1;  // 0 = full rate
 }
 
 // ── Provisioning / control surface folded from the old HTTP setup API ───────

@@ -9,7 +9,9 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <vector>
 
 #include "google/protobuf/timestamp.pb.h"    // nanopb: google_protobuf_Timestamp
 #include "visio_schema/v1/wire/header.pb.h"   // nanopb: Header + ControlStream
@@ -39,6 +41,22 @@ struct Message {
   // chain and blanks the viewer until the next one (a whole GOP). Set by the
   // producer alongside `bulk`.
   bool keyframe = false;
+
+  // In-memory only (NOT serialized): a live sink MAY rate-limit this message
+  // per its endpoint's live-rate setting (SetImuLiveRate). Set by the producer
+  // for per-sample derived streams (fused IMU quaternions) whose ground truth
+  // ships full-rate elsewhere (the raw bundles). Recording sinks ignore it —
+  // recordings stay lossless.
+  bool decimatable = false;
+
+  // In-memory only (NOT serialized): cache of EncodeFramed(*this), filled by
+  // the FIRST framed sink to send this message and reused by every other one.
+  // Outbound framed bytes are byte-identical across sinks (the header is
+  // stamped before fanout; per-link stream-id remap happens on hub INBOUND,
+  // never per-sink), so one COBS+CRC pass serves the whole fanout. Safe
+  // without locking: Bus::Relay hands the same Message to sinks sequentially
+  // under its dispatch lock. `mutable` so Send(const Message&) can fill it.
+  mutable std::shared_ptr<const std::vector<std::uint8_t>> framed;
 };
 
 }  // namespace visio_schema::wire

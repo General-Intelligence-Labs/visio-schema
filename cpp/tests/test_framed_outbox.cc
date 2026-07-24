@@ -222,3 +222,85 @@ TEST(FramedOutbox, ClearDropsEverything) {
   EXPECT_FALSE(ob.HasPending());
   EXPECT_EQ(ob.PendingBytes(), 0u);
 }
+
+// ---------------------------------------------------------------- shared ---
+// Frame-once fanout: one immutable SharedFrame feeds N outboxes by refcount.
+
+TEST(FramedOutboxShared, OneBufferFansOutToTwoOutboxesIntact) {
+  auto buf = std::make_shared<const std::vector<std::uint8_t>>(
+      Frame(0xAB, 4096));
+  FramedOutbox a(WritePolicy::drop_oldest());
+  FramedOutbox b(WritePolicy::drop_oldest());
+  EXPECT_TRUE(a.Enqueue(buf));
+  EXPECT_TRUE(b.Enqueue(buf));
+  EXPECT_EQ(buf.use_count(), 3);  // caller + both queues; no copies
+
+  FakeSink sa, sb;
+  while (a.HasPending()) ASSERT_TRUE(a.Drain(sa.fn()));
+  while (b.HasPending()) ASSERT_TRUE(b.Drain(sb.fn()));
+  EXPECT_EQ(sa.received, *buf);
+  EXPECT_EQ(sb.received, *buf);
+}
+
+TEST(FramedOutboxShared, OneAtATimePartialWriteFinishesSharedFrame) {
+  auto buf = std::make_shared<const std::vector<std::uint8_t>>(
+      Frame(0xCD, 100));
+  FramedOutbox ob(WritePolicy::stale_eviction(
+      1 << 20, std::chrono::microseconds(0),
+      WritePolicy::DrainMode::OneAtATime));
+  EXPECT_TRUE(ob.Enqueue(buf));
+
+  FakeSink sink;
+  sink.accept_per_call = 30;  // force multiple partial writes
+  while (ob.HasPending()) ASSERT_TRUE(ob.Drain(sink.fn()));
+  EXPECT_EQ(sink.received, *buf);
+}
+
+TEST(FramedOutboxShared, EvictionDropsRefcountNotTheSharedBuffer) {
+  auto big = std::make_shared<const std::vector<std::uint8_t>>(
+      Frame(0xEE, 900));
+  FramedOutbox ob(WritePolicy::stale_eviction(
+      /*max_bytes=*/1000, std::chrono::microseconds(0)));
+  EXPECT_TRUE(ob.Enqueue(big));
+  // A second 900-byte frame overflows the 1000-byte cap: the first is
+  // evicted — but only the queue's reference dies, the caller's buffer
+  // (shared with sibling sinks) is untouched.
+  EXPECT_TRUE(ob.Enqueue(big));
+  EXPECT_EQ(ob.Dropped(), 1u);
+  EXPECT_EQ(*big, Frame(0xEE, 900));
+  EXPECT_EQ(ob.PendingBytes(), 900u);
+}
+
+TEST(FramedOutboxShared, ClearMidFlightResetsSharedInFlight) {
+  auto buf = std::make_shared<const std::vector<std::uint8_t>>(
+      Frame(0x77, 64));
+  FramedOutbox ob(WritePolicy::stale_eviction(
+      1 << 20, std::chrono::microseconds(0),
+      WritePolicy::DrainMode::OneAtATime));
+  EXPECT_TRUE(ob.Enqueue(buf));
+  FakeSink sink;
+  sink.accept_per_call = 16;
+  ASSERT_TRUE(ob.Drain(sink.fn()));  // partial: 16 of 64 on the wire
+  ASSERT_TRUE(ob.InFlightActive());
+  ob.Clear();
+  EXPECT_FALSE(ob.InFlightActive());
+  EXPECT_FALSE(ob.HasPending());
+  EXPECT_EQ(buf.use_count(), 1);  // outbox released its reference
+}
+
+TEST(FramedOutboxShared, BatchAllCoalescesSharedFramesIntoOneWrite) {
+  auto a = std::make_shared<const std::vector<std::uint8_t>>(Frame(0x01, 10));
+  auto b = std::make_shared<const std::vector<std::uint8_t>>(Frame(0x02, 20));
+  FramedOutbox ob(WritePolicy::stale_eviction(
+      1 << 20, std::chrono::microseconds(0), WritePolicy::DrainMode::BatchAll));
+  EXPECT_TRUE(ob.Enqueue(a));
+  EXPECT_TRUE(ob.Enqueue(b));
+
+  FakeSink sink;
+  ASSERT_TRUE(ob.Drain(sink.fn()));
+  std::vector<std::uint8_t> want = Frame(0x01, 10);
+  const auto tail = Frame(0x02, 20);
+  want.insert(want.end(), tail.begin(), tail.end());
+  EXPECT_EQ(sink.received, want);
+  EXPECT_FALSE(ob.HasPending());
+}

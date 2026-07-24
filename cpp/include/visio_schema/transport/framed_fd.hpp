@@ -14,6 +14,7 @@
 #include <atomic>
 #include <cstdint>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "visio_schema/transport/endpoint.hpp"
@@ -54,6 +55,11 @@ class FramedFdEndpoint : public Endpoint {
     Wake();
   }
 
+  // Per-endpoint live-rate cap for decimatable messages (endpoint.hpp).
+  void SetLiveRateHz(int hz) override {
+    live_rate_hz_.store(hz > 0 ? hz : 0, std::memory_order_relaxed);
+  }
+
   // Diagnostics (thread-safe).
   std::size_t pending_bytes() const {
     return ctrl_outbox_.PendingBytes() + outbox_.PendingBytes();
@@ -77,6 +83,15 @@ class FramedFdEndpoint : public Endpoint {
  private:
   void Loop();           // the I/O thread body
   void Pump();           // drain outbox to the fd (I/O thread)
+  // Stall bookkeeping after each Pump: `accepted` is the bytes the fd took
+  // this pass. With bytes pending and none accepted for kStallNs the link is
+  // STALLED (a serial gadget nobody reads, a peer gone silent): Send then
+  // drops bulk + decimatable frames at the door so the CPU stops framing
+  // data the eviction loop would only shed. Small control frames still
+  // enqueue — they are the probe that detects the reader coming back, at
+  // which point the gate lifts and the bulk backlog is flushed for a clean
+  // keyframe re-sync.
+  void UpdateStallState(long accepted);
   bool ReadInbound(int fd);  // read+decode; returns true if the thread should exit
   void Wake();           // poke the I/O thread (from Send/Stop)
   void AdoptFd(int fd);  // O_NONBLOCK-or-close a freshly opened fd into fd_
@@ -90,6 +105,12 @@ class FramedFdEndpoint : public Endpoint {
   FramedOutbox outbox_;            // bulk: camera video; lossy backpressure
   std::atomic<bool> bulk_paused_{false};
   std::atomic<bool> bulk_flush_{false};  // per-client video-stream pause
+  std::atomic<bool> link_stalled_{false};   // set by I/O thread, read in Send
+  std::int64_t last_progress_ns_ = 0;       // I/O-thread-private
+  std::atomic<int> live_rate_hz_{0};        // 0 = full rate
+  // Last-forwarded time per decimatable stream. Touched only from Send under
+  // the bus dispatch serialization (decimatable messages arrive via Relay).
+  std::unordered_map<std::uint32_t, std::int64_t> decim_last_us_;
   std::int64_t reopen_backoff_ns_ = 0;
   std::int64_t next_reopen_ns_ = 0;
   std::vector<std::uint8_t> rx_buf_;

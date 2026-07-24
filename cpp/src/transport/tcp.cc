@@ -71,6 +71,25 @@ void TcpAcceptor::Loop() {
       // how much the kernel can hoard. Disables SO_SNDBUF autotuning.
       int sndbuf = 256 * 1024;
       ::setsockopt(cfd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
+      // A phone that vanishes without FIN (airplane mode, walked off the AP)
+      // must free its endpoint promptly — the product allows ONE client at a
+      // time, so a zombie link blocks the next connect. This device is
+      // nearly always sending, so TCP_USER_TIMEOUT (bounds how long unacked
+      // data may sit) is the detector that actually fires: the socket errors,
+      // the endpoint's I/O thread exits, the bus forgets it. Keepalive covers
+      // the fully-idle case. ~10 s total: also the worst-case lockout when a
+      // phone hops transports (Wi-Fi -> NCM) and its old link must die first.
+      int one_ka = 1;
+      ::setsockopt(cfd, SOL_SOCKET, SO_KEEPALIVE, &one_ka, sizeof(one_ka));
+#if defined(__linux__)
+      int user_timeout_ms = 10 * 1000;
+      ::setsockopt(cfd, IPPROTO_TCP, TCP_USER_TIMEOUT, &user_timeout_ms,
+                   sizeof(user_timeout_ms));
+      int idle_s = 5, intvl_s = 2, cnt = 3;  // idle links: dead in ~11 s
+      ::setsockopt(cfd, IPPROTO_TCP, TCP_KEEPIDLE, &idle_s, sizeof(idle_s));
+      ::setsockopt(cfd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl_s, sizeof(intvl_s));
+      ::setsockopt(cfd, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt));
+#endif
       // Fixed fd (no factory): a client EOF reports on_closed once and the
       // endpoint's I/O thread exits; the bus forgets it. The acceptor keeps
       // listening for the next client. FramedFdEndpoint takes ownership of cfd

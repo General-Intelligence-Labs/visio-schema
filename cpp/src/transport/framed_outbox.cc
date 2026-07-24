@@ -13,23 +13,30 @@ std::int64_t FramedOutbox::SteadyNowUs() {
 FramedOutbox::FramedOutbox(WritePolicy policy, NowFn now)
     : policy_(policy), now_(std::move(now)) {}
 
-bool FramedOutbox::Enqueue(const std::uint8_t* frame, std::size_t len,
-                           bool keyframe) {
+bool FramedOutbox::Enqueue(SharedFrame frame, bool keyframe) {
+  if (!frame) return false;
+  const std::size_t len = frame->size();
   const std::int64_t enqueue_us = now_();
   std::lock_guard<std::mutex> lk(mu_);
   const std::size_t before = queue_.size();
   if (!ApplyDropBound(policy_, queue_, queue_bytes_, len,
-                      [](const Entry& e) { return e.data.size(); })) {
+                      [](const Entry& e) { return e.data->size(); })) {
     dropped_.fetch_add(1, std::memory_order_relaxed);  // DropOnFail: rejected
     return false;
   }
   if (const std::size_t evicted = before - queue_.size()) {
     dropped_.fetch_add(evicted, std::memory_order_relaxed);  // evicted-oldest
   }
-  queue_.push_back({std::vector<std::uint8_t>(frame, frame + len), enqueue_us,
-                    keyframe});
+  queue_.push_back({std::move(frame), enqueue_us, keyframe});
   queue_bytes_ += len;
   return true;
+}
+
+bool FramedOutbox::Enqueue(const std::uint8_t* frame, std::size_t len,
+                           bool keyframe) {
+  return Enqueue(std::make_shared<const std::vector<std::uint8_t>>(
+                     frame, frame + len),
+                 keyframe);
 }
 
 // Three-phase drain (see header + umi_channel.hpp). The blocking WriteFn runs
@@ -37,13 +44,13 @@ bool FramedOutbox::Enqueue(const std::uint8_t* frame, std::size_t len,
 // touch the uncommitted queue_; in_flight_ is already on the wire.
 bool FramedOutbox::Drain(const WriteFn& wr) {
   // Phase 1: finish what's in-flight (drainer-private; no lock). Committed bytes.
-  if (in_flight_off_ < in_flight_.size()) {
-    const long r = wr(in_flight_.data() + in_flight_off_,
-                      in_flight_.size() - in_flight_off_);
+  if (in_flight_off_ < in_flight_size()) {
+    const long r = wr(in_flight_->data() + in_flight_off_,
+                      in_flight_->size() - in_flight_off_);
     if (r < 0) return false;  // link dead
     in_flight_off_ += static_cast<std::size_t>(r);
-    if (in_flight_off_ < in_flight_.size()) return true;  // partial/EAGAIN
-    in_flight_.clear();
+    if (in_flight_off_ < in_flight_size()) return true;  // partial/EAGAIN
+    in_flight_.reset();
     in_flight_off_ = 0;
   }
 
@@ -70,10 +77,10 @@ bool FramedOutbox::Drain(const WriteFn& wr) {
           // viewer joined. Keep it and let the stale run around it go.
           ++it;
         } else if (policy_.protect_below_bytes > 0 &&
-                   it->data.size() < policy_.protect_below_bytes) {
+                   it->data->size() < policy_.protect_below_bytes) {
           ++it;  // keep this stale-but-small control frame
         } else {
-          queue_bytes_ -= it->data.size();
+          queue_bytes_ -= it->data->size();
           it = queue_.erase(it);
           // Count it. Age eviction used to drop frames without touching
           // dropped_, so a leg shedding hard still reported shed=0 and the only
@@ -88,13 +95,13 @@ bool FramedOutbox::Drain(const WriteFn& wr) {
   }
 
   // Trailing best-effort write (no lock; in_flight_ is drainer-private now).
-  if (in_flight_off_ < in_flight_.size()) {
-    const long r = wr(in_flight_.data() + in_flight_off_,
-                      in_flight_.size() - in_flight_off_);
+  if (in_flight_off_ < in_flight_size()) {
+    const long r = wr(in_flight_->data() + in_flight_off_,
+                      in_flight_->size() - in_flight_off_);
     if (r < 0) return false;
     in_flight_off_ += static_cast<std::size_t>(r);
-    if (in_flight_off_ == in_flight_.size()) {
-      in_flight_.clear();
+    if (in_flight_off_ == in_flight_size()) {
+      in_flight_.reset();
       in_flight_off_ = 0;
     }
   }
@@ -105,18 +112,23 @@ bool FramedOutbox::Drain(const WriteFn& wr) {
 void FramedOutbox::PromoteToInFlight() {
   if (queue_.empty()) return;
   if (policy_.drain == WritePolicy::DrainMode::BatchAll) {
+    // Coalesce into a drainer-private scratch. The copy is inherent to
+    // batching (one write needs one contiguous buffer); the shared entries
+    // just drop their refcounts afterwards.
     std::size_t total = 0;
-    for (const auto& e : queue_) total += e.data.size();
-    in_flight_.clear();
-    in_flight_.reserve(total);
+    for (const auto& e : queue_) total += e.data->size();
+    std::vector<std::uint8_t> batch;
+    batch.reserve(total);
     for (auto& e : queue_) {
-      in_flight_.insert(in_flight_.end(), e.data.begin(), e.data.end());
+      batch.insert(batch.end(), e.data->begin(), e.data->end());
     }
+    in_flight_ =
+        std::make_shared<const std::vector<std::uint8_t>>(std::move(batch));
     queue_.clear();
     queue_bytes_ = 0;
-  } else {  // OneAtATime
+  } else {  // OneAtATime: a refcount move — no copy, shared buffer untouched
     in_flight_ = std::move(queue_.front().data);
-    queue_bytes_ -= in_flight_.size();
+    queue_bytes_ -= in_flight_->size();
     queue_.pop_front();
   }
   in_flight_off_ = 0;
@@ -128,7 +140,7 @@ void FramedOutbox::Clear() {
     queue_.clear();
     queue_bytes_ = 0;
   }
-  in_flight_.clear();   // drainer-private
+  in_flight_.reset();   // drainer-private
   in_flight_off_ = 0;
 }
 

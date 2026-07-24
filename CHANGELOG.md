@@ -4,6 +4,26 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.6.6 — 2026-07-24
+
+### Added `Command.set_imu_live_rate` (tag 31) — per-connection IMU live-rate cap
+
+- **New `SetImuLiveRate { uint32 rate_hz }`** on the Command oneof, scoped to
+  the sending connection exactly like `SetVideoStreaming`. Caps the live
+  delivery rate of per-sample derived IMU streams (the fused quaternions) to
+  that endpoint only. `0` — and a fresh connection — mean full rate, so a
+  client that records from the live stream and never asks stays lossless.
+  Raw IMU bundles and on-device recordings are never affected. Wire-compatible
+  MINOR addition; an old device ignores the unknown body, an old app simply
+  never sends it.
+- Transport (internal, unpinned): framed sinks now encode each outbound
+  message once and fan the shared framed buffer out by refcount; the control
+  outbox batches its drain (one write per pass instead of one per ~470 Hz IMU
+  message); a sink whose link accepts nothing for 3 s with bytes pending
+  stops paying to frame bulk/decimatable traffic until the reader returns;
+  accepted TCP connections carry `SO_KEEPALIVE` + `TCP_USER_TIMEOUT` (~10 s)
+  so a vanished peer frees its endpoint promptly.
+
 ## 0.6.5 — 2026-07-24
 
 Tooling and C++ library only — **no proto or wire change** (`make breaking` clean

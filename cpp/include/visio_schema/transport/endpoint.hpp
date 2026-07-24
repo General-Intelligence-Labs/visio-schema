@@ -67,6 +67,13 @@ class Endpoint {
   // the keyframe the viewer is actually waiting for. A recording sink ignores
   // this — it must keep every frame. Default: no-op.
   virtual void RequestBulkFlush() {}
+
+  // Cap the delivery rate of `decimatable`-tagged messages (per-sample derived
+  // streams, e.g. fused IMU quaternions) for THIS sink only. 0 = full rate
+  // (the default — a client that never asks gets everything, so a phone
+  // recording from the live stream stays lossless). Set from the client's own
+  // SetImuLiveRate command. Recording sinks ignore it. Default: no-op.
+  virtual void SetLiveRateHz(int /*hz*/) {}
 };
 
 }  // namespace visio_schema::transport

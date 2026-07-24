@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <vector>
 
@@ -36,8 +37,15 @@ class FramedOutbox {
 
   explicit FramedOutbox(WritePolicy policy, NowFn now = SteadyNowUs);
 
+  // A framed buffer as the queue holds it: shared and immutable, so one
+  // EncodeFramed result fans out to N sinks' outboxes without N copies.
+  using SharedFrame = std::shared_ptr<const std::vector<std::uint8_t>>;
+
   // Queue one already-framed payload. Applies the WritePolicy; never blocks.
   // Thread-safe. Returns false only when DropOnFail rejected this frame.
+  // The SharedFrame overload is the cheap path (refcount, no copy); the raw
+  // pointer overload copies and wraps for callers without a shared buffer.
+  bool Enqueue(SharedFrame frame, bool keyframe = false);
   bool Enqueue(const std::uint8_t* frame, std::size_t len,
                bool keyframe = false);
 
@@ -45,7 +53,7 @@ class FramedOutbox {
   // partial in_flight_). The owning endpoint uses this to multiplex two outboxes
   // (control + bulk) over one fd WITHOUT interleaving half-frames: it only
   // switches queues when neither has bytes mid-flight. Leg-thread-local read.
-  bool InFlightActive() const { return in_flight_off_ < in_flight_.size(); }
+  bool InFlightActive() const { return in_flight_off_ < in_flight_size(); }
 
   // Drain as much as the link will accept right now, non-blocking. Returns false
   // if `wr` reported the link dead (<0). Call ONLY from the single leg I/O thread.
@@ -54,13 +62,13 @@ class FramedOutbox {
   // True while there are committed-but-unwritten bytes or queued frames — i.e.
   // the sink wants POLLOUT. (in_flight_ read is leg-thread-local.)
   bool HasPending() const {
-    if (in_flight_off_ < in_flight_.size()) return true;
+    if (in_flight_off_ < in_flight_size()) return true;
     std::lock_guard<std::mutex> lk(mu_);
     return !queue_.empty();
   }
   // Total bytes the outbox is holding (in-flight remainder + queued).
   std::size_t PendingBytes() const {
-    const std::size_t inflight = in_flight_.size() - in_flight_off_;
+    const std::size_t inflight = in_flight_size() - in_flight_off_;
     std::lock_guard<std::mutex> lk(mu_);
     return inflight + queue_bytes_;
   }
@@ -79,19 +87,25 @@ class FramedOutbox {
 
  private:
   struct Entry {
-    std::vector<std::uint8_t> data;
+    SharedFrame data;  // shared with sibling sinks; eviction drops a refcount
     std::int64_t enqueue_us;
     bool keyframe = false;  // never age-evicted: it is the decoder's sync point
   };
   void PromoteToInFlight();  // queue_ -> in_flight_, per DrainMode (caller holds mu_)
+  std::size_t in_flight_size() const {
+    return in_flight_ ? in_flight_->size() : 0;
+  }
 
   mutable std::mutex mu_;                  // guards queue_, queue_bytes_
   WritePolicy policy_;
   NowFn now_;
   std::deque<Entry> queue_;
   std::size_t queue_bytes_ = 0;
-  std::vector<std::uint8_t> in_flight_;    // drainer-private (one leg thread)
-  std::size_t in_flight_off_ = 0;          // drainer-private
+  // Drainer-private (one leg thread). OneAtATime promotion is a refcount move
+  // of the shared entry; BatchAll wraps its concatenation scratch — either
+  // way the committed bytes are immutable and never evicted.
+  SharedFrame in_flight_;
+  std::size_t in_flight_off_ = 0;
   std::atomic<std::uint64_t> dropped_{0};
 };
 
