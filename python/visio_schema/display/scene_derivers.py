@@ -38,9 +38,14 @@ _LAYOUT_SCHEMA = "visio_schema.v1.calibration.TactileLayout"
 _TACTILE_SCHEMA = "visio_schema.v1.sensor.TactileRaw"
 _TF_SCHEMA = "foxglove.FrameTransforms"
 _SCENE_SCHEMA = "foxglove.SceneUpdate"
-# Synthetic stream ids for derived scene channels — high, to clear device ids.
-_TACTILE_SCENE_BASE = 30000
-_HAND_SCENE_BASE = 30100
+# Derived scene channels live in the reserved 0x7Fxxxxxx range (like
+# _TF_STREAM_ID / _BITRATE_STREAM_BASE / _JPEG_STREAM_BASE in __init__.py) so they
+# can't collide with a device-announced stream id — sinks key their channel cache
+# by stream_id, so an alias would log a scene under the wrong schema. Each derived
+# id is base + the source data stream's id (one scene channel per source stream),
+# mirroring BitrateDeriver; no counter, no cross-deriver collision.
+_TACTILE_SCENE_BASE = 0x7F030000
+_HAND_SCENE_BASE = 0x7F040000
 _UNIT_Q = Quaternion(x=0, y=0, z=0, w=1)
 # Building a scene (137 cubes / 26 spheres + serialize) costs a few ms — far
 # slower than the ~288 fps tactile stream. Deriving one per frame backs up the
@@ -66,7 +71,7 @@ class TactileSceneDeriver:
         self._placement = {}   # data_topic -> [(index, taxel_id, x, y)]
         self._scene_ch = {}    # data_topic -> derived scene Channel
         self._last_ns = {}     # data_topic -> capture ns of the last emitted scene
-        self._next_stream = _TACTILE_SCENE_BASE
+        self._seq = {}         # data_topic -> next per-stream seq (uint32)
 
     def derive(self, msg, ch):
         topic = ch.topic
@@ -86,14 +91,16 @@ class TactileSceneDeriver:
             self._last_ns[topic] = ns
             out_ch = self._scene_ch.get(topic)
             if out_ch is None:
-                out_ch = make_channel(topic + "/scene", _SCENE_SCHEMA, stream_id=self._next_stream)
-                self._next_stream += 1
+                out_ch = make_channel(topic + "/scene", _SCENE_SCHEMA,
+                                      stream_id=_TACTILE_SCENE_BASE + msg.stream_id)
                 self._scene_ch[topic] = out_ch
             tr = TactileRaw()
             tr.ParseFromString(msg.payload)
             frame = topic.strip("/").split("/")[0]  # /glove_left/tactile/0 -> glove_left
             scene = _tactile_scene(tr.data, pl, frame, msg.timestamp)
-            out = Message(stream_id=out_ch.id, payload=scene.SerializeToString())
+            seq = self._seq.get(topic, 0)
+            self._seq[topic] = (seq + 1) & 0xFFFFFFFF
+            out = Message(stream_id=out_ch.id, payload=scene.SerializeToString(), seq=seq)
             out.timestamp.CopyFrom(msg.timestamp)
             return out, out_ch
         return None
@@ -158,7 +165,7 @@ class HandSkeletonDeriver:
     def __init__(self):
         self._scene_ch = {}
         self._last_ns = {}
-        self._next_stream = _HAND_SCENE_BASE
+        self._seq = {}         # topic -> next per-stream seq (uint32)
 
     def derive(self, msg, ch):
         topic = ch.topic
@@ -185,11 +192,13 @@ class HandSkeletonDeriver:
             return None
         out_ch = self._scene_ch.get(topic)
         if out_ch is None:
-            out_ch = make_channel(topic + "/scene", _SCENE_SCHEMA, stream_id=self._next_stream)
-            self._next_stream += 1
+            out_ch = make_channel(topic + "/scene", _SCENE_SCHEMA,
+                                  stream_id=_HAND_SCENE_BASE + msg.stream_id)
             self._scene_ch[topic] = out_ch
         scene = _hand_scene(joints, ent_id, color, msg.timestamp)
-        out = Message(stream_id=out_ch.id, payload=scene.SerializeToString())
+        seq = self._seq.get(topic, 0)
+        self._seq[topic] = (seq + 1) & 0xFFFFFFFF
+        out = Message(stream_id=out_ch.id, payload=scene.SerializeToString(), seq=seq)
         out.timestamp.CopyFrom(msg.timestamp)
         return out, out_ch
 

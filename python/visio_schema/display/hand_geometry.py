@@ -90,4 +90,4 @@ def build_placement(layout, is_left):
 
 def side_is_left(topic):
     """True if a topic belongs to the left glove (/glove_left/...)."""
-    return "glove_left" in topic
+    return topic.strip("/").split("/")[0] == "glove_left"
