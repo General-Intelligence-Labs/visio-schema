@@ -1,24 +1,42 @@
-// Frame-once fanout + per-endpoint live-rate decimation.
+// Frame-once fanout + per-endpoint stream-policy decimation.
 //
 // One EncodeFramed pass serves every framed sink: the first Send fills
 // Message::framed and later sinks take a refcount instead of re-running
-// COBS+CRC. Decimatable messages honor the endpoint's SetLiveRateHz cap;
-// everything else is untouched.
+// COBS+CRC. A stream the client capped is decimated per stream; a stream it
+// named no rule for is untouched.
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cstdint>
+#include <initializer_list>
+#include <memory>
 #include <thread>
+#include <utility>
 
 #include "active_object_test_util.hpp"
 #include "visio_schema/transport/framing.hpp"
 #include "visio_schema/transport/link.hpp"
 #include "visio_schema/transport/serial.hpp"
+#include "visio_schema/transport/stream_policy.hpp"
 
 using visio_schema::transport::EncodeFramed;
 using visio_schema::transport::MakeFdPair;
+using visio_schema::transport::ResolvedStreamPolicy;
 using visio_schema::transport::SerialEndpoint;
+using visio_schema::transport::StreamRule;
 using visio_schema::transport::test::InboundCollector;
 using visio_schema::wire::Message;
+
+namespace {
+
+// The already-resolved table an endpoint is handed — the bus does the topic
+// glob -> stream_id step, which these transport tests deliberately skip.
+std::shared_ptr<const ResolvedStreamPolicy> Policy(
+    std::initializer_list<std::pair<const std::uint32_t, StreamRule>> rules) {
+  return std::make_shared<const ResolvedStreamPolicy>(rules);
+}
+
+}  // namespace
 
 TEST(FrameOnce, SendFillsTheCacheWithTheExactWireBytes) {
   auto [a, b] = MakeFdPair();
@@ -71,7 +89,7 @@ TEST(FrameOnce, SecondSinkReusesTheCacheAndDeliversIdenticalBytes) {
   rx2.Stop();
 }
 
-TEST(LiveRateDecimation, CapsDecimatableMessagesPerStream) {
+TEST(StreamPolicyDecimation, CapsEachCappedStreamSeparately) {
   auto [a, b] = MakeFdPair();
   SerialEndpoint tx(a), rx(b);
   InboundCollector rxc;
@@ -80,7 +98,9 @@ TEST(LiveRateDecimation, CapsDecimatableMessagesPerStream) {
   // 1 Hz: the min gap (1 s) cannot be straddled by the microsecond burst
   // below even on a badly stalled CI machine — the exact-count assertion
   // stays deterministic.
-  tx.SetLiveRateHz(1);
+  constexpr std::int64_t kOneSecond = 1'000'000;
+  tx.SetStreamPolicy(Policy({{20, StreamRule{false, kOneSecond}},
+                             {21, StreamRule{false, kOneSecond}}}));
 
   // A burst far faster than 1 Hz: only the first of each stream passes.
   for (int i = 0; i < 10; ++i) {
@@ -91,10 +111,9 @@ TEST(LiveRateDecimation, CapsDecimatableMessagesPerStream) {
     tx.Send(m);
   }
   Message other;
-  other.stream_id = 21;  // distinct stream: rate cap is per-stream
-  other.payload = "quat2";
-  other.decimatable = true;
-  tx.Send(other);
+  other.stream_id = 21;  // distinct stream: each carries its own clock. Also
+  other.payload = "raw";  // FLAGLESS — a cap is no longer tied to `decimatable`,
+  tx.Send(other);         // which is what lets the raw IMU bundles be thinned.
 
   ASSERT_GE(rxc.wait_for(2), 2u);
   // Give any stragglers time to (wrongly) arrive before counting.
@@ -105,13 +124,64 @@ TEST(LiveRateDecimation, CapsDecimatableMessagesPerStream) {
   rx.Stop();
 }
 
-TEST(LiveRateDecimation, ZeroRateAndPlainMessagesPassUntouched) {
+TEST(StreamPolicyDecimation, DropsWhatTheRuleDrops) {
   auto [a, b] = MakeFdPair();
   SerialEndpoint tx(a), rx(b);
   InboundCollector rxc;
   rx.Start(rxc.fn(), rxc.on_closed());
   tx.Start(nullptr, nullptr);
-  // rate 0 (default): decimatable passes at full rate.
+  tx.SetStreamPolicy(Policy({{30, StreamRule{true, 0}}}));
+
+  for (int i = 0; i < 5; ++i) {
+    Message m;
+    m.stream_id = 30;  // e.g. the raw IMU bundles a preview never reads
+    m.payload = "raw";
+    tx.Send(m);
+  }
+  Message kept;
+  kept.stream_id = 31;
+  kept.payload = "kept";
+  tx.Send(kept);
+
+  ASSERT_GE(rxc.wait_for(1), 1u);
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  ASSERT_EQ(rxc.messages().size(), 1u);
+  EXPECT_EQ(rxc.messages()[0].payload, "kept");
+
+  tx.Stop();
+  rx.Stop();
+}
+
+// Video is keep-or-drop: a cap on a bulk stream must be ignored, because
+// shedding P-frames costs the decoder its reference chain for a whole GOP.
+TEST(StreamPolicyDecimation, RateCapIsIgnoredForBulkVideo) {
+  auto [a, b] = MakeFdPair();
+  SerialEndpoint tx(a), rx(b);
+  InboundCollector rxc;
+  rx.Start(rxc.fn(), rxc.on_closed());
+  tx.Start(nullptr, nullptr);
+  tx.SetStreamPolicy(Policy({{40, StreamRule{false, 1'000'000}}}));
+
+  for (int i = 0; i < 5; ++i) {
+    Message m;
+    m.stream_id = 40;
+    m.payload = "frame";
+    m.bulk = true;
+    tx.Send(m);
+  }
+  ASSERT_GE(rxc.wait_for(5), 5u);
+  tx.Stop();
+  rx.Stop();
+}
+
+TEST(StreamPolicyDecimation, UnmatchedStreamsAndZeroRatePassUntouched) {
+  auto [a, b] = MakeFdPair();
+  SerialEndpoint tx(a), rx(b);
+  InboundCollector rxc;
+  rx.Start(rxc.fn(), rxc.on_closed());
+  tx.Start(nullptr, nullptr);
+  // No policy at all (a fresh connection): everything at full rate, which is
+  // what keeps a client recording from the live stream lossless.
   for (int i = 0; i < 5; ++i) {
     Message m;
     m.stream_id = 22;
@@ -119,8 +189,9 @@ TEST(LiveRateDecimation, ZeroRateAndPlainMessagesPassUntouched) {
     m.decimatable = true;
     tx.Send(m);
   }
-  // Rate set, but plain (non-decimatable) messages are never rate-limited.
-  tx.SetLiveRateHz(1);
+  // A policy that caps ONE stream leaves every stream it does not name alone —
+  // absent from the table means keep, not drop.
+  tx.SetStreamPolicy(Policy({{99, StreamRule{false, 1'000'000}}}));
   for (int i = 0; i < 5; ++i) {
     Message m;
     m.stream_id = 23;

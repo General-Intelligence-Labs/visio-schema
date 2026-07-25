@@ -88,26 +88,25 @@ void FramedFdEndpoint::Stop() {
 
 void FramedFdEndpoint::Send(const Message& msg) {
   // Door checks BEFORE any framing work, so a frame nobody will get costs
-  // nothing. All flags are set under the same dispatch serialization as Send
-  // (or by this endpoint's own I/O thread), so relaxed reads are consistent.
-  const bool stalled = link_stalled_.load(std::memory_order_relaxed);
-  // Video paused for this client (app on a non-video screen), or the link is
-  // stalled: drop bulk at the door so it never enters the queue. Control is
-  // never paused.
-  if (msg.bulk && (bulk_paused_.load(std::memory_order_relaxed) || stalled))
+  // nothing — the reason a thinned preview saves device CPU, not just bandwidth.
+
+  // Nobody is reading: bulk is hopeless and derived per-sample streams are pure
+  // waste (their ground truth ships full-rate elsewhere). Small control frames
+  // still enqueue — they are the probe that detects the reader coming back.
+  if (link_stalled_.load(std::memory_order_relaxed) &&
+      (msg.bulk || msg.decimatable)) {
     return;
-  if (msg.decimatable) {
-    // On a stalled link derived per-sample streams are pure waste — the raw
-    // bundles carry the ground truth and nothing is delivered anyway.
-    if (stalled) return;
-    // Client-requested live-rate cap (SetImuLiveRate), per stream.
-    if (const int rate = live_rate_hz_.load(std::memory_order_relaxed)) {
-      const std::int64_t min_gap_us = 1'000'000 / rate;
-      const std::int64_t now_us = FramedOutbox::SteadyNowUs();
-      std::int64_t& last_us = decim_last_us_[msg.stream_id];
-      if (now_us - last_us < min_gap_us) return;
-      last_us = now_us;
-    }
+  }
+  // Absent rule = keep at full rate, so a stream announced after the policy was
+  // resolved is delivered rather than silently dropped.
+  const StreamRule* rule = RuleFor(msg.stream_id);
+  if (rule != nullptr && rule->drop) return;
+  // A cap never applies to inter-coded video (stream_policy.hpp).
+  if (rule != nullptr && rule->min_gap_us != 0 && !msg.bulk) {
+    const std::int64_t now_us = FramedOutbox::SteadyNowUs();
+    std::int64_t& last_us = decim_last_us_[msg.stream_id];
+    if (now_us - last_us < rule->min_gap_us) return;
+    last_us = now_us;
   }
   // Frame ONCE per message: the framed bytes are identical for every sink
   // (see wire::Message::framed), so whoever gets here first pays the
@@ -126,15 +125,13 @@ void FramedFdEndpoint::Wake() { wake_.Signal(); }
 
 void FramedFdEndpoint::Pump() {
   if (fd_ < 0) return;
-  // When streaming was just paused, shed any video still queued from before the
-  // pause — but only at a frame boundary (not mid-write, or the reader desyncs).
-  // Clear() is leg-thread-only, and Pump runs on the leg thread, so this is the
-  // safe place to do it. Frees the AP within one drain cycle.
-  if (bulk_paused_.load(std::memory_order_relaxed) && !outbox_.InFlightActive())
-    outbox_.Clear();
-  // A viewer just (re)started decoding: drop the video it queued before that
-  // moment so the keyframe it is waiting for is next on the wire instead of a
-  // second deep. Frame boundary only — Clear() mid-write would splice a frame.
+  // Shed the video queued before the client's last change of mind — a backlog
+  // it either no longer wants, or (on a resume) cannot decode and which would
+  // only delay the keyframe it is waiting for.
+  //
+  // Frame boundary only: Clear() mid-write would splice a frame and desync the
+  // reader's COBS framing. Clear() is leg-thread-only and Pump runs on the leg
+  // thread, so this is the safe place.
   if (bulk_flush_.load(std::memory_order_relaxed) && !outbox_.InFlightActive()) {
     outbox_.Clear();
     bulk_flush_.store(false, std::memory_order_relaxed);

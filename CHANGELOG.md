@@ -4,6 +4,71 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.6.7 — 2026-07-25
+
+### Added `Command.set_stream_policy` (tag 32) — the generic per-connection stream filter
+
+- **New `SetStreamPolicy { repeated Rule { topic, drop, max_rate_hz } }`**: one
+  ordered, first-match-wins list saying which streams a connection wants and how
+  fast, addressed by **topic glob** rather than by message class. It replaces the
+  connection's policy outright (no merging), and a connection that never sends one
+  gets everything at full rate — so a lost command still costs bandwidth, never
+  data, and a client recording from the live stream stays lossless by not asking.
+  `target_device` is ignored: a policy describes one link, so it applies at the hop
+  it arrives on (on a suit, the hub→phone leg that actually binds).
+- **Why**: the two knobs it replaces keyed off a *message flag* (`bulk`,
+  `decimatable`), never the topic, so "camera 0 yes, camera 1 no" was inexpressible
+  and the raw IMU bundles — which carry neither flag — could not be shed at all. A
+  phone preview renders one camera at ~15 Hz but was pulling both H.265 eyes plus
+  the full IMU set.
+- **Glob grammar**: leading `/` stripped from both sides, then `*` matches exactly
+  one path segment and `**` matches zero or more segments at any position.
+  Everything else is a literal segment; there are no partial-segment globs. Patterns
+  are re-resolved whenever a peer learns a channel, so a rule covers leaves a hub has
+  not discovered yet. Prefer a **leading** `**` when the depth is not yours to know:
+  relayed leaf topics normally arrive unchanged, but a relay MAY namespace them under
+  the leaf's `device_name` (`prefix_topics_with_device_name`, off by default, opted
+  into for multi-device bring-up). `**/camera/0` matches both forms.
+- **`max_rate_hz` is ignored for camera video.** H.265 is inter-coded: shedding
+  arbitrary P-frames costs the decoder its reference chain and blanks the viewer for a
+  whole GOP. Video is keep-or-drop; capping is for streams whose messages stand alone.
+- At most **12 rules** — the bound the device's malloc-free decode struct is sized
+  for. A longer list fails to decode as a whole and carries no `command_id` to report
+  against, so it is part of the contract.
+
+### `CommandResult`: an unrecognized DIRECTED command must be refused, not ignored
+
+- A receiver now MUST answer a Command naming it in `target_device` even when it
+  does not implement it — `ok=false, error_code="unsupported"` — and callers must
+  treat that code as PERMANENT (no retry). Broadcasts (empty `target_device`) stay
+  silent, since they reach every leaf behind a hub and N replies to one
+  `command_id` is worse than none.
+- **Why**: silence is indistinguishable from a slow link, so a newer host spends
+  its full command timeout *and* its retry budget on something that can never
+  succeed. Measured: the app's stream-policy gate burned ~47 s over three attempts
+  against firmware predating tag 32, then silently gave up — losing the
+  non-video-screen pause and the join-keyframe with only a console warning. This
+  makes a version mismatch fail fast and legibly instead of on a stopwatch.
+- Wire-compatible: no field or tag changes, only a contract the `error_code`
+  string already had room for.
+
+### Deprecated `set_video_streaming` (23) and `set_imu_live_rate` (31)
+
+- Both are marked `deprecated` and are now **sugar over the policy**, not a second
+  mechanism: a receiver expands `SetVideoStreaming{false}` into "drop every
+  `foxglove.CompressedVideo` channel" and `SetImuLiveRate{hz}` into "cap every
+  `Quaternion` channel", using the schema names the registry already carries. Fielded
+  app builds are unaffected; old and new clients share one enforcement path.
+- Transport (internal, unpinned): `Endpoint::SetBulkPaused` / `SetLiveRateHz` are
+  **removed** in favour of `SetStreamPolicy(shared_ptr<const ResolvedStreamPolicy>)`,
+  and `FramedFdEndpoint::Send` now has a single filter gate instead of two. The filter
+  still runs before `EncodeFramed`, so a shed frame costs no CPU. `RequestBulkFlush()`
+  absorbs the old pause-shed: it is called on the policy edges where video stops (shed
+  the backlog) or resumes (drop pre-join video ahead of the keyframe).
+- **Recording sinks are untouched by any of this.** `SetStreamPolicy` is a no-op on
+  the `Endpoint` base and only `FramedFdEndpoint` overrides it, so a viewer thinning
+  its own preview cannot thin an MCAP — the reason the filter is per-endpoint.
+
 ## 0.6.6 — 2026-07-24
 
 ### Added `Command.set_imu_live_rate` (tag 31) — per-connection IMU live-rate cap

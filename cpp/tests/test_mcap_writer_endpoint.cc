@@ -15,10 +15,12 @@
 #include <filesystem>
 #include <string>
 #include <thread>
+#include <memory>
 #include <unordered_map>
 
 #include "visio_schema/routing/channel.hpp"
 #include "visio_schema/routing/registry.hpp"
+#include "visio_schema/transport/stream_policy.hpp"
 #include "visio_schema/wire/control.hpp"
 
 using namespace visio_schema::mcap;
@@ -303,4 +305,45 @@ TEST(McapWriterEndpoint, StorageFailureSurvivesDestructorWithoutExplicitStop) {
 
   EXPECT_TRUE(failed);
   fs::remove_all(dir);
+}
+
+// A live viewer can thin its own feed with a stream policy (SetStreamPolicy).
+// The recorder must be deaf to that: a preview showing one camera must not
+// silently produce a one-camera recording. McapWriterEndpoint derives straight
+// from Endpoint and does NOT override SetStreamPolicy, so it takes the base
+// no-op — this pins that, by handing it the most hostile policy possible and
+// checking every message still lands.
+TEST(McapWriterEndpoint, IgnoresAStreamPolicyAndKeepsRecordingEverything) {
+  const std::string path = TempPath("visio_mcap_test_policy.mcap");
+  std::remove(path.c_str());
+  std::unordered_map<std::uint32_t, Channel> table{
+      {kFirstDynamic, MakeChannel(kFirstDynamic, "/dev/camera/0")},
+      {kFirstDynamic + 1, MakeChannel(kFirstDynamic + 1, "/dev/camera/1")}};
+  auto resolve = [&](std::uint32_t id) -> const Channel* {
+    auto it = table.find(id);
+    return it == table.end() ? nullptr : &it->second;
+  };
+
+  // Drop both streams outright — what a preview-only client would install.
+  auto policy = std::make_shared<const ResolvedStreamPolicy>(
+      ResolvedStreamPolicy{{kFirstDynamic, StreamRule{true, 0}},
+                           {kFirstDynamic + 1, StreamRule{true, 0}}});
+
+  std::uint64_t written = 0;
+  {
+    McapWriterEndpoint ep(path, resolve);
+    ep.Start(nullptr, nullptr);
+    ep.SetStreamPolicy(policy);
+    ep.Send(Data(kFirstDynamic, "left-frame"));
+    ep.Send(Data(kFirstDynamic + 1, "right-frame"));
+    ep.Stop();
+    EXPECT_FALSE(ep.write_failed());
+    written = ep.bytes_written();
+  }
+  // Both payloads reached disk: the filter is per-endpoint, and this endpoint
+  // never opted in.
+  EXPECT_EQ(written, std::string("left-frame").size() +
+                         std::string("right-frame").size());
+  ASSERT_TRUE(fs::exists(path));
+  std::remove(path.c_str());
 }

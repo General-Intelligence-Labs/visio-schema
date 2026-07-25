@@ -42,11 +42,15 @@ struct Message {
   // producer alongside `bulk`.
   bool keyframe = false;
 
-  // In-memory only (NOT serialized): a live sink MAY rate-limit this message
-  // per its endpoint's live-rate setting (SetImuLiveRate). Set by the producer
-  // for per-sample derived streams (fused IMU quaternions) whose ground truth
-  // ships full-rate elsewhere (the raw bundles). Recording sinks ignore it —
-  // recordings stay lossless.
+  // In-memory only (NOT serialized): this message is SAFE TO SHED. Set by the
+  // producer for per-sample derived streams (fused IMU quaternions) whose
+  // ground truth ships full-rate elsewhere (the raw bundles), so losing one
+  // costs nothing recoverable. A live sink drops these on a STALLED link, where
+  // framing them is pure waste — nothing is being delivered anyway. Recording
+  // sinks ignore it; recordings stay lossless.
+  //
+  // Rate is NOT decided here — a client caps streams by topic
+  // (transport/stream_policy.hpp).
   bool decimatable = false;
 
   // In-memory only (NOT serialized): cache of EncodeFramed(*this), filled by

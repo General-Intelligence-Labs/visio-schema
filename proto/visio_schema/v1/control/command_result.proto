@@ -152,10 +152,23 @@ message DeviceState {
 }
 
 // The single ack a device emits per Command on /<device>/command_result.
+//
+// A receiver MUST answer a Command that names it in `target_device`, even one it
+// does not understand: reply `ok=false, error_code="unsupported"`. Silence is not
+// a valid answer — a caller cannot distinguish it from a slow link, so it spends
+// its whole command timeout and every retry on something that can never succeed,
+// and a newer host talking to older firmware degrades on a stopwatch instead of
+// immediately. `"unsupported"` is a PERMANENT refusal: callers must not retry it.
+//
+// A BROADCAST (empty `target_device`) is exempt, and must stay silent when
+// unsupported — it reaches every leaf behind a hub, so answering would put N
+// contradictory replies on the wire against one command_id.
 message CommandResult {
   uint64 command_id    = 1;  // echoes Command.command_id
   bool   ok            = 2;
-  string error_code    = 3;  // machine-readable; empty when ok
+  // Machine-readable; empty when ok. Well-known: "unsupported" (this receiver
+  // does not implement the command — permanent, do not retry).
+  string error_code    = 3;
   string error_message = 4;  // human-readable; empty when ok
 
   // Command-specific return data. Setters + GetState return `state`; ScanWifi

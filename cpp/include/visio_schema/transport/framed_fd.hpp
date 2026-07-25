@@ -13,8 +13,10 @@
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "visio_schema/transport/endpoint.hpp"
@@ -40,24 +42,21 @@ class FramedFdEndpoint : public Endpoint {
   void Send(const Message& msg) override;
   void Stop() override;
 
-  // Drop `bulk` (video) frames for this client while paused; control still
-  // flows. Set under the bus dispatch lock (same serialization as Send), read
-  // lock-free in Send/Pump. Pump() sheds already-queued video at a frame
-  // boundary so the link frees within one drain cycle.
-  void SetBulkPaused(bool paused) override {
-    bulk_paused_.store(paused, std::memory_order_relaxed);
+  // This client's delivery filter (endpoint.hpp). Replaced whole rather than
+  // mutated, so a reader works from a consistent table. Serialized with Send()
+  // by the bus dispatch mutex — the same contract decim_last_us_ relies on, and
+  // the reason this needs no atomic (libstdc++'s atomic shared_ptr ops take a
+  // process-global pthread mutex, which would be ~100x this gate's cost).
+  void SetStreamPolicy(
+      std::shared_ptr<const ResolvedStreamPolicy> policy) override {
+    policy_ = std::move(policy);
   }
 
   // Honoured by Pump() at a frame boundary (never mid-write, or the reader
-  // desyncs on a half-written COBS frame) — same discipline as the pause shed.
+  // desyncs on a half-written COBS frame).
   void RequestBulkFlush() override {
     bulk_flush_.store(true, std::memory_order_relaxed);
     Wake();
-  }
-
-  // Per-endpoint live-rate cap for decimatable messages (endpoint.hpp).
-  void SetLiveRateHz(int hz) override {
-    live_rate_hz_.store(hz > 0 ? hz : 0, std::memory_order_relaxed);
   }
 
   // Diagnostics (thread-safe).
@@ -103,13 +102,22 @@ class FramedFdEndpoint : public Endpoint {
   // between them only at a frame boundary (never mid-frame → no COBS desync).
   FramedOutbox ctrl_outbox_;       // non-bulk: control/sensor; near-lossless
   FramedOutbox outbox_;            // bulk: camera video; lossy backpressure
-  std::atomic<bool> bulk_paused_{false};
-  std::atomic<bool> bulk_flush_{false};  // per-client video-stream pause
+  std::atomic<bool> bulk_flush_{false};     // shed queued video at a frame boundary
   std::atomic<bool> link_stalled_{false};   // set by I/O thread, read in Send
   std::int64_t last_progress_ns_ = 0;       // I/O-thread-private
-  std::atomic<int> live_rate_hz_{0};        // 0 = full rate
-  // Last-forwarded time per decimatable stream. Touched only from Send under
-  // the bus dispatch serialization (decimatable messages arrive via Relay).
+  // This client's filter; null = deliver everything. Guarded by the bus dispatch
+  // serialization, like decim_last_us_ below.
+  std::shared_ptr<const ResolvedStreamPolicy> policy_;
+  // The rule for `stream_id`, or null when nothing restricts it.
+  const StreamRule* RuleFor(std::uint32_t stream_id) const {
+    if (!policy_) return nullptr;
+    const auto it = policy_->find(stream_id);
+    return it == policy_->end() ? nullptr : &it->second;
+  }
+  // Last-forwarded time per rate-capped stream. Touched only from Send, which
+  // the bus serializes under its dispatch mutex (every send path — Publish,
+  // Relay, ReplyTo — takes it), so this needs no lock of its own. Bounded by the
+  // number of channels a rule matched.
   std::unordered_map<std::uint32_t, std::int64_t> decim_last_us_;
   std::int64_t reopen_backoff_ns_ = 0;
   std::int64_t next_reopen_ns_ = 0;

@@ -64,6 +64,17 @@ visio_schema.v1.control.FormatStorage.fs_type         max_size:8
 # SetNoticeLang: ISO 639-1 code, possibly with a region subtag ("zh-CN").
 visio_schema.v1.control.SetNoticeLang.lang            max_size:16
 
+# SetStreamPolicy: the per-connection delivery filter. Bounded (not FT_POINTER
+# like the result lists) because it rides the inbound Command decode path, which
+# is deliberately malloc-free — same reasoning as SetCalibration's artifacts.
+# 12 rules x 64 B is ~0.9 KB in the Command union, and a preview needs 4.
+# The count is a HARD limit: nanopb fails the whole decode past it, so the
+# bound is part of the contract (documented in command.proto).
+# Topic headroom: "/GILABS-AABBCCDD/glove_left/imus/15/raw" is 40 chars, and a
+# hub prefixes relayed leaf topics with the leaf's device_name.
+visio_schema.v1.control.SetStreamPolicy.rules         max_count:12
+visio_schema.v1.control.SetStreamPolicy.Rule.topic    max_size:64
+
 # ---- Control: CommandResult ack + DeviceState snapshot (bounded inline so the
 #      ack is a static struct; the two list payloads below are FT_POINTER) -----
 visio_schema.v1.control.CommandResult.error_code               max_size:32

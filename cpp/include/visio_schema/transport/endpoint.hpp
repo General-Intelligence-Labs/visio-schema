@@ -21,8 +21,10 @@
 #pragma once
 
 #include <functional>
+#include <memory>
 #include <stdexcept>
 
+#include "visio_schema/transport/stream_policy.hpp"
 #include "visio_schema/wire/message.hpp"
 
 namespace visio_schema::transport {
@@ -55,11 +57,16 @@ class Endpoint {
   // Stop + join the I/O thread and close the link. Idempotent.
   virtual void Stop() = 0;
 
-  // Pause/resume `bulk`-tagged frames (camera video) for THIS sink only, leaving
-  // control/sensor frames flowing. A streaming sink (FramedFdEndpoint) drops
-  // bulk while paused so a control reply isn't stuck behind buffered H.265; a
-  // recording sink (MCAP) ignores this and keeps capturing. Default: no-op.
-  virtual void SetBulkPaused(bool /*paused*/) {}
+  // Install this sink's per-connection delivery filter (transport/stream_policy.hpp).
+  // nullptr / never-called = deliver everything at full rate, which is why a
+  // client that never asks — including one recording from the live stream —
+  // stays lossless.
+  //
+  // A RECORDING sink must never override this. The MCAP writer takes the base
+  // no-op, so a viewer thinning its own preview cannot thin the capture: that
+  // separation is the whole reason the filter lives per-endpoint, not per-device.
+  virtual void SetStreamPolicy(
+      std::shared_ptr<const ResolvedStreamPolicy> /*policy*/) {}
 
   // Drop this sink's QUEUED bulk frames at the next frame boundary, keeping the
   // link and all control traffic intact. For a viewer that has just started
@@ -67,13 +74,6 @@ class Endpoint {
   // the keyframe the viewer is actually waiting for. A recording sink ignores
   // this — it must keep every frame. Default: no-op.
   virtual void RequestBulkFlush() {}
-
-  // Cap the delivery rate of `decimatable`-tagged messages (per-sample derived
-  // streams, e.g. fused IMU quaternions) for THIS sink only. 0 = full rate
-  // (the default — a client that never asks gets everything, so a phone
-  // recording from the live stream stays lossless). Set from the client's own
-  // SetImuLiveRate command. Recording sinks ignore it. Default: no-op.
-  virtual void SetLiveRateHz(int /*hz*/) {}
 };
 
 }  // namespace visio_schema::transport
