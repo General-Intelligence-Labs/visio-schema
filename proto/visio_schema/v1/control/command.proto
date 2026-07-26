@@ -104,8 +104,7 @@ message Identify {
 //
 //     **/camera/0     keep          (max_rate_hz 0, drop false)
 //     **/camera/*     drop          the other eye
-//     **/imu/*/raw    drop
-//     **/imu/*/quat   max_rate_hz 30
+//     **/imu/*/quat   drop          the ~470/s fused stream nothing renders
 //
 // Topic patterns are globs over path segments: the leading '/' is stripped from
 // both sides, then '*' matches exactly one segment and '**' matches zero or more

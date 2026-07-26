@@ -67,8 +67,13 @@ tail. A phone showing one eye of a stereo ego sends:
 |---|---|
 | `**/camera/0` | keep (no drop, no cap) |
 | `**/camera/*` | drop — the other eye |
-| `**/imu/*/raw` | drop — the bundled ground truth no preview reads |
-| `**/imu/*/quat` | `max_rate_hz: 30` |
+| `**/imu/*/quat` | drop — the ~470 msg/s fused stream nothing renders |
+
+Note what is NOT filtered: the raw IMU bundles. They carry the accel/gyro a
+client actually displays and arrive pre-batched at ~29 msg/s, so a rule there
+costs samples and saves almost no messages. The per-message framing of the
+*derived* quaternion stream is the real device-CPU cost, and dropping it is free
+because its ground truth is in the bundles.
 
 Each command **replaces** the connection's policy; rules are never merged with what
 came before, so a client sends its full desired state and a lost or reordered command
