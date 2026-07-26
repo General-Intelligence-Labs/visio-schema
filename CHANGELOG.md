@@ -4,6 +4,40 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.6.9 — 2026-07-26
+
+### Added `Command.set_status_report` (tag 34), `SetStorage/TestStorage.status_prefix` (tag 7), `DeviceState.status_report` (tag 31) + `storage_status_prefix` (tag 32) — periodic device status reports
+
+Devices can now periodically PUT a health snapshot (plus a low-res camera JPEG) to
+the customer's S3/OSS bucket, so a fleet owner can see which units are alive,
+aimed, hot, or filling their card without touching them.
+
+- **`SetStorage.status_prefix` / `TestStorage.status_prefix`**: a SECOND key prefix
+  over the SAME credentials. The recordings leg (`prefix`) and the status leg are
+  independent — a device may do recordings only, status only, or both. Empty means
+  the device default, `status/`. Deliberately a sibling of the recordings subtree,
+  not nested inside it: the two want different lifecycle rules and different read
+  grants, and health JSON must not appear where a recordings-ingest pipeline walks.
+- **`Command.set_status_report`**: `SetStatusReport { enabled }`, the runtime
+  on/off switch, persisted device-side. Separate from `SetAutoUpload`, which gates
+  the recordings leg; the two share credentials and nothing else.
+- **`DeviceState.status_report`**: **tri-state**, not a bool, for the same reason
+  as `audio_recording` — `UNSUPPORTED` covers both pre-status-report firmware and
+  `[status_report] enable=0` in the board config, letting the app hide a control it
+  cannot move rather than render a switch in the wrong position.
+- **`DeviceState.storage_status_prefix`**: echoed so the app can show where health
+  reports land.
+
+Wire-compatible in both directions: all four are new optional fields on new tag
+numbers. Old apps ignore them; new apps see `UNSUPPORTED` / empty from old
+firmware, which is exactly the "feature absent" reading.
+
+NOTE on tags: an earlier draft of this feature targeted `Command` tag 33 and
+`DeviceState` tag 30. Both were taken by `forget_wifi` / `wifi_networks` in 0.6.8
+while this was in progress — re-derived to 34 and 31/32. Always re-check against
+`origin/main` before claiming a tag; see the 0.4.x note about `set_notice_lang`
+having to move 26 → 27 for the same reason.
+
 ## 0.6.8 — 2026-07-26
 
 ### Added `Command.forget_wifi` (tag 33) + `DeviceState.wifi_networks` (tag 30) — many remembered networks

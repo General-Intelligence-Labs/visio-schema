@@ -152,6 +152,9 @@ message DeviceState {
   // Access key ID is an identifier (not a secret), echoed back so the app can
   // show which credential is configured. The secret access key is NEVER echoed.
   string storage_access_key_id = 26;
+  // The status-report key prefix (see SetStorage.status_prefix). Echoed so the
+  // app can show where health reports land; empty means the device default.
+  string storage_status_prefix = 32;
 
   // ── upload queue ──
   uint32 upload_pending             = 14;
@@ -190,6 +193,22 @@ message DeviceState {
     AUDIO_RECORDING_DISABLED    = 2;
   }
   AudioRecording audio_recording = 29;
+
+  // ── status reports ──
+  // Whether the device periodically PUTs health + a camera JPEG to the status
+  // prefix (SetStatusReport).
+  //
+  // Tri-state for the same reason as AudioRecording above: UNSUPPORTED covers
+  // both "this firmware predates status reports" and "[status_report] enable=0
+  // in the board config", and lets the app HIDE the control rather than render a
+  // switch it cannot actually move. A bool would read false on old firmware,
+  // which is indistinguishable from "supported but off".
+  enum StatusReport {
+    STATUS_REPORT_UNSUPPORTED = 0;
+    STATUS_REPORT_ENABLED     = 1;
+    STATUS_REPORT_DISABLED    = 2;
+  }
+  StatusReport status_report = 31;
 }
 
 // The single ack a device emits per Command on /<device>/command_result.

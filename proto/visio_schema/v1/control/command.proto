@@ -52,6 +52,7 @@ message Command {
     SetImuLiveRate set_imu_live_rate = 31 [deprecated = true];
     SetStreamPolicy set_stream_policy = 32;
     ForgetWifi     forget_wifi     = 33;
+    SetStatusReport set_status_report = 34;
   }
 }
 
@@ -203,6 +204,13 @@ message SetAutoStart {
 // in-flight upload finishes; the stored creds + queue are NOT cleared), so
 // re-enabling resumes. Default is enabled. The current value is reported in
 // DeviceState.auto_upload_enabled.
+// Turn periodic status reporting on or off at runtime. Persisted device-side, so
+// it survives a reboot. Independent of SetAutoUpload, which gates the RECORDING
+// upload leg — the two share credentials but nothing else.
+message SetStatusReport {
+  bool enabled = 1;
+}
+
 message SetAutoUpload {
   bool enabled = 1;
 }
@@ -356,6 +364,12 @@ message SetStorage {
   string access_key_id     = 4;
   string secret_access_key = 5;
   string prefix            = 6;
+  // Key prefix for periodic STATUS REPORTS (device health + a low-res camera
+  // JPEG), written under the same credentials as `prefix` above but to a
+  // separate subtree with its own lifecycle and its own read grant. Empty means
+  // the device's default ("status/"). The two legs are independent: a device may
+  // upload recordings only, report status only, or both.
+  string status_prefix     = 7;
 }
 
 // Validate S3 credentials WITHOUT persisting (HEAD bucket). Replaces
@@ -367,6 +381,12 @@ message TestStorage {
   string access_key_id     = 4;
   string secret_access_key = 5;
   string prefix            = 6;
+  // Key prefix for periodic STATUS REPORTS (device health + a low-res camera
+  // JPEG), written under the same credentials as `prefix` above but to a
+  // separate subtree with its own lifecycle and its own read grant. Empty means
+  // the device's default ("status/"). The two legs are independent: a device may
+  // upload recordings only, report status only, or both.
+  string status_prefix     = 7;
 }
 
 // List recorded sessions + their upload state; the CommandResult carries

@@ -43,12 +43,14 @@ visio_schema.v1.control.SetStorage.bucket             max_size:64
 visio_schema.v1.control.SetStorage.access_key_id      max_size:32
 visio_schema.v1.control.SetStorage.secret_access_key  max_size:64
 visio_schema.v1.control.SetStorage.prefix             max_size:128
+visio_schema.v1.control.SetStorage.status_prefix      max_size:128
 visio_schema.v1.control.TestStorage.endpoint_url      max_size:128
 visio_schema.v1.control.TestStorage.region            max_size:32
 visio_schema.v1.control.TestStorage.bucket            max_size:64
 visio_schema.v1.control.TestStorage.access_key_id     max_size:32
 visio_schema.v1.control.TestStorage.secret_access_key max_size:64
 visio_schema.v1.control.TestStorage.prefix            max_size:128
+visio_schema.v1.control.TestStorage.status_prefix     max_size:128
 
 # StartRecording capture metadata: bounded so they decode into the static
 # struct (session_name stays the nanopb default callback — firmware ignores it).
@@ -95,6 +97,7 @@ visio_schema.v1.control.DeviceState.wifi_last_error            max_size:128
 visio_schema.v1.control.DeviceState.storage_endpoint           max_size:128
 visio_schema.v1.control.DeviceState.storage_bucket             max_size:64
 visio_schema.v1.control.DeviceState.storage_prefix             max_size:128
+visio_schema.v1.control.DeviceState.storage_status_prefix      max_size:128
 visio_schema.v1.control.DeviceState.storage_access_key_id      max_size:32
 visio_schema.v1.control.DeviceState.upload_last_error          max_size:128
 
