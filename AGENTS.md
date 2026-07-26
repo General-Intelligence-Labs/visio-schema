@@ -50,7 +50,7 @@ without reordering. (The C++ `McapWriter::Write(channel, msg)` keeps channel-fir
 languages have separate idioms.)
 
 Proto entry points consumers rely on: `v1.control.command_pb2` (`Command` + its oneof bodies +
-`StartRecording`/`StopRecording`/`Identify`/`SetAutoStart`/`ConnectWifi`/`SetStorage`/
+`StartRecording`/`StopRecording`/`Identify`/`SetAutoStart`/`ConnectWifi`/`ForgetWifi`/`SetStorage`/
 `ListRecordings`/`GetState`/`SetCalibration`/`SetAutoUpload`/`SetNoticeLang`/`SetResolution`/
 `SetAudioRecording`), `v1.control.command_result_pb2.CommandResult`,
 `v1.wire.header_pb2` (`Header`, `ControlStream`), `v1.service.device_info.device_info_pb2`

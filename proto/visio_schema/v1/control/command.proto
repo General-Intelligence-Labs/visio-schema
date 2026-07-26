@@ -51,6 +51,7 @@ message Command {
     SetAudioRecording set_audio_recording = 30;
     SetImuLiveRate set_imu_live_rate = 31 [deprecated = true];
     SetStreamPolicy set_stream_policy = 32;
+    ForgetWifi     forget_wifi     = 33;
   }
 }
 
@@ -296,6 +297,12 @@ message SetTime {
 }
 
 // Provision Wi-Fi STA credentials and (re)associate. Replaces POST /wifi.
+//
+// On success the network is REMEMBERED and moves to the FRONT of
+// DeviceState.wifi_networks — the list the device walks, in order, whenever it
+// is offline. Re-provisioning an SSID that is already remembered updates its
+// passphrase in place and moves it to the front; it never creates a duplicate.
+// There is deliberately no reorder command: joining IS the reorder.
 message ConnectWifi {
   string ssid       = 1;
   string passphrase = 2;
@@ -306,12 +313,33 @@ message ConnectWifi {
 message ScanWifi {
 }
 
-// Forget the provisioned Wi-Fi STA credentials and return to the setup soft-AP.
+// Forget ONE remembered Wi-Fi network, by SSID. ResetToAp forgets them all;
+// this is the per-network door.
 //
-// A one-shot ACTION, not a mode: the device erases the stored credentials (so
-// it will not rejoin on the next boot), drops any STA association, and brings
-// the AP back up. Sending it while already on the AP is a no-op that still
-// clears the stored credentials.
+// A LIST EDIT, NOT A RADIO ACTION. The entry is removed from the remembered set
+// so the device never auto-joins it again, and nothing else changes. In
+// particular, forgetting the SSID the device is currently associated with does
+// NOT drop that association: the link this command arrived over survives, the
+// CommandResult actually gets back, and the device simply will not rejoin after
+// the next disconnect. To leave a network *now*, use ResetToAp.
+//
+// That restraint is the whole point. ConnectWifi and ResetToAp both cost the
+// caller its link by design, and every client carries follow/rollback machinery
+// for it; ForgetWifi needs none, on any client.
+//
+// IDEMPOTENT: an ssid that is not remembered answers ok=true, not an error.
+// Two clients rendering the same polled list must not race into a spurious
+// failure, and "already gone" is the desired end state.
+message ForgetWifi {
+  string ssid = 1;
+}
+
+// Forget ALL remembered Wi-Fi STA credentials and return to the setup soft-AP.
+//
+// A one-shot ACTION, not a mode: the device erases EVERY stored network (so it
+// will not rejoin any of them on the next boot), drops any STA association, and
+// brings the AP back up. Sending it while already on the AP is a no-op that
+// still clears the stored credentials. Use ForgetWifi to drop a single entry.
 //
 // Like ConnectWifi, the CommandResult usually never reaches a caller that is
 // talking over the STA link, because the device tears that link down to switch

@@ -26,6 +26,21 @@ message WifiScanResults {
   repeated WifiScanResult results = 1;
 }
 
+// One remembered Wi-Fi network — an entry in the ordered list the device tries
+// while it is offline. See DeviceState.wifi_networks.
+//
+// A message rather than a bare `repeated string` so a later per-entry attribute
+// is an additive field instead of a second parallel array, the same reason
+// WifiScanResult is a message.
+//
+// There is deliberately NO passphrase field, and there never will be.
+// Credentials travel device-INBOUND only (ConnectWifi); nothing outbound
+// carries one — the rule storage_access_key_id already follows for the S3
+// secret.
+message WifiNetwork {
+  string ssid = 1;
+}
+
 // One recorded session on local storage, with its upload state.
 message RecordingEntry {
   string name            = 1;
@@ -102,6 +117,32 @@ message DeviceState {
   string    wifi_ssid       = 7;
   string    wifi_ip         = 8;
   string    wifi_last_error = 9;
+
+  // Remembered STA networks, NEWEST FIRST — the order the device tries them in
+  // while it is offline. Index 0 is the most recently joined.
+  //
+  // The device owns the ordering, not the host: a successful ConnectWifi puts
+  // its SSID at index 0 (moving it if already present, and replacing the stored
+  // passphrase), ForgetWifi removes one entry, ResetToAp clears all of them.
+  // There is no reorder command. While the device IS associated it does not
+  // switch away on its own — the order governs what it reaches for when it has
+  // no link, not a preference it re-evaluates.
+  //
+  // "Which one am I on?" is deliberately NOT a field here: compare an entry's
+  // ssid against wifi_ssid above (meaningful only while wifi_state ==
+  // WIFI_STATE_STA). One source of truth, so a stale per-entry flag can never
+  // contradict the actual connection.
+  //
+  // ABSENT on firmware predating this field — which proto3 makes
+  // indistinguishable from "nothing is remembered" (repeated has no presence).
+  // A device can also be joined to a network it cannot list, if its stored
+  // config holds a block the device does not manage (WPA-Enterprise, a hidden
+  // network). BOTH cases look the same on the wire and mean the same thing to a
+  // client: an EMPTY list next to a non-empty wifi_ssid is "this network exists
+  // but I cannot manage it", never "nothing is saved". Render the one network
+  // you do know about and hide the per-entry forget; do not probe with
+  // ForgetWifi, whose `unsupported` is a permanent refusal.
+  repeated WifiNetwork wifi_networks = 30;
 
   // ── storage (config only; never the secret key) ──
   bool   storage_configured = 10;

@@ -33,6 +33,10 @@ visio_schema.v1.sensor.ButtonEvent.button_id   max_size:32
 visio_schema.v1.control.Command.target_device         max_size:32
 visio_schema.v1.control.ConnectWifi.ssid              max_size:33
 visio_schema.v1.control.ConnectWifi.passphrase        max_size:64
+# Same 33 as ConnectWifi.ssid, and it must stay the same: a 32-octet SSID that
+# ConnectWifi accepts would otherwise be truncated here, and the entry it named
+# could never be removed.
+visio_schema.v1.control.ForgetWifi.ssid               max_size:33
 visio_schema.v1.control.SetStorage.endpoint_url       max_size:128
 visio_schema.v1.control.SetStorage.region             max_size:32
 visio_schema.v1.control.SetStorage.bucket             max_size:64
@@ -107,6 +111,18 @@ visio_schema.v1.control.RecordingEntry.task       type:FT_POINTER
 visio_schema.v1.control.RecordingEntry.location   type:FT_POINTER
 visio_schema.v1.control.RecordingEntry.message    type:FT_POINTER
 visio_schema.v1.control.RecordingEntry.capturer   type:FT_POINTER
+
+# DeviceState.wifi_networks: the first FT_POINTER field on DeviceState, which is
+# otherwise fully inline. A fixed WifiNetwork[N] with char ssid[33] would add
+# ~35*N bytes to EVERY CommandResult — i.e. to every setter's ack, forever — to
+# carry a list that is usually one or two entries. FT_POINTER costs a pointer +
+# a pb_size_t instead, and mallocs NOTHING on the device: the publisher borrows
+# c_str() into a live std::vector, exactly like the two lists above. This does
+# not violate the malloc-free rule, which governs the inbound Command DECODE
+# path — the device only ever ENCODES a DeviceState. A host-side C++ consumer
+# that DECODES a CommandResult must pb_release it, already true for both lists.
+visio_schema.v1.control.DeviceState.wifi_networks type:FT_POINTER
+visio_schema.v1.control.WifiNetwork.ssid          type:FT_POINTER
 
 # ---- Calibration: bound the foxglove camera/transform + ImuCalibration repeated
 #      fields so every SetCalibration artifact (and the published calibration) is a

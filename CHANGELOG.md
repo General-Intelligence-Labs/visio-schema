@@ -4,6 +4,47 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.6.8 — 2026-07-26
+
+### Added `Command.forget_wifi` (tag 33) + `DeviceState.wifi_networks` (tag 30) — many remembered networks
+
+- **`DeviceState.wifi_networks`**: `repeated WifiNetwork { ssid }`, **newest first** — the
+  ordered set the device walks whenever it is offline. Index 0 is the most recently
+  joined. Previously a device remembered exactly one network and every join erased the
+  previous one, so a rig carried between a factory floor, a lab and a hotspot had to be
+  reprovisioned on every move.
+- **`ConnectWifi` (tag 14) is unchanged on the wire but gains a documented side effect**:
+  a successful join puts its SSID at the FRONT of the list, moving it (and replacing the
+  stored passphrase) if it was already there. There is deliberately **no reorder command** —
+  joining *is* the reorder, so there is no second way for host and device to disagree
+  about the order.
+- **`ForgetWifi { ssid }`**: removes ONE entry. A **list edit, not a radio action** — even
+  when it names the network the device is currently on, the association survives, so the
+  caller's link survives and the ack actually gets back. `ResetToAp` remains the "leave
+  now" verb and is now documented as forgetting **all** of them. Idempotent: an unknown
+  ssid answers `ok=true`, so two clients rendering the same polled list cannot race into a
+  spurious failure.
+- **No passphrase is ever carried outbound.** `WifiNetwork` has no field for one and never
+  will — the rule `storage_access_key_id` already follows for the S3 secret.
+- **No `connected` flag** on an entry: compare its ssid against `wifi_ssid` (meaningful
+  only while `wifi_state == WIFI_STATE_STA`). One source of truth, so nothing can go stale
+  against the actual connection.
+- **Reading an empty list**: proto3 gives `repeated` no presence, so "old firmware", "this
+  device manages no networks" and "the device is on a network it cannot manage" (a
+  WPA-Enterprise or hidden block in its stored config) are indistinguishable — and all
+  three mean the same thing to a client. An empty list next to a **non-empty `wifi_ssid`**
+  is *"this network exists but I cannot manage it"*, never *"nothing is saved"*: render the
+  one network you know about and hide the per-entry forget. Do not probe with `ForgetWifi`;
+  its `unsupported` is a permanent refusal.
+- **nanopb**: `ForgetWifi.ssid` is `max_size:33`, matching `ConnectWifi.ssid` so a 32-octet
+  SSID cannot be accepted by one and truncated by the other. `wifi_networks` is
+  `FT_POINTER` — a fixed array would add bytes to *every* `CommandResult` ack forever to
+  carry a list that is usually one entry, and the malloc-free rule governs the inbound
+  `Command` decode path, which this does not touch.
+- The device caps what it stores (a runaway backstop, not a wire limit — nothing decodes
+  into a fixed array), so unlike `SetStreamPolicy.rules` the bound is **not** part of this
+  contract.
+
 ## 0.6.7 — 2026-07-25
 
 ### Added `Command.set_stream_policy` (tag 32) — the generic per-connection stream filter
