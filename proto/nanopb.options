@@ -27,6 +27,14 @@ foxglove.CompressedImage.format     max_size:8
 # ---- Sensors: short button id (samples stay callback — see strategy above) -
 visio_schema.v1.sensor.ButtonEvent.button_id   max_size:32
 
+# ---- Heartbeat: sender identity, bounded inline ---------------------------
+# Must NOT be a callback: the beacon is encoded into a fixed
+# `Heartbeat_size` buffer on both the device and the host, and a callback field
+# makes that size runtime-dependent. 40 holds a 36-char uuid + NUL with room to
+# spare, and the device compares it on every beacon, so it has to be readable
+# without an allocator.
+visio_schema.v1.service.heartbeat.Heartbeat.client_id   max_size:40
+
 # ---- Control: command payload strings (bounded inline — small, fixed shape) -
 # target_device must be bounded (not the default callback) so on_command can read
 # it and honor end-to-end addressing when a hub relays Commands to multiple leaves.

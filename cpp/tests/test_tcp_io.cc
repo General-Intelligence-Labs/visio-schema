@@ -48,7 +48,8 @@ struct AcceptedPeer {
 
   // The acceptor's on_accept callback: capture + Start + signal.
   TcpAcceptor::OnAccept on_accept() {
-    return [this](std::shared_ptr<Endpoint> e) {
+    return [this](std::shared_ptr<Endpoint> e,
+                  const visio_schema::transport::AcceptedLeg&) {
       e->Start(rx.fn(), rx.on_closed());
       {
         std::lock_guard<std::mutex> lk(mu);
@@ -82,7 +83,8 @@ struct MultiAccept {
   std::vector<std::shared_ptr<InboundCollector>> rxs;
 
   TcpAcceptor::OnAccept on_accept() {
-    return [this](std::shared_ptr<Endpoint> e) {
+    return [this](std::shared_ptr<Endpoint> e,
+                  const visio_schema::transport::AcceptedLeg&) {
       auto rx = std::make_shared<InboundCollector>();
       e->Start(rx->fn(), rx->on_closed());
       {

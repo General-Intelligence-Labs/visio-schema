@@ -4,6 +4,25 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.6.11 — 2026-07-27
+
+### Added `Heartbeat.client_id` (tag 5) — stable sender identity (wire-compatible)
+
+- **New optional field on the beacon**: a per-install identity of the SENDER,
+  constant across reconnects, transports and app restarts. `""` = not reported,
+  so every existing client keeps working unchanged.
+- **Why**: a device that allows one client at a time cannot otherwise tell "my
+  phone is back" from "a second phone wants the board". A link dropped without a
+  FIN — Wi-Fi provisioning (AP→STA), reset-to-hotspot, an app restart — leaves a
+  socket its owner has already abandoned, and refusing the owner's next
+  connection locks them out of their own device ("Device in use") until
+  TCP_USER_TIMEOUT reaps the corpse, or indefinitely while the owner still holds
+  both networks.
+- **On the beacon** because it is the one message every healthy client already
+  sends at 1 Hz, so identity costs no extra round trip. It therefore arrives
+  shortly *after* accept; consumers resolve occupancy when it lands rather than
+  at accept time.
+
 ## 0.6.10 — 2026-07-27
 
 ### Added `Command.clear_camera_tuning` (tag 35) — erase a unit's per-unit camera tuning (wire-compatible)

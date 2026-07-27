@@ -2,6 +2,7 @@
 
 #include "visio_schema/transport/link.hpp"  // SetCurrentThreadName
 
+#include <arpa/inet.h>  // inet_ntop (leg identity of an accepted connection)
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
@@ -16,7 +17,20 @@ namespace visio_schema::transport {
 
 namespace {
 constexpr int kTickMs = 200;
+
+// getsockname/getpeername as a dotted quad; "" when unavailable or not IPv4.
+// Never throws — an address we cannot read is reported as unknown, and callers
+// must treat "" as "leg unknown" rather than as a distinct leg.
+std::string SocketIpv4(int fd, int (*get)(int, ::sockaddr*, ::socklen_t*)) {
+  ::sockaddr_in sa{};
+  ::socklen_t len = sizeof(sa);
+  if (get(fd, reinterpret_cast<::sockaddr*>(&sa), &len) != 0) return {};
+  if (sa.sin_family != AF_INET) return {};
+  char buf[INET_ADDRSTRLEN] = {0};
+  if (!::inet_ntop(AF_INET, &sa.sin_addr, buf, sizeof(buf))) return {};
+  return buf;
 }
+}  // namespace
 
 TcpAcceptor::TcpAcceptor(std::uint16_t port, WritePolicy policy)
     : port_(port), policy_(policy) {
@@ -90,12 +104,17 @@ void TcpAcceptor::Loop() {
       ::setsockopt(cfd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl_s, sizeof(intvl_s));
       ::setsockopt(cfd, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt));
 #endif
+      // Read the addresses BEFORE handing cfd over: from here on the endpoint
+      // owns it and its I/O thread may close it at any moment.
+      AcceptedLeg who;
+      who.local_ip = SocketIpv4(cfd, ::getsockname);
+      who.peer_ip = SocketIpv4(cfd, ::getpeername);
       // Fixed fd (no factory): a client EOF reports on_closed once and the
       // endpoint's I/O thread exits; the bus forgets it. The acceptor keeps
       // listening for the next client. FramedFdEndpoint takes ownership of cfd
       // (and sets O_NONBLOCK).
       auto ep = std::make_shared<FramedFdEndpoint>(cfd, policy_);
-      if (on_accept_) on_accept_(std::move(ep));
+      if (on_accept_) on_accept_(std::move(ep), who);
     }
   }
 }
