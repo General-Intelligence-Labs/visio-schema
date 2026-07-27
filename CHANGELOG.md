@@ -4,6 +4,22 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.6.10 — 2026-07-27
+
+### Added `Command.clear_camera_tuning` (tag 35) — erase a unit's per-unit camera tuning (wire-compatible)
+
+- **New no-field Command body `ClearCameraTuning`**, the counterpart to
+  `SetCalibration{camera_tuning}`. A new per-unit white-balance correction cannot be
+  measured on top of a live one (the measurement reads the residual *after* the
+  correction), so the device now **refuses** a `camera_tuning` write while a correction
+  is applied — `CommandResult{ok=false, error_code="correction_active"}`. Clearing erases
+  the stored record and the device restarts so the next boot comes up uncorrected — the
+  clean baseline a re-measure needs.
+- **Deliberately its own command, not an empty `SetCalibration`.** The `camera_tuning`
+  artifact requires ≥1 point and its write path is exactly what the gate blocks, so
+  "clear" has to be a separate, ungated verb. Empty body — tuning is one record per unit.
+- Works on **sealed units** (bus only, no adb), like the rest of the calibration path.
+
 ## 0.6.9 — 2026-07-26
 
 ### Added `Command.set_status_report` (tag 34), `SetStorage/TestStorage.status_prefix` (tag 7), `DeviceState.status_report` (tag 31) + `storage_status_prefix` (tag 32) — periodic device status reports

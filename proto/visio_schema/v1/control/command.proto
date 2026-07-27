@@ -53,6 +53,7 @@ message Command {
     SetStreamPolicy set_stream_policy = 32;
     ForgetWifi     forget_wifi     = 33;
     SetStatusReport set_status_report = 34;
+    ClearCameraTuning clear_camera_tuning = 35;
   }
 }
 
@@ -461,4 +462,22 @@ message SetCalibration {
     visio_schema.v1.calibration.CameraTuning camera_tuning = 15;  // CAMERA, set-only
     // 10 reserved for a deferred magnetometer artifact.
   }
+}
+
+// Erase this unit's stored per-unit camera tuning (the camera_tuning record) and
+// restart so it comes back UNCORRECTED.
+//
+// A one-shot ACTION, and the counterpart to SetCalibration{camera_tuning}. It
+// exists because a new tuning cannot be measured on top of a live correction: the
+// measurement reads the residual with the correction already applied, so the
+// device REFUSES a camera_tuning write while one is active (CommandResult
+// error_code "correction_active"). Clearing removes the on-disk record; the
+// device then restarts (like a successful set) so the next boot loads no record
+// and the ISP comes up at identity — the clean baseline a re-measure needs.
+//
+// Deliberately its own command, not an empty SetCalibration: the camera_tuning
+// artifact requires >=1 point and its write path is exactly what the gate blocks,
+// so "clear" must be a separate, ungated verb. No fields — tuning is one record
+// per unit.
+message ClearCameraTuning {
 }
