@@ -45,33 +45,25 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: python -m pip install pyinstaller pytest   # pytest: the fixture module below imports it
+      # pytest: the smoke check imports the test module for its MCAP fixtures.
+      # pyinstaller is pinned — a bootloader change would otherwise land straight on
+      # a tag build, and this binary is what customers download.
+      - run: python -m pip install "pyinstaller==6.21.0" pytest
       - run: pyinstaller tools/session-json/visio-session-json.spec --noconfirm --distpath dist
-      - name: smoke test
+      # Proves the BUNDLE, not the logic: rebuild / kept / exit-1, through a folder
+      # named with a space and CJK, with a non-ASCII capturer — the Windows console
+      # and filesystem paths the unit suite can't reach.
+      - run: python tools/session-json/smoke_frozen.py dist
+      # Give each binary its final, OS-distinct name here, where `runner.os` is at
+      # hand — so the release job just uploads what it downloads, and renaming a
+      # matrix entry can't silently break it. (Windows is already `.exe`.)
+      - name: name it per OS
         shell: bash
         run: |
-          # A frozen build must survive its own bootloader: --help, then a real
-          # rebuild of a session fixture, checked byte-for-byte against the sidecar
-          # the firmware used to write.
-          exe=dist/visio-session-json
-          if [ "${{ runner.os }}" = "Windows" ]; then exe=dist/visio-session-json.exe; fi
-          "$exe" --help
-          python - <<'PY'
-          import pathlib, sys
-          sys.path.insert(0, "python/tests")
-          from test_session_json import GOLDEN_META, _mcap
-          d = pathlib.Path("smoke/session_00003"); d.mkdir(parents=True)
-          (d / "ego_0000.mcap").write_bytes(_mcap(GOLDEN_META))
-          PY
-          "$exe" smoke
-          python - <<'PY'
-          import pathlib, sys
-          sys.path.insert(0, "python/tests")
-          from test_session_json import GOLDEN
-          got = pathlib.Path("smoke/session_00003/session.json").read_bytes()
-          assert got == GOLDEN.encode(), got
-          print("rebuilt sidecar matches the firmware's byte-for-byte")
-          PY
+          case "${{ runner.os }}" in
+            Linux) mv dist/visio-session-json dist/visio-session-json-linux ;;
+            macOS) mv dist/visio-session-json dist/visio-session-json-macos ;;
+          esac
       - uses: actions/upload-artifact@v4
         with:
           name: visio-session-json-${{ runner.os }}
@@ -88,16 +80,8 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           pattern: visio-session-json-*
+          merge-multiple: true    # already OS-distinct names; nothing collides
           path: dist
-      # One flat, OS-suffixed name per binary — the download page shouldn't offer
-      # three identically-named files.
-      - name: name them per OS
-        run: |
-          mkdir -p out
-          mv dist/visio-session-json-Linux/visio-session-json   out/visio-session-json-linux
-          mv dist/visio-session-json-macOS/visio-session-json   out/visio-session-json-macos
-          mv dist/visio-session-json-Windows/visio-session-json.exe out/visio-session-json.exe
-          chmod +x out/visio-session-json-linux out/visio-session-json-macos
       - uses: softprops/action-gh-release@v2
         with:
-          files: out/*
+          files: dist/*

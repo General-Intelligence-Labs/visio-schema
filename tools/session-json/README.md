@@ -72,6 +72,17 @@ older than the in-MCAP metadata, whose sessions still have their sidecar
 Fields the device didn't record (no GPS fix, no task typed in) come back as the same
 blanks the sidecar always carried: `""`, `0`, `0.0000000`.
 
+**GPS coordinates lose their last digit.** The sidecar wrote latitude and longitude
+with 7 decimals; the firmware embeds them in the MCAP with 6. A session recorded at
+`37.7698784` rebuilds as `37.7698780` — about 1 cm, and it is destroyed before this
+tool sees the file, so no version of it can recover the digit. Every other field is
+exact.
+
+**A session whose part is torn past its identity keys is refused, not guessed.** If a
+part's metadata record is damaged the tool moves on to the session's other parts (each
+one re-emits it); if none survive, it reports the failure rather than writing a sidecar
+with a blank device and a 1970 timestamp.
+
 ## The mapping
 
 | `session.json` | `visio.capture` record |
