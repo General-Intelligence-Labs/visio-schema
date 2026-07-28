@@ -1,5 +1,10 @@
 # Changelog
 
+### Added `Command.set_recording_destination` (tag 36)
+
+- Selects device/SD or phone-only recording behavior. Phone mode is leased so
+  disconnecting the controlling app automatically restores device recording.
+
 All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.

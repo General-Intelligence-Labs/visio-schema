@@ -54,7 +54,20 @@ message Command {
     ForgetWifi     forget_wifi     = 33;
     SetStatusReport set_status_report = 34;
     ClearCameraTuning clear_camera_tuning = 35;
+    SetRecordingDestination set_recording_destination = 36;
   }
+}
+
+// Select where recording controls write. PHONE is deliberately a short lease:
+// the app refreshes it while a lossless USB connection is alive; expiry, app
+// crash, or disconnect safely restores DEVICE/SD behavior.
+message SetRecordingDestination {
+  enum Destination {
+    DESTINATION_DEVICE = 0;
+    DESTINATION_PHONE = 1;
+  }
+  Destination destination = 1;
+  uint32 lease_ms = 2; // PHONE only; device clamps to a safe short maximum
 }
 
 // Begin a recording session on the target.
