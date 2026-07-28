@@ -27,8 +27,12 @@ SIDECAR = GOLDEN.replace('"capturer":""', f'"capturer":"{CAPTURER}"').encode("ut
 
 def run(exe: Path, *args: str) -> subprocess.CompletedProcess:
     done = subprocess.run([str(exe), *args], capture_output=True)
-    sys.stdout.write(done.stdout.decode("utf-8", "replace"))
-    sys.stderr.write(done.stderr.decode("utf-8", "replace"))
+    # Relay the child's bytes as bytes. Decoding them onto this script's stdout
+    # crashes the runner: a Windows Python's stdout is cp1252, which has no 配菜.
+    sys.stdout.buffer.write(done.stdout)
+    sys.stderr.buffer.write(done.stderr)
+    sys.stdout.flush()
+    sys.stderr.flush()
     return done
 
 
