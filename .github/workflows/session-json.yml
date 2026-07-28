@@ -1,0 +1,103 @@
+name: session-json
+
+# Build the standalone `visio-session-json` tool (PyInstaller onefile) for Linux,
+# macOS and Windows, and attach the three binaries to the `v*` release alongside the
+# wheels (wheels.yml) and the launcher zips (launcher.yml). PyInstaller can't
+# cross-compile, hence one build per OS.
+#
+# Unlike the launcher, this needs NO codegen and NO package install: the tool is one
+# stdlib-only script that parses the few MCAP record bytes it reads. Keep it that way
+# — that is what lets a customer run the single .py on a bare Python.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "tools/session-json/**"
+      - "python/tests/test_session_json.py"
+      - ".github/workflows/session-json.yml"
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install pytest
+      # Runs the tool's suite alone (the rest of python/tests needs the generated
+      # bindings); `make pytest` runs it again in CI proper.
+      - run: python -m pytest python/tests/test_session_json.py -q
+
+  build:
+    name: exe (${{ matrix.os }})
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install pyinstaller pytest   # pytest: the fixture module below imports it
+      - run: pyinstaller tools/session-json/visio-session-json.spec --noconfirm --distpath dist
+      - name: smoke test
+        shell: bash
+        run: |
+          # A frozen build must survive its own bootloader: --help, then a real
+          # rebuild of a session fixture, checked byte-for-byte against the sidecar
+          # the firmware used to write.
+          exe=dist/visio-session-json
+          if [ "${{ runner.os }}" = "Windows" ]; then exe=dist/visio-session-json.exe; fi
+          "$exe" --help
+          python - <<'PY'
+          import pathlib, sys
+          sys.path.insert(0, "python/tests")
+          from test_session_json import GOLDEN_META, _mcap
+          d = pathlib.Path("smoke/session_00003"); d.mkdir(parents=True)
+          (d / "ego_0000.mcap").write_bytes(_mcap(GOLDEN_META))
+          PY
+          "$exe" smoke
+          python - <<'PY'
+          import pathlib, sys
+          sys.path.insert(0, "python/tests")
+          from test_session_json import GOLDEN
+          got = pathlib.Path("smoke/session_00003/session.json").read_bytes()
+          assert got == GOLDEN.encode(), got
+          print("rebuilt sidecar matches the firmware's byte-for-byte")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: visio-session-json-${{ runner.os }}
+          path: dist/visio-session-json*
+
+  release_assets:
+    name: attach the binaries to the release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: visio-session-json-*
+          path: dist
+      # One flat, OS-suffixed name per binary — the download page shouldn't offer
+      # three identically-named files.
+      - name: name them per OS
+        run: |
+          mkdir -p out
+          mv dist/visio-session-json-Linux/visio-session-json   out/visio-session-json-linux
+          mv dist/visio-session-json-macOS/visio-session-json   out/visio-session-json-macos
+          mv dist/visio-session-json-Windows/visio-session-json.exe out/visio-session-json.exe
+          chmod +x out/visio-session-json-linux out/visio-session-json-macos
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/*

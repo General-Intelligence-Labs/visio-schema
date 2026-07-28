@@ -97,6 +97,19 @@ Then open the `.mcap` **directly in Foxglove** (**File ▸ Open local file**) �
 > `--rerun` instead of `--foxglove` to spawn the [Rerun](https://rerun.io) viewer (it auto-creates
 > views): `--serial /dev/ttyACM0 --rerun`, or `--mcap-in run.mcap --rerun` to replay a file.
 
+## Rebuild a recording's `session.json` — `visio-session-json`
+
+A recording session's capture metadata (task, capturer, start time, device, GPS) now lives
+**inside** the MCAP, so the `session.json` file that used to sit next to the `.mcap` parts is gone.
+If your pipeline still reads that sidecar, **[`tools/session-json/`](tools/session-json/)** puts it
+back — byte-for-byte as the device wrote it. Drag a folder onto the Windows `.exe` from the
+[latest release](https://github.com/General-Intelligence-Labs/visio-schema/releases), or run the
+single stdlib-only script with any Python:
+
+```bash
+python tools/session-json/session_json.py ~/recordings   # a card, one session, or one .mcap
+```
+
 ## Write your own code
 
 For custom integrations — your own viewer, a recorder, or a client that sends commands back to the
@@ -123,6 +136,7 @@ complete surface and the stability guarantee.
 | [`cpp/`](cpp/) | The C++ codec + nanopb bindings for embedded/on-device use. |
 | [`docs/`](docs/) | User guides ([install](docs/install.md), [usage](docs/usage.md)) and the [protocol reference](docs/protocol/). |
 | [`examples/`](examples/) | Runnable Python and C++ demos. |
+| [`tools/`](tools/) | Standalone utilities: the [fleet-status](tools/fleet-status/) dashboard and [session-json](tools/session-json/), which rebuilds a recording's `session.json` sidecar. |
 
 ## Documentation
 
