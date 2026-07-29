@@ -3,6 +3,8 @@
 #include <poll.h>
 #include <unistd.h>
 
+#include <iostream>
+
 #include "visio_schema/transport/framing.hpp"
 #include "visio_schema/transport/link.hpp"  // SetCurrentThreadName
 #include "visio_schema/wire/time.hpp"       // MonotonicNs
@@ -44,23 +46,21 @@ WritePolicy ControlPolicy() {
   return p;
 }
 
-// No bytes accepted for this long WITH bytes pending = the link is stalled
-// (serial gadget nobody reads, peer gone silent). Long enough that a
-// congested-but-alive Wi-Fi link (which still accepts something every few
-// hundred ms) never trips it.
-constexpr std::int64_t kStallNs = 3'000'000'000;
 }  // namespace
 
-FramedFdEndpoint::FramedFdEndpoint(int fd, WritePolicy policy)
-    : ctrl_outbox_(ControlPolicy()), outbox_(policy) {
+FramedFdEndpoint::FramedFdEndpoint(int fd, WritePolicy policy,
+                                   std::int64_t stall_ns)
+    : ctrl_outbox_(ControlPolicy()), outbox_(policy), stall_ns_(stall_ns) {
   AdoptFd(fd);
 }
 
 FramedFdEndpoint::FramedFdEndpoint(FdFactory factory, WritePolicy policy,
-                                   std::int64_t reopen_backoff_ns)
+                                   std::int64_t reopen_backoff_ns,
+                                   std::int64_t stall_ns)
     : factory_(std::move(factory)),
       ctrl_outbox_(ControlPolicy()),
       outbox_(policy),
+      stall_ns_(stall_ns),
       reopen_backoff_ns_(reopen_backoff_ns) {
   if (factory_) AdoptFd(factory_());
 }
@@ -90,11 +90,19 @@ void FramedFdEndpoint::Send(const Message& msg) {
   // Door checks BEFORE any framing work, so a frame nobody will get costs
   // nothing — the reason a thinned preview saves device CPU, not just bandwidth.
 
-  // Nobody is reading: bulk is hopeless and derived per-sample streams are pure
-  // waste (their ground truth ships full-rate elsewhere). Small control frames
-  // still enqueue — they are the probe that detects the reader coming back.
+  // Nobody is reading: framing bulk or decimatable frames is pure waste — a
+  // recovering reader has no use for their stale backlog (video re-syncs at a
+  // keyframe; per-sample state is superseded). Everything else — control
+  // streams and low-rate data like ButtonEvent or the raw IMU bundles — still
+  // enqueues into the bounded control outbox: control is the probe whose
+  // first accepted write detects the reader coming back, and one-shot events
+  // must survive the stall to be delivered on recovery. The producers decide
+  // what is shed-safe by marking it (message.hpp); the on-device MCAP sink is
+  // not a framed leg, but a downstream recorder over TCP IS subject to this
+  // gate after a >3 s reader wedge — door_dropped() makes that gap visible.
   if (link_stalled_.load(std::memory_order_relaxed) &&
       (msg.bulk || msg.decimatable)) {
+    door_dropped_.fetch_add(1, std::memory_order_relaxed);
     return;
   }
   // Absent rule = keep at full rate, so a stream announced after the policy was
@@ -189,6 +197,9 @@ void FramedFdEndpoint::UpdateStallState(long accepted) {
     last_progress_ns_ = now_ns;
     if (link_stalled_.load(std::memory_order_relaxed) && accepted > 0) {
       link_stalled_.store(false, std::memory_order_relaxed);
+      std::cerr << "visio-schema: link recovered ("
+                << door_dropped_.load(std::memory_order_relaxed)
+                << " frames door-dropped while stalled)\n";
       // The reader is back. Whatever bulk survived queuing is stale; flush it
       // so the viewer re-syncs on the next keyframe instead of replaying a
       // dead backlog.
@@ -198,8 +209,11 @@ void FramedFdEndpoint::UpdateStallState(long accepted) {
   }
   if (last_progress_ns_ == 0) {
     last_progress_ns_ = now_ns;  // first pass with pending bytes: arm
-  } else if (now_ns - last_progress_ns_ > kStallNs) {
+  } else if (now_ns - last_progress_ns_ > stall_ns_ &&
+             !link_stalled_.load(std::memory_order_relaxed)) {
     link_stalled_.store(true, std::memory_order_relaxed);
+    std::cerr << "visio-schema: link stalled (no reader for "
+              << stall_ns_ / 1'000'000 << " ms) — shedding bulk/decimatable\n";
   }
 }
 

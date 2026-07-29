@@ -42,12 +42,16 @@ struct Message {
   // producer alongside `bulk`.
   bool keyframe = false;
 
-  // In-memory only (NOT serialized): this message is SAFE TO SHED. Set by the
-  // producer for per-sample derived streams (fused IMU quaternions) whose
-  // ground truth ships full-rate elsewhere (the raw bundles), so losing one
-  // costs nothing recoverable. A live sink drops these on a STALLED link, where
-  // framing them is pure waste — nothing is being delivered anyway. Recording
-  // sinks ignore it; recordings stay lossless.
+  // In-memory only (NOT serialized): this message is SAFE TO SHED — a
+  // periodic stream whose stale backlog is worthless to a recovering reader,
+  // because the next message supersedes it (fused IMU quaternions, whose
+  // ground truth ships full-rate in the raw bundles) or because it is only
+  // meaningful live (audio playback; per-frame metadata paired with video
+  // that is itself shed). A live sink drops these at the door on a STALLED
+  // link, where framing them is pure waste — nothing is being delivered
+  // anyway. One-shot events (ButtonEvent) and ground-truth bundles must NOT
+  // set this: they queue through the stall and deliver on recovery.
+  // Recording sinks ignore it; recordings stay lossless.
   //
   // Rate is NOT decided here — a client caps streams by topic
   // (transport/stream_policy.hpp).

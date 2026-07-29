@@ -10,6 +10,7 @@
 #include <chrono>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 #include <thread>
 
@@ -17,6 +18,7 @@
 #include "visio_schema/transport/framing.hpp"
 #include "visio_schema/transport/link.hpp"
 #include "visio_schema/transport/write_policy.hpp"
+#include "visio_schema/wire/control.hpp"
 
 using namespace std::chrono_literals;
 using visio_schema::transport::CloseFd;
@@ -45,11 +47,52 @@ void ShrinkBuffers(int a, int b) {
 // small default AF_UNIX socket buffers stall the drainer).
 Message Frame(std::size_t n) {
   Message m;
-  m.stream_id = 16;
+  m.stream_id = visio_schema::kFirstDynamic;
   m.payload = std::string(n, 'x');
   m.bulk = true;
   return m;
 }
+
+// Background thread draining `fd` into an accumulating buffer — the "reader
+// keeps up / comes back" side of these tests. `read_chunk` bounds each read()
+// so a test can keep the drain slow relative to its flood.
+class DrainingReader {
+ public:
+  explicit DrainingReader(int fd, std::size_t read_chunk = 4096)
+      : chunk_(read_chunk), thread_([this, fd] { Run(fd); }) {}
+  ~DrainingReader() { Stop(); }
+
+  void Stop() {
+    stop_.store(true);
+    if (thread_.joinable()) thread_.join();
+  }
+  // Steal everything received so far. The caller keeps its own carry buffer,
+  // so a frame split across two Take()s still reassembles.
+  std::vector<std::uint8_t> Take() {
+    std::lock_guard<std::mutex> lk(mu_);
+    return std::exchange(rx_, {});
+  }
+
+ private:
+  void Run(int fd) {
+    std::vector<std::uint8_t> buf(chunk_);
+    while (!stop_.load()) {
+      const long n = ReadSome(fd, buf.data(), buf.size());
+      if (n < 0) break;
+      if (n == 0) {
+        std::this_thread::sleep_for(1ms);
+        continue;
+      }
+      std::lock_guard<std::mutex> lk(mu_);
+      rx_.insert(rx_.end(), buf.begin(), buf.begin() + n);
+    }
+  }
+  std::size_t chunk_;
+  std::atomic<bool> stop_{false};
+  std::mutex mu_;
+  std::vector<std::uint8_t> rx_;
+  std::thread thread_;  // last member: starts after everything it touches
+};
 
 }  // namespace
 
@@ -152,22 +195,7 @@ TEST(Backpressure, DrainsBurstThroughAStallingLinkWithoutSplicingFrames) {
   ASSERT_GE(b, 0);
   ShrinkBuffers(a, b);  // small buffers => writes hit EAGAIN mid-burst
 
-  std::vector<std::uint8_t> rx;
-  std::mutex rx_mu;
-  std::atomic<bool> stop{false};
-  std::thread reader([b = b, &rx, &rx_mu, &stop] {
-    std::uint8_t buf[1024];
-    while (!stop.load()) {
-      const long n = ReadSome(b, buf, sizeof(buf));
-      if (n < 0) break;
-      if (n == 0) {
-        std::this_thread::sleep_for(1ms);
-        continue;
-      }
-      std::lock_guard<std::mutex> lk(rx_mu);
-      rx.insert(rx.end(), buf, buf + n);
-    }
-  });
+  DrainingReader reader(b, /*read_chunk=*/1024);  // slow drain vs the burst
 
   // OneAtATime is the mode the device's TCP leg uses; the queue is deep enough
   // that nothing sheds, so a missing frame means it was never drained.
@@ -183,7 +211,7 @@ TEST(Backpressure, DrainsBurstThroughAStallingLinkWithoutSplicingFrames) {
     tx.Send(bulk);
     if (i % 10 == 0) {  // interleave control traffic across the drain loop
       Message ctrl;
-      ctrl.stream_id = 4;
+      ctrl.stream_id = visio_schema::kCommand;
       ctrl.payload = "ctrl";
       ctrl.bulk = false;
       tx.Send(ctrl);
@@ -201,28 +229,27 @@ TEST(Backpressure, DrainsBurstThroughAStallingLinkWithoutSplicingFrames) {
   // pending_bytes()==0 means the endpoint handed everything to the kernel, not
   // that the peer has read it — let the reader catch up before tearing it down,
   // or the tail of the burst is lost to the test rather than to the code.
+  std::vector<std::uint8_t> rx;
   for (int i = 0, stable = 0; i < 500 && stable < 20; ++i) {
-    std::size_t before;
-    {
-      std::lock_guard<std::mutex> lk(rx_mu);
-      before = rx.size();
-    }
     std::this_thread::sleep_for(1ms);
-    std::lock_guard<std::mutex> lk(rx_mu);
-    stable = (rx.size() == before) ? stable + 1 : 0;
+    const std::vector<std::uint8_t> chunk = reader.Take();
+    rx.insert(rx.end(), chunk.begin(), chunk.end());
+    stable = chunk.empty() ? stable + 1 : 0;
   }
 
   tx.Stop();
-  stop.store(true);
+  reader.Stop();
   CloseFd(b);
-  reader.join();
+  {
+    const std::vector<std::uint8_t> tail = reader.Take();
+    rx.insert(rx.end(), tail.begin(), tail.end());
+  }
 
-  std::lock_guard<std::mutex> lk(rx_mu);
   const std::vector<Message> got = ExtractFrames(rx);
   int bulk_seen = 0;
   int ctrl_seen = 0;
   for (const Message& m : got) {
-    if (m.stream_id == 4) {
+    if (m.stream_id == visio_schema::kCommand) {
       ++ctrl_seen;
       EXPECT_EQ(m.payload, "ctrl");
     } else {
@@ -234,4 +261,110 @@ TEST(Backpressure, DrainsBurstThroughAStallingLinkWithoutSplicingFrames) {
   }
   EXPECT_EQ(bulk_seen, kFrames);
   EXPECT_EQ(ctrl_seen, (kFrames + 9) / 10);
+}
+
+// A STALLED link (no bytes accepted while bytes are pending for the stall
+// window) must shed bulk + decimatable frames at Send's door — counted by
+// door_dropped() — while control streams AND non-decimatable data (one-shot
+// events like ButtonEvent, ground-truth IMU bundles) still enqueue and are
+// delivered when the reader comes back. The shed classes are what kept a dead
+// serial gadget's I/O thread at ~5% CPU forever (see the Send gate comment);
+// the queued classes are what recovery must not lose.
+TEST(Backpressure, StalledLinkShedsDecimatableKeepsControlAndEvents) {
+  auto [a, b] = MakeFdPair();
+  ASSERT_GE(a, 0);
+  ASSERT_GE(b, 0);
+  ShrinkBuffers(a, b);
+
+  FramedFdEndpoint tx(a, WritePolicy::drop_oldest(/*depth=*/4096),
+                      /*stall_ns=*/50'000'000);
+  tx.Start({}, {});
+
+  // Fill the kernel buffer with bulk, then keep sending while waiting: each
+  // Send Wake()s the I/O thread, which is what re-runs the stall clock —
+  // without it the latch waits for the 200 ms poll tick and the shrunk
+  // 50 ms window buys nothing.
+  const Message flood = Frame(512);
+  for (int i = 0; i < 200; ++i) tx.Send(flood);
+  bool stalled = false;
+  for (int i = 0; i < 2000 && !stalled; ++i) {
+    tx.Send(flood);
+    stalled = tx.stalled();
+    if (!stalled) std::this_thread::sleep_for(1ms);
+  }
+  ASSERT_TRUE(stalled) << "an unread peer must latch stalled()";
+
+  // At the door while stalled: bulk and decimatable are refused before any
+  // queue is touched; control and one-shot data enqueue. The decimatable
+  // frame sits exactly on the control/data boundary id, so an off-by-one in
+  // the gate can't hide.
+  const std::uint64_t door_before = tx.door_dropped();
+  const std::size_t pending_before = tx.pending_bytes();
+  Message decim;
+  decim.stream_id = visio_schema::kFirstDynamic;
+  decim.payload = "DECIM-WHILE-STALLED";
+  decim.decimatable = true;
+  tx.Send(Frame(512));  // bulk while stalled
+  tx.Send(decim);
+  EXPECT_EQ(tx.door_dropped(), door_before + 2) << "bulk + decimatable refused";
+  EXPECT_EQ(tx.pending_bytes(), pending_before) << "refused = never enqueued";
+
+  Message ctrl;
+  ctrl.stream_id = visio_schema::kHeartbeat;
+  ctrl.payload = "CTRL-WHILE-STALLED";
+  Message event;  // one-shot data (the ButtonEvent shape): must survive
+  event.stream_id = visio_schema::kFirstDynamic + 1;
+  event.payload = "EVENT-WHILE-STALLED";
+  tx.Send(ctrl);
+  tx.Send(event);
+
+  // The reader comes back and drains; accepted writes lift the gate.
+  DrainingReader reader(b);
+  bool recovered = false;
+  for (int i = 0; i < 2000 && !recovered; ++i) {
+    recovered = !tx.stalled();
+    if (!recovered) std::this_thread::sleep_for(1ms);
+  }
+  EXPECT_TRUE(recovered) << "accepted writes must lift the stall gate";
+
+  // With the gate lifted even the shed class flows again. It rides the same
+  // FIFO control outbox as ctrl/event above, so once it arrives, anything
+  // enqueued during the stall has arrived before it — the wait below cannot
+  // truncate the assertions that follow.
+  Message after;
+  after.stream_id = visio_schema::kFirstDynamic;
+  after.payload = "DECIM-AFTER-RECOVERY";
+  after.decimatable = true;
+  tx.Send(after);
+
+  std::vector<Message> got;
+  std::vector<std::uint8_t> carry;
+  bool seen_after = false;
+  for (int i = 0; i < 2000 && !seen_after; ++i) {
+    const std::vector<std::uint8_t> chunk = reader.Take();
+    carry.insert(carry.end(), chunk.begin(), chunk.end());
+    for (Message& m : ExtractFrames(carry)) {  // consumes; keeps partial tail
+      seen_after |= (m.payload == "DECIM-AFTER-RECOVERY");
+      got.push_back(std::move(m));
+    }
+    if (!seen_after) std::this_thread::sleep_for(1ms);
+  }
+
+  bool seen_ctrl = false;
+  bool seen_event = false;
+  bool seen_stalled_decim = false;
+  for (const Message& m : got) {
+    seen_ctrl |= (m.payload == "CTRL-WHILE-STALLED");
+    seen_event |= (m.payload == "EVENT-WHILE-STALLED");
+    seen_stalled_decim |= (m.payload == "DECIM-WHILE-STALLED");
+  }
+  EXPECT_TRUE(seen_ctrl) << "control frames must survive the stalled window";
+  EXPECT_TRUE(seen_event) << "one-shot data must survive the stalled window";
+  EXPECT_FALSE(seen_stalled_decim)
+      << "decimatable frames sent while stalled must be dropped at the door";
+  EXPECT_TRUE(seen_after) << "shed classes must resume after recovery";
+
+  tx.Stop();
+  reader.Stop();
+  CloseFd(b);
 }
