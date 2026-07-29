@@ -217,7 +217,32 @@ void FramedFdEndpoint::UpdateStallState(long accepted) {
   }
 }
 
+void FramedFdEndpoint::ReportClosedOnce() {
+  if (closed_reported_) return;
+  closed_reported_ = true;
+  if (on_closed_) on_closed_(this);
+}
+
 void FramedFdEndpoint::MarkLinkDead() {
+  // A FIXED fd cannot come back: Tick() only reopens when a factory is set, so
+  // for an accepted TCP client or a dialed TcpEndpoint this IS the end of the
+  // link — and the owner has to hear about it, exactly as it would from a read
+  // EOF. Report it here or the endpoint strands: the fd is gone, so it is never
+  // polled again and ReadInbound never runs, leaving it attached to the bus
+  // forever while the peer is long gone.
+  //
+  // This path is reached when a WRITE fails before the read side sees the peer
+  // leave, which is the common case for a client that aborts (RST) while the
+  // device still has video queued to it: Pump() runs before ReadInbound() in the
+  // same loop iteration, so the write error wins the race. Measured on an ego
+  // over NCM: a client RSTing with ~2 MB queued stranded its link within two
+  // attempts, after which the board (one client at a time) refused every later
+  // client until the process restarted.
+  //
+  // A REOPENABLE endpoint (the serial gadget) is the opposite case and must NOT
+  // report closed — it self-heals on the next Tick, and its owner would detach a
+  // link that is about to come back.
+  const bool fixed_link = !factory_;
   if (fd_ >= 0) {
     CloseFd(fd_);
     fd_ = -1;
@@ -228,6 +253,10 @@ void FramedFdEndpoint::MarkLinkDead() {
   next_reopen_ns_ = 0;  // reopen ASAP on the next Tick
   // A fresh link starts unstalled and re-arms its own stall clock.
   link_stalled_.store(false, std::memory_order_relaxed);
+  // Last, with the endpoint's own state already settled: the owner detaches us
+  // from inside this call. Once per link — a second MarkLinkDead (fd_ already
+  // -1) must not re-report a closure the owner has acted on.
+  if (fixed_link) ReportClosedOnce();
   last_progress_ns_ = 0;
 }
 
@@ -284,7 +313,7 @@ bool FramedFdEndpoint::ReadInbound(int fd) {
       MarkLinkDead();         // reopenable: self-heal on the next Tick
       return false;
     }
-    if (on_closed_) on_closed_(this);  // fixed fd: owner detaches us
+    ReportClosedOnce();                // fixed fd: owner detaches us
     return true;                       // thread exits
   }
   rx_buf_.insert(rx_buf_.end(), chunk, chunk + r);

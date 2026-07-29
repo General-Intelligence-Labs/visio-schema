@@ -5,6 +5,7 @@
 // The positive control shows a draining peer sheds nothing.
 #include <gtest/gtest.h>
 #include <sys/socket.h>
+#include <unistd.h>
 
 #include <atomic>
 #include <chrono>
@@ -367,4 +368,50 @@ TEST(Backpressure, StalledLinkShedsDecimatableKeepsControlAndEvents) {
   tx.Stop();
   reader.Stop();
   CloseFd(b);
+}
+
+// A FIXED link that dies on a WRITE must report itself closed, exactly as a read
+// EOF does. It cannot be reopened (Tick only reopens with a factory), so if this
+// goes unreported the fd is gone, the endpoint is never polled again, and it
+// strands attached to its owner forever while the peer is long gone.
+//
+// The ordering is the whole point. Loop() runs Pump() BEFORE ReadInbound(), and
+// ReadInbound only runs when poll reported POLLIN/POLLHUP/POLLERR — so whenever
+// the write fails on an iteration that reported POLLOUT *only*, the read path
+// never gets to notice the peer and cannot act as a backstop. That is the real
+// shape of the failure: a client aborting (RST) while the device still has video
+// queued. Measured on an ego over NCM, a client RSTing with ~2 MB queued stranded
+// its link within two attempts, after which the board (one client at a time)
+// refused every later client until the process restarted.
+//
+// Reproduced deterministically here with a local shutdown(SHUT_WR): our writes
+// fail EPIPE while the peer stays open and silent, so poll reports POLLOUT and
+// nothing else — exactly the iteration shape that has no read-side rescue.
+TEST(Backpressure, AFixedLinkDyingOnAWriteReportsClosed) {
+    auto [a, b] = MakeFdPair();
+    ASSERT_GE(a, 0);
+    ASSERT_GE(b, 0);
+    std::atomic<int> closed_calls{0};
+    {
+        FramedFdEndpoint ep(a);   // fixed fd: no factory, so no reopen is possible
+        ep.Start([](Message, visio_schema::transport::Endpoint*) {},
+                 [&closed_calls](visio_schema::transport::Endpoint*) {
+                     closed_calls.fetch_add(1);
+                 });
+        // Writes now fail; the peer stays OPEN and silent so there is no POLLIN,
+        // no POLLHUP and no POLLERR to fall back on.
+        ASSERT_EQ(::shutdown(a, SHUT_WR), 0);
+        for (int i = 0; i < 400 && closed_calls.load() == 0; ++i) {
+            ep.Send(Frame(4096));
+            std::this_thread::sleep_for(1ms);
+        }
+        EXPECT_EQ(closed_calls.load(), 1)
+            << "a fixed link that died on a write never reported closed — the "
+               "owner would keep it attached forever";
+        ep.Stop();
+    }
+    // One-shot: the two report paths (read EOF, write failure) must never both
+    // fire for one link.
+    EXPECT_EQ(closed_calls.load(), 1);
+    CloseFd(b);
 }

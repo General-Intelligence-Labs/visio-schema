@@ -148,6 +148,10 @@ class FramedFdEndpoint : public Endpoint {
   std::atomic<bool> stop_{false};
   InboundFn on_inbound_;
   ClosedFn on_closed_;
+  // A fixed link dies once, but two paths can notice — a read EOF and a write
+  // failure. One helper so a third can't forget the latch.
+  void ReportClosedOnce();
+  bool closed_reported_ = false;
 };
 
 }  // namespace visio_schema::transport
