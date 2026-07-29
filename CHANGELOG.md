@@ -9,6 +9,31 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.6.12 — 2026-07-28
+
+### Added `visio_schema.v1.sensor.CameraFrameInfo` — per-frame exposure + sensor timing (wire-compatible)
+
+- **New payload type** on `/<device>/camera/<idx>/frame_info`, a sibling of the
+  `CompressedVideo` topic: exposure actually in effect for the frame
+  (integration time, analog/digital/ISP gains, ISO, integration lines) plus the
+  sensor timing that makes any clip self-contained for rolling-shutter work
+  (HTS / VTS / pixel clock — line time = `line_length_pixels /
+  (pixel_clock_mhz * 1e6)`).
+- **Deliberately a sibling topic, not a field on `foxglove.CompressedVideo`.**
+  That schema is adopted as-is from the pinned foxglove-sdk submodule
+  ([foxglove_compat.md](docs/protocol/foxglove_compat.md)); a same-name superset
+  would collide in any consumer's descriptor pool that also loads the official
+  definition. A sibling is also independently filterable via `SetStreamPolicy`.
+- **Join rule**: `timestamp` is byte-identical to the described frame's video
+  message — a plain equality join. The producer drains its ISP stats queue every
+  frame and binds each entry to its frame by exact counter match against recent
+  capture history (self-validating — no assumed offset); an unmatched entry
+  (unknown-SDK safety net) is stamped with the drain frame's PTS and flagged by
+  `vi_time_ref != isp_frame_id`. `vi_time_ref - isp_frame_id` doubles as the
+  drain latency in frames.
+- New message on a new topic: wire-compatible in both directions. Old consumers
+  ignore the unknown channel; the announce self-describes it for new ones.
+
 ## 0.6.11 — 2026-07-27
 
 ### Added `Heartbeat.client_id` (tag 5) — stable sender identity (wire-compatible)

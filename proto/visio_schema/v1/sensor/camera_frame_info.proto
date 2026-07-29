@@ -1,0 +1,64 @@
+// visio_schema/v1/sensor/camera_frame_info.proto
+//
+// Per-frame camera capture metadata (exposure + sensor timing) on
+// /<device>/camera/<idx>/frame_info — a sibling of the CompressedVideo
+// topic, one message per ISP stats entry (normally one per video frame).
+//
+// Deliberately NOT a field on foxglove.CompressedVideo: that schema is
+// adopted as-is from the pinned foxglove-sdk submodule (see
+// docs/protocol/foxglove_compat.md), and a same-name superset would
+// collide in any consumer's descriptor pool that also loads the
+// official definition. A sibling topic is also independently
+// filterable via SetStreamPolicy.
+//
+// Join rule: `timestamp` is the VI capture PTS of the frame this entry
+// DESCRIBES (`isp_frame_id`), byte-identical to that frame's
+// CompressedVideo timestamp — a plain equality join. The producer
+// drains the ISP stats queue every frame and binds each entry to its
+// frame by exact counter match against recent capture history; an
+// entry whose counter matches nothing (unknown-SDK safety net, never
+// observed on rkaiq) is stamped with the drain frame's PTS instead,
+// and `vi_time_ref != isp_frame_id` flags exactly that case.
+
+syntax = "proto3";
+
+package visio_schema.v1.sensor;
+
+import "google/protobuf/timestamp.proto";
+
+message CameraFrameInfo {
+  // VI capture PTS of the frame this entry describes (see the join
+  // rule above).
+  google.protobuf.Timestamp timestamp = 1;
+
+  // Frame of reference — matches CompressedVideo.frame_id ("cam0").
+  string frame_id = 2;
+
+  // The two frame counters, verbatim. isp_frame_id identifies the
+  // described frame and is UNIQUE per stream — the producer drops the
+  // ISP's rare redelivered stats entries, so a missing frame appears
+  // as a gap, never as a duplicate. vi_time_ref is the frame the
+  // entry was drained on, so vi_time_ref - isp_frame_id is the drain
+  // latency in frames (0 or 1 observed) and an unequal pair marks the
+  // fallback-stamped case from the join rule.
+  uint32 isp_frame_id = 3;  // ISP 3A stats frame counter
+  uint32 vi_time_ref = 4;   // VI buffer sequence of the drain frame
+
+  // Exposure actually in effect for isp_frame_id, real domain —
+  // verbatim from the ISP's AE result, no unit conversion.
+  float exposure_time_s = 5;    // integration time in seconds
+  float analog_gain = 6;        // linear multiplier
+  float digital_gain = 7;       // sensor digital gain, linear
+  float isp_digital_gain = 8;   // ISP digital gain, linear
+  uint32 iso = 9;
+
+  // Sensor register domain: integration time in lines.
+  uint32 coarse_integration_time_lines = 10;
+
+  // Sensor timing. Static per sensor mode; carried per frame so any
+  // clip is self-contained. Rolling-shutter line time =
+  // line_length_pixels / (pixel_clock_mhz * 1e6) seconds.
+  uint32 line_length_pixels = 11;  // HTS
+  uint32 frame_length_lines = 12;  // VTS
+  float pixel_clock_mhz = 13;
+}

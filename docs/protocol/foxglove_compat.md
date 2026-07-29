@@ -54,6 +54,7 @@ proto-name distinction.
 | `visio_schema.v1.sensor.SystemHealth` | `STREAM_SYSTEM_HEALTH` | CPU / RAM / battery / disk / stream-clients periodic telemetry. No Foxglove equivalent. |
 | `visio_schema.v1.sensor.AudioCompressed` | `STREAM_AUDIO_COMPRESSED` | `foxglove.RawAudio` only supports PCM-S16. We need AAC-LC ADTS / Opus / Vorbis for the UMI headset mic path. |
 | `visio_schema.v1.sensor.ButtonEvent` | `STREAM_BUTTON_EVENT` | Named-button edge events; no Foxglove equivalent. |
+| `visio_schema.v1.sensor.CameraFrameInfo` | — | Per-frame exposure + sensor timing (HTS/VTS/pclk) on `/<dev>/camera/<idx>/frame_info`, a sibling of the video topic; timestamps join byte-identically. Foxglove has no per-frame camera-metadata schema, and extending `foxglove.CompressedVideo` in place would collide with the official descriptor in consumers' pools. Post-StreamKind type — dynamic topic only. |
 | `visio_schema.v1.input.QuestControllerState` | `STREAM_CONTROLLER_STATE` | Quest controller buttons + sticks for BOTH hands per tick. No Foxglove equivalent (`foxglove.JointStates` is the closest but joints are continuous, not buttons). |
 | `visio_schema.v1.control.Command` | `STREAM_COMMAND` | Host→device intents (StartRecording, StopRecording, Identify). Application-specific. |
 | `visio_schema.v1.geometry.Twist` | `STREAM_TWIST` | 6-DoF velocity. Foxglove only has linear `Velocity3`; no Twist. We use `foxglove.Vector3` primitives so it composes. |
