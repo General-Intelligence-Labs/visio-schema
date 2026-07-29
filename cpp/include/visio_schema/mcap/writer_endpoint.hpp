@@ -15,6 +15,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <string_view>
 #include <thread>
 #include <unordered_map>
@@ -43,10 +44,13 @@ struct McapWriterStats {
 
 class McapWriterEndpoint : public transport::Endpoint {
  public:
+  // rotate_on_keyframe + pair_guard_ns are forwarded to the inner McapWriter; see
+  // McapWriter's ctor for their contract (opt-in keyframe-aligned rotation).
   McapWriterEndpoint(std::string_view path, StreamResolver resolve,
                      std::uint64_t max_bytes = 0, double max_duration_s = 0.0,
                      transport::WritePolicy policy = transport::WritePolicy::lossless(),
-                     std::map<std::string, std::string> metadata = {});
+                     std::map<std::string, std::string> metadata = {},
+                     bool rotate_on_keyframe = false, std::int64_t pair_guard_ns = 0);
   ~McapWriterEndpoint() override;
 
   McapWriterEndpoint(const McapWriterEndpoint&) = delete;
@@ -65,6 +69,15 @@ class McapWriterEndpoint : public transport::Endpoint {
   std::uint64_t bytes_written() const;
   McapWriterStats stats() const;
 
+  // True once the writer thread hit an unrecoverable storage error (card full
+  // or flipped read-only). Everything sent afterwards is shed. LATCHED —
+  // recording cannot resume on this endpoint; the owner stops and reopens. The
+  // reason is logged by the endpoint, not stored (see NoteFailure).
+  //
+  // Deliberately NOT reported through on_closed: that contract means "fixed
+  // link hit EOF, detach me", and a write-only sink ignores both callbacks.
+  bool write_failed() const { return failed_.load(std::memory_order_relaxed); }
+
  private:
   struct Entry {
     std::shared_ptr<const Channel> channel;  // snapshot — writer-thread safe
@@ -73,6 +86,7 @@ class McapWriterEndpoint : public transport::Endpoint {
   void WriterLoop();
   void DrainBatch(std::deque<Entry>& batch);  // timed writer_->Write
   void NoteDrop(std::size_t n);
+  void NoteFailure(const char* what) noexcept;  // latch + log once
 
   static constexpr std::uint64_t kSlowWriteNs = 50'000'000;  // 50 ms
 
@@ -89,6 +103,7 @@ class McapWriterEndpoint : public transport::Endpoint {
   bool stop_ = false;
   std::thread thread_;
 
+  std::atomic<bool> failed_{false};   // unrecoverable storage error, latched
   std::atomic<std::uint64_t> dropped_{0};
   std::atomic<std::uint64_t> stat_writes_{0};
   std::atomic<std::uint64_t> stat_blocked_ns_{0};

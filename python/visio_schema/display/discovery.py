@@ -42,11 +42,16 @@ import socket
 import sys
 import threading
 from collections.abc import Callable
+from pathlib import Path
 
 # Transport tags — the closed set a device DTO's ``transport`` is drawn from.
 USB = "usb"
 STA = "sta"
 AP = "ap"
+# A local ``.mcap`` recording replayed as a source (not a live device).
+MCAP = "mcap"
+# MCAP file magic (spec §"Magic") — validate an added recording looks like one.
+_MCAP_MAGIC = b"\x89MCAP0\r\n"
 
 # GI-Labs USB vendor id — the CDC-ACM gadget on every ego / glove / gripper.
 _GILABS_USB_VID = 0x2207
@@ -69,12 +74,14 @@ def _tcp_id(host: str, port: int) -> str:
 
 
 def _device(*, dev_id: str, label: str, transport: str, host: str | None = None,
-            port: int | None = None, device: str | None = None) -> dict:
+            port: int | None = None, device: str | None = None,
+            path: str | None = None) -> dict:
     """Build a device DTO. ``id`` is a stable *connection* key (not the serial, which
     is unknown until we connect) — so the same unit reachable over both USB and Wi-Fi
-    legitimately appears as two rows, each describing one way to reach it."""
+    legitimately appears as two rows, each describing one way to reach it. ``path`` is
+    set only for an :data:`MCAP` replay source (the local file to open)."""
     return {"id": dev_id, "label": label, "transport": transport,
-            "host": host, "port": port, "device": device}
+            "host": host, "port": port, "device": device, "path": path}
 
 
 # A unit's stable identity token — ``GILABS-<code8>`` — is stamped into BOTH its USB
@@ -256,6 +263,20 @@ class DiscoveryService:
             pass
         dto = _device(dev_id=_tcp_id(host, port), label=f"{host}:{port}",
                       transport=AP, host=host, port=port)
+        self._upsert(dto)
+        return dto
+
+    # -- mcap replay (local file) ------------------------------------------ #
+    def add_mcap(self, path: str) -> dict:
+        """Add a local ``.mcap`` recording as a replay source. Reading the magic here
+        means an obvious mistake (missing file, wrong file type) fails at add time —
+        as an ``OSError`` the caller turns into a 400 — instead of mid-replay. The
+        resolved path is the id, so adding the same file twice dedups to one row."""
+        p = Path(path).expanduser().resolve()
+        with open(p, "rb") as f:
+            if f.read(len(_MCAP_MAGIC)) != _MCAP_MAGIC:
+                raise OSError(f"not an MCAP recording: {p.name}")
+        dto = _device(dev_id=f"mcap:{p}", label=p.name, transport=MCAP, path=str(p))
         self._upsert(dto)
         return dto
 

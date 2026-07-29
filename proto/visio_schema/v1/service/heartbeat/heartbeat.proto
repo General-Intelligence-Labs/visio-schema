@@ -52,4 +52,18 @@ message Heartbeat {
   // Optional backpressure hint: the sender's instantaneous outbound queue
   // depth, in messages. 0 means "no backpressure" / "not reported."
   uint32 queue_depth = 4;
+
+  // Stable identity of the SENDER, not of this connection: the same string
+  // across reconnects, transports and app restarts (a per-install uuid on a
+  // phone). "" = not reported.
+  //
+  // A device that allows one client at a time cannot otherwise tell "my phone
+  // is back" from "a second phone wants the board": a link dropped without a
+  // FIN — Wi-Fi provisioning, reset-to-hotspot, an app restart — leaves a
+  // socket the owner has already walked away from, and refusing the owner's
+  // next connection locks them out of their own device. Carried on the beacon
+  // because it is the one message every healthy client already sends, so
+  // identity costs no extra round trip; it therefore arrives shortly AFTER
+  // accept, and occupancy is resolved when it does.
+  string client_id = 5;
 }

@@ -1,8 +1,289 @@
 # Changelog
 
+### Added `Command.set_recording_destination` (tag 36)
+
+- Selects device/SD or phone-only recording behavior. Phone mode is leased so
+  disconnecting the controlling app automatically restores device recording.
+
 All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
+
+## 0.6.11 — 2026-07-27
+
+### Added `Heartbeat.client_id` (tag 5) — stable sender identity (wire-compatible)
+
+- **New optional field on the beacon**: a per-install identity of the SENDER,
+  constant across reconnects, transports and app restarts. `""` = not reported,
+  so every existing client keeps working unchanged.
+- **Why**: a device that allows one client at a time cannot otherwise tell "my
+  phone is back" from "a second phone wants the board". A link dropped without a
+  FIN — Wi-Fi provisioning (AP→STA), reset-to-hotspot, an app restart — leaves a
+  socket its owner has already abandoned, and refusing the owner's next
+  connection locks them out of their own device ("Device in use") until
+  TCP_USER_TIMEOUT reaps the corpse, or indefinitely while the owner still holds
+  both networks.
+- **On the beacon** because it is the one message every healthy client already
+  sends at 1 Hz, so identity costs no extra round trip. It therefore arrives
+  shortly *after* accept; consumers resolve occupancy when it lands rather than
+  at accept time.
+
+## 0.6.10 — 2026-07-27
+
+### Added `Command.clear_camera_tuning` (tag 35) — erase a unit's per-unit camera tuning (wire-compatible)
+
+- **New no-field Command body `ClearCameraTuning`**, the counterpart to
+  `SetCalibration{camera_tuning}`. A new per-unit white-balance correction cannot be
+  measured on top of a live one (the measurement reads the residual *after* the
+  correction), so the device now **refuses** a `camera_tuning` write while a correction
+  is applied — `CommandResult{ok=false, error_code="correction_active"}`. Clearing erases
+  the stored record and the device restarts so the next boot comes up uncorrected — the
+  clean baseline a re-measure needs.
+- **Deliberately its own command, not an empty `SetCalibration`.** The `camera_tuning`
+  artifact requires ≥1 point and its write path is exactly what the gate blocks, so
+  "clear" has to be a separate, ungated verb. Empty body — tuning is one record per unit.
+- Works on **sealed units** (bus only, no adb), like the rest of the calibration path.
+
+## 0.6.9 — 2026-07-26
+
+### Added `Command.set_status_report` (tag 34), `SetStorage/TestStorage.status_prefix` (tag 7), `DeviceState.status_report` (tag 31) + `storage_status_prefix` (tag 32) — periodic device status reports
+
+Devices can now periodically PUT a health snapshot (plus a low-res camera JPEG) to
+the customer's S3/OSS bucket, so a fleet owner can see which units are alive,
+aimed, hot, or filling their card without touching them.
+
+- **`SetStorage.status_prefix` / `TestStorage.status_prefix`**: a SECOND key prefix
+  over the SAME credentials. The recordings leg (`prefix`) and the status leg are
+  independent — a device may do recordings only, status only, or both. Empty means
+  the device default, `status/`. Deliberately a sibling of the recordings subtree,
+  not nested inside it: the two want different lifecycle rules and different read
+  grants, and health JSON must not appear where a recordings-ingest pipeline walks.
+- **`Command.set_status_report`**: `SetStatusReport { enabled }`, the runtime
+  on/off switch, persisted device-side. Separate from `SetAutoUpload`, which gates
+  the recordings leg; the two share credentials and nothing else.
+- **`DeviceState.status_report`**: **tri-state**, not a bool, for the same reason
+  as `audio_recording` — `UNSUPPORTED` covers both pre-status-report firmware and
+  `[status_report] enable=0` in the board config, letting the app hide a control it
+  cannot move rather than render a switch in the wrong position.
+- **`DeviceState.storage_status_prefix`**: echoed so the app can show where health
+  reports land.
+
+Wire-compatible in both directions: all four are new optional fields on new tag
+numbers. Old apps ignore them; new apps see `UNSUPPORTED` / empty from old
+firmware, which is exactly the "feature absent" reading.
+
+NOTE on tags: an earlier draft of this feature targeted `Command` tag 33 and
+`DeviceState` tag 30. Both were taken by `forget_wifi` / `wifi_networks` in 0.6.8
+while this was in progress — re-derived to 34 and 31/32. Always re-check against
+`origin/main` before claiming a tag; see the 0.4.x note about `set_notice_lang`
+having to move 26 → 27 for the same reason.
+
+## 0.6.8 — 2026-07-26
+
+### Added `Command.forget_wifi` (tag 33) + `DeviceState.wifi_networks` (tag 30) — many remembered networks
+
+- **`DeviceState.wifi_networks`**: `repeated WifiNetwork { ssid }`, **newest first** — the
+  ordered set the device walks whenever it is offline. Index 0 is the most recently
+  joined. Previously a device remembered exactly one network and every join erased the
+  previous one, so a rig carried between a factory floor, a lab and a hotspot had to be
+  reprovisioned on every move.
+- **`ConnectWifi` (tag 14) is unchanged on the wire but gains a documented side effect**:
+  a successful join puts its SSID at the FRONT of the list, moving it (and replacing the
+  stored passphrase) if it was already there. There is deliberately **no reorder command** —
+  joining *is* the reorder, so there is no second way for host and device to disagree
+  about the order.
+- **`ForgetWifi { ssid }`**: removes ONE entry. A **list edit, not a radio action** — even
+  when it names the network the device is currently on, the association survives, so the
+  caller's link survives and the ack actually gets back. `ResetToAp` remains the "leave
+  now" verb and is now documented as forgetting **all** of them. Idempotent: an unknown
+  ssid answers `ok=true`, so two clients rendering the same polled list cannot race into a
+  spurious failure.
+- **No passphrase is ever carried outbound.** `WifiNetwork` has no field for one and never
+  will — the rule `storage_access_key_id` already follows for the S3 secret.
+- **No `connected` flag** on an entry: compare its ssid against `wifi_ssid` (meaningful
+  only while `wifi_state == WIFI_STATE_STA`). One source of truth, so nothing can go stale
+  against the actual connection.
+- **Reading an empty list**: proto3 gives `repeated` no presence, so "old firmware", "this
+  device manages no networks" and "the device is on a network it cannot manage" (a
+  WPA-Enterprise or hidden block in its stored config) are indistinguishable — and all
+  three mean the same thing to a client. An empty list next to a **non-empty `wifi_ssid`**
+  is *"this network exists but I cannot manage it"*, never *"nothing is saved"*: render the
+  one network you know about and hide the per-entry forget. Do not probe with `ForgetWifi`;
+  its `unsupported` is a permanent refusal.
+- **nanopb**: `ForgetWifi.ssid` is `max_size:33`, matching `ConnectWifi.ssid` so a 32-octet
+  SSID cannot be accepted by one and truncated by the other. `wifi_networks` is
+  `FT_POINTER` — a fixed array would add bytes to *every* `CommandResult` ack forever to
+  carry a list that is usually one entry, and the malloc-free rule governs the inbound
+  `Command` decode path, which this does not touch.
+- The device caps what it stores (a runaway backstop, not a wire limit — nothing decodes
+  into a fixed array), so unlike `SetStreamPolicy.rules` the bound is **not** part of this
+  contract.
+
+## 0.6.7 — 2026-07-25
+
+### Added `Command.set_stream_policy` (tag 32) — the generic per-connection stream filter
+
+- **New `SetStreamPolicy { repeated Rule { topic, drop, max_rate_hz } }`**: one
+  ordered, first-match-wins list saying which streams a connection wants and how
+  fast, addressed by **topic glob** rather than by message class. It replaces the
+  connection's policy outright (no merging), and a connection that never sends one
+  gets everything at full rate — so a lost command still costs bandwidth, never
+  data, and a client recording from the live stream stays lossless by not asking.
+  `target_device` is ignored: a policy describes one link, so it applies at the hop
+  it arrives on (on a suit, the hub→phone leg that actually binds).
+- **Why**: the two knobs it replaces keyed off a *message flag* (`bulk`,
+  `decimatable`), never the topic, so "camera 0 yes, camera 1 no" was inexpressible
+  and the raw IMU bundles — which carry neither flag — could not be shed at all. A
+  phone preview renders one camera at ~15 Hz but was pulling both H.265 eyes plus
+  the full IMU set.
+- **Glob grammar**: leading `/` stripped from both sides, then `*` matches exactly
+  one path segment and `**` matches zero or more segments at any position.
+  Everything else is a literal segment; there are no partial-segment globs. Patterns
+  are re-resolved whenever a peer learns a channel, so a rule covers leaves a hub has
+  not discovered yet. Prefer a **leading** `**` when the depth is not yours to know:
+  relayed leaf topics normally arrive unchanged, but a relay MAY namespace them under
+  the leaf's `device_name` (`prefix_topics_with_device_name`, off by default, opted
+  into for multi-device bring-up). `**/camera/0` matches both forms.
+- **`max_rate_hz` is ignored for camera video.** H.265 is inter-coded: shedding
+  arbitrary P-frames costs the decoder its reference chain and blanks the viewer for a
+  whole GOP. Video is keep-or-drop; capping is for streams whose messages stand alone.
+- At most **12 rules** — the bound the device's malloc-free decode struct is sized
+  for. A longer list fails to decode as a whole and carries no `command_id` to report
+  against, so it is part of the contract.
+
+### `CommandResult`: an unrecognized DIRECTED command must be refused, not ignored
+
+- A receiver now MUST answer a Command naming it in `target_device` even when it
+  does not implement it — `ok=false, error_code="unsupported"` — and callers must
+  treat that code as PERMANENT (no retry). Broadcasts (empty `target_device`) stay
+  silent, since they reach every leaf behind a hub and N replies to one
+  `command_id` is worse than none.
+- **Why**: silence is indistinguishable from a slow link, so a newer host spends
+  its full command timeout *and* its retry budget on something that can never
+  succeed. Measured: the app's stream-policy gate burned ~47 s over three attempts
+  against firmware predating tag 32, then silently gave up — losing the
+  non-video-screen pause and the join-keyframe with only a console warning. This
+  makes a version mismatch fail fast and legibly instead of on a stopwatch.
+- Wire-compatible: no field or tag changes, only a contract the `error_code`
+  string already had room for.
+
+### Deprecated `set_video_streaming` (23) and `set_imu_live_rate` (31)
+
+- Both are marked `deprecated` and are now **sugar over the policy**, not a second
+  mechanism: a receiver expands `SetVideoStreaming{false}` into "drop every
+  `foxglove.CompressedVideo` channel" and `SetImuLiveRate{hz}` into "cap every
+  `Quaternion` channel", using the schema names the registry already carries. Fielded
+  app builds are unaffected; old and new clients share one enforcement path.
+- Transport (internal, unpinned): `Endpoint::SetBulkPaused` / `SetLiveRateHz` are
+  **removed** in favour of `SetStreamPolicy(shared_ptr<const ResolvedStreamPolicy>)`,
+  and `FramedFdEndpoint::Send` now has a single filter gate instead of two. The filter
+  still runs before `EncodeFramed`, so a shed frame costs no CPU. `RequestBulkFlush()`
+  absorbs the old pause-shed: it is called on the policy edges where video stops (shed
+  the backlog) or resumes (drop pre-join video ahead of the keyframe).
+- **Recording sinks are untouched by any of this.** `SetStreamPolicy` is a no-op on
+  the `Endpoint` base and only `FramedFdEndpoint` overrides it, so a viewer thinning
+  its own preview cannot thin an MCAP — the reason the filter is per-endpoint.
+
+## 0.6.6 — 2026-07-24
+
+### Added `Command.set_imu_live_rate` (tag 31) — per-connection IMU live-rate cap
+
+- **New `SetImuLiveRate { uint32 rate_hz }`** on the Command oneof, scoped to
+  the sending connection exactly like `SetVideoStreaming`. Caps the live
+  delivery rate of per-sample derived IMU streams (the fused quaternions) to
+  that endpoint only. `0` — and a fresh connection — mean full rate, so a
+  client that records from the live stream and never asks stays lossless.
+  Raw IMU bundles and on-device recordings are never affected. Wire-compatible
+  MINOR addition; an old device ignores the unknown body, an old app simply
+  never sends it.
+- Transport (internal, unpinned): framed sinks now encode each outbound
+  message once and fan the shared framed buffer out by refcount; the control
+  outbox batches its drain (one write per pass instead of one per ~470 Hz IMU
+  message); a sink whose link accepts nothing for 3 s with bytes pending
+  stops paying to frame bulk/decimatable traffic until the reader returns;
+  accepted TCP connections carry `SO_KEEPALIVE` + `TCP_USER_TIMEOUT` (~10 s)
+  so a vanished peer frees its endpoint promptly.
+
+## 0.6.5 — 2026-07-24
+
+Tooling and C++ library only — **no proto or wire change** (`make breaking` clean
+against `main`). Cut as the first tag since `v0.4.2`, so it also ships the
+accumulated `0.5.0`–`0.6.4` (see those entries), including the **breaking `0.6.0`
+`ImuCalibration` slim**.
+
+### `McapWriterEndpoint` survives a storage failure instead of terminating (C++)
+
+- The writer thread had no exception handling. `McapWriter` throws when it cannot
+  open the next part, so a card that fills up — or that the kernel flips read-only
+  after an integrity error — threw out of the thread's entry function, which is
+  `std::terminate`. Observed in the field: a FAT-corrupt SD card went read-only
+  mid-recording and the whole firmware died on the next part rotation, taking the
+  bus and the cameras with it.
+- The failure is now caught and **latched** behind a new `write_failed(reason)`
+  query; the thread stays alive to shed what is queued so `Send()`/`Stop()` stay
+  well-behaved, and the owner polls the latch and stops the recording. `Stop()`
+  guards `Close()` the same way — it runs from a `noexcept` destructor, and losing
+  a footer costs one part's index, which the uploader's torn-part repair recovers.
+- Not routed through `on_closed`: that contract means "fixed link hit EOF, detach
+  me", a different thing from "storage died, stop recording", and a write-only
+  sink ignores both callbacks.
+
+### `visio-display --serve`: load & replay a local MCAP file (launcher)
+
+- New "Recording / MCAP file" source replays a local recording into the same
+  Foxglove WebSocket bridge, reusing the existing H.265→JPEG decode fallback so
+  replayed video transcodes unchanged for browsers that can't decode HEVC. The
+  file is opened by path (nothing is uploaded); a server-side file browser
+  (`GET /api/fs`, `POST /api/mcap`) picks it, since a browser can't hand the
+  server a filesystem path.
+- Also fixes a latent launcher bug: `_run` passed a zero-arg `on_closed`, but the
+  fd and MCAP-reader endpoints call `on_closed(self)`, so a replay EOF (or a live
+  TCP unplug) would `TypeError`; a terminal "ended" state now replaces the stale
+  "streaming" a finished source reported.
+
+## 0.6.4 — 2026-07-23
+
+### Added `SetCalibration.camera_tuning` — per-unit ISP measurement (wire-compatible)
+
+- **New `visio_schema.v1.calibration.CameraTuning` (`WbMeasurement` + `WbPoint`)**,
+  carried on the `SetCalibration` artifact oneof at **tag 15**, `sensor_kind =
+  CAMERA`. A lens+IR-cut varies unit to unit, so one per-model iqfile cannot be
+  correct for every part; this is how a fixture tells a device what its own
+  optics measured.
+- **Set-only — the first `SetCalibration` artifact that is never re-published.**
+  Nothing downstream consumes it, so it is persisted and applied but has no
+  `/<dev>/...` topic. Consequence for callers: the `CommandResult` is the *only*
+  acknowledgement, with no 1 Hz re-broadcast to confirm against.
+- **Points are the only vocabulary.** There is no separate "apply this
+  multiplier" field, because two ways of stating a correction can disagree and
+  nothing would arbitrate. With `awb_mode = LIVE` a correct pipeline renders a
+  neutral target at `rg = bg = 1.0` — that is what AWB is for — so a point's
+  `rg` *is* the residual error, and a chosen ×1.0565 red gain is simply the point
+  `rg = 1/1.0565`. A later fixture measurement then replaces it at the same CCT
+  without the record changing shape. At least one point is required.
+- **Carries measurements and nothing else.** The model that extends a
+  measurement across colour temperature and the resulting ISP values live on the
+  device, so improving either is an OTA rather than a re-push of every unit.
+- **Indexed by CCT**, not by illuminant name or iqfile light-source slot, so
+  changing a sensor's light-source list does not reinterpret stored records.
+  `mired` is absent (derivable as `1e6/cct`; carrying both invites a record whose
+  two indices disagree).
+- **One record per unit, not per camera.** `sensor_index` is still required by
+  `SetCalibration` but selects nothing here: the ISP shares a single AWB gain
+  table across a rig's sensors, measured on an RV1106 stereo ego — a record
+  naming `cam0` alone moved *both* cameras by the same factor, under camgroup and
+  under per-sensor free-run alike. A per-camera artifact would have promised what
+  the hardware cannot do.
+- **`lens_model` / `lens_batch` are the only identity fields on the wire**,
+  because the lens is the one thing no device can sense. `lens_model` is required;
+  `lens_batch` is recorded and logged but **never gates**, since correcting a unit
+  from a new lens batch is the entire purpose.
+- **Deliberately NOT on the wire**: the sensor and the ISP tuning revision. A
+  host tool can observe neither, so a value it sent would be an assertion about
+  state it cannot see. The device stamps its own when it stores a record and
+  re-checks at apply, catching a reflash between calibration and use.
+- Field numbers 2-4 reserved on `CameraTuning` for lens-shading, black-level and
+  defect-pixel artifacts.
 
 ## 0.6.3 — 2026-07-21
 

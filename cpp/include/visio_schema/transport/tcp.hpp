@@ -48,13 +48,28 @@ class TcpEndpoint : public FramedFdEndpoint {
   }
 };
 
+// Which local address a connection landed on. A device serving several links at
+// once (setup AP, station Wi-Fi, USB-NCM) cannot tell them apart from the
+// Endpoint alone, and an occupancy rule that treats every client as
+// interchangeable then locks a phone out of its own session when it moves from
+// one link to another. Captured at accept() from getsockname(), before anything
+// can close the fd.
+struct AcceptedLeg {
+  // Dotted-quad local address the client reached us on ("" if unavailable) —
+  // e.g. the AP gateway vs the station lease. This is the LEG identity.
+  std::string local_ip;
+  // Dotted-quad remote address ("" if unavailable), for logging.
+  std::string peer_ip;
+};
+
 // Listen-mode acceptor. Produces one FramedFdEndpoint per accepted connection.
 class TcpAcceptor {
  public:
-  // on_accept(endpoint) is called from the accept thread for each new client; it
-  // must attach the endpoint somewhere (e.g. bus.AttachPeer) — the acceptor keeps
-  // no reference to it.
-  using OnAccept = std::function<void(std::shared_ptr<Endpoint>)>;
+  // on_accept(endpoint, who) is called from the accept thread for each new
+  // client; it must attach the endpoint somewhere (e.g. bus.AttachPeer) — the
+  // acceptor keeps no reference to it.
+  using OnAccept =
+      std::function<void(std::shared_ptr<Endpoint>, const AcceptedLeg&)>;
 
   explicit TcpAcceptor(std::uint16_t port,
                        WritePolicy policy = WritePolicy::drop_oldest());

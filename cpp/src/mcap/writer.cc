@@ -29,6 +29,11 @@ namespace {
   return opts;
 }
 
+// The protobuf full name Foxglove uses for H.265 video (a camera channel's
+// Channel::schema_name). Only these channels are keyframe-gated; audio
+// ("foxglove.RawAudio"), IMU, encoder and control are written unconditionally.
+constexpr const char* kCompressedVideoSchema = "foxglove.CompressedVideo";
+
 // A drop-in for upstream mcap's FileWriter that opens the part file with
 // O_CLOEXEC. Upstream FileWriter uses fopen(path, "wb"), whose fd is NOT
 // close-on-exec, so it leaks into every child this process fork+execs — notably
@@ -148,11 +153,14 @@ void FsyncPart(const std::string& path) {
 }  // namespace
 
 McapWriter::McapWriter(std::string_view path, std::uint64_t max_bytes,
-                       double max_duration_s)
+                       double max_duration_s, bool rotate_on_keyframe,
+                       std::int64_t pair_guard_ns)
     : base_path_(path),
       max_bytes_(max_bytes),
       max_duration_ns_(static_cast<std::int64_t>(max_duration_s * 1e9)),
-      rotating_(max_bytes > 0 || max_duration_s > 0.0) {
+      rotating_(max_bytes > 0 || max_duration_s > 0.0),
+      rotate_on_keyframe_(rotate_on_keyframe),
+      pair_guard_ns_(pair_guard_ns) {
   OpenPart();
 }
 
@@ -168,6 +176,11 @@ void McapWriter::OpenPart() {
   // Each part re-registers its own schemas/channels so it stands alone.
   schema_ids_.clear();
   channel_ids_.clear();
+  // Each part must open every video stream on its own keyframe (the previous
+  // part's IDR is not in this file), so unprime all video channels and forget the
+  // prior part's video high-water timestamp.
+  primed_video_channels_.clear();
+  part_max_video_ts_ = INT64_MIN;
   part_bytes_ = 0;
   part_start_ = std::chrono::steady_clock::now();
   const std::string p = PartPath();
@@ -237,7 +250,41 @@ void McapWriter::Roll() {
 void McapWriter::Write(const Channel& channel, const Message& msg) {
   if (closed_) return;
 
-  if (rotating_ && ShouldRoll()) Roll();
+  const bool is_video = channel.schema_name == kCompressedVideoSchema;
+  const std::int64_t msg_ts_ns = TimestampNs(msg.timestamp);
+
+  if (rotate_on_keyframe_ && rotating_) {
+    // Cut ONLY at a video keyframe that begins a pair NOT yet started in this
+    // part — one strictly newer than every video frame already written, plus a
+    // guard so a pair's µs-skewed sibling keyframe (which may already be in this
+    // part) can never trigger the cut and split the pair. If the cap is crossed
+    // mid-GOP, the current GOP finishes into the old part and the cut lands at the
+    // next boundary (≤1 extra GOP overshoot). A byte hard ceiling (+1/8) still
+    // rolls if video keyframes ever stall, so a stuck encoder can't grow a part
+    // unbounded — this only bounds BYTE rotation (max_bytes>0), the sole on-device
+    // mode; a duration-only rotate_on_keyframe would have no stall ceiling.
+    const bool starts_new_pair =
+        is_video && msg.keyframe && msg_ts_ns > part_max_video_ts_ + pair_guard_ns_;
+    if (ShouldRoll() && starts_new_pair) {
+      Roll();
+    } else if (max_bytes_ > 0 && part_bytes_ >= max_bytes_ + max_bytes_ / 8) {
+      Roll();
+    }
+  } else if (rotating_ && ShouldRoll()) {
+    Roll();  // opt-in off: original byte-exact roll
+  }
+
+  // Keyframe gate: drop a video channel's frames until its first keyframe of the
+  // current part, so every part (first and each rotation) opens each video stream
+  // on a decodable IDR. The dropped pre-keyframe P-frames reference a frame in the
+  // previous part and are already undecodable in isolation — nothing decodable is
+  // lost, only dead bytes trimmed. ShouldRoll() never rolls while part_bytes_ == 0,
+  // so a part still awaiting its first keyframe cannot spuriously roll.
+  if (is_video &&
+      primed_video_channels_.find(channel.id) == primed_video_channels_.end()) {
+    if (!msg.keyframe) return;  // pre-keyframe P-frame — drop, don't count
+    primed_video_channels_.insert(channel.id);
+  }
 
   auto sit = schema_ids_.find(channel.schema_name);
   if (sit == schema_ids_.end()) {
@@ -261,7 +308,7 @@ void McapWriter::Write(const Channel& channel, const Message& msg) {
     cit = channel_ids_.emplace(channel.id, ch.id).first;
   }
 
-  const auto ts = static_cast<::mcap::Timestamp>(TimestampNs(msg.timestamp));
+  const auto ts = static_cast<::mcap::Timestamp>(msg_ts_ns);
   ::mcap::Message out;
   out.channelId = cit->second;
   out.sequence = msg.seq;
@@ -271,6 +318,10 @@ void McapWriter::Write(const Channel& channel, const Message& msg) {
   out.data = reinterpret_cast<const std::byte*>(msg.payload.data());
   writer_->write(out);
   part_bytes_ += msg.payload.size();
+  // Track the newest video capture time WRITTEN this part — the rotate-on-keyframe
+  // "starts a new pair" test compares against it (P-frames included, so the next
+  // GOP's keyframe beats the last P-frame while a pair's sibling does not).
+  if (is_video && msg_ts_ns > part_max_video_ts_) part_max_video_ts_ = msg_ts_ns;
   // Lifetime total — monotonic across part rotation (OpenPart resets part_bytes_
   // but never this), so a poller can distinguish active writing from a stall.
   bytes_written_.fetch_add(msg.payload.size(), std::memory_order_relaxed);

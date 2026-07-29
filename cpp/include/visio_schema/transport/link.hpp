@@ -68,4 +68,9 @@ int OpenTcpListenSocket(std::uint16_t port);
 // for Linux's accept4(SOCK_CLOEXEC).
 int AcceptCloexec(int listen_fd);
 
+// Name the calling thread (prctl PR_SET_NAME on Linux, 15 chars kept; no-op
+// elsewhere). Purely diagnostic — the endpoint/acceptor/timer loops name
+// themselves so top -H and per-thread CPU accounting on a device are readable.
+void SetCurrentThreadName(const char* name);
+
 }  // namespace visio_schema::transport

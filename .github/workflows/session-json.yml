@@ -1,0 +1,87 @@
+name: session-json
+
+# Build the standalone `visio-session-json` tool (PyInstaller onefile) for Linux,
+# macOS and Windows, and attach the three binaries to the `v*` release alongside the
+# wheels (wheels.yml) and the launcher zips (launcher.yml). PyInstaller can't
+# cross-compile, hence one build per OS.
+#
+# Unlike the launcher, this needs NO codegen and NO package install: the tool is one
+# stdlib-only script that parses the few MCAP record bytes it reads. Keep it that way
+# — that is what lets a customer run the single .py on a bare Python.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "tools/session-json/**"
+      - "python/tests/test_session_json.py"
+      - ".github/workflows/session-json.yml"
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install pytest
+      # Runs the tool's suite alone (the rest of python/tests needs the generated
+      # bindings); `make pytest` runs it again in CI proper.
+      - run: python -m pytest python/tests/test_session_json.py -q
+
+  build:
+    name: exe (${{ matrix.os }})
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # pytest: the smoke check imports the test module for its MCAP fixtures.
+      # pyinstaller is pinned — a bootloader change would otherwise land straight on
+      # a tag build, and this binary is what customers download.
+      - run: python -m pip install "pyinstaller==6.21.0" pytest
+      - run: pyinstaller tools/session-json/visio-session-json.spec --noconfirm --distpath dist
+      # Proves the BUNDLE, not the logic: rebuild / kept / exit-1, through a folder
+      # named with a space and CJK, with a non-ASCII capturer — the Windows console
+      # and filesystem paths the unit suite can't reach.
+      - run: python tools/session-json/smoke_frozen.py dist
+      # Give each binary its final, OS-distinct name here, where `runner.os` is at
+      # hand — so the release job just uploads what it downloads, and renaming a
+      # matrix entry can't silently break it. (Windows is already `.exe`.)
+      - name: name it per OS
+        shell: bash
+        run: |
+          case "${{ runner.os }}" in
+            Linux) mv dist/visio-session-json dist/visio-session-json-linux ;;
+            macOS) mv dist/visio-session-json dist/visio-session-json-macos ;;
+          esac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: visio-session-json-${{ runner.os }}
+          path: dist/visio-session-json*
+
+  release_assets:
+    name: attach the binaries to the release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: visio-session-json-*
+          merge-multiple: true    # already OS-distinct names; nothing collides
+          path: dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*

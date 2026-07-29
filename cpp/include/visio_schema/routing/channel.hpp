@@ -20,6 +20,16 @@ namespace visio_schema {
 // Centralized so the fallback isn't a scattered string literal.
 inline constexpr const char* kDefaultEncoding = "protobuf";
 
+// Schema names that code BRANCHES on, rather than merely records. Centralized
+// for the same reason as the encoding above, and with more at stake: a peer
+// deciding "is this channel video?" from a private copy of the string silently
+// changes behaviour if the producer's copy drifts.
+inline constexpr const char* kCompressedVideoSchema = "foxglove.CompressedVideo";
+inline constexpr const char* kQuaternionSchema =
+    "visio_schema.v1.ros.geometry_msgs.Quaternion";
+inline constexpr const char* kCommandResultSchema =
+    "visio_schema.v1.control.CommandResult";
+
 struct Channel {
   std::uint32_t id = 0;
   std::string topic;

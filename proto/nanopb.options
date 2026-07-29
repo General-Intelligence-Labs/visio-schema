@@ -27,24 +27,38 @@ foxglove.CompressedImage.format     max_size:8
 # ---- Sensors: short button id (samples stay callback — see strategy above) -
 visio_schema.v1.sensor.ButtonEvent.button_id   max_size:32
 
+# ---- Heartbeat: sender identity, bounded inline ---------------------------
+# Must NOT be a callback: the beacon is encoded into a fixed
+# `Heartbeat_size` buffer on both the device and the host, and a callback field
+# makes that size runtime-dependent. 40 holds a 36-char uuid + NUL with room to
+# spare, and the device compares it on every beacon, so it has to be readable
+# without an allocator.
+visio_schema.v1.service.heartbeat.Heartbeat.client_id   max_size:40
+
 # ---- Control: command payload strings (bounded inline — small, fixed shape) -
 # target_device must be bounded (not the default callback) so on_command can read
 # it and honor end-to-end addressing when a hub relays Commands to multiple leaves.
 visio_schema.v1.control.Command.target_device         max_size:32
 visio_schema.v1.control.ConnectWifi.ssid              max_size:33
 visio_schema.v1.control.ConnectWifi.passphrase        max_size:64
+# Same 33 as ConnectWifi.ssid, and it must stay the same: a 32-octet SSID that
+# ConnectWifi accepts would otherwise be truncated here, and the entry it named
+# could never be removed.
+visio_schema.v1.control.ForgetWifi.ssid               max_size:33
 visio_schema.v1.control.SetStorage.endpoint_url       max_size:128
 visio_schema.v1.control.SetStorage.region             max_size:32
 visio_schema.v1.control.SetStorage.bucket             max_size:64
 visio_schema.v1.control.SetStorage.access_key_id      max_size:32
 visio_schema.v1.control.SetStorage.secret_access_key  max_size:64
 visio_schema.v1.control.SetStorage.prefix             max_size:128
+visio_schema.v1.control.SetStorage.status_prefix      max_size:128
 visio_schema.v1.control.TestStorage.endpoint_url      max_size:128
 visio_schema.v1.control.TestStorage.region            max_size:32
 visio_schema.v1.control.TestStorage.bucket            max_size:64
 visio_schema.v1.control.TestStorage.access_key_id     max_size:32
 visio_schema.v1.control.TestStorage.secret_access_key max_size:64
 visio_schema.v1.control.TestStorage.prefix            max_size:128
+visio_schema.v1.control.TestStorage.status_prefix     max_size:128
 
 # StartRecording capture metadata: bounded so they decode into the static
 # struct (session_name stays the nanopb default callback — firmware ignores it).
@@ -64,6 +78,17 @@ visio_schema.v1.control.FormatStorage.fs_type         max_size:8
 # SetNoticeLang: ISO 639-1 code, possibly with a region subtag ("zh-CN").
 visio_schema.v1.control.SetNoticeLang.lang            max_size:16
 
+# SetStreamPolicy: the per-connection delivery filter. Bounded (not FT_POINTER
+# like the result lists) because it rides the inbound Command decode path, which
+# is deliberately malloc-free — same reasoning as SetCalibration's artifacts.
+# 12 rules x 64 B is ~0.9 KB in the Command union, and a preview needs 4.
+# The count is a HARD limit: nanopb fails the whole decode past it, so the
+# bound is part of the contract (documented in command.proto).
+# Topic headroom: "/GILABS-AABBCCDD/glove_left/imus/15/raw" is 40 chars, and a
+# hub prefixes relayed leaf topics with the leaf's device_name.
+visio_schema.v1.control.SetStreamPolicy.rules         max_count:12
+visio_schema.v1.control.SetStreamPolicy.Rule.topic    max_size:64
+
 # ---- Control: CommandResult ack + DeviceState snapshot (bounded inline so the
 #      ack is a static struct; the two list payloads below are FT_POINTER) -----
 visio_schema.v1.control.CommandResult.error_code               max_size:32
@@ -80,6 +105,7 @@ visio_schema.v1.control.DeviceState.wifi_last_error            max_size:128
 visio_schema.v1.control.DeviceState.storage_endpoint           max_size:128
 visio_schema.v1.control.DeviceState.storage_bucket             max_size:64
 visio_schema.v1.control.DeviceState.storage_prefix             max_size:128
+visio_schema.v1.control.DeviceState.storage_status_prefix      max_size:128
 visio_schema.v1.control.DeviceState.storage_access_key_id      max_size:32
 visio_schema.v1.control.DeviceState.upload_last_error          max_size:128
 
@@ -96,6 +122,18 @@ visio_schema.v1.control.RecordingEntry.task       type:FT_POINTER
 visio_schema.v1.control.RecordingEntry.location   type:FT_POINTER
 visio_schema.v1.control.RecordingEntry.message    type:FT_POINTER
 visio_schema.v1.control.RecordingEntry.capturer   type:FT_POINTER
+
+# DeviceState.wifi_networks: the first FT_POINTER field on DeviceState, which is
+# otherwise fully inline. A fixed WifiNetwork[N] with char ssid[33] would add
+# ~35*N bytes to EVERY CommandResult — i.e. to every setter's ack, forever — to
+# carry a list that is usually one or two entries. FT_POINTER costs a pointer +
+# a pb_size_t instead, and mallocs NOTHING on the device: the publisher borrows
+# c_str() into a live std::vector, exactly like the two lists above. This does
+# not violate the malloc-free rule, which governs the inbound Command DECODE
+# path — the device only ever ENCODES a DeviceState. A host-side C++ consumer
+# that DECODES a CommandResult must pb_release it, already true for both lists.
+visio_schema.v1.control.DeviceState.wifi_networks type:FT_POINTER
+visio_schema.v1.control.WifiNetwork.ssid          type:FT_POINTER
 
 # ---- Calibration: bound the foxglove camera/transform + ImuCalibration repeated
 #      fields so every SetCalibration artifact (and the published calibration) is a
@@ -118,6 +156,20 @@ visio_schema.v1.calibration.TactileLayout.points          max_count:160
 visio_schema.v1.calibration.TactileLayout.Group.fields    max_count:4
 visio_schema.v1.calibration.TactileLayout.Point.part      max_size:16
 foxglove.PackedElementField.name                          max_size:16
+# CameraTuning (per-unit ISP measurement, inbound on SetCalibration): bound
+# everything so it stays FT_STATIC like the artifacts above — this rides the same
+# Command decode path, and a pb_callback_t there would mean hand-written decode
+# callbacks on an inbound control message.
+# points headroom 8 > the 7-illuminant ladder (HZ/A/TL84/CWF/D50/D65/D75).
+# illuminant is a label only (cct is the key), sized to rkaiq's own
+# CALD_AWB_ILLUMINATION_NAME (20). utc holds an ISO-8601 stamp ("...T09:14:00Z").
+visio_schema.v1.calibration.WbMeasurement.points          max_count:8
+visio_schema.v1.calibration.WbMeasurement.fixture         max_size:24
+visio_schema.v1.calibration.WbMeasurement.utc             max_size:24
+visio_schema.v1.calibration.WbMeasurement.fw              max_size:16
+visio_schema.v1.calibration.WbMeasurement.lens_model      max_size:24
+visio_schema.v1.calibration.WbMeasurement.lens_batch      max_size:12
+visio_schema.v1.calibration.WbPoint.illuminant            max_size:20
 
 # ---- Geometry: short frame id ---------------------------------------------
 visio_schema.v1.geometry.Twist.frame_id   max_size:32

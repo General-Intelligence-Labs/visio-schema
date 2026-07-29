@@ -26,6 +26,21 @@ message WifiScanResults {
   repeated WifiScanResult results = 1;
 }
 
+// One remembered Wi-Fi network — an entry in the ordered list the device tries
+// while it is offline. See DeviceState.wifi_networks.
+//
+// A message rather than a bare `repeated string` so a later per-entry attribute
+// is an additive field instead of a second parallel array, the same reason
+// WifiScanResult is a message.
+//
+// There is deliberately NO passphrase field, and there never will be.
+// Credentials travel device-INBOUND only (ConnectWifi); nothing outbound
+// carries one — the rule storage_access_key_id already follows for the S3
+// secret.
+message WifiNetwork {
+  string ssid = 1;
+}
+
 // One recorded session on local storage, with its upload state.
 message RecordingEntry {
   string name            = 1;
@@ -103,6 +118,32 @@ message DeviceState {
   string    wifi_ip         = 8;
   string    wifi_last_error = 9;
 
+  // Remembered STA networks, NEWEST FIRST — the order the device tries them in
+  // while it is offline. Index 0 is the most recently joined.
+  //
+  // The device owns the ordering, not the host: a successful ConnectWifi puts
+  // its SSID at index 0 (moving it if already present, and replacing the stored
+  // passphrase), ForgetWifi removes one entry, ResetToAp clears all of them.
+  // There is no reorder command. While the device IS associated it does not
+  // switch away on its own — the order governs what it reaches for when it has
+  // no link, not a preference it re-evaluates.
+  //
+  // "Which one am I on?" is deliberately NOT a field here: compare an entry's
+  // ssid against wifi_ssid above (meaningful only while wifi_state ==
+  // WIFI_STATE_STA). One source of truth, so a stale per-entry flag can never
+  // contradict the actual connection.
+  //
+  // ABSENT on firmware predating this field — which proto3 makes
+  // indistinguishable from "nothing is remembered" (repeated has no presence).
+  // A device can also be joined to a network it cannot list, if its stored
+  // config holds a block the device does not manage (WPA-Enterprise, a hidden
+  // network). BOTH cases look the same on the wire and mean the same thing to a
+  // client: an EMPTY list next to a non-empty wifi_ssid is "this network exists
+  // but I cannot manage it", never "nothing is saved". Render the one network
+  // you do know about and hide the per-entry forget; do not probe with
+  // ForgetWifi, whose `unsupported` is a permanent refusal.
+  repeated WifiNetwork wifi_networks = 30;
+
   // ── storage (config only; never the secret key) ──
   bool   storage_configured = 10;
   string storage_endpoint   = 11;
@@ -111,6 +152,9 @@ message DeviceState {
   // Access key ID is an identifier (not a secret), echoed back so the app can
   // show which credential is configured. The secret access key is NEVER echoed.
   string storage_access_key_id = 26;
+  // The status-report key prefix (see SetStorage.status_prefix). Echoed so the
+  // app can show where health reports land; empty means the device default.
+  string storage_status_prefix = 32;
 
   // ── upload queue ──
   uint32 upload_pending             = 14;
@@ -149,13 +193,42 @@ message DeviceState {
     AUDIO_RECORDING_DISABLED    = 2;
   }
   AudioRecording audio_recording = 29;
+
+  // ── status reports ──
+  // Whether the device periodically PUTs health + a camera JPEG to the status
+  // prefix (SetStatusReport).
+  //
+  // Tri-state for the same reason as AudioRecording above: UNSUPPORTED covers
+  // both "this firmware predates status reports" and "[status_report] enable=0
+  // in the board config", and lets the app HIDE the control rather than render a
+  // switch it cannot actually move. A bool would read false on old firmware,
+  // which is indistinguishable from "supported but off".
+  enum StatusReport {
+    STATUS_REPORT_UNSUPPORTED = 0;
+    STATUS_REPORT_ENABLED     = 1;
+    STATUS_REPORT_DISABLED    = 2;
+  }
+  StatusReport status_report = 31;
 }
 
 // The single ack a device emits per Command on /<device>/command_result.
+//
+// A receiver MUST answer a Command that names it in `target_device`, even one it
+// does not understand: reply `ok=false, error_code="unsupported"`. Silence is not
+// a valid answer — a caller cannot distinguish it from a slow link, so it spends
+// its whole command timeout and every retry on something that can never succeed,
+// and a newer host talking to older firmware degrades on a stopwatch instead of
+// immediately. `"unsupported"` is a PERMANENT refusal: callers must not retry it.
+//
+// A BROADCAST (empty `target_device`) is exempt, and must stay silent when
+// unsupported — it reaches every leaf behind a hub, so answering would put N
+// contradictory replies on the wire against one command_id.
 message CommandResult {
   uint64 command_id    = 1;  // echoes Command.command_id
   bool   ok            = 2;
-  string error_code    = 3;  // machine-readable; empty when ok
+  // Machine-readable; empty when ok. Well-known: "unsupported" (this receiver
+  // does not implement the command — permanent, do not retry).
+  string error_code    = 3;
   string error_message = 4;  // human-readable; empty when ok
 
   // Command-specific return data. Setters + GetState return `state`; ScanWifi

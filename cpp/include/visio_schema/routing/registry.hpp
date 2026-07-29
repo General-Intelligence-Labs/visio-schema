@@ -64,6 +64,18 @@ class ChannelRegistry {
   // ── Resolution ───────────────────────────────────────────────────────
   const Channel* Resolve(std::uint32_t stream_id) const;
   std::vector<Channel> Channels() const;
+  // Sweep every channel without copying: Channels() returns them BY VALUE and a
+  // Channel carries its whole serialized FileDescriptorSet (KB scale), so a
+  // sweep through it would copy the entire schema set. Used to re-resolve a
+  // per-connection stream policy, which re-runs whenever a channel is learned.
+  template <class F>
+  void ForEachChannel(F&& fn) const {
+    for (const auto& [id, ch] : by_id_) fn(id, ch);
+  }
+  // Is `id` one of OUR outputs (vs a channel learned from a peer's announce)?
+  // A hub's registry holds both, so a peer picking one of its own channels to
+  // publish on has to be able to tell them apart.
+  bool IsOwnOutput(std::uint32_t id) const { return own_ids_.count(id) != 0; }
   // True iff this peer has declared outputs to announce (the announce is
   // own-only; learned channels propagate by the bus forwarding leaf announces).
   bool HasOwnOutputs() const { return !own_ids_.empty(); }

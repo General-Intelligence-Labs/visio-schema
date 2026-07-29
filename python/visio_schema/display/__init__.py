@@ -1035,6 +1035,7 @@ def run_bridge(
     *,
     derive_tf: bool = False,
     derive_bitrate: bool = False,
+    derive_scene: bool = False,
     bitrate_window: float = 2.0,
     close_sinks: bool = True,
 ) -> int:
@@ -1051,6 +1052,13 @@ def run_bridge(
     outlives any single device's source."""
     tf = TfDeriver() if derive_tf else None
     bitrate = BitrateDeriver(window=bitrate_window) if derive_bitrate else None
+    scene = []
+    if derive_scene:
+        # Device-specific scene twins live in display (viewer policy), lazily
+        # imported so the base bridge carries no hard dep on them.
+        from visio_schema.display.scene_derivers import (
+            HandSkeletonDeriver, TactileSceneDeriver)
+        scene = [TactileSceneDeriver(), HandSkeletonDeriver()]
     n = 0
 
     def _fan_out(msg: Message, ch: Channel) -> None:
@@ -1063,6 +1071,10 @@ def run_bridge(
             derived = tf.derive(msg, ch) if tf else None
             if derived is not None:
                 _fan_out(*derived)
+            for sd in scene:
+                r = sd.derive(msg, ch)
+                if r is not None:
+                    _fan_out(*r)
             if bitrate is not None:
                 for d_msg, d_ch in bitrate.feed(msg, ch):
                     _fan_out(d_msg, d_ch)
@@ -1108,6 +1120,9 @@ def main(argv: list[str] | None = None) -> int:
                         "Foxglove or MCAP sink is active (default: on; --no-bitrate off)")
     p.add_argument("--bitrate-window", type=float, default=2.0, metavar="SECS",
                    help="bitrate sliding-window length in seconds (default 2.0)")
+    p.add_argument("--scene", action="store_true",
+                   help="derive hand-shape SceneUpdate twins on .../scene "
+                        "(JQ tactile glove + Quest hand skeleton)")
     p.add_argument("--rerun", action="store_true", help="display in the Rerun viewer")
     p.add_argument("--rerun-memory", metavar="LIMIT", default="2GB",
                    help="Rerun viewer memory cap; old data drops past it (default 2GB)")
@@ -1182,6 +1197,7 @@ def main(argv: list[str] | None = None) -> int:
         source, sinks,
         derive_tf=want_derived,
         derive_bitrate=bool(args.bitrate and want_derived),
+        derive_scene=args.scene,
         bitrate_window=args.bitrate_window,
     )
     print(f"done ({n} messages)", file=sys.stderr)

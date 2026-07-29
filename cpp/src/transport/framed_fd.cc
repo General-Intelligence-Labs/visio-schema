@@ -4,7 +4,8 @@
 #include <unistd.h>
 
 #include "visio_schema/transport/framing.hpp"
-#include "visio_schema/wire/time.hpp"  // MonotonicNs
+#include "visio_schema/transport/link.hpp"  // SetCurrentThreadName
+#include "visio_schema/wire/time.hpp"       // MonotonicNs
 
 namespace visio_schema::transport {
 
@@ -30,10 +31,24 @@ void FramedFdEndpoint::AdoptFd(int fd) {
 
 // Control queue: near-lossless and bounded by frame count (control + IMU are
 // low-byte; 512 frames is generous headroom, dropping oldest only if the link
-// stalls for seconds). OneAtATime drain (WritePolicy default) so Pump can
-// interleave it with video at frame boundaries.
+// stalls for seconds). BatchAll drain: at ~470 IMU messages/s, OneAtATime
+// made every tiny frame its own write() and — with TCP_NODELAY — its own
+// packet, ~500 syscalls+packets/s per client. Coalescing costs one copy of a
+// few KB per drain pass and still interleaves with video at frame boundaries
+// (the batch is one in-flight unit; worst case a video frame waits behind
+// ~25 KB of control, microseconds on any link this serves).
 namespace {
-WritePolicy ControlPolicy() { return WritePolicy::drop_oldest(512); }
+WritePolicy ControlPolicy() {
+  WritePolicy p = WritePolicy::drop_oldest(512);
+  p.drain = WritePolicy::DrainMode::BatchAll;
+  return p;
+}
+
+// No bytes accepted for this long WITH bytes pending = the link is stalled
+// (serial gadget nobody reads, peer gone silent). Long enough that a
+// congested-but-alive Wi-Fi link (which still accepts something every few
+// hundred ms) never trips it.
+constexpr std::int64_t kStallNs = 3'000'000'000;
 }  // namespace
 
 FramedFdEndpoint::FramedFdEndpoint(int fd, WritePolicy policy)
@@ -72,15 +87,37 @@ void FramedFdEndpoint::Stop() {
 }
 
 void FramedFdEndpoint::Send(const Message& msg) {
-  // Video paused for this client (e.g. the app is on a non-video screen): drop
-  // it at the door so it never enters the queue or contends for the AP. Control
-  // is never paused. Set under the same dispatch serialization as Send, so the
-  // relaxed read is consistent here.
-  if (msg.bulk && bulk_paused_.load(std::memory_order_relaxed)) return;
-  const auto framed = EncodeFramed(msg);
+  // Door checks BEFORE any framing work, so a frame nobody will get costs
+  // nothing — the reason a thinned preview saves device CPU, not just bandwidth.
+
+  // Nobody is reading: bulk is hopeless and derived per-sample streams are pure
+  // waste (their ground truth ships full-rate elsewhere). Small control frames
+  // still enqueue — they are the probe that detects the reader coming back.
+  if (link_stalled_.load(std::memory_order_relaxed) &&
+      (msg.bulk || msg.decimatable)) {
+    return;
+  }
+  // Absent rule = keep at full rate, so a stream announced after the policy was
+  // resolved is delivered rather than silently dropped.
+  const StreamRule* rule = RuleFor(msg.stream_id);
+  if (rule != nullptr && rule->drop) return;
+  // A cap never applies to inter-coded video (stream_policy.hpp).
+  if (rule != nullptr && rule->min_gap_us != 0 && !msg.bulk) {
+    const std::int64_t now_us = FramedOutbox::SteadyNowUs();
+    std::int64_t& last_us = decim_last_us_[msg.stream_id];
+    if (now_us - last_us < rule->min_gap_us) return;
+    last_us = now_us;
+  }
+  // Frame ONCE per message: the framed bytes are identical for every sink
+  // (see wire::Message::framed), so whoever gets here first pays the
+  // COBS+CRC pass and the rest just take a refcount.
+  if (!msg.framed) {
+    msg.framed = std::make_shared<const std::vector<std::uint8_t>>(
+        EncodeFramed(msg));
+  }
   // Bulk (camera video) -> lossy video queue; everything else -> the control
   // queue, which Pump() drains ahead of video. thread-safe; no I/O.
-  (msg.bulk ? outbox_ : ctrl_outbox_).Enqueue(framed.data(), framed.size());
+  (msg.bulk ? outbox_ : ctrl_outbox_).Enqueue(msg.framed, msg.keyframe);
   Wake();
 }
 
@@ -88,28 +125,82 @@ void FramedFdEndpoint::Wake() { wake_.Signal(); }
 
 void FramedFdEndpoint::Pump() {
   if (fd_ < 0) return;
-  // When streaming was just paused, shed any video still queued from before the
-  // pause — but only at a frame boundary (not mid-write, or the reader desyncs).
-  // Clear() is leg-thread-only, and Pump runs on the leg thread, so this is the
-  // safe place to do it. Frees the AP within one drain cycle.
-  if (bulk_paused_.load(std::memory_order_relaxed) && !outbox_.InFlightActive())
+  // Shed the video queued before the client's last change of mind — a backlog
+  // it either no longer wants, or (on a resume) cannot decode and which would
+  // only delay the keyframe it is waiting for.
+  //
+  // Frame boundary only: Clear() mid-write would splice a frame and desync the
+  // reader's COBS framing. Clear() is leg-thread-only and Pump runs on the leg
+  // thread, so this is the safe place.
+  if (bulk_flush_.load(std::memory_order_relaxed) && !outbox_.InFlightActive()) {
     outbox_.Clear();
+    bulk_flush_.store(false, std::memory_order_relaxed);
+  }
   const int fd = fd_;
-  const auto wr = [fd](const std::uint8_t* p, std::size_t n) {
-    return WriteSome(fd, p, n);
+  long accepted = 0;  // bytes the fd took this pass — feeds stall detection
+  const auto wr = [fd, &accepted](const std::uint8_t* p, std::size_t n) {
+    const long r = WriteSome(fd, p, n);
+    if (r > 0) accepted += r;
+    return r;
   };
-  // Multiplex the two outboxes over the one fd WITHOUT splitting a frame: if
-  // either has a frame mid-write (bytes already on the wire), finish exactly
-  // that one — switching now would inject the other queue's bytes into a
-  // half-written COBS frame and desync the reader. Only at a frame boundary
-  // (neither in-flight) do we choose, and then control goes first so a reply
-  // never waits behind the video backlog. The video outbox is OneAtATime, so
-  // "finish the in-flight frame" is bounded to a single video frame.
-  FramedOutbox* pick = outbox_.InFlightActive()        ? &outbox_
-                       : ctrl_outbox_.InFlightActive()  ? &ctrl_outbox_
-                       : ctrl_outbox_.HasPending()      ? &ctrl_outbox_
-                                                        : &outbox_;
-  if (!pick->Drain(wr)) MarkLinkDead();
+  // Keep draining while the link keeps accepting. A OneAtATime Drain() promotes
+  // exactly ONE frame, so a single Drain() per poll wakeup caps this leg at one
+  // frame per wakeup. That is invisible on a fast link (writes never EAGAIN, so
+  // poll returns immediately and the loop spins), but on a real one it throttles
+  // the leg to the POLLOUT rate — and this device publishes ~550 messages/s
+  // (~60 video + ~467 IMU + audio), so the backlog grows, frames age past the
+  // outbox's max_age and are evicted. Measured symptom: the kernel send queue
+  // sat EMPTY in 94 of 100 samples while the viewer saw 0.4-0.6 s gaps and its
+  // decoder lost sync — we simply weren't feeding the socket.
+  //
+  // Each iteration re-picks, so control frames still interleave at frame
+  // boundaries; the loop stops the moment a write reports EAGAIN (bytes left
+  // in flight) or nothing is pending. Bounded so a saturating producer can't
+  // starve this thread's inbound reads.
+  constexpr int kMaxFramesPerPump = 64;
+  for (int i = 0; i < kMaxFramesPerPump; ++i) {
+    // Multiplex the two outboxes over the one fd WITHOUT splitting a frame: if
+    // either has a frame mid-write (bytes already on the wire), finish exactly
+    // that one — switching now would inject the other queue's bytes into a
+    // half-written COBS frame and desync the reader. Only at a frame boundary
+    // (neither in-flight) do we choose, and then control goes first so a reply
+    // never waits behind the video backlog. The video outbox is OneAtATime, so
+    // "finish the in-flight frame" is bounded to a single video frame.
+    FramedOutbox* pick = outbox_.InFlightActive()         ? &outbox_
+                         : ctrl_outbox_.InFlightActive()  ? &ctrl_outbox_
+                         : ctrl_outbox_.HasPending()      ? &ctrl_outbox_
+                                                          : &outbox_;
+    if (!pick->Drain(wr)) {
+      MarkLinkDead();
+      return;
+    }
+    // Bytes still in flight => the write hit EAGAIN; wait for the next POLLOUT
+    // rather than spinning on a socket that isn't taking data.
+    if (pick->InFlightActive()) break;
+    if (!ctrl_outbox_.HasPending() && !outbox_.HasPending()) break;
+  }
+  UpdateStallState(accepted);
+}
+
+void FramedFdEndpoint::UpdateStallState(long accepted) {
+  const std::int64_t now_ns = MonotonicNs();
+  const bool pending = ctrl_outbox_.HasPending() || outbox_.HasPending();
+  if (accepted > 0 || !pending) {
+    last_progress_ns_ = now_ns;
+    if (link_stalled_.load(std::memory_order_relaxed) && accepted > 0) {
+      link_stalled_.store(false, std::memory_order_relaxed);
+      // The reader is back. Whatever bulk survived queuing is stale; flush it
+      // so the viewer re-syncs on the next keyframe instead of replaying a
+      // dead backlog.
+      RequestBulkFlush();
+    }
+    return;
+  }
+  if (last_progress_ns_ == 0) {
+    last_progress_ns_ = now_ns;  // first pass with pending bytes: arm
+  } else if (now_ns - last_progress_ns_ > kStallNs) {
+    link_stalled_.store(true, std::memory_order_relaxed);
+  }
 }
 
 void FramedFdEndpoint::MarkLinkDead() {
@@ -121,6 +212,9 @@ void FramedFdEndpoint::MarkLinkDead() {
   outbox_.Clear();
   rx_buf_.clear();
   next_reopen_ns_ = 0;  // reopen ASAP on the next Tick
+  // A fresh link starts unstalled and re-arms its own stall clock.
+  link_stalled_.store(false, std::memory_order_relaxed);
+  last_progress_ns_ = 0;
 }
 
 bool FramedFdEndpoint::Reopen() {
@@ -139,6 +233,7 @@ void FramedFdEndpoint::Tick(std::int64_t now_ns) {
 }
 
 void FramedFdEndpoint::Loop() {
+  SetCurrentThreadName("vs_ep_io");
   while (!stop_.load()) {
     const int fd = fd_;
     pollfd pfds[2];

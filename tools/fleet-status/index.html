@@ -1,0 +1,1172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Visio Fleet Status</title>
+<!--
+  Visio Fleet Status — a single self-contained page that reads the status
+  reports firmware writes to S3/OSS and shows the fleet.
+
+  No build step, no dependencies, no server of its own. It signs ListObjectsV2 /
+  GetObject in the browser with WebCrypto, implementing both signature flavours
+  the devices use (AWS SigV4 and Aliyun OSS V4) — including the OSS quirk that the
+  payload hash must literally be "UNSIGNED-PAYLOAD".
+
+  ── DEPLOYMENT (this order matters) ────────────────────────────────────────────
+  Upload this ONE file into the same bucket the devices write to and mark just
+  this object public-read, then open it from the bucket URL:
+
+      aws s3 cp index.html s3://BUCKET/dashboard/index.html --acl public-read
+      # or:  aliyun oss cp index.html oss://BUCKET/dashboard/index.html --acl public-read
+
+  Requests are then SAME-ORIGIN, so no CORS rule is needed at all. The file holds
+  no credentials — you type them into Settings and they stay in localStorage.
+
+  Local alternative:  python3 -m http.server  (then http://localhost:8000)
+    ...plus a CORS rule on the bucket, because it is now cross-origin.
+
+  Opening this straight off disk (file://) will NOT work: browsers give file://
+  an opaque origin, so both the fetch and window.crypto.subtle are unavailable.
+
+  ── COST ───────────────────────────────────────────────────────────────────────
+  One LIST per refresh, independent of fleet size: keys are strictly
+  chronological, so a start-after cursor returns only beats newer than the last
+  one seen. Objects are immutable, so each beat is downloaded exactly once. The
+  counter in the footer shows the running request count — it should climb by
+  about one LIST per tick, not one per device.
+-->
+<style>
+:root {
+  color-scheme: dark;
+  --bg:#0e1116; --panel:#161b22; --panel-2:#1c232c; --line:#2a313c;
+  --fg:#e6edf3; --fg-dim:#9aa7b4; --fg-faint:#6b7785;
+  --live:#3fb950; --late:#d29922; --dark:#f85149; --rec:#f85149;
+  --accent:#4493f8;
+  --radius:10px;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg:#f6f8fa; --panel:#ffffff; --panel-2:#f0f3f6; --line:#d7dee6;
+  --fg:#1f2328; --fg-dim:#59636e; --fg-faint:#818b98;
+  --live:#1a7f37; --late:#9a6700; --dark:#cf222e; --rec:#cf222e;
+  --accent:#0969da;
+}
+* { box-sizing:border-box; }
+html,body { margin:0; padding:0; }
+body {
+  background:var(--bg); color:var(--fg);
+  font:14px/1.45 var(--sans);
+  -webkit-font-smoothing:antialiased;
+}
+button, input, select { font:inherit; color:inherit; }
+button { cursor:pointer; }
+a { color:var(--accent); }
+
+/* ── top bar ─────────────────────────────────────────────────────────────── */
+header {
+  position:sticky; top:0; z-index:20;
+  background:var(--panel); border-bottom:1px solid var(--line);
+}
+.bar { display:flex; align-items:center; gap:14px; padding:10px 16px; flex-wrap:wrap; }
+.brand { font-weight:640; letter-spacing:-0.01em; white-space:nowrap; }
+.brand small { color:var(--fg-faint); font-weight:400; margin-left:8px; }
+.counts { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+.count { display:flex; align-items:center; gap:6px; color:var(--fg-dim); white-space:nowrap; }
+.count b { color:var(--fg); font-variant-numeric:tabular-nums; }
+.dot { width:8px; height:8px; border-radius:50%; flex:none; }
+.dot.live{background:var(--live)} .dot.late{background:var(--late)} .dot.dark{background:var(--dark)}
+.spacer { flex:1 1 auto; }
+.ctl {
+  background:var(--panel-2); border:1px solid var(--line); color:var(--fg);
+  border-radius:8px; padding:6px 10px;
+}
+.ctl:hover { border-color:var(--fg-faint); }
+input.ctl { min-width:150px; }
+.seg { display:flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+.seg button { background:var(--panel-2); border:0; padding:6px 11px; color:var(--fg-dim); }
+.seg button[aria-pressed="true"] { background:var(--accent); color:#fff; }
+.filters { display:flex; gap:6px; flex-wrap:wrap; padding:0 16px 10px; }
+.chip {
+  background:var(--panel-2); border:1px solid var(--line); color:var(--fg-dim);
+  border-radius:999px; padding:4px 12px; font-size:13px;
+}
+.chip[aria-pressed="true"] { background:var(--accent); border-color:var(--accent); color:#fff; }
+
+/* ── grid ────────────────────────────────────────────────────────────────── */
+main { padding:16px; }
+.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:14px; }
+.card {
+  background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+  overflow:hidden; cursor:pointer; position:relative;
+  border-left:3px solid var(--line); transition:transform .08s ease, border-color .15s;
+}
+.card:hover { transform:translateY(-1px); border-color:var(--fg-faint); }
+.card.s-live { border-left-color:var(--live); }
+.card.s-late { border-left-color:var(--late); }
+.card.s-dark { border-left-color:var(--dark); }
+.card.s-alert{ border-left-color:var(--dark); }
+.thumb {
+  position:relative; aspect-ratio:16/9; background:var(--panel-2);
+  display:flex; align-items:center; justify-content:center; overflow:hidden;
+}
+.thumb img { width:100%; height:100%; object-fit:cover; display:block; }
+.ph { text-align:center; color:var(--fg-faint); font-size:12px; padding:8px; }
+.ph .ico { font-size:22px; display:block; margin-bottom:4px; opacity:.65; }
+.badge {
+  position:absolute; top:7px; padding:2px 7px; border-radius:999px;
+  font-size:11px; font-weight:600; letter-spacing:.02em;
+  background:rgba(0,0,0,.62); color:#fff; backdrop-filter:blur(3px);
+}
+.badge.rec { left:7px; background:var(--rec); }
+.badge.idle{ left:7px; }
+.badge.age { right:7px; font-variant-numeric:tabular-nums; }
+.badge.age.late { background:var(--late); color:#000; }
+.badge.age.dark { background:var(--dark); }
+.pulse { display:inline-block; width:6px; height:6px; border-radius:50%; background:#fff;
+         margin-right:4px; animation:pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
+.meta { padding:8px 10px 10px; }
+.name { font-family:var(--mono); font-size:12.5px; font-weight:600;
+        white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.sub  { color:var(--fg-faint); font-size:11.5px; margin-top:1px; height:1.3em;
+        white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.stats { display:flex; gap:10px; margin-top:7px; font-size:11.5px; color:var(--fg-dim);
+         font-variant-numeric:tabular-nums; flex-wrap:wrap; }
+.stats .warn { color:var(--late); font-weight:600; }
+.stats .bad  { color:var(--dark); font-weight:600; }
+
+/* ── table view ──────────────────────────────────────────────────────────── */
+.tablewrap { overflow-x:auto; border:1px solid var(--line); border-radius:var(--radius); }
+table { border-collapse:collapse; width:100%; min-width:820px; }
+th,td { text-align:left; padding:8px 12px; border-bottom:1px solid var(--line); font-size:13px;
+        white-space:nowrap; }
+th { color:var(--fg-dim); font-weight:600; cursor:pointer; user-select:none;
+     background:var(--panel); position:sticky; top:0; }
+tbody tr { cursor:pointer; }
+tbody tr:hover { background:var(--panel-2); }
+td.num { font-variant-numeric:tabular-nums; }
+
+/* ── wall view ───────────────────────────────────────────────────────────── */
+body.wall header, body.wall .filters, body.wall footer { display:none; }
+body.wall main { padding:6px; }
+body.wall .grid { grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:6px; }
+body.wall .stats, body.wall .sub { display:none; }
+
+/* ── drawer ──────────────────────────────────────────────────────────────── */
+.scrim { position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:30; }
+.drawer {
+  position:fixed; top:0; right:0; bottom:0; width:min(560px,100vw); z-index:31;
+  background:var(--panel); border-left:1px solid var(--line);
+  overflow-y:auto; padding:16px;
+}
+.drawer h2 { margin:0 0 2px; font-size:16px; font-family:var(--mono); }
+.drawer .close { position:absolute; top:12px; right:14px; background:none; border:0;
+                 color:var(--fg-dim); font-size:20px; line-height:1; }
+.drawer img.full { width:100%; border-radius:8px; border:1px solid var(--line); margin:10px 0; }
+.kv { display:grid; grid-template-columns:auto 1fr; gap:2px 14px; font-size:13px; margin:10px 0; }
+.kv dt { color:var(--fg-dim); }
+.kv dd { margin:0; font-variant-numeric:tabular-nums; }
+.section { margin-top:18px; }
+.section h3 { font-size:12px; text-transform:uppercase; letter-spacing:.06em;
+              color:var(--fg-faint); margin:0 0 8px; }
+pre { background:var(--panel-2); border:1px solid var(--line); border-radius:8px;
+      padding:10px; overflow:auto; max-height:300px; font-family:var(--mono);
+      font-size:11.5px; margin:0; }
+.spark { display:flex; align-items:center; gap:10px; margin-bottom:6px; font-size:12px; }
+.spark span:first-child { color:var(--fg-dim); width:74px; flex:none; }
+.spark svg { flex:1; height:26px; }
+.spark b { font-variant-numeric:tabular-nums; width:56px; text-align:right; flex:none; }
+.timeline { display:flex; gap:2px; align-items:flex-end; height:26px; }
+.timeline i { flex:1; min-width:2px; background:var(--live); border-radius:1px; height:100%; }
+.timeline i.gap { background:var(--line); height:35%; }
+
+/* ── settings + states ───────────────────────────────────────────────────── */
+.panel { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+         padding:18px; max-width:560px; margin:32px auto; }
+.panel h2 { margin:0 0 4px; font-size:17px; }
+.panel p.hint { color:var(--fg-dim); font-size:13px; margin:0 0 16px; }
+.field { margin-bottom:11px; }
+.field label { display:block; font-size:12px; color:var(--fg-dim); margin-bottom:3px; }
+.field input, .field select { width:100%; padding:7px 10px; border-radius:8px;
+  border:1px solid var(--line); background:var(--panel-2); }
+.row2 { display:grid; grid-template-columns:1fr 1fr; gap:11px; }
+.btn { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:9px 16px;
+       font-weight:600; }
+.btn.ghost { background:var(--panel-2); color:var(--fg); border:1px solid var(--line); }
+.msg { border-radius:8px; padding:10px 12px; font-size:13px; margin:12px 0; }
+.msg.err { background:rgba(248,81,73,.12); border:1px solid var(--dark); }
+.msg.ok  { background:rgba(63,185,80,.12); border:1px solid var(--live); }
+.msg pre { margin-top:8px; max-height:200px; }
+.empty { text-align:center; color:var(--fg-faint); padding:60px 20px; }
+footer { color:var(--fg-faint); font-size:12px; padding:14px 16px 30px;
+         display:flex; gap:16px; flex-wrap:wrap; }
+footer b { color:var(--fg-dim); font-variant-numeric:tabular-nums; }
+</style>
+</head>
+<body>
+
+<header id="hdr" hidden>
+  <div class="bar">
+    <div class="brand">Fleet Status <small id="bucketLabel"></small></div>
+    <div class="counts" id="counts"></div>
+    <div class="spacer"></div>
+    <input class="ctl" id="search" type="search" placeholder="Search device…" autocomplete="off">
+    <select class="ctl" id="sort">
+      <option value="name">Sort: name</option>
+      <option value="age">Sort: staleness</option>
+      <option value="temp">Sort: temperature</option>
+      <option value="disk">Sort: disk free</option>
+    </select>
+    <div class="seg" id="viewSeg">
+      <button data-view="grid"  aria-pressed="true">Grid</button>
+      <button data-view="table" aria-pressed="false">Table</button>
+      <button data-view="wall"  aria-pressed="false">Wall</button>
+    </div>
+    <button class="ctl" id="refreshNow" title="Refresh now">⟳</button>
+    <button class="ctl" id="themeBtn" title="Toggle theme">◐</button>
+    <button class="ctl" id="settingsBtn" title="Settings">⚙</button>
+  </div>
+  <div class="filters" id="filters">
+    <button class="chip" data-f="all"       aria-pressed="true">All</button>
+    <button class="chip" data-f="recording" aria-pressed="false">Recording</button>
+    <button class="chip" data-f="idle"      aria-pressed="false">Idle</button>
+    <button class="chip" data-f="late"      aria-pressed="false">Late</button>
+    <button class="chip" data-f="dark"      aria-pressed="false">Dark</button>
+    <button class="chip" data-f="alert"     aria-pressed="false">Alerts</button>
+  </div>
+</header>
+
+<main id="main"></main>
+<footer id="footer" hidden></footer>
+
+<script>
+"use strict";
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Request signing. Must stay byte-compatible with what the devices send.
+
+   AWS : AWS4-HMAC-SHA256, key "AWS4"+SK, scope <date>/<region>/s3/aws4_request,
+         x-amz-date / x-amz-content-sha256, Authorization ... SignedHeaders=<all>
+   OSS : OSS4-HMAC-SHA256, key "aliyun_v4"+SK, <date>/<region>/oss/aliyun_v4_request,
+         x-oss-date / x-oss-content-sha256, Authorization ...,AdditionalHeaders=<non-default>
+
+   Two OSS behaviours that are easy to get wrong and produce an opaque 403:
+     * the payload hash must be the literal string UNSIGNED-PAYLOAD. A real hash
+       is rejected with 400 InvalidArgument.
+     * content-type / content-md5 / x-oss-* are "default-signed": OSS folds them
+       into its own canonical request, so they are signed but must NOT be listed
+       in AdditionalHeaders. Everything else that IS signed (host) must be.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+const enc = new TextEncoder();
+const hex = buf => [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+
+async function sha256Hex(str) {
+  return hex(await crypto.subtle.digest("SHA-256", enc.encode(str)));
+}
+async function hmac(keyBytes, msg) {
+  const k = await crypto.subtle.importKey("raw", keyBytes, { name: "HMAC", hash: "SHA-256" },
+                                          false, ["sign"]);
+  return new Uint8Array(await crypto.subtle.sign("HMAC", k, enc.encode(msg)));
+}
+
+// RFC 3986. encodeURIComponent leaves !'()* alone, which S3 does not.
+const uriEncode = s => encodeURIComponent(s)
+  .replace(/[!'()*]/g, c => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+const uriEncodePath = p => p.split("/").map(uriEncode).join("/");
+
+const isOssHost = host => /\.aliyuncs\.com$/i.test(host);
+
+function flavorSpec(oss) {
+  return oss
+    ? { algo:"OSS4-HMAC-SHA256", keyPrefix:"aliyun_v4", terminator:"aliyun_v4_request",
+        service:"oss", dateHdr:"x-oss-date", contentHdr:"x-oss-content-sha256" }
+    : { algo:"AWS4-HMAC-SHA256", keyPrefix:"AWS4", terminator:"aws4_request",
+        service:"s3",  dateHdr:"x-amz-date", contentHdr:"x-amz-content-sha256" };
+}
+const ossDefaultHeader = k =>
+  k === "content-type" || k === "content-md5" || k.startsWith("x-oss-");
+
+// Bucket addressing. For OSS the
+// SIGNED path keeps /<bucket>/<key> while the REQUEST goes to /<key> on a
+// bucket-prefixed host; path-style has them identical.
+function bucketEndpoint(endpointUrl, bucket) {
+  const u = new URL(endpointUrl);
+  const basePath = u.pathname === "/" ? "" : u.pathname.replace(/\/$/, "");
+  const oss = isOssHost(u.hostname);
+  return {
+    oss,
+    scheme: u.protocol.replace(":", ""),
+    host: oss ? `${bucket}.${u.hostname}` : u.hostname,
+    port: u.port,
+    signPrefix: `${basePath}/${bucket}`,
+    reqPrefix: oss ? basePath : `${basePath}/${bucket}`,
+  };
+}
+
+async function signedFetch(cfg, { method = "GET", key = "", query = {} }) {
+  const ep = bucketEndpoint(cfg.endpoint, cfg.bucket);
+  const sp = flavorSpec(ep.oss);
+  const payloadHash = ep.oss ? "UNSIGNED-PAYLOAD" : await sha256Hex("");
+
+  const now = new Date();
+  const amzDate = now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+  const date = amzDate.slice(0, 8);
+
+  const canonicalQuery = Object.keys(query).sort()
+    .map(k => `${uriEncode(k)}=${uriEncode(query[k])}`).join("&");
+
+  const hostHeader = ep.port ? `${ep.host}:${ep.port}` : ep.host;
+  const headers = {
+    host: hostHeader,
+    [sp.contentHdr]: payloadHash,
+    [sp.dateHdr]: amzDate,
+  };
+  const sortedKeys = Object.keys(headers).sort();
+  const canonicalHeaders = sortedKeys.map(k => `${k}:${headers[k]}\n`).join("");
+  const signedHeaders = sortedKeys.join(";");
+  const additionalHeaders = sortedKeys.filter(k => !ossDefaultHeader(k)).join(";");
+  const fifthLine = ep.oss ? additionalHeaders : signedHeaders;
+
+  const signPath = uriEncodePath(`${ep.signPrefix}/${key}`) || "/";
+  const canonicalRequest =
+    `${method}\n${signPath}\n${canonicalQuery}\n${canonicalHeaders}\n${fifthLine}\n${payloadHash}`;
+
+  const scope = `${date}/${cfg.region}/${sp.service}/${sp.terminator}`;
+  const stringToSign =
+    `${sp.algo}\n${amzDate}\n${scope}\n${await sha256Hex(canonicalRequest)}`;
+
+  let k = enc.encode(sp.keyPrefix + cfg.secret);
+  k = await hmac(k, date);
+  k = await hmac(k, cfg.region);
+  k = await hmac(k, sp.service);
+  k = await hmac(k, sp.terminator);
+  const signature = hex(await hmac(k, stringToSign));
+
+  const auth = `${sp.algo} Credential=${cfg.accessKey}/${scope}` +
+    (ep.oss
+      ? (additionalHeaders ? `,AdditionalHeaders=${additionalHeaders}` : "")
+      : `, SignedHeaders=${signedHeaders}`) +
+    (ep.oss ? `,Signature=${signature}` : `, Signature=${signature}`);
+
+  const reqPath = uriEncodePath(`${ep.reqPrefix}/${key}`) || "/";
+  const url = `${ep.scheme}://${hostHeader}${reqPath}` +
+              (canonicalQuery ? `?${canonicalQuery}` : "");
+
+  stats.requests++;
+  // Host is set by the browser and cannot be overridden — it already matches.
+  return fetch(url, {
+    method,
+    headers: { [sp.contentHdr]: payloadHash, [sp.dateHdr]: amzDate, Authorization: auth },
+  });
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   S3/OSS operations
+   ══════════════════════════════════════════════════════════════════════════ */
+
+async function listObjects(cfg, prefix, startAfter) {
+  const out = [];
+  let token = null;
+  // MUST follow IsTruncated. A 100-device fleet at the 300 s default writes
+  // ~1200 keys into one hour prefix, so stopping at the first page of 1000 does
+  // not merely re-list — it silently DROPS beats and the devices sorting past
+  // the cap show up as dark.
+  for (let page = 0; page < 20; page++) {
+    const query = { "list-type": "2", prefix, "max-keys": "1000" };
+    if (startAfter) query["start-after"] = startAfter;
+    if (token) query["continuation-token"] = token;
+    const res = await signedFetch(cfg, { key: "", query });
+    const text = await res.text();
+    if (!res.ok) throw new HttpError(res.status, text);
+    const doc = new DOMParser().parseFromString(text, "application/xml");
+    for (const c of doc.getElementsByTagName("Contents")) {
+      const key = c.getElementsByTagName("Key")[0]?.textContent || "";
+      if (!key.endsWith(".json")) continue;
+      out.push({
+        key,
+        // Server truth. Immune to a device whose clock is wrong — which, with no
+        // NTP on these boards, is a real state and not a hypothetical.
+        lastModified: Date.parse(c.getElementsByTagName("LastModified")[0]?.textContent || ""),
+        size: +(c.getElementsByTagName("Size")[0]?.textContent || 0),
+      });
+    }
+    const more = doc.getElementsByTagName("IsTruncated")[0]?.textContent === "true";
+    token = doc.getElementsByTagName("NextContinuationToken")[0]?.textContent || null;
+    if (!more || !token) break;
+  }
+  return out;
+}
+
+async function getBeat(cfg, key) {
+  const res = await signedFetch(cfg, { key });
+  const text = await res.text();
+  if (!res.ok) throw new HttpError(res.status, text);
+  return JSON.parse(text);
+}
+
+class HttpError extends Error {
+  constructor(status, body) {
+    super(`HTTP ${status}`);
+    this.status = status;
+    this.body = body;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   State
+   ══════════════════════════════════════════════════════════════════════════ */
+
+const LS_CFG = "visio.fleet.cfg";
+const LS_ROSTER = "visio.fleet.roster";
+const LS_THEME = "visio.fleet.theme";
+const MAX_HISTORY = 120;          // beats kept per device, in memory only
+const OVERLAP_MS = 120e3;         // cursor rewind; see pollOnce()
+
+let cfg = null;
+// De-dup only: immutable keys mean "seen" is enough, so this holds KEYS, not
+// beats. Holding the beats retained every base64 image for the life of the tab
+// (~20 KB each; a 50-device fleet left open overnight was hundreds of MB).
+const seenKeys = new Set();
+const devices = new Map();        // uid -> { uid, label, history[], latest, lastModified }
+let roster = {};                  // uid -> {label,lastModified,key} — persisted, NO images
+const cursors = new Map();        // hour prefix -> last key seen in it
+let timer = null;
+let selected = null;
+let rosterDirty = false;
+let view = new URLSearchParams(location.search).get("wall") ? "wall" : "grid";
+let filter = "all", sortBy = "name", search = "";
+const stats = { requests: 0, fetched: 0, lastPoll: 0, lastError: null,
+                beatErrors: 0, lastBeatError: null, rejected: 0 };
+
+const loadCfg = () => { try { return JSON.parse(localStorage.getItem(LS_CFG)); } catch { return null; } };
+const saveCfg = c => localStorage.setItem(LS_CFG, JSON.stringify(c));
+const loadRoster = () => { try { return JSON.parse(localStorage.getItem(LS_ROSTER)) || {}; } catch { return {}; } };
+const saveRoster = () => localStorage.setItem(LS_ROSTER, JSON.stringify(roster));
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Polling
+
+   Keys are <prefix>/<YYYY-MM-DD>/<HH>/<MMSS>-<uid>.json — strictly
+   chronological, uid in the leaf. That is what makes start-after work: one LIST
+   per refresh returns only beats newer than the cursor, regardless of fleet size
+   or history depth. (Put <uid>/ in the path and keys sort by device within the
+   hour, forcing a full re-list every tick.)
+   ══════════════════════════════════════════════════════════════════════════ */
+
+const pad = (n, w = 2) => String(n).padStart(w, "0");
+const hourPrefix = (d, prefix) =>
+  `${prefix}${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}/${pad(d.getUTCHours())}/`;
+
+function normPrefix(p) { p = (p || "status/").trim(); return p.endsWith("/") ? p : p + "/"; }
+
+async function pollOnce() {
+  const prefix = normPrefix(cfg.statusPrefix);
+  const now = new Date();
+  const prev = new Date(now.getTime() - 3600e3);
+
+  // Both the current hour and the previous one: at :00 the newest beats are in a
+  // prefix that did not exist a minute ago, and beats from :59 are still fresh.
+  const hours = [hourPrefix(prev, prefix), hourPrefix(now, prefix)];
+  const found = [];
+
+  for (const hp of hours) {
+    // Rewind the cursor by OVERLAP_MS. The key carries CAPTURE time, but a slow
+    // PUT can land after a faster device's later beat and therefore sort BEHIND
+    // a cursor that has already moved past it. Re-listing a couple of minutes and
+    // deduping by key is the standard fix; the overlap is a few dozen keys, so it
+    // is still one request.
+    //
+    // The cursor is PER HOUR. A single global cursor always lived in the current
+    // hour, so the previous hour got no start-after and was re-listed in full on
+    // every tick for a whole hour — the opposite of the one-LIST-per-refresh this
+    // key layout exists to buy.
+    let startAfter;
+    const seen = cursors.get(hp);
+    if (seen) {
+      const rewound = new Date(now.getTime() - OVERLAP_MS);
+      startAfter = hourPrefix(rewound, prefix) === hp
+        ? hp + pad(rewound.getUTCMinutes()) + pad(rewound.getUTCSeconds())
+        : seen;   // overlap falls in an earlier hour: resume from the last key
+    }
+    found.push(...await listObjects(cfg, hp, startAfter));
+  }
+
+  found.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  for (const o of found) {
+    const hp = o.key.slice(0, o.key.lastIndexOf("/") + 1);
+    const prev_seen = cursors.get(hp);
+    if (!prev_seen || o.key > prev_seen) cursors.set(hp, o.key);
+  }
+  // Drop cursors for hours we no longer list, so the Map cannot grow forever.
+  for (const hp of [...cursors.keys()]) if (!hours.includes(hp)) cursors.delete(hp);
+
+  // Immutable keys ⇒ never re-download one we already hold. This is what keeps a
+  // dashboard left open all day cheap.
+  const fresh = found.filter(o => !seenKeys.has(o.key));
+  // Fan out in bounded batches. Serial awaits made a cold start (two full hours
+  // of a 50-device fleet) take minutes of blank page before the first render.
+  const kConcurrency = 6;
+  for (let i = 0; i < fresh.length; i += kConcurrency) {
+    const batch = fresh.slice(i, i + kConcurrency);
+    await Promise.all(batch.map(async o => {
+      seenKeys.add(o.key);          // immutable keys: never fetch one twice
+      try {
+        const beat = await getBeat(cfg, o.key);
+        beat._key = o.key;
+        beat._lastModified = o.lastModified;
+        stats.fetched++;
+        ingest(beat);
+      } catch (e) {
+        // A key that lists but 403s on GET is the classic "read grant scoped to
+        // the wrong prefix" — surface it instead of rendering an empty fleet.
+        stats.beatErrors++;
+        stats.lastBeatError = e;
+        console.warn("beat fetch failed", o.key, e);
+      }
+    }));
+  }
+  if (rosterDirty) { saveRoster(); rosterDirty = false; }
+
+  stats.lastPoll = Date.now();
+  stats.lastError = null;
+}
+
+const SCHEMA = "gilabs.status_report/1";
+
+function ingest(beat) {
+  // Require the contract. Inventing a uid for a stray object collapsed every
+  // unrelated .json under the prefix into one card whose zeroed fields rendered
+  // as a HEALTHY device.
+  if (beat.schema !== SCHEMA || !beat.device_uid) {
+    stats.rejected++;
+    return;
+  }
+  const uid = beat.device_uid;
+  let d = devices.get(uid);
+  if (!d) {
+    d = { uid, label: beat.device_label || uid, history: [], latest: null, lastModified: 0 };
+    devices.set(uid, d);
+  }
+  d.label = beat.device_label || d.label;
+  // History feeds the sparklines and the gap timeline only, so strip the image
+  // before storing: keeping it would retain ~20 KB per beat per device.
+  const { image, ...light } = beat;
+  d.history.push(light);
+  d.history.sort((a, b) => a._lastModified - b._lastModified);
+  if (d.history.length > MAX_HISTORY) d.history.splice(0, d.history.length - MAX_HISTORY);
+  if (beat._lastModified >= d.lastModified) {
+    d.latest = beat;
+    d.lastModified = beat._lastModified;
+  }
+  // Roster carries METADATA ONLY. Persisting beats would blow the ~5 MB
+  // localStorage budget almost immediately (a beat with an image is ~40 KB).
+  roster[uid] = { label: d.label, lastModified: d.lastModified, key: beat._key };
+  rosterDirty = true;   // written once per poll, not once per beat
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Classification
+   ══════════════════════════════════════════════════════════════════════════ */
+
+// Freshness is relative to the device's OWN reported interval, so a 5-minute
+// device and a 60-second device are judged on the same scale.
+function classify(d) {
+  const interval = (d.latest?.interval_s || 300) * 1000;
+  const age = Date.now() - (d.lastModified || 0);
+  let state = age <= 2 * interval ? "live" : age <= 6 * interval ? "late" : "dark";
+  if (!d.lastModified) state = "dark";
+
+  const b = d.latest;
+  const alerts = [];
+  if (b) {
+    if (b.thermal?.soc_c != null && b.thermal.soc_c >= 85) alerts.push(`SoC ${b.thermal.soc_c}°C`);
+    if (b.disk?.free_pct != null && b.disk.free_pct >= 0 && b.disk.free_pct <= 10)
+      alerts.push(`disk ${b.disk.free_pct}%`);
+    if (b.disk?.no_sdcard) alerts.push("no SD card");
+    if (b.upload?.failed > 0) alerts.push(`${b.upload.failed} upload failed`);
+    if (b.clock_synced === false) alerts.push("clock unsynced");
+    for (const c of b.cameras || [])
+      if (c.last_frame_age_us > 1e6) alerts.push(`cam${c.index} stalled`);
+  }
+  return { state, age, alerts, recording: !!b?.recording?.active };
+}
+
+function relAge(ms) {
+  if (!isFinite(ms) || ms < 0) return "—";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return s + "s";
+  const m = Math.round(s / 60);
+  if (m < 60) return m + "m";
+  const h = Math.round(m / 60);
+  return h < 48 ? h + "h" : Math.round(h / 24) + "d";
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Rendering
+   ══════════════════════════════════════════════════════════════════════════ */
+
+const $ = s => document.querySelector(s);
+const el = (tag, cls, txt) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (txt != null) n.textContent = txt;
+  return n;
+};
+
+function visibleDevices() {
+  let list = [...devices.values()];
+  // A device that has gone dark for longer than the listing window disappears
+  // from a chronological listing entirely — so surface anything in the persisted
+  // roster that we have not seen this session. Without this the dashboard
+  // silently stops showing exactly the devices you most need to see.
+  for (const [uid, r] of Object.entries(roster)) {
+    if (!devices.has(uid)) {
+      list.push({ uid, label: r.label || uid, history: [], latest: null,
+                  lastModified: r.lastModified || 0 });
+    }
+  }
+  if (search) {
+    const q = search.toLowerCase();
+    list = list.filter(d => d.label.toLowerCase().includes(q) || d.uid.includes(q));
+  }
+  list = list.filter(d => {
+    if (filter === "all") return true;
+    const c = classify(d);
+    if (filter === "alert") return c.alerts.length > 0;
+    if (filter === "recording") return c.recording;
+    if (filter === "idle") return !c.recording && c.state === "live";
+    return c.state === filter;
+  });
+  const rank = { dark: 0, late: 1, live: 2 };
+  list.sort((a, b) => {
+    if (sortBy === "age") return (b.lastModified ? Date.now() - b.lastModified : 1e15)
+                               - (a.lastModified ? Date.now() - a.lastModified : 1e15);
+    if (sortBy === "temp") return (b.latest?.thermal?.soc_c ?? -1) - (a.latest?.thermal?.soc_c ?? -1);
+    if (sortBy === "disk") return (a.latest?.disk?.free_pct ?? 999) - (b.latest?.disk?.free_pct ?? 999);
+    return a.label.localeCompare(b.label);
+  });
+  if (sortBy === "name") list.sort((a, b) => (rank[classify(a).state] - rank[classify(b).state])
+                                          || a.label.localeCompare(b.label));
+  return list;
+}
+
+function thumbNode(d, c) {
+  const wrap = el("div", "thumb");
+  const b = d.latest;
+  if (b?.image?.data_base64) {
+    const img = el("img");
+    img.loading = "lazy";
+    img.alt = `${d.label} camera view`;
+    img.src = `data:image/jpeg;base64,${b.image.data_base64}`;
+    wrap.appendChild(img);
+  } else {
+    // The reason matters: "idle by policy" and "camera broken" look nothing
+    // alike operationally, and image_reason is exactly what tells them apart.
+    const reason = b?.image_reason;
+    const map = {
+      not_recording: ["🌙", "idle"],
+      disabled:      ["🚫", "images off"],
+      timeout:       ["⚠", "no frame"],
+      unavailable:   ["—", "no camera"],
+      encode_failed: ["⚠", "encode failed"],
+    };
+    const [ico, label] = map[reason] || (b ? ["—", "no image"] : ["…", "no beat yet"]);
+    const ph = el("div", "ph");
+    ph.appendChild(el("span", "ico", ico));
+    ph.appendChild(document.createTextNode(label));
+    wrap.appendChild(ph);
+  }
+  if (b) {
+    const rec = el("div", `badge ${c.recording ? "rec" : "idle"}`);
+    if (c.recording) rec.appendChild(el("span", "pulse"));
+    rec.appendChild(document.createTextNode(c.recording ? "REC" : "IDLE"));
+    wrap.appendChild(rec);
+  }
+  const age = el("div", `badge age ${c.state === "live" ? "" : c.state}`,
+                 d.lastModified ? relAge(c.age) : "never");
+  wrap.appendChild(age);
+  return wrap;
+}
+
+function statsNode(b, c) {
+  const s = el("div", "stats");
+  if (!b) { s.appendChild(el("span", "", "no data")); return s; }
+  const t = b.thermal?.soc_c;
+  s.appendChild(el("span", t >= 85 ? "bad" : t >= 75 ? "warn" : "",
+                   t == null ? "🌡 —" : `🌡 ${t.toFixed(0)}°`));
+  const dp = b.disk?.free_pct;
+  const dpKnown = dp != null && dp >= 0;   // -1 is the firmware's "unknown"
+  s.appendChild(el("span", !dpKnown ? "" : dp <= 10 ? "bad" : dp <= 25 ? "warn" : "",
+                   dpKnown ? `💾 ${dp}%` : "💾 —"));
+  s.appendChild(el("span", b.wifi?.state === 1 ? "" : "warn",
+                   b.wifi?.state === 1 ? "📶" : b.wifi?.state === 2 ? "📶 AP" : "📶 off"));
+  const up = (b.upload?.pending || 0) + (b.upload?.in_flight || 0);
+  if (b.upload?.failed) s.appendChild(el("span", "bad", `⬆ ${b.upload.failed} failed`));
+  else if (up) s.appendChild(el("span", "", `⬆ ${up}`));
+  return s;
+}
+
+function renderGrid(list) {
+  const g = el("div", "grid");
+  for (const d of list) {
+    const c = classify(d);
+    const card = el("div", `card s-${c.state}${c.alerts.length ? " s-alert" : ""}`);
+    card.appendChild(thumbNode(d, c));
+    const meta = el("div", "meta");
+    meta.appendChild(el("div", "name", d.label));
+    meta.appendChild(el("div", "sub",
+      c.recording ? (d.latest?.recording?.session || "recording")
+                  : (c.alerts[0] || d.uid)));
+    meta.appendChild(statsNode(d.latest, c));
+    card.appendChild(meta);
+    card.onclick = () => openDrawer(d.uid);
+    g.appendChild(card);
+  }
+  return g;
+}
+
+function renderTable(list) {
+  const wrap = el("div", "tablewrap");
+  const t = el("table");
+  t.innerHTML = `<thead><tr>
+    <th>Device</th><th>State</th><th>Age</th><th>SoC °C</th><th>Disk %</th>
+    <th>CPU %</th><th>Wi-Fi</th><th>Uploads</th><th>Alerts</th></tr></thead>`;
+  const tb = el("tbody");
+  for (const d of list) {
+    const c = classify(d), b = d.latest;
+    const tr = el("tr");
+    const cells = [
+      [d.label, ""],
+      [c.state, ""],
+      [d.lastModified ? relAge(c.age) : "never", "num"],
+      [b?.thermal?.soc_c?.toFixed(1) ?? "—", "num"],
+      [b?.disk?.free_pct != null && b.disk.free_pct >= 0 ? b.disk.free_pct : "—", "num"],
+      [b?.cpu?.busy_pct?.toFixed(0) ?? "—", "num"],
+      [b?.wifi?.ssid || (b?.wifi?.state === 2 ? "AP" : "—"), ""],
+      [b ? `${b.upload?.pending ?? 0}/${b.upload?.failed ?? 0}` : "—", "num"],
+      [c.alerts.join(", ") || "—", ""],
+    ];
+    for (const [txt, cls] of cells) tr.appendChild(el("td", cls, String(txt)));
+    tr.onclick = () => openDrawer(d.uid);
+    tb.appendChild(tr);
+  }
+  t.appendChild(tb);
+  wrap.appendChild(t);
+  return wrap;
+}
+
+function sparkline(values, unit, fmt = v => v.toFixed(0)) {
+  const pts = values.filter(v => v != null);
+  const row = el("div", "spark");
+  row.appendChild(el("span", "", unit));
+  if (pts.length < 2) {
+    row.appendChild(el("span", "", "not enough history"));
+    return row;
+  }
+  const min = Math.min(...pts), max = Math.max(...pts), span = max - min || 1;
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", `0 0 100 26`);
+  svg.setAttribute("preserveAspectRatio", "none");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke", "currentColor");
+  path.setAttribute("stroke-width", "1.5");
+  path.setAttribute("points", pts.map((v, i) =>
+    `${(i / (pts.length - 1)) * 100},${24 - ((v - min) / span) * 22}`).join(" "));
+  svg.appendChild(path);
+  row.appendChild(svg);
+  row.appendChild(el("b", "", fmt(pts[pts.length - 1])));
+  return row;
+}
+
+function openDrawer(uid) { selected = uid; render(); }
+function closeDrawer() { selected = null; render(); }
+
+function renderDrawer(d) {
+  const scrim = el("div", "scrim");
+  scrim.onclick = closeDrawer;
+  const dr = el("div", "drawer");
+  const b = d.latest;
+  const c = classify(d);
+
+  const x = el("button", "close", "✕");
+  x.onclick = closeDrawer;
+  dr.appendChild(x);
+  dr.appendChild(el("h2", "", d.label));
+  dr.appendChild(el("div", "sub", d.uid));
+
+  if (b?.image?.data_base64) {
+    const img = el("img", "full");
+    img.src = `data:image/jpeg;base64,${b.image.data_base64}`;
+    img.alt = `${d.label} camera view`;
+    dr.appendChild(img);
+  }
+
+  if (b) {
+    const kv = el("dl", "kv");
+    const add = (k, v) => { kv.appendChild(el("dt", "", k)); kv.appendChild(el("dd", "", v)); };
+    add("State", `${c.state}${c.recording ? " · recording" : ""}`);
+    add("Last beat", `${relAge(c.age)} ago (server time)`);
+    add("Captured", new Date(b.captured_at_us / 1000).toISOString());
+    if (b.clock_synced === false) add("⚠ Clock", "device clock disagrees with S3");
+    add("Equipment", `${b.equipment} · ${b.design_version}`);
+    add("Firmware", b.firmware_version);
+    add("Uptime", relAge(b.uptime_s * 1000));
+    add("Interval", `${b.interval_s}s`);
+    add("Session", b.recording?.session || "—");
+    add("Wi-Fi", `${b.wifi?.ssid || "—"} ${b.wifi?.ip || ""}`);
+    add("Uploads", `${b.upload?.pending ?? 0} pending · ${b.upload?.failed ?? 0} failed`);
+    if (b.upload?.last_error) add("Upload error", b.upload.last_error);
+    if (c.alerts.length) add("⚠ Alerts", c.alerts.join(", "));
+    dr.appendChild(kv);
+
+    const trends = el("div", "section");
+    trends.appendChild(el("h3", "", `Trend · ${d.history.length} beats this session`));
+    trends.appendChild(sparkline(d.history.map(x => x.thermal?.soc_c), "SoC °C", v => v.toFixed(1) + "°"));
+    trends.appendChild(sparkline(d.history.map(x => x.disk?.free_pct), "Disk %", v => v + "%"));
+    trends.appendChild(sparkline(d.history.map(x => x.cpu?.busy_pct), "CPU %", v => v.toFixed(0) + "%"));
+    dr.appendChild(trends);
+
+    // Gaps are the point: a missing beat means the device was unreachable, and
+    // the firmware deliberately never backfills, so a gap here is real.
+    const tl = el("div", "section");
+    tl.appendChild(el("h3", "", "Beats (gaps = device was dark)"));
+    const strip = el("div", "timeline");
+    const iv = (b.interval_s || 300) * 1000;
+    for (let i = 1; i < d.history.length; i++) {
+      const delta = d.history[i]._lastModified - d.history[i - 1]._lastModified;
+      const tick = el("i");
+      if (delta > iv * 1.8) tick.className = "gap";
+      tick.title = `${new Date(d.history[i]._lastModified).toLocaleTimeString()} (+${Math.round(delta / 1000)}s)`;
+      strip.appendChild(tick);
+    }
+    tl.appendChild(strip);
+    dr.appendChild(tl);
+
+    const raw = el("div", "section");
+    raw.appendChild(el("h3", "", "Raw beat"));
+    const copy = el("button", "ctl", "Copy JSON");
+    copy.style.marginBottom = "8px";
+    copy.onclick = () => {
+      const { image, ...rest } = b;
+      navigator.clipboard.writeText(JSON.stringify(
+        { ...rest, image: image ? { ...image, data_base64: "<omitted>" } : null }, null, 2));
+      copy.textContent = "Copied";
+      setTimeout(() => (copy.textContent = "Copy JSON"), 1200);
+    };
+    raw.appendChild(copy);
+    const { image, ...rest } = b;
+    raw.appendChild(el("pre", "", JSON.stringify(
+      { ...rest, image: image ? { ...image, data_base64: `<${image.bytes} bytes>` } : null }, null, 2)));
+    dr.appendChild(raw);
+  } else {
+    dr.appendChild(el("div", "msg err",
+      "No beat retrieved for this device in the current window. It is in the saved " +
+      "roster, so it reported at some point — but nothing recently."));
+  }
+
+  const frag = document.createDocumentFragment();
+  frag.appendChild(scrim);
+  frag.appendChild(dr);
+  return frag;
+}
+
+function render() {
+  const main = $("#main");
+  main.textContent = "";
+  document.body.classList.toggle("wall", view === "wall");
+
+  if (!cfg) { main.appendChild(renderSettings()); return; }
+  $("#hdr").hidden = false;
+  $("#footer").hidden = false;
+  $("#bucketLabel").textContent = `${cfg.bucket} · ${normPrefix(cfg.statusPrefix)}`;
+
+  const list = visibleDevices();
+  const all = [...devices.values()];
+  const n = { live: 0, late: 0, dark: 0 };
+  for (const d of all) n[classify(d).state]++;
+  const missing = Object.keys(roster).filter(u => !devices.has(u)).length;
+  n.dark += missing;
+
+  const counts = $("#counts");
+  counts.textContent = "";
+  const mk = (cls, label, v) => {
+    const w = el("div", "count");
+    if (cls) w.appendChild(el("span", `dot ${cls}`));
+    w.appendChild(el("b", "", String(v)));
+    w.appendChild(document.createTextNode(label));
+    return w;
+  };
+  counts.appendChild(mk("", "devices", all.length + missing));
+  counts.appendChild(mk("live", "live", n.live));
+  counts.appendChild(mk("late", "late", n.late));
+  counts.appendChild(mk("dark", "dark", n.dark));
+
+  if (stats.lastError) {
+    main.appendChild(errorNode(stats.lastError));
+  }
+  if (!list.length) {
+    const e = el("div", "empty");
+    e.appendChild(el("div", "", all.length
+      ? "No devices match this filter."
+      : "No status reports found yet in this prefix."));
+    if (!all.length) {
+      e.appendChild(el("div", "", ""));
+      e.appendChild(el("small", "",
+        "Devices report every [status_report] interval_s (default 300 s). " +
+        "Check the prefix in Settings matches storage.json's status_prefix."));
+    }
+    main.appendChild(e);
+  } else {
+    main.appendChild(view === "table" ? renderTable(list) : renderGrid(list));
+  }
+
+  const d = selected && (devices.get(selected) ||
+    (roster[selected] && { uid: selected, label: roster[selected].label, history: [],
+                           latest: null, lastModified: roster[selected].lastModified }));
+  if (d) main.appendChild(renderDrawer(d));
+
+  const f = $("#footer");
+  f.textContent = "";
+  f.appendChild(el("span", "", `Last refresh: ${stats.lastPoll ? relAge(Date.now() - stats.lastPoll) + " ago" : "—"}`));
+  const rq = el("span", "");
+  rq.appendChild(document.createTextNode("Requests this session: "));
+  rq.appendChild(el("b", "", String(stats.requests)));
+  rq.appendChild(document.createTextNode(` (${stats.fetched} beats downloaded)`));
+  f.appendChild(rq);
+  f.appendChild(el("span", "", `Refresh every ${cfg.refreshSec}s`));
+}
+
+function errorNode(e) {
+  const box = el("div", "msg err");
+  if (e instanceof HttpError) {
+    box.appendChild(el("strong", "", `Request failed — HTTP ${e.status}`));
+    box.appendChild(el("pre", "", (e.body || "").slice(0, 1200)));
+    if (e.status === 403) {
+      box.appendChild(el("div", "",
+        "403 usually means the key/secret are wrong, the region does not match the " +
+        "bucket, or the credential lacks s3:ListBucket / s3:GetObject on this prefix."));
+    }
+  } else if (e instanceof TypeError && /fetch|network/i.test(e.message)) {
+    const bucket = cfg?.bucket || "BUCKET";
+    const oss = isOssHost(new URL(cfg?.endpoint || "https://example.com").hostname);
+
+    if (location.protocol === "file:") {
+      // A file:// page sends Origin: null, so the bucket must allow the literal
+      // origin "null" — which is loose, since "null" also covers sandboxed
+      // iframes and data: URLs. Signing itself is fine: browsers treat file:// as
+      // a potentially-trustworthy origin, so crypto.subtle IS available here.
+      box.appendChild(el("strong", "", "Blocked by CORS — this page is on file://"));
+      box.appendChild(el("div", "",
+        "A file:// page has the origin \"null\", so the bucket rejects the request " +
+        "unless its CORS rule allows \"null\" explicitly. Serving over http is the " +
+        "cleaner fix, since it lets you allow one specific origin instead:"));
+      box.appendChild(el("pre", "",
+`# Recommended — serve it over http and allow that one origin (rule below):
+python3 -m http.server 8000     # then open http://localhost:8000
+
+# Or keep using file:// by allowing the "null" origin in the bucket's CORS rule.
+# Works, but "null" is not a specific origin — it also covers sandboxed iframes
+# and data: URLs — so prefer the option above where you can.`));
+    } else {
+      box.appendChild(el("strong", "", "Network / CORS error"));
+      box.appendChild(el("div", "",
+        `The browser blocked the request. Serving this page from the bucket itself is ` +
+        `same-origin and needs no CORS at all; from ${location.origin} the bucket needs ` +
+        `a rule allowing that origin:`));
+    }
+
+    // Flavour-correct command. Aliyun OSS takes XML via the aliyun CLI; the AWS
+    // CLI takes JSON. Printing the wrong one is worse than printing nothing.
+    box.appendChild(el("pre", "", oss
+? `cat > cors.xml <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<CORSConfiguration>
+  <CORSRule>
+    <AllowedOrigin>${location.protocol === "file:" ? "http://localhost:8000" : location.origin}</AllowedOrigin>
+    <AllowedMethod>GET</AllowedMethod>
+    <AllowedMethod>HEAD</AllowedMethod>
+    <AllowedHeader>*</AllowedHeader>
+    <ExposeHeader>ETag</ExposeHeader>
+    <ExposeHeader>Date</ExposeHeader>
+  </CORSRule>
+</CORSConfiguration>
+EOF
+aliyun oss cors --method put oss://${bucket} cors.xml`
+: `aws s3api put-bucket-cors --bucket ${bucket} --cors-configuration '{
+  "CORSRules": [{
+    "AllowedOrigins": ["${location.protocol === "file:" ? "http://localhost:8000" : location.origin}"],
+    "AllowedMethods": ["GET", "HEAD"],
+    "AllowedHeaders": ["*"],
+    "ExposeHeaders": ["ETag", "Date"]
+  }]
+}'`));
+    box.appendChild(el("div", "",
+      "Also check the credential can READ: listing needs oss:ListObjects / " +
+      "s3:ListBucket on the bucket and GetObject on the prefix. A device key is " +
+      "usually write-only and will fail here."));
+  } else {
+    box.appendChild(el("strong", "", "Error"));
+    box.appendChild(el("pre", "", String(e && e.stack || e)));
+  }
+  return box;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Settings
+   ══════════════════════════════════════════════════════════════════════════ */
+
+function renderSettings() {
+  const p = el("div", "panel");
+  p.appendChild(el("h2", "", "Connect to your bucket"));
+  p.appendChild(el("p", "hint",
+    "Read-only credentials, scoped to the status prefix. They are stored in this " +
+    "browser's localStorage and sent only to the endpoint below."));
+
+  const c = cfg || {
+    endpoint: "https://oss-cn-hangzhou.aliyuncs.com",
+    region: "cn-hangzhou", bucket: "", statusPrefix: "status/",
+    accessKey: "", secret: "", refreshSec: 60,
+  };
+  const f = (id, label, val, type = "text", ph = "") => {
+    const w = el("div", "field");
+    w.appendChild(el("label", "", label));
+    const i = el("input");
+    i.id = id; i.value = val || ""; i.type = type; i.placeholder = ph;
+    i.autocomplete = "off";
+    w.appendChild(i);
+    return w;
+  };
+
+  p.appendChild(f("f_endpoint", "Endpoint URL", c.endpoint, "text",
+                  "https://s3.us-east-1.amazonaws.com"));
+  const r2 = el("div", "row2");
+  r2.appendChild(f("f_region", "Region", c.region, "text", "us-east-1"));
+  r2.appendChild(f("f_bucket", "Bucket", c.bucket, "text", "my-bucket"));
+  p.appendChild(r2);
+  const r3 = el("div", "row2");
+  r3.appendChild(f("f_prefix", "Status prefix", c.statusPrefix, "text", "status/"));
+  r3.appendChild(f("f_refresh", "Refresh (seconds)", c.refreshSec, "number"));
+  p.appendChild(r3);
+  p.appendChild(f("f_ak", "Access key ID", c.accessKey));
+  p.appendChild(f("f_sk", "Secret access key", c.secret, "password"));
+
+  const msg = el("div");
+  p.appendChild(msg);
+
+  const bar = el("div");
+  bar.style.cssText = "display:flex;gap:10px;margin-top:14px";
+  const test = el("button", "btn ghost", "Test");
+  const save = el("button", "btn", "Connect");
+  const read = () => ({
+    endpoint: $("#f_endpoint").value.trim().replace(/\/$/, ""),
+    region: $("#f_region").value.trim(),
+    bucket: $("#f_bucket").value.trim(),
+    statusPrefix: normPrefix($("#f_prefix").value),
+    accessKey: $("#f_ak").value.trim(),
+    secret: $("#f_sk").value,
+    refreshSec: Math.max(10, +$("#f_refresh").value || 60),
+  });
+  test.onclick = async () => {
+    msg.textContent = "";
+    const probe = read();
+    const saved = cfg; cfg = probe;
+    try {
+      const objs = await listObjects(probe, normPrefix(probe.statusPrefix));
+      const ok = el("div", "msg ok",
+        `Connected. ${objs.length} object(s) visible under ${normPrefix(probe.statusPrefix)}.`);
+      msg.appendChild(ok);
+    } catch (e) {
+      msg.appendChild(errorNode(e));
+    } finally { cfg = saved; }
+  };
+  save.onclick = () => {
+    cfg = read();
+    if (!cfg.bucket || !cfg.accessKey || !cfg.secret) {
+      msg.textContent = "";
+      msg.appendChild(el("div", "msg err", "Bucket, access key and secret are required."));
+      cfg = null;
+      return;
+    }
+    saveCfg(cfg);
+    roster = loadRoster();
+    start();
+  };
+  bar.appendChild(test);
+  bar.appendChild(save);
+  if (cfg) {
+    const cancel = el("button", "btn ghost", "Cancel");
+    cancel.onclick = () => { cfg = loadCfg(); render(); };
+    bar.appendChild(cancel);
+  }
+  p.appendChild(bar);
+
+  if (!window.isSecureContext) {
+    p.appendChild(el("div", "msg err",
+      "This page is not in a secure context, so window.crypto.subtle is unavailable " +
+      "and requests cannot be signed. Serve it over https, or from http://localhost."));
+  }
+  return p;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Wiring
+   ══════════════════════════════════════════════════════════════════════════ */
+
+async function tick() {
+  try {
+    await pollOnce();
+  } catch (e) {
+    stats.lastError = e;
+    console.error(e);
+  }
+  render();
+}
+
+function start() {
+  if (timer) clearInterval(timer);
+  render();
+  tick();
+  timer = setInterval(tick, cfg.refreshSec * 1000);
+}
+
+$("#settingsBtn").onclick = () => { $("#main").textContent = ""; $("#main").appendChild(renderSettings()); };
+$("#refreshNow").onclick = tick;
+$("#search").oninput = e => { search = e.target.value; render(); };
+$("#sort").onchange = e => { sortBy = e.target.value; render(); };
+$("#viewSeg").onclick = e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  view = b.dataset.view;
+  for (const x of $("#viewSeg").children) x.setAttribute("aria-pressed", String(x === b));
+  render();
+};
+$("#filters").onclick = e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  filter = b.dataset.f;
+  for (const x of $("#filters").children) x.setAttribute("aria-pressed", String(x === b));
+  render();
+};
+$("#themeBtn").onclick = () => {
+  const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+  document.documentElement.dataset.theme = next;
+  localStorage.setItem(LS_THEME, next);
+};
+document.addEventListener("keydown", e => { if (e.key === "Escape" && selected) closeDrawer(); });
+
+document.documentElement.dataset.theme =
+  localStorage.getItem(LS_THEME) ||
+  (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+for (const x of $("#viewSeg").children) x.setAttribute("aria-pressed", String(x.dataset.view === view));
+
+cfg = loadCfg();
+roster = loadRoster();
+if (cfg) start(); else render();
+</script>
+</body>
+</html>

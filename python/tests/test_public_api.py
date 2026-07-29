@@ -55,6 +55,7 @@ REQUIRED_COMMAND_BODIES = frozenset(
         "set_auto_upload",
         "set_notice_lang",
         "set_resolution",
+        "set_recording_destination",
     }
 )
 
@@ -156,6 +157,12 @@ def test_proto_command_schema_present():
     assert not missing_types, f"missing command message types: {missing_types}"
 
     assert hasattr(command_result_pb2, "CommandResult")
+
+    destination = command_pb2.SetRecordingDestination
+    assert body_to_type["set_recording_destination"] == destination.DESCRIPTOR.name
+    assert command_pb2.Command.DESCRIPTOR.fields_by_name["set_recording_destination"].number == 36
+    assert destination.DESTINATION_DEVICE == 0
+    assert destination.DESTINATION_PHONE == 1
 
 
 def test_proto_wire_and_device_info_present():

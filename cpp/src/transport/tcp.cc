@@ -1,5 +1,8 @@
 #include "visio_schema/transport/tcp.hpp"
 
+#include "visio_schema/transport/link.hpp"  // SetCurrentThreadName
+
+#include <arpa/inet.h>  // inet_ntop (leg identity of an accepted connection)
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
@@ -14,7 +17,20 @@ namespace visio_schema::transport {
 
 namespace {
 constexpr int kTickMs = 200;
+
+// getsockname/getpeername as a dotted quad; "" when unavailable or not IPv4.
+// Never throws — an address we cannot read is reported as unknown, and callers
+// must treat "" as "leg unknown" rather than as a distinct leg.
+std::string SocketIpv4(int fd, int (*get)(int, ::sockaddr*, ::socklen_t*)) {
+  ::sockaddr_in sa{};
+  ::socklen_t len = sizeof(sa);
+  if (get(fd, reinterpret_cast<::sockaddr*>(&sa), &len) != 0) return {};
+  if (sa.sin_family != AF_INET) return {};
+  char buf[INET_ADDRSTRLEN] = {0};
+  if (!::inet_ntop(AF_INET, &sa.sin_addr, buf, sizeof(buf))) return {};
+  return buf;
 }
+}  // namespace
 
 TcpAcceptor::TcpAcceptor(std::uint16_t port, WritePolicy policy)
     : port_(port), policy_(policy) {
@@ -48,6 +64,7 @@ void TcpAcceptor::Stop() {
 void TcpAcceptor::Wake() { wake_.Signal(); }
 
 void TcpAcceptor::Loop() {
+  SetCurrentThreadName("vs_tcp_accept");
   while (!stop_.load()) {
     pollfd pfds[2] = {{wake_.poll_fd(), POLLIN, 0}, {listen_fd_, POLLIN, 0}};
     ::poll(pfds, 2, kTickMs);
@@ -68,12 +85,36 @@ void TcpAcceptor::Loop() {
       // how much the kernel can hoard. Disables SO_SNDBUF autotuning.
       int sndbuf = 256 * 1024;
       ::setsockopt(cfd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
+      // A phone that vanishes without FIN (airplane mode, walked off the AP)
+      // must free its endpoint promptly — the product allows ONE client at a
+      // time, so a zombie link blocks the next connect. This device is
+      // nearly always sending, so TCP_USER_TIMEOUT (bounds how long unacked
+      // data may sit) is the detector that actually fires: the socket errors,
+      // the endpoint's I/O thread exits, the bus forgets it. Keepalive covers
+      // the fully-idle case. ~10 s total: also the worst-case lockout when a
+      // phone hops transports (Wi-Fi -> NCM) and its old link must die first.
+      int one_ka = 1;
+      ::setsockopt(cfd, SOL_SOCKET, SO_KEEPALIVE, &one_ka, sizeof(one_ka));
+#if defined(__linux__)
+      int user_timeout_ms = 10 * 1000;
+      ::setsockopt(cfd, IPPROTO_TCP, TCP_USER_TIMEOUT, &user_timeout_ms,
+                   sizeof(user_timeout_ms));
+      int idle_s = 5, intvl_s = 2, cnt = 3;  // idle links: dead in ~11 s
+      ::setsockopt(cfd, IPPROTO_TCP, TCP_KEEPIDLE, &idle_s, sizeof(idle_s));
+      ::setsockopt(cfd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl_s, sizeof(intvl_s));
+      ::setsockopt(cfd, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt));
+#endif
+      // Read the addresses BEFORE handing cfd over: from here on the endpoint
+      // owns it and its I/O thread may close it at any moment.
+      AcceptedLeg who;
+      who.local_ip = SocketIpv4(cfd, ::getsockname);
+      who.peer_ip = SocketIpv4(cfd, ::getpeername);
       // Fixed fd (no factory): a client EOF reports on_closed once and the
       // endpoint's I/O thread exits; the bus forgets it. The acceptor keeps
       // listening for the next client. FramedFdEndpoint takes ownership of cfd
       // (and sets O_NONBLOCK).
       auto ep = std::make_shared<FramedFdEndpoint>(cfd, policy_);
-      if (on_accept_) on_accept_(std::move(ep));
+      if (on_accept_) on_accept_(std::move(ep), who);
     }
   }
 }

@@ -28,6 +28,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "visio_schema/routing/channel.hpp"   // Channel
 #include "visio_schema/wire/message.hpp"
@@ -47,8 +48,18 @@ class McapWriter {
   // Record to a filesystem path. With max_bytes > 0 and/or max_duration_s > 0,
   // rotate into numbered parts (path becomes <stem>_NNN<ext>); 0 disables that
   // axis. Throws std::runtime_error if a part can't be opened.
+  //
+  // rotate_on_keyframe (opt-in): when rotating by size, defer the cut to the next
+  // compressed-video keyframe that begins a pair not yet started in the current
+  // part, so every part opens each video stream on a decodable IDR and no
+  // co-phased stereo pair is split. REQUIRES that the producer emit co-phased
+  // IDRs on multi-cam recordings (else the non-triggering eye loses up to a GOP
+  // per rotation). pair_guard_ns (≈ half a frame period) separates a pair's
+  // µs-skewed sibling keyframe from the next GOP's keyframe. Both default off, so
+  // a caller that does not opt in keeps the plain byte-exact roll.
   explicit McapWriter(std::string_view path, std::uint64_t max_bytes = 0,
-                      double max_duration_s = 0.0);
+                      double max_duration_s = 0.0, bool rotate_on_keyframe = false,
+                      std::int64_t pair_guard_ns = 0);
   ~McapWriter();
 
   McapWriter(const McapWriter&) = delete;
@@ -92,6 +103,8 @@ class McapWriter {
   const std::uint64_t max_bytes_;
   const std::int64_t max_duration_ns_;
   const bool rotating_;
+  const bool rotate_on_keyframe_;
+  const std::int64_t pair_guard_ns_;
 
   // The IWritable backing writer_'s current part. We own the underlying fd
   // (opened with O_CLOEXEC) rather than letting upstream mcap fopen() it, so a
@@ -112,6 +125,16 @@ class McapWriter {
   // Caches (reset per part): schema id per schema_name, channel id per Channel id.
   std::unordered_map<std::string, std::uint16_t> schema_ids_;
   std::unordered_map<std::uint32_t, std::uint16_t> channel_ids_;
+
+  // Per-part keyframe gate (reset in OpenPart): the set of compressed-video
+  // Channel ids that have already seen their first keyframe of this part. A video
+  // channel's frames are dropped until it appears here, so every part opens each
+  // video stream on a decodable IDR. `part_max_video_ts_` is the newest capture
+  // timestamp of any video frame *written* to the current part; rotate-on-keyframe
+  // cuts only on a keyframe strictly newer than it (+guard), which is what keeps a
+  // co-phased pair whole across a rotation boundary.
+  std::unordered_set<std::uint32_t> primed_video_channels_;
+  std::int64_t part_max_video_ts_ = INT64_MIN;
 };
 
 }  // namespace visio_schema::mcap

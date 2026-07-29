@@ -20,10 +20,12 @@
 
 #include "visio_schema/routing/channel.hpp"
 #include "visio_schema/wire/control.hpp"
+#include "visio_schema/wire/time.hpp"   // SetTimestampNs
 
 using visio_schema::Channel;
 using visio_schema::kFirstDynamic;
 using visio_schema::mcap::McapWriter;
+using visio_schema::SetTimestampNs;
 using visio_schema::wire::Message;
 namespace fs = std::filesystem;
 
@@ -47,6 +49,49 @@ Message Data(std::uint32_t id, std::string payload) {
   m.stream_id = id;
   m.payload = std::move(payload);
   return m;
+}
+
+// A compressed-video channel — the only schema the keyframe gate acts on.
+Channel VideoChannel(std::uint32_t id, const std::string& topic) {
+  Channel c;
+  c.id = id;
+  c.topic = topic;
+  c.schema_name = "foxglove.CompressedVideo";
+  c.schema = std::string(8, '\x01');
+  return c;
+}
+
+// A channel with a given non-video schema (audio, imu, …) to prove it is never
+// gated even when carrying no keyframe flag.
+Channel NonVideoChannel(std::uint32_t id, const std::string& topic,
+                        const std::string& schema) {
+  Channel c;
+  c.id = id;
+  c.topic = topic;
+  c.schema_name = schema;
+  c.schema = std::string(8, '\x01');
+  return c;
+}
+
+// A video frame with an explicit keyframe flag and capture timestamp. The `ts_ns`
+// carries pair identity for rotate-on-keyframe: a co-phased pair shares one ts.
+Message VideoMsg(std::uint32_t id, std::string payload, bool keyframe,
+                 std::int64_t ts_ns) {
+  Message m;
+  m.stream_id = id;
+  m.payload = std::move(payload);
+  m.bulk = true;
+  m.keyframe = keyframe;
+  SetTimestampNs(&m.timestamp, ts_ns);
+  return m;
+}
+
+void RemoveParts(const std::string& stem_no_ext) {
+  for (int i = 0; i < 8; ++i) {
+    char buf[8];
+    std::snprintf(buf, sizeof(buf), "_%04d", i);
+    std::remove(TempPath(stem_no_ext + buf + ".mcap").c_str());
+  }
 }
 
 }  // namespace
@@ -175,4 +220,217 @@ TEST(McapWriter, BytesWrittenIsMonotonicAcrossRotation) {
   ASSERT_TRUE(fs::exists(p1));           // confirm a rotation actually happened
   std::remove(p0.c_str());
   std::remove(p1.c_str());
+}
+
+// ---- Keyframe gate (always on) + rotate-at-keyframe (opt-in) ---------------
+//
+// bytes_written() only advances on an ACTUAL write, so dropped (gated) frames
+// are invisible to it — with distinct payload sizes the total uniquely
+// fingerprints exactly which frames were kept, per channel.
+
+// (a) A video stream's leading P-frames are dropped until its first keyframe.
+TEST(McapWriterGate, DropsLeadingPFramesUntilFirstKeyframe) {
+  const std::string path = TempPath("visio_schema_gate_a.mcap");
+  std::remove(path.c_str());
+  const Channel v = VideoChannel(kFirstDynamic, "/dev/camera/0");
+  McapWriter w(path);
+  w.Write(v, VideoMsg(kFirstDynamic, std::string(3, 'a'), /*kf=*/false, 1000));
+  EXPECT_EQ(w.bytes_written(), 0u);   // pre-keyframe P-frame dropped
+  w.Write(v, VideoMsg(kFirstDynamic, std::string(9, 'a'), /*kf=*/true, 2000));
+  EXPECT_EQ(w.bytes_written(), 9u);   // first IDR primes + writes
+  w.Write(v, VideoMsg(kFirstDynamic, std::string(5, 'a'), /*kf=*/false, 3000));
+  EXPECT_EQ(w.bytes_written(), 14u);  // subsequent P-frames flow
+  w.Close();
+  std::remove(path.c_str());
+}
+
+// (b) Non-video channels (audio, imu) are never gated, keyframe flag or not.
+TEST(McapWriterGate, AudioAndImuNeverGated) {
+  const std::string path = TempPath("visio_schema_gate_b.mcap");
+  std::remove(path.c_str());
+  const Channel imu = MakeChannel(kFirstDynamic, "/dev/imu/0/raw");
+  const Channel audio =
+      NonVideoChannel(kFirstDynamic + 1, "/dev/audio/0", "foxglove.RawAudio");
+  McapWriter w(path);
+  w.Write(imu, Data(kFirstDynamic, "abcd"));            // 4, written immediately
+  EXPECT_EQ(w.bytes_written(), 4u);
+  w.Write(audio, Data(kFirstDynamic + 1, "audiodata"));  // 9, RawAudio + no keyframe
+  EXPECT_EQ(w.bytes_written(), 13u);                     // not gated
+  w.Close();
+  std::remove(path.c_str());
+}
+
+// (c) After a plain byte-exact roll, the new part re-drops video until ITS first
+// keyframe (the gate runs regardless of rotate_on_keyframe).
+TEST(McapWriterGate, RotationReDropsUntilKeyframe) {
+  RemoveParts("visio_schema_gate_c");
+  const std::string path = TempPath("visio_schema_gate_c.mcap");
+  const Channel v = VideoChannel(kFirstDynamic, "/dev/camera/0");
+  {
+    McapWriter w(path, /*max_bytes=*/16);  // rotate_on_keyframe defaults off
+    w.Write(v, VideoMsg(kFirstDynamic, std::string(10, 'a'), true, 1000));   // part0 prime
+    w.Write(v, VideoMsg(kFirstDynamic, std::string(10, 'a'), false, 2000));  // part0, pb=20
+    w.Write(v, VideoMsg(kFirstDynamic, std::string(5, 'a'), false, 3000));   // roll → part1, drop
+    EXPECT_EQ(w.bytes_written(), 20u);
+    w.Write(v, VideoMsg(kFirstDynamic, std::string(7, 'a'), true, 4000));    // part1 prime
+    EXPECT_EQ(w.bytes_written(), 27u);
+    w.Close();
+  }
+  EXPECT_TRUE(fs::exists(TempPath("visio_schema_gate_c_0001.mcap")));
+  RemoveParts("visio_schema_gate_c");
+}
+
+// (d) Two video channels are gated independently (each opens on its own IDR).
+TEST(McapWriterGate, TwoVideoChannelsGatedIndependently) {
+  const std::string path = TempPath("visio_schema_gate_d.mcap");
+  std::remove(path.c_str());
+  const Channel v0 = VideoChannel(kFirstDynamic, "/dev/camera/0");
+  const Channel v1 = VideoChannel(kFirstDynamic + 1, "/dev/camera/1");
+  McapWriter w(path);
+  w.Write(v0, VideoMsg(kFirstDynamic, std::string(10, 'a'), true, 1000));      // v0 prime
+  w.Write(v1, VideoMsg(kFirstDynamic + 1, std::string(5, 'b'), false, 1000));  // v1 drop
+  w.Write(v1, VideoMsg(kFirstDynamic + 1, std::string(5, 'b'), false, 2000));  // v1 drop
+  w.Write(v0, VideoMsg(kFirstDynamic, std::string(3, 'a'), false, 2000));      // v0 write
+  w.Write(v1, VideoMsg(kFirstDynamic + 1, std::string(7, 'b'), true, 3000));   // v1 prime
+  EXPECT_EQ(w.bytes_written(), 20u);  // 10 + 3 + 7 (v1's two P-frames dropped)
+  w.Close();
+  std::remove(path.c_str());
+}
+
+// (e) A part that never gets a keyframe stays empty and must NOT spuriously roll
+// (ShouldRoll never fires while part_bytes_ == 0).
+TEST(McapWriterGate, PartWithNoKeyframeStaysEmptyAndDoesNotRoll) {
+  RemoveParts("visio_schema_gate_e");
+  const std::string path = TempPath("visio_schema_gate_e.mcap");
+  const Channel v = VideoChannel(kFirstDynamic, "/dev/camera/0");
+  {
+    McapWriter w(path, /*max_bytes=*/16);
+    for (int i = 0; i < 10; ++i)
+      w.Write(v, VideoMsg(kFirstDynamic, std::string(100, 'a'), false, 1000 + i));
+    EXPECT_EQ(w.bytes_written(), 0u);
+    w.Close();
+  }
+  EXPECT_TRUE(fs::exists(TempPath("visio_schema_gate_e_0000.mcap")));
+  EXPECT_FALSE(fs::exists(TempPath("visio_schema_gate_e_0001.mcap")));  // never rolled
+  RemoveParts("visio_schema_gate_e");
+}
+
+// (f) rotate_on_keyframe: once the cap is crossed mid-GOP, the part keeps growing
+// (no roll on P-frames) until a NEW-pair keyframe arrives, which cuts cleanly.
+TEST(McapWriterRotateKeyframe, DefersRollToNextKeyframe) {
+  RemoveParts("visio_schema_gate_f");
+  const std::string path = TempPath("visio_schema_gate_f.mcap");
+  const std::string p1 = TempPath("visio_schema_gate_f_0001.mcap");
+  const Channel v = VideoChannel(kFirstDynamic, "/dev/camera/0");
+  {
+    McapWriter w(path, /*max_bytes=*/50, /*max_duration_s=*/0.0,
+                 /*rotate_on_keyframe=*/true, /*pair_guard_ns=*/500);
+    w.Write(v, VideoMsg(kFirstDynamic, std::string(10, 'a'), true, 1000));   // prime, pb=10
+    for (int i = 0; i < 4; ++i)                                              // pb -> 50
+      w.Write(v, VideoMsg(kFirstDynamic, std::string(10, 'a'), false, 2000 + i));
+    EXPECT_EQ(w.bytes_written(), 50u);
+    EXPECT_FALSE(fs::exists(p1));  // full, but no keyframe yet → no roll
+    w.Write(v, VideoMsg(kFirstDynamic, std::string(7, 'a'), true, 1'000'000));  // new pair → roll
+    EXPECT_EQ(w.bytes_written(), 57u);
+    EXPECT_TRUE(fs::exists(p1));   // rolled, new part opens on the keyframe
+    w.Close();
+  }
+  RemoveParts("visio_schema_gate_f");
+}
+
+// (g) rotate_on_keyframe hard ceiling: if keyframes stall, the part still rolls at
+// max_bytes + 1/8 rather than growing unbounded (then the gate drops the tail).
+TEST(McapWriterRotateKeyframe, HardCeilingRollsWhenKeyframesStall) {
+  RemoveParts("visio_schema_gate_g");
+  const std::string path = TempPath("visio_schema_gate_g.mcap");
+  const std::string p1 = TempPath("visio_schema_gate_g_0001.mcap");
+  const Channel v = VideoChannel(kFirstDynamic, "/dev/camera/0");
+  {
+    McapWriter w(path, /*max_bytes=*/50, 0.0, /*rotate_on_keyframe=*/true, 500);
+    w.Write(v, VideoMsg(kFirstDynamic, std::string(10, 'a'), true, 1000));   // prime
+    for (int i = 0; i < 10; ++i)                                             // only P-frames
+      w.Write(v, VideoMsg(kFirstDynamic, std::string(10, 'a'), false, 2000 + i));
+    // p0 grew to the ceiling (50 + 50/8 = 56) then rolled; the post-roll P-frames
+    // drop (new part unprimed, no keyframe ever). Only p0's content is written.
+    EXPECT_EQ(w.bytes_written(), 60u);            // 10 + 5×10 into p0 before the ceiling roll
+    EXPECT_TRUE(fs::exists(p1));                  // ceiling forced a roll despite no keyframe
+    w.Close();
+  }
+  RemoveParts("visio_schema_gate_g");
+}
+
+// (h) opt-in OFF preserves the original byte-exact roll: a mid-stream P-frame
+// triggers the rotation (contrast with (f), where it waits for a keyframe).
+TEST(McapWriterRotateKeyframe, OptInOffRollsByteExactMidStream) {
+  RemoveParts("visio_schema_gate_h");
+  const std::string path = TempPath("visio_schema_gate_h.mcap");
+  const std::string p1 = TempPath("visio_schema_gate_h_0001.mcap");
+  const Channel v = VideoChannel(kFirstDynamic, "/dev/camera/0");
+  {
+    McapWriter w(path, /*max_bytes=*/16);  // rotate_on_keyframe off
+    w.Write(v, VideoMsg(kFirstDynamic, std::string(10, 'a'), true, 1000));   // prime, pb=10
+    w.Write(v, VideoMsg(kFirstDynamic, std::string(10, 'a'), false, 2000));  // pb=20
+    EXPECT_FALSE(fs::exists(p1));
+    w.Write(v, VideoMsg(kFirstDynamic, std::string(5, 'a'), false, 3000));   // rolls on a P-frame
+    EXPECT_TRUE(fs::exists(p1));            // byte-exact roll fired mid-stream
+    w.Close();
+  }
+  RemoveParts("visio_schema_gate_h");
+}
+
+// (i) Documented degradation: with rotate_on_keyframe but IDRs NOT co-phased, the
+// eye whose keyframe doesn't trigger the roll loses frames until its own next IDR.
+TEST(McapWriterRotateKeyframe, UnsyncedMultiCamDropsTheNonTriggeringEye) {
+  RemoveParts("visio_schema_gate_i");
+  const std::string path = TempPath("visio_schema_gate_i.mcap");
+  const Channel v0 = VideoChannel(kFirstDynamic, "/dev/camera/0");
+  const Channel v1 = VideoChannel(kFirstDynamic + 1, "/dev/camera/1");
+  {
+    McapWriter w(path, /*max_bytes=*/50, 0.0, /*rotate_on_keyframe=*/true, 500);
+    w.Write(v0, VideoMsg(kFirstDynamic, std::string(10, 'a'), true, 1000));      // both prime
+    w.Write(v1, VideoMsg(kFirstDynamic + 1, std::string(10, 'b'), true, 1000));
+    w.Write(v0, VideoMsg(kFirstDynamic, std::string(10, 'a'), false, 2000));
+    w.Write(v1, VideoMsg(kFirstDynamic + 1, std::string(10, 'b'), false, 2000));
+    w.Write(v0, VideoMsg(kFirstDynamic, std::string(10, 'a'), false, 3000));     // pb=50
+    // v0's keyframe (a new pair) triggers the roll — v1 has NO keyframe here.
+    w.Write(v0, VideoMsg(kFirstDynamic, std::string(8, 'a'), true, 1'000'000));  // roll, v0 primed
+    w.Write(v1, VideoMsg(kFirstDynamic + 1, std::string(5, 'b'), false, 1'000'000));  // v1 DROPPED
+    w.Write(v1, VideoMsg(kFirstDynamic + 1, std::string(5, 'b'), false, 1'050'000));  // v1 DROPPED
+    w.Write(v1, VideoMsg(kFirstDynamic + 1, std::string(6, 'b'), true, 2'000'000));   // v1's own IDR
+    EXPECT_EQ(w.bytes_written(), 64u);  // 50 + 8 + 6; v1 lost 10 bytes (its offset gap)
+    w.Close();
+  }
+  RemoveParts("visio_schema_gate_i");
+}
+
+// (j) THE regression this design exists for: the byte cap is crossed WHILE writing
+// eye0's keyframe of pair M; eye1's keyframe of the SAME pair (same ts) must NOT
+// trigger a roll — the pair stays whole in one part, and the cut lands at M+GOP.
+TEST(McapWriterRotateKeyframe, DoesNotSplitACoPhasedPair) {
+  RemoveParts("visio_schema_gate_j");
+  const std::string path = TempPath("visio_schema_gate_j.mcap");
+  const std::string p1 = TempPath("visio_schema_gate_j_0001.mcap");
+  const Channel v0 = VideoChannel(kFirstDynamic, "/dev/camera/0");
+  const Channel v1 = VideoChannel(kFirstDynamic + 1, "/dev/camera/1");
+  {
+    McapWriter w(path, /*max_bytes=*/50, 0.0, /*rotate_on_keyframe=*/true, 500);
+    // An earlier pair fills part0 to 30.
+    w.Write(v0, VideoMsg(kFirstDynamic, std::string(15, 'a'), true, 10'000));
+    w.Write(v1, VideoMsg(kFirstDynamic + 1, std::string(15, 'b'), true, 10'000));
+    // Pair M: eye0's keyframe pushes part0 to exactly the cap (50)...
+    w.Write(v0, VideoMsg(kFirstDynamic, std::string(20, 'a'), true, 100'000));
+    EXPECT_FALSE(fs::exists(p1));
+    // ...then eye1's keyframe of the SAME pair (ts == part_max) must land in the
+    // SAME part — never trigger a roll on the sibling (the split bug).
+    w.Write(v1, VideoMsg(kFirstDynamic + 1, std::string(20, 'b'), true, 100'000));
+    EXPECT_FALSE(fs::exists(p1)) << "co-phased pair M was split across the rotation";
+    EXPECT_EQ(w.bytes_written(), 70u);  // 15+15+20+20, pair M whole in part0
+    // The NEXT pair (M+GOP) is where the deferred cut lands.
+    w.Write(v0, VideoMsg(kFirstDynamic, std::string(10, 'a'), true, 200'000));   // roll → part1
+    w.Write(v1, VideoMsg(kFirstDynamic + 1, std::string(10, 'b'), true, 200'000));
+    EXPECT_TRUE(fs::exists(p1));          // clean cut at M+GOP, both IDRs in part1
+    EXPECT_EQ(w.bytes_written(), 90u);
+    w.Close();
+  }
+  RemoveParts("visio_schema_gate_j");
 }
