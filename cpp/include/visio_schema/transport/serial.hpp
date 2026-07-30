@@ -57,6 +57,17 @@ class SerialEndpoint : public FramedFdEndpoint {
   bool watchdog_enabled_ = false;
   SerialWatchdog watchdog_;
   UsbStateFn usb_state_fn_;
+  // The I/O loop calls Tick() on EVERY wakeup — at message rate, hundreds of
+  // times per second under load — but the sysfs read behind usb_state_fn_
+  // feeds a watchdog that acts on 2-10 s timescales. Sample at 200 ms: the
+  // loop's own idle tick, i.e. exactly the cadence the watchdog was designed
+  // around, so edge detection is unchanged and only the load-scaled excess
+  // is cut. A disconnect/reconnect bounce completing inside one window would
+  // alias away as an edge; the drain-stall path is the designed backstop.
+  static constexpr std::int64_t kUsbStatePollNs = 200'000'000;
+  // Starts one full interval in the past so the first Tick always samples.
+  std::int64_t last_usb_read_ns_ = -kUsbStatePollNs;
+  std::string last_usb_state_;
 };
 
 }  // namespace visio_schema::transport

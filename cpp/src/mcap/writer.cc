@@ -26,6 +26,16 @@ namespace {
 ::mcap::McapWriterOptions MakeOptions() {
   ::mcap::McapWriterOptions opts("");  // empty profile: plain protobuf channels
   opts.compression = ::mcap::Compression::None;
+  // No chunk CRC: upstream's default CRC-32s every recorded byte inside the
+  // chunk writer — ~2 MB/s of table-driven checksumming on the device.
+  // Nothing in the pipeline ever verified it (readers default to skipping
+  // CRC validation, and repair/finalization checks work on record framing),
+  // so the deliberate trade is: no at-rest integrity check inside chunks —
+  // truncation is still caught by the footer/summary check, and the dominant
+  // payload (H.265) is loudly corrupt on decode. Chunking itself stays ON so
+  // readers keep the per-chunk message index for seeking; the summary CRC
+  // stays ON (one cheap pass at close).
+  opts.noChunkCRC = true;
   return opts;
 }
 

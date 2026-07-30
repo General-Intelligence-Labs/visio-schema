@@ -39,6 +39,15 @@ def test_roundtrip(data: bytes) -> None:
         (b"\xff" * 255, b"\xff" * 255 + b"\x02\xff"),
         # Two full 0xFF blocks back to back, again no trailing phantom block.
         (b"\xff" * 508, b"\xff" * 510),
+        # All-zero input: n zeros -> n+1 code bytes of 0x01 (max code-byte
+        # ratio — the tightest fit against the C++ encoder's pre-sized buffer).
+        (b"\x00", b"\x01\x01"),
+        (b"\x00" * 32, b"\x01" * 33),
+        # One under the block boundary: 0xFE code + 253 data.
+        (b"\xff" * 253, b"\xfe" + b"\xff" * 253),
+        # A zero right after a full block: the speculative block closes as
+        # 0x01, then the zero opens the final empty block.
+        (b"\xff" * 254 + b"\x00", b"\xff" * 255 + b"\x01\x01"),
     ],
 )
 def test_encode_golden_vectors(data: bytes, expected: bytes) -> None:

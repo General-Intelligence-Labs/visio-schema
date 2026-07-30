@@ -8,6 +8,10 @@
 // learned channels (from announces, already in this peer's id space) in one
 // id -> Channel map, with the invariant that a topic maps to exactly one id. The
 // bus calls Forget() when a link drops so the topic frees for a reconnect.
+//
+// Not thread-safe — the caller serializes every call, const methods included
+// (SelfInfo() maintains a cache). On the bus that serialization is the
+// dispatch mutex.
 #pragma once
 
 #include <cstdint>
@@ -97,6 +101,7 @@ class ChannelRegistry {
     hardware_revision_ = std::move(hardware_revision);
     serial_ = std::move(serial);
     boot_unix_seconds_ = boot_unix_seconds;
+    self_info_cache_.reset();
   }
   std::string SelfInfo() const;          // serialized DeviceInfo announce
   void OnAnnounce(const std::string& payload);
@@ -129,6 +134,15 @@ class ChannelRegistry {
   Channel device_info_channel_;
   std::uint32_t next_id_ = kFirstDynamic;
   std::uint64_t dropped_unmapped_ = 0;
+  // Lazily built SelfInfo() payload; nullopt = rebuild on next call. The
+  // announce carries every own Channel's serialized FileDescriptorSet (KB
+  // scale) and is typically re-sent at a fixed cadence, so it is encoded
+  // once and reset by whatever changes its content: Declare, Forget of an
+  // own id, or SetMetadata. Learn cannot change it — the announce is
+  // own-outputs only, and Learn rejects an own-id collision outright.
+  // `mutable` without a lock relies on the class's serialization contract
+  // (see the class comment).
+  mutable std::optional<std::string> self_info_cache_;
 };
 
 }  // namespace visio_schema::routing
