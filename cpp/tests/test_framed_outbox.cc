@@ -288,6 +288,27 @@ TEST(FramedOutboxShared, ClearMidFlightResetsSharedInFlight) {
   EXPECT_EQ(buf.use_count(), 1);  // outbox released its reference
 }
 
+TEST(FramedOutboxShared, BatchAllSingleFramePromotesByRefcountNotCopy) {
+  // The common case on a live leg: the loop is woken per enqueued message, so
+  // a "batch" usually holds exactly one frame — coalescing it would only
+  // re-copy the one buffer. Pin the fast path: a partial write leaves the
+  // caller's OWN buffer in flight (use_count 2 = caller + in_flight), where
+  // the copying path would have dropped the queue's reference already.
+  auto buf = std::make_shared<const std::vector<std::uint8_t>>(
+      Frame(0x5A, 64));
+  FramedOutbox ob(WritePolicy::stale_eviction(
+      1 << 20, std::chrono::microseconds(0), WritePolicy::DrainMode::BatchAll));
+  EXPECT_TRUE(ob.Enqueue(buf));
+
+  FakeSink sink;
+  sink.accept_per_call = 16;
+  ASSERT_TRUE(ob.Drain(sink.fn()));  // partial: promotion happened
+  ASSERT_TRUE(ob.InFlightActive());
+  EXPECT_EQ(buf.use_count(), 2);  // shared, not copied
+  while (ob.HasPending()) ASSERT_TRUE(ob.Drain(sink.fn()));
+  EXPECT_EQ(sink.received, *buf);  // delivered intact either way
+}
+
 TEST(FramedOutboxShared, BatchAllCoalescesSharedFramesIntoOneWrite) {
   auto a = std::make_shared<const std::vector<std::uint8_t>>(Frame(0x01, 10));
   auto b = std::make_shared<const std::vector<std::uint8_t>>(Frame(0x02, 20));

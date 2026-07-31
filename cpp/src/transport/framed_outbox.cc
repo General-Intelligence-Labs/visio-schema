@@ -111,7 +111,7 @@ bool FramedOutbox::Drain(const WriteFn& wr) {
 // Caller holds mu_.
 void FramedOutbox::PromoteToInFlight() {
   if (queue_.empty()) return;
-  if (policy_.drain == WritePolicy::DrainMode::BatchAll) {
+  if (policy_.drain == WritePolicy::DrainMode::BatchAll && queue_.size() > 1) {
     // Coalesce into a drainer-private scratch. The copy is inherent to
     // batching (one write needs one contiguous buffer); the shared entries
     // just drop their refcounts afterwards.
@@ -126,7 +126,11 @@ void FramedOutbox::PromoteToInFlight() {
         std::make_shared<const std::vector<std::uint8_t>>(std::move(batch));
     queue_.clear();
     queue_bytes_ = 0;
-  } else {  // OneAtATime: a refcount move — no copy, shared buffer untouched
+  } else {
+    // OneAtATime — or a single-entry "batch", where coalescing would only
+    // re-copy the one buffer: a refcount move, no copy, shared buffer
+    // untouched. The single-entry case is the common one: the loop is woken
+    // per enqueued message, so a batch usually holds exactly one frame.
     in_flight_ = std::move(queue_.front().data);
     queue_bytes_ -= in_flight_->size();
     queue_.pop_front();

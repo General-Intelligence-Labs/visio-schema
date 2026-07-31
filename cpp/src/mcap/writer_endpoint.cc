@@ -86,6 +86,7 @@ void McapWriterEndpoint::Send(const Message& msg) {
   }
 
   const std::size_t len = msg.payload.size();
+  bool was_empty = false;
   {
     std::lock_guard<std::mutex> lk(mu_);
     const std::size_t before = queue_.size();
@@ -97,8 +98,14 @@ void McapWriterEndpoint::Send(const Message& msg) {
     if (const std::size_t evicted = before - queue_.size()) NoteDrop(evicted);
     queue_.push_back(Entry{std::move(ch), msg});
     queue_bytes_ += len;
+    was_empty = before == 0;
   }
-  cv_.notify_one();
+  // Signal only the empty→non-empty edge: the writer swaps the WHOLE queue
+  // per wake and its wait predicate re-checks emptiness under the lock, so
+  // while the queue is non-empty it is either draining or about to re-check —
+  // never blocked. Per-message notify_one was ~590 futex signals/s while
+  // recording, for a writer that wakes a handful of times a second.
+  if (was_empty) cv_.notify_one();
 }
 
 void McapWriterEndpoint::WriterLoop() {
