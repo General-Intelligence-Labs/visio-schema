@@ -76,3 +76,58 @@ TEST(FrameTest, HeaderLenOverflowRejected) {
   Message decoded;
   EXPECT_EQ(DecodeFrame(bad, &decoded), FrameStatus::kHeaderLenOverflow);
 }
+
+// ---- wire::Payload: the shared-immutable payload contract ------------------
+
+TEST(PayloadTest, CopyingAMessageSharesThePayloadBytes) {
+  // The reason Payload exists: a Message fans out to sinks that retain it
+  // (the MCAP recorder queues a copy per message), and as a plain string
+  // that was a full byte copy per retention. Copying must be a refcount.
+  Message a = MakeMsg();
+  a.payload = std::string(1000, 'x');
+  Message b = a;
+  EXPECT_EQ(&a.payload.str(), &b.payload.str());  // same buffer, not a copy
+  EXPECT_EQ(b.payload, a.payload);
+}
+
+TEST(PayloadTest, EmptyPayloadReadsAsTheEmptyString) {
+  Message m;
+  EXPECT_TRUE(m.payload.empty());
+  EXPECT_EQ(m.payload.size(), 0u);
+  EXPECT_EQ(m.payload.str(), "");
+}
+
+TEST(PayloadTest, ComparesAgainstStringsAndLiterals) {
+  Message m = MakeMsg();
+  m.payload = "hello";
+  EXPECT_EQ(m.payload, "hello");
+  EXPECT_EQ(m.payload, std::string("hello"));
+  EXPECT_NE(m.payload, "world");
+  Message other = MakeMsg();
+  other.payload = std::string("hello");
+  EXPECT_EQ(m.payload, other.payload);
+}
+
+TEST(PayloadTest, AdoptsASharedBufferWithoutCopying) {
+  // The 1 Hz announce path: the registry hands out its cached blob and the
+  // Message adopts it by refcount.
+  auto cached = std::make_shared<const std::string>("announce-bytes");
+  Message m = MakeMsg();
+  m.payload = visio_schema::wire::Payload(cached);
+  EXPECT_EQ(&m.payload.str(), cached.get());
+  EXPECT_EQ(cached.use_count(), 2);  // cache + message, no copies
+}
+
+TEST(PayloadTest, StringViewConstructionCopiesOutOfTheTransientWindow) {
+  // DecodeFrame routes every inbound payload through this constructor from a
+  // transient decode window; it must COPY, never alias — an "optimization"
+  // to alias here would corrupt every inbound message once the rx buffer is
+  // reused.
+  std::string window = "inbound-bytes";
+  visio_schema::wire::Payload p{std::string_view(window)};
+  window.assign(window.size(), 'X');  // the decode window gets clobbered
+  EXPECT_EQ(p, "inbound-bytes");
+  // Default (null buffer) and explicit-empty compare equal — both read as "".
+  EXPECT_EQ(visio_schema::wire::Payload(),
+            visio_schema::wire::Payload(std::string()));
+}

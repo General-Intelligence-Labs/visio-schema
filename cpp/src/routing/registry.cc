@@ -265,15 +265,15 @@ Routed ChannelRegistry::Accept(Message msg) {
 
 // ── Discovery ───────────────────────────────────────────────────────────────
 
-std::string ChannelRegistry::SelfInfo() const {
+std::shared_ptr<const std::string> ChannelRegistry::SelfInfoShared() const {
   // Own outputs only; learned channels propagate by the bus forwarding each
   // leaf's announce (with the ids remapped), not by recombining them here.
   if (!self_info_cache_) {
-    self_info_cache_ =
+    self_info_cache_ = std::make_shared<const std::string>(
         Encode(device_name_, equipment_type_, firmware_version_,
-               hardware_revision_, serial_, boot_unix_seconds_, OwnChannels());
+               hardware_revision_, serial_, boot_unix_seconds_, OwnChannels()));
   }
-  return *self_info_cache_;
+  return self_info_cache_;
 }
 
 void ChannelRegistry::OnAnnounce(const std::string& payload) {

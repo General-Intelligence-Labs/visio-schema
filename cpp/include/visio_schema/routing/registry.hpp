@@ -103,7 +103,12 @@ class ChannelRegistry {
     boot_unix_seconds_ = boot_unix_seconds;
     self_info_cache_.reset();
   }
-  std::string SelfInfo() const;          // serialized DeviceInfo announce
+  // Serialized DeviceInfo announce (own outputs only). SelfInfoShared() hands
+  // out the cached buffer itself for zero-copy re-publishing (the announce is
+  // KB-scale and re-sent every second — see wire::Payload); SelfInfo() is the
+  // by-reference view of the same buffer for callers that just read it.
+  std::shared_ptr<const std::string> SelfInfoShared() const;
+  const std::string& SelfInfo() const { return *SelfInfoShared(); }
   void OnAnnounce(const std::string& payload);
 
   // DeviceInfo announce envelope (nanopb FT_POINTER). Public so the bus + tests
@@ -134,15 +139,16 @@ class ChannelRegistry {
   Channel device_info_channel_;
   std::uint32_t next_id_ = kFirstDynamic;
   std::uint64_t dropped_unmapped_ = 0;
-  // Lazily built SelfInfo() payload; nullopt = rebuild on next call. The
+  // Lazily built SelfInfo() payload; null = rebuild on next call. The
   // announce carries every own Channel's serialized FileDescriptorSet (KB
   // scale) and is typically re-sent at a fixed cadence, so it is encoded
   // once and reset by whatever changes its content: Declare, Forget of an
   // own id, or SetMetadata. Learn cannot change it — the announce is
   // own-outputs only, and Learn rejects an own-id collision outright.
-  // `mutable` without a lock relies on the class's serialization contract
-  // (see the class comment).
-  mutable std::optional<std::string> self_info_cache_;
+  // Shared (not just cached) so the 1 Hz re-publish adopts the buffer by
+  // refcount instead of copying it. `mutable` without a lock relies on the
+  // class's serialization contract (see the class comment).
+  mutable std::shared_ptr<const std::string> self_info_cache_;
 };
 
 }  // namespace visio_schema::routing

@@ -86,8 +86,8 @@ FrameStatus DecodeFrame(std::string_view frame, Message* out) {
   out->stream_id = header.stream_id;
   out->seq = header.seq;
   out->timestamp = header.timestamp;
-  out->payload.assign(frame.data() + payload_end,
-                      frame.size() - payload_end - 2);
+  out->payload = std::string_view(frame.data() + payload_end,
+                                  frame.size() - payload_end - 2);
   return FrameStatus::kOk;
 }
 

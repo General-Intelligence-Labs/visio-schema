@@ -204,3 +204,20 @@ TEST(ChannelRegistry, LinkLocalControlMembership) {
   EXPECT_FALSE(visio_schema::IsLinkLocalControl(visio_schema::kDeviceInfo));
   EXPECT_FALSE(visio_schema::IsLinkLocalControl(visio_schema::kCommand));
 }
+
+TEST(ChannelRegistry, SelfInfoSharedIsStableAndOldBuffersSurviveInvalidation) {
+  // The 1 Hz announce adopts this buffer by refcount (wire::Payload), so the
+  // zero-copy contract lives HERE: same pointer while nothing changed (no
+  // re-encode per announce), a fresh buffer after a mutation, and the old
+  // buffer's bytes intact — an announce already in an outbox must not see
+  // the registry re-encoding underneath it.
+  ChannelRegistry r("dev");
+  r.Declare("/dev/imu/0/raw", "S");
+  auto first = r.SelfInfoShared();
+  EXPECT_EQ(r.SelfInfoShared().get(), first.get());
+  const std::string held = *first;
+  r.Declare("/dev/imu/1/raw", "S");  // invalidates the cache
+  auto second = r.SelfInfoShared();
+  EXPECT_NE(second.get(), first.get());
+  EXPECT_EQ(*first, held);
+}
