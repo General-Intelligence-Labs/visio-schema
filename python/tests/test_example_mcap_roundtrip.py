@@ -91,3 +91,72 @@ def test_writer_records_by_channel(tmp_path) -> None:
     assert rch.topic == "/glove_left/imus/0/raw"
     assert rch.schema_name == "visio_schema.v1.sensor.ImuRaw"
     assert rmsg.payload == b"raw-bytes" and rmsg.seq == 1
+
+
+def _one(tmp_path, name, *, chan_id, topic, schema_name, payload):
+    """Write a single-message MCAP, letting the caller pick the channel id."""
+    from visio_schema.mcap import McapWriter
+    from visio_schema.v1.service.device_info.device_info_pb2 import Channel
+    from visio_schema.wire.message import Message
+    from visio_schema.wire.schema import file_descriptor_set
+
+    ch = Channel(
+        id=chan_id, topic=topic, encoding="protobuf", schema_name=schema_name,
+        schema=file_descriptor_set(schema_name), schema_encoding="protobuf",
+    )
+    msg = Message(stream_id=chan_id, seq=1, payload=payload)
+    msg.timestamp.FromNanoseconds(1_700_000_000_000_000_000)
+    out = tmp_path / name
+    with McapWriter(str(out)) as w:
+        w.write(msg, ch)
+    return out
+
+
+def test_merge_of_sources_with_colliding_channel_ids(tmp_path) -> None:
+    """Channels dedupe by TOPIC, not by `Channel.id`.
+
+    Regression: `Channel.id` is only unique within one file — `read_mcap` fills it
+    with the MCAP channel id — so two independently written sources both start at 1.
+    Keying the writer's channel cache on it made the second source's messages inherit
+    the FIRST source's topic and schema: merging a recording with a VIO sidecar wrote
+    3810 `foxglove.PoseInFrame` payloads onto `/ego/imu/0/quat` labelled as
+    `Quaternion`, with no error raised and nothing to notice at read time.
+    """
+    from visio_schema.mcap import McapWriter, read_mcap
+
+    a = _one(tmp_path, "a.mcap", chan_id=1, topic="/ego/imu/0/quat",
+             schema_name="visio_schema.v1.ros.geometry_msgs.Quaternion",
+             payload=b"quat-bytes")
+    b = _one(tmp_path, "b.mcap", chan_id=1, topic="/ego/vio/pose",
+             schema_name="foxglove.PoseInFrame", payload=b"pose-bytes")
+    # the ids really do collide — the precondition the bug needed
+    assert {ch.id for _m, ch in read_mcap(a)} == {ch.id for _m, ch in read_mcap(b)}
+
+    merged = tmp_path / "merged.mcap"
+    with McapWriter(str(merged)) as w:
+        for src in (a, b):
+            for msg, ch in read_mcap(src):
+                w.write(msg, ch)
+
+    rows = {ch.topic: (ch.schema_name, msg.payload) for msg, ch in read_mcap(merged)}
+    assert set(rows) == {"/ego/imu/0/quat", "/ego/vio/pose"}, rows
+    assert rows["/ego/vio/pose"] == ("foxglove.PoseInFrame", b"pose-bytes")
+    assert rows["/ego/imu/0/quat"][0] == "visio_schema.v1.ros.geometry_msgs.Quaternion"
+
+
+def test_same_topic_with_two_schemas_is_refused(tmp_path) -> None:
+    """A topic carrying two schemas is an unreadable file — fail, don't silently bind
+    to whichever arrived first."""
+    import pytest
+
+    from visio_schema.mcap import McapWriter, read_mcap
+
+    a = _one(tmp_path, "a.mcap", chan_id=1, topic="/ego/thing",
+             schema_name="visio_schema.v1.ros.geometry_msgs.Quaternion", payload=b"q")
+    b = _one(tmp_path, "b.mcap", chan_id=7, topic="/ego/thing",
+             schema_name="foxglove.PoseInFrame", payload=b"p")
+    with pytest.raises(ValueError, match="already registered with schema"):
+        with McapWriter(str(tmp_path / "bad.mcap")) as w:
+            for src in (a, b):
+                for msg, ch in read_mcap(src):
+                    w.write(msg, ch)
