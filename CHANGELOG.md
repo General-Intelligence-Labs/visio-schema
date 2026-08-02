@@ -1,15 +1,45 @@
 # Changelog
 
-### Added `Command.set_recording_destination` (tag 36)
-
-- Selects device/SD or phone-only recording behavior. Phone mode is leased so
-  disconnecting the controlling app automatically restores device recording.
-
 All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.7.0 — 2026-08-01
+
+### Changed (BREAKING) `visio_schema.v1.sensor.CameraFrameInfo` — one join key
+
+Trimmed to a single identifier contract. `timestamp` is now the **only** join key and is
+unique per stream *by construction*; `isp_frame_id` survives as a diagnostic only.
+
+- **Removed `frame_id` (tag 2)** — a coordinate frame NAME (the ROS/foxglove
+  `Header.frame_id` convention), copied from the sibling video topic. Exposure and gains
+  are not expressed in any coordinate frame, so it anchored nothing, and its similarity to
+  `isp_frame_id` (a counter) actively misled. Number and name reserved.
+- **Removed `vi_time_ref` (tag 4)** — the drain frame's counter, published so
+  `vi_time_ref != isp_frame_id` could flag a substitute-stamped entry. The producer no
+  longer substitute-stamps at all, and on real recordings that flag was aliased with the
+  healthy case: a one-frame drain latency is the normal majority state, so the inequality
+  distinguished nothing. Number and name reserved.
+- **Join rule corrected.** The 0.6.12 rule described a fallback path — an entry the
+  producer could not bind to its frame was stamped with the *drain* frame's PTS. That
+  structurally manufactured duplicate timestamps (measured at 4-7% of frames), because the
+  substitute PTS is also some other entry's correct one. The producer now **drops** an
+  entry it cannot bind, so every entry on the wire carries its own frame's PTS and
+  `timestamp` is a safe equality join. A dropped or lost entry shows as an `isp_frame_id`
+  gap, which consumers should interpolate across rather than join on.
+
+**Safe to break:** no consumer joins on the removed fields — `CameraFrameInfo` is
+referenced only by the firmware that produces it. (Recordings carrying the stream do
+exist, from boards with `[frame_info] enable=1`; they simply carry two fields nothing
+reads, and a 0.7.0 consumer ignores them.) Ships with the matching `visio-embedded`
+producer change, which is what makes `timestamp` unique by construction.
+
 ## 0.6.12 — 2026-07-28
+
+### Added `Command.set_recording_destination` (tag 36)
+
+- Selects device/SD or phone-only recording behavior. Phone mode is leased so
+  disconnecting the controlling app automatically restores device recording.
 
 ### Added `visio_schema.v1.sensor.CameraFrameInfo` — per-frame exposure + sensor timing (wire-compatible)
 
@@ -31,6 +61,8 @@ bump the MINOR version.
   (unknown-SDK safety net) is stamped with the drain frame's PTS and flagged by
   `vi_time_ref != isp_frame_id`. `vi_time_ref - isp_frame_id` doubles as the
   drain latency in frames.
+  **⚠️ Superseded by 0.7.0** — real recordings showed the fallback produces
+  duplicate timestamps and the flag is aliased with the healthy case. See above.
 - New message on a new topic: wire-compatible in both directions. Old consumers
   ignore the unknown channel; the announce self-describes it for new ones.
 

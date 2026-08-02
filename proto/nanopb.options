@@ -26,7 +26,8 @@ foxglove.CompressedImage.format     max_size:8
 
 # ---- Sensors: short string ids (samples stay callback — see strategy above) -
 visio_schema.v1.sensor.ButtonEvent.button_id   max_size:32
-visio_schema.v1.sensor.CameraFrameInfo.frame_id   max_size:32
+# CameraFrameInfo.frame_id was removed in 0.7.0 (a coordinate-frame NAME that
+# anchored nothing on an exposure record) — no string fields remain here.
 
 # ---- Heartbeat: sender identity, bounded inline ---------------------------
 # Must NOT be a callback: the beacon is encoded into a fixed

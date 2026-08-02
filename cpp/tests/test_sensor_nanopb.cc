@@ -1,14 +1,16 @@
-// Device-side (nanopb) round-trip for sensor payloads whose shape depends on
-// nanopb.options bounds. CameraFrameInfo.frame_id must be a bounded char[32]
-// (FT_STATIC) — the options key has to match the proto's fully-qualified name
-// character-for-character, and a typo silently degrades the field to a
-// pb_callback_t, which the sizeof assertion below turns into a compile error.
+// Device-side (nanopb) round-trip for sensor payloads.
+//
+// CameraFrameInfo is all-scalar as of 0.7.0 (`frame_id` and `vi_time_ref` were
+// removed), so it needs no nanopb.options bound and every field is FT_STATIC by
+// construction — the whole message encodes into a fixed-size buffer with no
+// callbacks. The round-trip below is what pins that: a field that ever degraded
+// to a pb_callback_t would fail to encode here rather than silently drop on the
+// wire.
 #include <gtest/gtest.h>
 
 #include <pb_decode.h>
 #include <pb_encode.h>
 
-#include <cstdio>
 #include <string>
 
 #include "visio_schema/v1/sensor/camera_frame_info.pb.h"
@@ -37,17 +39,13 @@ bool Decode(const pb_msgdesc_t* fields, const std::string& buf, T* out) {
 
 TEST(SensorNanopb, CameraFrameInfoRoundTrip) {
   using Msg = visio_schema_v1_sensor_CameraFrameInfo;
-  // Compile-time proof the nanopb.options bound took effect (see file header).
-  static_assert(sizeof(Msg::frame_id) == 32, "frame_id must be a bounded char[32]");
 
   Msg m = visio_schema_v1_sensor_CameraFrameInfo_init_zero;
   m.has_timestamp = true;
   // Non-round ns split across the Timestamp fields.
   m.timestamp.seconds = 482;
   m.timestamp.nanos = 526755001;
-  std::snprintf(m.frame_id, sizeof(m.frame_id), "cam1");
   m.isp_frame_id = 14113;
-  m.vi_time_ref = 14114;
   m.exposure_time_s = 0.00425676582f;
   m.analog_gain = 6.0f;
   m.digital_gain = 1.0f;
@@ -65,9 +63,7 @@ TEST(SensorNanopb, CameraFrameInfoRoundTrip) {
   ASSERT_TRUE(out.has_timestamp);
   EXPECT_EQ(out.timestamp.seconds, 482);
   EXPECT_EQ(out.timestamp.nanos, 526755001);
-  EXPECT_STREQ(out.frame_id, "cam1");
   EXPECT_EQ(out.isp_frame_id, 14113u);
-  EXPECT_EQ(out.vi_time_ref, 14114u);
   EXPECT_FLOAT_EQ(out.exposure_time_s, 0.00425676582f);
   EXPECT_FLOAT_EQ(out.analog_gain, 6.0f);
   EXPECT_FLOAT_EQ(out.digital_gain, 1.0f);

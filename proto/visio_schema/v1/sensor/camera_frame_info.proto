@@ -12,13 +12,28 @@
 // filterable via SetStreamPolicy.
 //
 // Join rule: `timestamp` is the VI capture PTS of the frame this entry
-// DESCRIBES (`isp_frame_id`), byte-identical to that frame's
-// CompressedVideo timestamp — a plain equality join. The producer
-// drains the ISP stats queue every frame and binds each entry to its
-// frame by exact counter match against recent capture history; an
-// entry whose counter matches nothing (unknown-SDK safety net, never
-// observed on rkaiq) is stamped with the drain frame's PTS instead,
-// and `vi_time_ref != isp_frame_id` flags exactly that case.
+// describes, byte-identical to that frame's CompressedVideo timestamp
+// — a plain equality join, and the ONLY join key. It is unique per
+// stream BY CONSTRUCTION: the producer drains the ISP stats queue
+// every frame and binds each entry to its frame by exact counter match
+// against recent capture history, and an entry it cannot bind is
+// DROPPED, never stamped with a substitute. So an entry that reaches
+// the wire is always stamped with its own frame's PTS.
+//
+// `isp_frame_id` is a DIAGNOSTIC, not a join key: a gap in it means an
+// ISP stats entry was genuinely lost or could not be bound, which is a
+// health signal rather than something a consumer joins on. Consumers
+// that need per-frame exposure should key on `timestamp` alone and
+// treat a missing frame as a gap to interpolate across.
+//
+// An earlier revision (0.6.12) also carried `frame_id` (a coordinate
+// frame NAME — nothing geometric here to anchor) and `vi_time_ref`
+// (the drain frame's counter, published so that
+// `vi_time_ref != isp_frame_id` could flag a substitute-stamped
+// entry). Both are gone: there are no substitute-stamped entries any
+// more, and on real recordings that flag was aliased with the healthy
+// case (a one-frame drain latency is the normal majority state), so it
+// distinguished nothing.
 
 syntax = "proto3";
 
@@ -27,22 +42,19 @@ package visio_schema.v1.sensor;
 import "google/protobuf/timestamp.proto";
 
 message CameraFrameInfo {
-  // VI capture PTS of the frame this entry describes (see the join
-  // rule above).
+  // 0.7.0 removed two fields; see the join rule above.
+  reserved 2, 4;
+  reserved "frame_id", "vi_time_ref";
+
+  // VI capture PTS of the frame this entry describes — the join key
+  // (see the join rule above). Unique per stream.
   google.protobuf.Timestamp timestamp = 1;
 
-  // Frame of reference — matches CompressedVideo.frame_id ("cam0").
-  string frame_id = 2;
-
-  // The two frame counters, verbatim. isp_frame_id identifies the
-  // described frame and is UNIQUE per stream — the producer drops the
-  // ISP's rare redelivered stats entries, so a missing frame appears
-  // as a gap, never as a duplicate. vi_time_ref is the frame the
-  // entry was drained on, so vi_time_ref - isp_frame_id is the drain
-  // latency in frames (0 or 1 observed) and an unequal pair marks the
-  // fallback-stamped case from the join rule.
-  uint32 isp_frame_id = 3;  // ISP 3A stats frame counter
-  uint32 vi_time_ref = 4;   // VI buffer sequence of the drain frame
+  // ISP 3A stats frame counter, verbatim. DIAGNOSTIC ONLY — never a
+  // join key. Unique per stream (the producer drops the ISP's rare
+  // redelivered stats entries), so an entry that was lost or could not
+  // be bound to its frame appears as a gap, never as a duplicate.
+  uint32 isp_frame_id = 3;
 
   // Exposure actually in effect for isp_frame_id, real domain —
   // verbatim from the ISP's AE result, no unit conversion.

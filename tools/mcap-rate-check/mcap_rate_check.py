@@ -53,7 +53,6 @@ from __future__ import annotations
 import argparse
 import glob
 import json
-import math
 import os
 import sys
 
@@ -403,7 +402,13 @@ def read_file(path, gap_factor):
             fid = getattr(decoded, "isp_frame_id", None)
             if fid is not None:
                 s["counter"].append(int(fid))
-                s["drain"].append(int(getattr(decoded, "vi_time_ref", fid)) - int(fid))
+                # vi_time_ref was removed in schema 0.7.0. Only collect the drain
+                # latency when the recording actually carries it -- defaulting to
+                # `fid` would report a flat +0 for every frame, i.e. fabricate a
+                # perfectly-healthy reading out of a field that is not there.
+                vtr = getattr(decoded, "vi_time_ref", None)
+                if vtr is not None:
+                    s["drain"].append(int(vtr) - int(fid))
 
     result = {"path": path, "metadata": meta, "streams": {}, "_times": {}}
     for topic, s in sorted(streams.items()):
@@ -435,6 +440,7 @@ def read_file(path, gap_factor):
                 backwards=int((d < 0).sum()),
             )
             if s["drain"]:
+                # Pre-0.7.0 recordings only (vi_time_ref is gone since).
                 # vi_time_ref - isp_frame_id: how many frames after capture the
                 # ISP stats entry was drained. Constant is healthy; a mixture
                 # means entries are being bound to frames inconsistently.
@@ -568,7 +574,8 @@ def fmt(result, args):
                      f"{c['backwards']} backwards")
             if c.get("drain_frames"):
                 d = ", ".join(f"{k:+d}:{v}" for k, v in sorted(c["drain_frames"].items()))
-                L.append(f"        .. drain latency (vi_time_ref - isp_frame_id): {d}")
+                L.append(f"        .. drain latency (vi_time_ref - isp_frame_id, "
+                         f"pre-0.7.0 only): {d}")
         if args.verbose and st.get("method") == "grid":
             L.append(f"        .. grid: {st['nominal_hz']:.3f} Hz, worst sample is "
                      f"{st['grid_resid_ms']:.3f} ms off its slot")

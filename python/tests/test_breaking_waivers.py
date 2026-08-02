@@ -14,6 +14,7 @@ _REPO = Path(__file__).resolve().parents[2]
 _FILTER = _REPO / "scripts" / "breaking_waivers.py"
 
 _IMU = "proto/visio_schema/v1/calibration/imu.proto"
+_FRAME_INFO = "proto/visio_schema/v1/sensor/camera_frame_info.proto"
 
 
 def _err(path: str, message: str, type_: str = "FIELD_NO_DELETE") -> dict:
@@ -42,6 +43,26 @@ def test_sanctioned_slim_is_waived() -> None:
     r = _run(errors)
     assert r.returncode == 0
     assert "19 error(s) waived" in r.stdout
+
+
+def test_camera_frame_info_trim_is_waived() -> None:
+    """The 0.7.0 single-join-key trim: frame_id (2) and vi_time_ref (4)."""
+    errors = [_err(_FRAME_INFO, f'Previously present field "{n}" with name "{name}" '
+                                f'on message "CameraFrameInfo" was deleted.')
+              for n, name in ((2, "frame_id"), (4, "vi_time_ref"))]
+    r = _run(errors)
+    assert r.returncode == 0
+    assert "2 error(s) waived" in r.stdout
+
+
+def test_deleting_a_kept_camera_frame_info_field_fails() -> None:
+    """The waiver is scoped to the two reviewed tags — losing `isp_frame_id`, or
+    anything else in that message, must still fail the gate."""
+    r = _run([_err(_FRAME_INFO, 'Previously present field "3" with name '
+                                '"isp_frame_id" on message "CameraFrameInfo" '
+                                'was deleted.')])
+    assert r.returncode == 1
+    assert "un-waived" in r.stderr
 
 
 def test_unwaived_deletion_in_same_message_fails() -> None:
