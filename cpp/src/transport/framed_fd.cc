@@ -1,6 +1,7 @@
 #include "visio_schema/transport/framed_fd.hpp"
 
 #include <poll.h>
+#include <sys/resource.h>
 #include <unistd.h>
 
 #include <iostream>
@@ -277,6 +278,12 @@ void FramedFdEndpoint::Tick(std::int64_t now_ns) {
 
 void FramedFdEndpoint::Loop() {
   SetCurrentThreadName("vs_ep_io");
+  // Below-normal: egress to viewers must yield to the producing device's
+  // capture/encode pipeline. When the CPU saturates, THIS thread starving is
+  // the designed degradation — the outbox stall gate sheds preview frames —
+  // whereas a starved encoder sheds recording frames, which is never
+  // acceptable. Harmless off-device (readers are not CPU-bound).
+  setpriority(PRIO_PROCESS, 0, 5);
   while (!stop_.load()) {
     const int fd = fd_;
     pollfd pfds[2];
