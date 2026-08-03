@@ -290,10 +290,15 @@ TEST(Backpressure, StalledLinkShedsDecimatableKeepsControlAndEvents) {
   bool stalled = false;
   for (int i = 0; i < 2000 && !stalled; ++i) {
     tx.Send(flood);
-    stalled = tx.stalled();
+    stalled = tx.Stalled();
     if (!stalled) std::this_thread::sleep_for(1ms);
   }
   ASSERT_TRUE(stalled) << "an unread peer must latch stalled()";
+  // The interface-level view a producer's presence gate reads through the
+  // bus roster (Endpoint::Stalled defaults false; framed endpoints forward
+  // the latch).
+  EXPECT_TRUE(static_cast<visio_schema::transport::Endpoint&>(tx).Stalled())
+      << "Stalled() must reflect the latch through the Endpoint interface";
 
   // At the door while stalled: bulk and decimatable are refused before any
   // queue is touched; control and one-shot data enqueue. The decimatable
@@ -323,7 +328,7 @@ TEST(Backpressure, StalledLinkShedsDecimatableKeepsControlAndEvents) {
   DrainingReader reader(b);
   bool recovered = false;
   for (int i = 0; i < 2000 && !recovered; ++i) {
-    recovered = !tx.stalled();
+    recovered = !tx.Stalled();
     if (!recovered) std::this_thread::sleep_for(1ms);
   }
   EXPECT_TRUE(recovered) << "accepted writes must lift the stall gate";

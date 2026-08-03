@@ -81,7 +81,9 @@ class FramedFdEndpoint : public Endpoint {
   // True while no bytes are being accepted with bytes pending (see
   // UpdateStallState) — i.e. nobody is reading this leg. Producers may use it
   // to skip building payloads that Send() would only drop at the door.
-  bool stalled() const { return link_stalled_.load(std::memory_order_relaxed); }
+  bool Stalled() const override {
+    return link_stalled_.load(std::memory_order_relaxed);
+  }
 
  protected:
   // Called from the I/O thread each loop iteration (~kTickMs). Base: reopen a
