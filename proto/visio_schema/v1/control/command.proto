@@ -55,7 +55,31 @@ message Command {
     SetStatusReport set_status_report = 34;
     ClearCameraTuning clear_camera_tuning = 35;
     SetRecordingDestination set_recording_destination = 36;
+    SetRecordingHeartbeat set_recording_heartbeat = 37;
   }
+}
+
+// Enable/disable the periodic tick-tock voice heartbeat a speaker-equipped
+// board plays while it is recording (the recording_tick_tock notice, every
+// 5 s). Persisted to a device-side sidecar (recording_heartbeat.json under the
+// device state dir) and applied WITHOUT a reboot — an in-flight recording goes
+// quiet (or starts ticking) on the next beat. Only the heartbeat is affected:
+// recording start/stop announcements and error notices keep playing.
+//
+// Only boards with a speaker + voice notices accept this; every other device
+// rejects it ("unsupported"), which is EXPECTED. The boot default comes from
+// the board config ([audio] heartbeat_default — shipping egos default OFF, so
+// the wearer opts in from the app); once the app has set a value, the
+// persisted sidecar wins over the config default on every later boot. The
+// current value is reported in DeviceState.recording_heartbeat, which also
+// tells the app whether to offer the control at all.
+//
+// Note on downgrade: the sidecar survives a rollback to firmware that
+// predates this command, and such firmware plays the heartbeat
+// unconditionally — so a device that was silenced resumes ticking until
+// re-upgraded.
+message SetRecordingHeartbeat {
+  bool enabled = 1;
 }
 
 // Select where recording controls write. PHONE is deliberately a short lease:

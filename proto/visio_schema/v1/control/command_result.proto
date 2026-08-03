@@ -210,6 +210,21 @@ message DeviceState {
     STATUS_REPORT_DISABLED    = 2;
   }
   StatusReport status_report = 31;
+
+  // ── recording heartbeat ──
+  // Whether the recording tick-tock voice heartbeat plays
+  // (SetRecordingHeartbeat).
+  //
+  // Tri-state for the same reason as AudioRecording above: UNSUPPORTED covers
+  // both "this board has no speaker / voice notices" and "this firmware
+  // predates the toggle", and lets the app HIDE the control rather than render
+  // a switch it cannot actually move.
+  enum RecordingHeartbeat {
+    RECORDING_HEARTBEAT_UNSUPPORTED = 0;
+    RECORDING_HEARTBEAT_ENABLED     = 1;
+    RECORDING_HEARTBEAT_DISABLED    = 2;
+  }
+  RecordingHeartbeat recording_heartbeat = 33;
 }
 
 // The single ack a device emits per Command on /<device>/command_result.

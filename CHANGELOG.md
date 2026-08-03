@@ -6,6 +6,17 @@ bump the MINOR version.
 
 ## 0.7.1 — 2026-08-03
 
+### Added `Command.set_recording_heartbeat` (tag 37) + `DeviceState.recording_heartbeat` (tag 33)
+
+App-facing toggle for the tick-tock voice heartbeat a speaker-equipped board plays
+while recording. Persisted device-side, applied without a reboot; only the heartbeat
+is affected — start/stop announcements and error notices keep playing.
+
+`DeviceState.recording_heartbeat` is tri-state (like `audio_recording` /
+`status_report`): `UNSUPPORTED` covers speakerless boards and pre-toggle firmware, so
+the app hides the switch instead of rendering one it cannot move. Purely additive;
+ships with the matching `visio-embedded` device change.
+
 ### Added `visio_schema.v1.sensor.SystemHealth.disk_total_bytes` (tag 10)
 
 Total size of the recording volume — the denominator that `disk_free_bytes` (tag 6) has
