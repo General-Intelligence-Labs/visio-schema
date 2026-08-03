@@ -385,8 +385,9 @@ message SetStorage {
   string status_prefix     = 7;
 }
 
-// Validate S3 credentials WITHOUT persisting (HEAD bucket). Replaces
-// POST /storage/test. Same fields as SetStorage.
+// Validate S3 credentials WITHOUT persisting (a max-keys=1 list under the
+// recordings prefix, so the key needs only put + list — no bucket-info
+// grant). Replaces POST /storage/test. Same fields as SetStorage.
 message TestStorage {
   string endpoint_url      = 1;
   string region            = 2;

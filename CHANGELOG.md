@@ -4,6 +4,36 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.7.1 — 2026-08-03
+
+### Added `visio_schema.v1.sensor.SystemHealth.disk_total_bytes` (tag 10)
+
+Total size of the recording volume — the denominator that `disk_free_bytes` (tag 6) has
+always lacked. A consumer holding only the free byte count cannot say how full the card
+is; the app's storage row wants "N of M free", and `DeviceState.disk_free_pct` carries
+only a rounded percentage.
+
+Both disk fields are emitted only when there is a real recording medium to measure — a
+device whose recording root has degraded to its own rootfs (card yanked, or never
+present) sends neither, rather than reporting the rootfs's geometry as the card's.
+
+Purely additive: an old consumer ignores tag 10, and a new consumer treats an absent
+`disk_total_bytes` exactly as it already treats an absent `disk_free_bytes`. Ships with
+the matching `visio-embedded` producer change.
+
+### Changed (docs) `TestStorage` — credential probe is a list, not a HEAD
+
+No wire change — the comment now matches what the device does. It validates storage
+credentials with a `max-keys=1` list under the recordings prefix instead of a HEAD of
+the bucket, so the key needs only put + list grants (on Aliyun OSS: no
+`oss:GetBucketInfo`), and the probe exercises exactly the grant the app's cloud
+recordings list depends on.
+
+**The required grant changed with it**, which the "no wire change" above does not cover:
+a key minted for the new probe has no `oss:GetBucketInfo`, so firmware older than this
+release — which HEADs the bucket — fails its storage Test against that key. Re-issuing a
+fleet's device policy is therefore coupled to its firmware version.
+
 ## 0.7.0 — 2026-08-01
 
 ### Changed (BREAKING) `visio_schema.v1.sensor.CameraFrameInfo` — one join key

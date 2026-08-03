@@ -86,7 +86,8 @@ message RecordingsList {
 
 // The device's operational-state snapshot — the GET /info payload. Fields that
 // DeviceInfo (device_name/serial/firmware + channels) and SystemHealth
-// (recording, disk_free_bytes) already report are intentionally NOT duplicated
+// (recording, disk_free_bytes, disk_total_bytes) already report are
+// intentionally NOT duplicated
 // here. Carried only inside CommandResult; it has no own stream.
 message DeviceState {
   // ── recording ──
