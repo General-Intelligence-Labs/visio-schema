@@ -175,6 +175,7 @@ std::uint32_t ChannelRegistry::Declare(const std::string& topic,
   by_id_[cid] = std::move(ch);
   topic_to_id_[topic] = cid;
   own_ids_.insert(cid);
+  self_info_cache_.reset();
   return cid;
 }
 
@@ -204,6 +205,14 @@ void ChannelRegistry::Learn(const Channel& channel) {
                               "' already mapped to id " +
                               std::to_string(it->second));
   }
+  // A learned id must never collide with an own output: silently overwriting
+  // it would corrupt OwnChannels() (and serve a stale SelfInfo cache) with no
+  // signal. Ids are disjoint by construction on a bus (one Alloc counter);
+  // this guards the raw-wire consumer path, where ids arrive unvalidated.
+  if (own_ids_.count(channel.id) != 0) {
+    throw DuplicateTopicError("stream id " + std::to_string(channel.id) +
+                              " is already declared as an own output");
+  }
   by_id_[channel.id] = channel;
   topic_to_id_[channel.topic] = channel.id;
 }
@@ -218,7 +227,7 @@ void ChannelRegistry::Forget(const std::vector<std::uint32_t>& ids) {
       }
       by_id_.erase(it);
     }
-    own_ids_.erase(cid);
+    if (own_ids_.erase(cid) != 0) self_info_cache_.reset();
   }
 }
 
@@ -256,11 +265,15 @@ Routed ChannelRegistry::Accept(Message msg) {
 
 // ── Discovery ───────────────────────────────────────────────────────────────
 
-std::string ChannelRegistry::SelfInfo() const {
+std::shared_ptr<const std::string> ChannelRegistry::SelfInfoShared() const {
   // Own outputs only; learned channels propagate by the bus forwarding each
   // leaf's announce (with the ids remapped), not by recombining them here.
-  return Encode(device_name_, equipment_type_, firmware_version_,
-                hardware_revision_, serial_, boot_unix_seconds_, OwnChannels());
+  if (!self_info_cache_) {
+    self_info_cache_ = std::make_shared<const std::string>(
+        Encode(device_name_, equipment_type_, firmware_version_,
+               hardware_revision_, serial_, boot_unix_seconds_, OwnChannels()));
+  }
+  return self_info_cache_;
 }
 
 void ChannelRegistry::OnAnnounce(const std::string& payload) {

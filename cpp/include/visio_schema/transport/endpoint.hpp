@@ -74,6 +74,13 @@ class Endpoint {
   // the keyframe the viewer is actually waiting for. A recording sink ignores
   // this — it must keep every frame. Default: no-op.
   virtual void RequestBulkFlush() {}
+
+  // The peer has accepted nothing for the endpoint's no-progress window while
+  // bytes were pending (see FramedFdEndpoint::stalled). A stalled sink is
+  // connected but consuming nothing — producers may stop generating work for
+  // it. Default false: an endpoint with no outbox (a recording sink) is never
+  // "stalled", so it keeps counting as a consumer.
+  virtual bool Stalled() const { return false; }
 };
 
 }  // namespace visio_schema::transport

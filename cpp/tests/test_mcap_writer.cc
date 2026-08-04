@@ -6,10 +6,15 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
+#include <vector>
 
 #if defined(__linux__)
 #include <climits>
@@ -433,4 +438,42 @@ TEST(McapWriterRotateKeyframe, DoesNotSplitACoPhasedPair) {
     w.Close();
   }
   RemoveParts("visio_schema_gate_j");
+}
+
+// noChunkCRC: chunk records must still be written (chunking carries the
+// per-chunk message index readers seek by) but with uncompressed_crc == 0 —
+// the spec's "not computed", which every reader skips. Pins BOTH halves of
+// the writer option: flipping noChunking too would silently drop the seek
+// index, and re-enabling the CRC would put the per-byte checksum back on the
+// device's hot path. Raw little-endian record scan — no C++ MCAP reader
+// exists in this repo, and none is needed for a field this shallow.
+TEST(McapWriter, WritesChunksWithZeroCrc) {
+  const std::string path = TempPath("visio_schema_mcap_nocrc.mcap");
+  std::remove(path.c_str());
+  const Channel ch = MakeChannel(kFirstDynamic, "/dev/imu/0/raw");
+  {
+    McapWriter w(path);
+    w.Write(ch, Data(kFirstDynamic, "frame-0"));
+    w.Close();
+  }
+
+  std::ifstream f(path, std::ios::binary);
+  const std::vector<unsigned char> b{std::istreambuf_iterator<char>(f), {}};
+  ASSERT_GT(b.size(), 8u);
+  int chunks = 0;
+  for (std::size_t off = 8; off + 9 <= b.size();) {  // skip leading magic
+    std::uint64_t len = 0;
+    std::memcpy(&len, &b[off + 1], 8);
+    if (off + 9 + len > b.size()) break;             // trailing magic
+    if (b[off] == 0x06 && len >= 28) {               // Chunk record
+      ++chunks;
+      // Body: start time u64, end time u64, uncompressed_size u64, then crc.
+      std::uint32_t crc = 0;
+      std::memcpy(&crc, &b[off + 9 + 24], 4);
+      EXPECT_EQ(crc, 0u);
+    }
+    off += 9 + len;
+  }
+  EXPECT_GE(chunks, 1) << "chunking must stay ON (seek index)";
+  std::remove(path.c_str());
 }

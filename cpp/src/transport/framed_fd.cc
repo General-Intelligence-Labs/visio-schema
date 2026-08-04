@@ -1,7 +1,10 @@
 #include "visio_schema/transport/framed_fd.hpp"
 
 #include <poll.h>
+#include <sys/resource.h>
 #include <unistd.h>
+
+#include <iostream>
 
 #include "visio_schema/transport/framing.hpp"
 #include "visio_schema/transport/link.hpp"  // SetCurrentThreadName
@@ -44,23 +47,21 @@ WritePolicy ControlPolicy() {
   return p;
 }
 
-// No bytes accepted for this long WITH bytes pending = the link is stalled
-// (serial gadget nobody reads, peer gone silent). Long enough that a
-// congested-but-alive Wi-Fi link (which still accepts something every few
-// hundred ms) never trips it.
-constexpr std::int64_t kStallNs = 3'000'000'000;
 }  // namespace
 
-FramedFdEndpoint::FramedFdEndpoint(int fd, WritePolicy policy)
-    : ctrl_outbox_(ControlPolicy()), outbox_(policy) {
+FramedFdEndpoint::FramedFdEndpoint(int fd, WritePolicy policy,
+                                   std::int64_t stall_ns)
+    : ctrl_outbox_(ControlPolicy()), outbox_(policy), stall_ns_(stall_ns) {
   AdoptFd(fd);
 }
 
 FramedFdEndpoint::FramedFdEndpoint(FdFactory factory, WritePolicy policy,
-                                   std::int64_t reopen_backoff_ns)
+                                   std::int64_t reopen_backoff_ns,
+                                   std::int64_t stall_ns)
     : factory_(std::move(factory)),
       ctrl_outbox_(ControlPolicy()),
       outbox_(policy),
+      stall_ns_(stall_ns),
       reopen_backoff_ns_(reopen_backoff_ns) {
   if (factory_) AdoptFd(factory_());
 }
@@ -90,11 +91,19 @@ void FramedFdEndpoint::Send(const Message& msg) {
   // Door checks BEFORE any framing work, so a frame nobody will get costs
   // nothing — the reason a thinned preview saves device CPU, not just bandwidth.
 
-  // Nobody is reading: bulk is hopeless and derived per-sample streams are pure
-  // waste (their ground truth ships full-rate elsewhere). Small control frames
-  // still enqueue — they are the probe that detects the reader coming back.
+  // Nobody is reading: framing bulk or decimatable frames is pure waste — a
+  // recovering reader has no use for their stale backlog (video re-syncs at a
+  // keyframe; per-sample state is superseded). Everything else — control
+  // streams and low-rate data like ButtonEvent or the raw IMU bundles — still
+  // enqueues into the bounded control outbox: control is the probe whose
+  // first accepted write detects the reader coming back, and one-shot events
+  // must survive the stall to be delivered on recovery. The producers decide
+  // what is shed-safe by marking it (message.hpp); the on-device MCAP sink is
+  // not a framed leg, but a downstream recorder over TCP IS subject to this
+  // gate after a >3 s reader wedge — door_dropped() makes that gap visible.
   if (link_stalled_.load(std::memory_order_relaxed) &&
       (msg.bulk || msg.decimatable)) {
+    door_dropped_.fetch_add(1, std::memory_order_relaxed);
     return;
   }
   // Absent rule = keep at full rate, so a stream announced after the policy was
@@ -189,6 +198,9 @@ void FramedFdEndpoint::UpdateStallState(long accepted) {
     last_progress_ns_ = now_ns;
     if (link_stalled_.load(std::memory_order_relaxed) && accepted > 0) {
       link_stalled_.store(false, std::memory_order_relaxed);
+      std::cerr << "visio-schema: link recovered ("
+                << door_dropped_.load(std::memory_order_relaxed)
+                << " frames door-dropped while stalled)\n";
       // The reader is back. Whatever bulk survived queuing is stale; flush it
       // so the viewer re-syncs on the next keyframe instead of replaying a
       // dead backlog.
@@ -198,12 +210,40 @@ void FramedFdEndpoint::UpdateStallState(long accepted) {
   }
   if (last_progress_ns_ == 0) {
     last_progress_ns_ = now_ns;  // first pass with pending bytes: arm
-  } else if (now_ns - last_progress_ns_ > kStallNs) {
+  } else if (now_ns - last_progress_ns_ > stall_ns_ &&
+             !link_stalled_.load(std::memory_order_relaxed)) {
     link_stalled_.store(true, std::memory_order_relaxed);
+    std::cerr << "visio-schema: link stalled (no reader for "
+              << stall_ns_ / 1'000'000 << " ms) — shedding bulk/decimatable\n";
   }
 }
 
+void FramedFdEndpoint::ReportClosedOnce() {
+  if (closed_reported_) return;
+  closed_reported_ = true;
+  if (on_closed_) on_closed_(this);
+}
+
 void FramedFdEndpoint::MarkLinkDead() {
+  // A FIXED fd cannot come back: Tick() only reopens when a factory is set, so
+  // for an accepted TCP client or a dialed TcpEndpoint this IS the end of the
+  // link — and the owner has to hear about it, exactly as it would from a read
+  // EOF. Report it here or the endpoint strands: the fd is gone, so it is never
+  // polled again and ReadInbound never runs, leaving it attached to the bus
+  // forever while the peer is long gone.
+  //
+  // This path is reached when a WRITE fails before the read side sees the peer
+  // leave, which is the common case for a client that aborts (RST) while the
+  // device still has video queued to it: Pump() runs before ReadInbound() in the
+  // same loop iteration, so the write error wins the race. Measured on an ego
+  // over NCM: a client RSTing with ~2 MB queued stranded its link within two
+  // attempts, after which the board (one client at a time) refused every later
+  // client until the process restarted.
+  //
+  // A REOPENABLE endpoint (the serial gadget) is the opposite case and must NOT
+  // report closed — it self-heals on the next Tick, and its owner would detach a
+  // link that is about to come back.
+  const bool fixed_link = !factory_;
   if (fd_ >= 0) {
     CloseFd(fd_);
     fd_ = -1;
@@ -214,6 +254,10 @@ void FramedFdEndpoint::MarkLinkDead() {
   next_reopen_ns_ = 0;  // reopen ASAP on the next Tick
   // A fresh link starts unstalled and re-arms its own stall clock.
   link_stalled_.store(false, std::memory_order_relaxed);
+  // Last, with the endpoint's own state already settled: the owner detaches us
+  // from inside this call. Once per link — a second MarkLinkDead (fd_ already
+  // -1) must not re-report a closure the owner has acted on.
+  if (fixed_link) ReportClosedOnce();
   last_progress_ns_ = 0;
 }
 
@@ -234,6 +278,12 @@ void FramedFdEndpoint::Tick(std::int64_t now_ns) {
 
 void FramedFdEndpoint::Loop() {
   SetCurrentThreadName("vs_ep_io");
+  // Below-normal: egress to viewers must yield to the producing device's
+  // capture/encode pipeline. When the CPU saturates, THIS thread starving is
+  // the designed degradation — the outbox stall gate sheds preview frames —
+  // whereas a starved encoder sheds recording frames, which is never
+  // acceptable. Harmless off-device (readers are not CPU-bound).
+  setpriority(PRIO_PROCESS, 0, 5);
   while (!stop_.load()) {
     const int fd = fd_;
     pollfd pfds[2];
@@ -270,7 +320,7 @@ bool FramedFdEndpoint::ReadInbound(int fd) {
       MarkLinkDead();         // reopenable: self-heal on the next Tick
       return false;
     }
-    if (on_closed_) on_closed_(this);  // fixed fd: owner detaches us
+    ReportClosedOnce();                // fixed fd: owner detaches us
     return true;                       // thread exits
   }
   rx_buf_.insert(rx_buf_.end(), chunk, chunk + r);

@@ -54,4 +54,27 @@ TEST(WakeFd, SignalBeforeOpenIsNoOp) {
   WakeFd w;
   w.Signal();                      // no fd yet — must not crash
   EXPECT_FALSE(w.is_open());
+  // The pre-open Signal must not have latched the coalescing flag either, or
+  // the first real Signal after Open would elide its write forever.
+  ASSERT_TRUE(w.Open());
+  w.Signal();
+  EXPECT_TRUE(Readable(w, 100));
+}
+
+TEST(WakeFd, SignalAfterDrainAlwaysWakesAgain) {
+  // The property Signal's syscall-elision flag must never break: once Drain
+  // has run, the NEXT Signal must make poll() readable again — a stale flag
+  // here would leave the loop asleep a full tick with work queued (the
+  // lost-wakeup this cycle is ordered against; see WakeFd::Drain).
+  WakeFd w;
+  ASSERT_TRUE(w.Open());
+  for (int round = 0; round < 3; ++round) {
+    for (int i = 0; i < 4; ++i) w.Signal();  // coalesced into one wakeup
+    EXPECT_TRUE(Readable(w, 100)) << "round " << round;
+    w.Drain();
+    EXPECT_FALSE(Readable(w, 10)) << "round " << round;
+    w.Signal();                              // must wake again immediately
+    EXPECT_TRUE(Readable(w, 100)) << "round " << round;
+    w.Drain();
+  }
 }

@@ -35,6 +35,12 @@ message SystemHealth {
   // Free disk space on the recording volume, in bytes.
   optional uint64 disk_free_bytes = 6;
 
+  // Total size of the recording volume, in bytes. Pairs with
+  // disk_free_bytes so a consumer can show "N of M free" rather than a bare
+  // remainder. Both are absent when there is no recording medium to measure,
+  // so the device's own rootfs never masquerades as the card.
+  optional uint64 disk_total_bytes = 10;
+
   // True if the device is currently writing to local recording storage.
   optional bool recording = 7;
 

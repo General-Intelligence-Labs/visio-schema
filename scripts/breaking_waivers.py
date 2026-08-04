@@ -50,6 +50,23 @@ WAIVERS: list[dict] = [
         "reason": "0.6.0 ImuCalibration slim — numbers + names reserved in imu.proto; "
                   "see CHANGELOG 0.6.0.",
     },
+    {
+        "rule": "FIELD_NO_DELETE",
+        "path": "proto/visio_schema/v1/sensor/camera_frame_info.proto",
+        "message": "CameraFrameInfo",
+        # The 0.7.0 single-join-key trim (camera_frame_info.proto):
+        # 2  frame_id    — a coordinate frame NAME copied from the sibling video
+        #                  topic, but exposure metadata is not expressed in any
+        #                  frame, so it anchored nothing.
+        # 4  vi_time_ref — the drain frame's counter, published so that
+        #                  `vi_time_ref != isp_frame_id` could flag a
+        #                  substitute-stamped entry. The producer no longer
+        #                  substitute-stamps, and on real recordings that flag was
+        #                  aliased with the healthy case anyway.
+        "fields": {2, 4},
+        "reason": "0.7.0 CameraFrameInfo single-join-key trim — numbers + names "
+                  "reserved; see CHANGELOG 0.7.0.",
+    },
 ]
 
 # buf's JSON error has no structured field/message keys, so scrape them from the

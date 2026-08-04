@@ -8,6 +8,10 @@
 // learned channels (from announces, already in this peer's id space) in one
 // id -> Channel map, with the invariant that a topic maps to exactly one id. The
 // bus calls Forget() when a link drops so the topic frees for a reconnect.
+//
+// Not thread-safe — the caller serializes every call, const methods included
+// (SelfInfo() maintains a cache). On the bus that serialization is the
+// dispatch mutex.
 #pragma once
 
 #include <cstdint>
@@ -97,8 +101,14 @@ class ChannelRegistry {
     hardware_revision_ = std::move(hardware_revision);
     serial_ = std::move(serial);
     boot_unix_seconds_ = boot_unix_seconds;
+    self_info_cache_.reset();
   }
-  std::string SelfInfo() const;          // serialized DeviceInfo announce
+  // Serialized DeviceInfo announce (own outputs only). SelfInfoShared() hands
+  // out the cached buffer itself for zero-copy re-publishing (the announce is
+  // KB-scale and re-sent every second — see wire::Payload); SelfInfo() is the
+  // by-reference view of the same buffer for callers that just read it.
+  std::shared_ptr<const std::string> SelfInfoShared() const;
+  const std::string& SelfInfo() const { return *SelfInfoShared(); }
   void OnAnnounce(const std::string& payload);
 
   // DeviceInfo announce envelope (nanopb FT_POINTER). Public so the bus + tests
@@ -129,6 +139,16 @@ class ChannelRegistry {
   Channel device_info_channel_;
   std::uint32_t next_id_ = kFirstDynamic;
   std::uint64_t dropped_unmapped_ = 0;
+  // Lazily built SelfInfo() payload; null = rebuild on next call. The
+  // announce carries every own Channel's serialized FileDescriptorSet (KB
+  // scale) and is typically re-sent at a fixed cadence, so it is encoded
+  // once and reset by whatever changes its content: Declare, Forget of an
+  // own id, or SetMetadata. Learn cannot change it — the announce is
+  // own-outputs only, and Learn rejects an own-id collision outright.
+  // Shared (not just cached) so the 1 Hz re-publish adopts the buffer by
+  // refcount instead of copying it. `mutable` without a lock relies on the
+  // class's serialization contract (see the class comment).
+  mutable std::shared_ptr<const std::string> self_info_cache_;
 };
 
 }  // namespace visio_schema::routing

@@ -25,14 +25,16 @@ __all__ = ["message_class", "file_descriptor_set"]
 
 # Generated payload modules. Importing them registers their descriptors in the
 # default pool so message_class() / file_descriptor_set() can resolve any
-# payload type by name. Mirrors visio-schema/tests/test_imports.py; extend both
-# when a new payload type is added.
+# payload type by name. python/tests/test_gen_schema_blobs.py and the repo-root
+# tests/test_imports.py both walk this tuple — a new payload type needs an
+# entry here and nothing else.
 _PAYLOAD_MODULES = (
     "visio_schema.v1.sensor.imu_raw_pb2",
     "visio_schema.v1.sensor.encoder_raw_pb2",
     "visio_schema.v1.sensor.system_health_pb2",
     "visio_schema.v1.sensor.audio_compressed_pb2",
     "visio_schema.v1.sensor.button_pb2",
+    "visio_schema.v1.sensor.camera_frame_info_pb2",
     "visio_schema.v1.sensor.tactile_raw_pb2",
     "visio_schema.v1.calibration.imu_pb2",
     "visio_schema.v1.calibration.encoder_pb2",

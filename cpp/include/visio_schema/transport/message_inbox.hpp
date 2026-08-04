@@ -36,6 +36,7 @@ class MessageInbox {
   // Producer: enqueue one Message (moved in). Applies the WritePolicy; never
   // blocks. Wakes a waiting consumer.
   void Push(wire::Message&& msg) {
+    bool was_empty = false;
     {
       std::lock_guard<std::mutex> lk(mu_);
       const std::size_t incoming = msg.payload.size();
@@ -50,8 +51,13 @@ class MessageInbox {
       }
       queue_.push_back(std::move(msg));
       bytes_ += incoming;
+      was_empty = before == 0;
     }
-    cv_.notify_one();
+    // Signal only the empty→non-empty edge (the twin of
+    // McapWriterEndpoint::Send): PopBatch's wait predicate re-checks
+    // emptiness under the lock, so a consumer only ever BLOCKS on an empty
+    // queue — per-push notifies were pure futex churn at message rate.
+    if (was_empty) cv_.notify_one();
   }
 
   // Consumer: wait up to `timeout_ms` for frames, then take up to `max_frames`

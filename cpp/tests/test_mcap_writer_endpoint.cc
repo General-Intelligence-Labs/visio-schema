@@ -347,3 +347,38 @@ TEST(McapWriterEndpoint, IgnoresAStreamPolicyAndKeepsRecordingEverything) {
   ASSERT_TRUE(fs::exists(path));
   std::remove(path.c_str());
 }
+
+TEST(McapWriterEndpoint, DeliversWhileRunningWithoutStopAsTheFlush) {
+  // Guards the empty→non-empty notify edge in Send(): a writer asleep with a
+  // non-empty queue would be rescued by Stop()'s unconditional notify, and
+  // every other test in this file asserts only after Stop() — so a lost
+  // wakeup would be silently flushed away there. This one polls
+  // bytes_written() BEFORE Stop, across several bursts so the edge is
+  // crossed repeatedly (the writer drains fully between bursts).
+  const std::string path = TempPath("visio_mcap_test_live.mcap");
+  std::remove(path.c_str());
+  std::unordered_map<std::uint32_t, Channel> table{
+      {kFirstDynamic, MakeChannel(kFirstDynamic, "/dev/imu/0/raw")}};
+  auto resolve = [&](std::uint32_t id) -> const Channel* {
+    auto it = table.find(id);
+    return it == table.end() ? nullptr : &it->second;
+  };
+  {
+    McapWriterEndpoint ep(path, resolve);
+    ep.Start(nullptr, nullptr);
+    std::uint64_t want = 0;
+    for (int burst = 0; burst < 5; ++burst) {
+      for (int i = 0; i < 20; ++i) {
+        ep.Send(Data(kFirstDynamic, "0123456789"));
+        want += 10;
+      }
+      for (int spin = 0; spin < 2000 && ep.bytes_written() < want; ++spin) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      ASSERT_EQ(ep.bytes_written(), want)
+          << "writer asleep with a non-empty queue (burst " << burst << ")";
+    }
+    ep.Stop();
+  }
+  std::remove(path.c_str());
+}

@@ -1,0 +1,76 @@
+// visio_schema/v1/sensor/camera_frame_info.proto
+//
+// Per-frame camera capture metadata (exposure + sensor timing) on
+// /<device>/camera/<idx>/frame_info — a sibling of the CompressedVideo
+// topic, one message per ISP stats entry (normally one per video frame).
+//
+// Deliberately NOT a field on foxglove.CompressedVideo: that schema is
+// adopted as-is from the pinned foxglove-sdk submodule (see
+// docs/protocol/foxglove_compat.md), and a same-name superset would
+// collide in any consumer's descriptor pool that also loads the
+// official definition. A sibling topic is also independently
+// filterable via SetStreamPolicy.
+//
+// Join rule: `timestamp` is the VI capture PTS of the frame this entry
+// describes, byte-identical to that frame's CompressedVideo timestamp
+// — a plain equality join, and the ONLY join key. It is unique per
+// stream BY CONSTRUCTION: the producer drains the ISP stats queue
+// every frame and binds each entry to its frame by exact counter match
+// against recent capture history, and an entry it cannot bind is
+// DROPPED, never stamped with a substitute. So an entry that reaches
+// the wire is always stamped with its own frame's PTS.
+//
+// `isp_frame_id` is a DIAGNOSTIC, not a join key: a gap in it means an
+// ISP stats entry was genuinely lost or could not be bound, which is a
+// health signal rather than something a consumer joins on. Consumers
+// that need per-frame exposure should key on `timestamp` alone and
+// treat a missing frame as a gap to interpolate across.
+//
+// An earlier revision (0.6.12) also carried `frame_id` (a coordinate
+// frame NAME — nothing geometric here to anchor) and `vi_time_ref`
+// (the drain frame's counter, published so that
+// `vi_time_ref != isp_frame_id` could flag a substitute-stamped
+// entry). Both are gone: there are no substitute-stamped entries any
+// more, and on real recordings that flag was aliased with the healthy
+// case (a one-frame drain latency is the normal majority state), so it
+// distinguished nothing.
+
+syntax = "proto3";
+
+package visio_schema.v1.sensor;
+
+import "google/protobuf/timestamp.proto";
+
+message CameraFrameInfo {
+  // 0.7.0 removed two fields; see the join rule above.
+  reserved 2, 4;
+  reserved "frame_id", "vi_time_ref";
+
+  // VI capture PTS of the frame this entry describes — the join key
+  // (see the join rule above). Unique per stream.
+  google.protobuf.Timestamp timestamp = 1;
+
+  // ISP 3A stats frame counter, verbatim. DIAGNOSTIC ONLY — never a
+  // join key. Unique per stream (the producer drops the ISP's rare
+  // redelivered stats entries), so an entry that was lost or could not
+  // be bound to its frame appears as a gap, never as a duplicate.
+  uint32 isp_frame_id = 3;
+
+  // Exposure actually in effect for isp_frame_id, real domain —
+  // verbatim from the ISP's AE result, no unit conversion.
+  float exposure_time_s = 5;    // integration time in seconds
+  float analog_gain = 6;        // linear multiplier
+  float digital_gain = 7;       // sensor digital gain, linear
+  float isp_digital_gain = 8;   // ISP digital gain, linear
+  uint32 iso = 9;
+
+  // Sensor register domain: integration time in lines.
+  uint32 coarse_integration_time_lines = 10;
+
+  // Sensor timing. Static per sensor mode; carried per frame so any
+  // clip is self-contained. Rolling-shutter line time =
+  // line_length_pixels / (pixel_clock_mhz * 1e6) seconds.
+  uint32 line_length_pixels = 11;  // HTS
+  uint32 frame_length_lines = 12;  // VTS
+  float pixel_clock_mhz = 13;
+}

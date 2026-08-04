@@ -154,3 +154,54 @@ TEST(SerialEndpointWatchdog, ReopensOnConfiguredEdge) {
   EXPECT_EQ(s->invocations, 2);  // watchdog forced a reopen
   EXPECT_TRUE(ep.link_up());
 }
+
+// The USB-state sysfs read is sampled at kUsbStatePollNs (200 ms — the I/O
+// loop's idle tick cadence), not on every Tick: under load Tick runs at
+// message rate and the read was pure waste. A flip inside a window is
+// deferred to the next sample, never lost; the first Tick always samples.
+TEST(SerialEndpointWatchdog, UsbFlipWithinPollWindowIsDeferredToNextSample) {
+  auto s = std::make_shared<FakeFactory>();
+  std::string usb = "DISCONNECTED";
+  int reads = 0;
+  TestSerial ep(FnOf(s), WritePolicy::drop_oldest(), [&] {
+    ++reads;
+    return usb;
+  });
+  ASSERT_TRUE(ep.link_up());
+  ep.Tick(0);                    // first Tick always samples
+  EXPECT_EQ(reads, 1);
+
+  usb = "CONFIGURED";            // edge INSIDE the 200 ms window
+  ep.Tick(100'000'000);
+  ep.Tick(199'999'999);
+  EXPECT_EQ(reads, 1);           // cached value fed to the watchdog
+  EXPECT_EQ(s->invocations, 1);  // edge deferred: no reopen yet
+
+  ep.Tick(200'000'000);          // window elapsed: re-sample, edge seen
+  EXPECT_EQ(reads, 2);
+  EXPECT_EQ(s->invocations, 2);  // reopen at most one interval late
+  EXPECT_TRUE(ep.link_up());
+}
+
+// The NEGATIVE half of the fixed-fd close report: a REOPENABLE link that dies
+// must NOT tell its owner it closed. It is about to come back on the next Tick,
+// and reporting would have the owner detach a link that then self-heals — on the
+// device that is the CDC-ACM serial leg leaving the bus on any write hiccup,
+// after which Tick reopens an endpoint the bus no longer holds.
+TEST(EndpointReconnect, AReopenableLinkDyingDoesNotReportClosed) {
+  auto s = std::make_shared<FakeFactory>();
+  TestFd ep(FnOf(s), WritePolicy::drop_oldest(), /*reopen_backoff_ns=*/1000);
+  int closed_calls = 0;
+  ep.Start([](visio_schema::wire::Message, visio_schema::transport::Endpoint*) {},
+           [&closed_calls](visio_schema::transport::Endpoint*) { ++closed_calls; });
+  ASSERT_TRUE(ep.link_up());
+
+  ::close(s->last_peer());
+  ep.SimulatePeerEof();
+  EXPECT_EQ(closed_calls, 0) << "a reopenable link reported closed; its owner "
+                                "would detach a link that is about to return";
+  ep.Tick(0);
+  EXPECT_TRUE(ep.link_up());
+  EXPECT_EQ(closed_calls, 0);
+  ep.Stop();
+}

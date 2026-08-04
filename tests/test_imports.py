@@ -43,6 +43,7 @@ VISIO_MODULES = [
     "visio_schema.v1.sensor.system_health_pb2",
     "visio_schema.v1.sensor.audio_compressed_pb2",
     "visio_schema.v1.sensor.button_pb2",
+    "visio_schema.v1.sensor.camera_frame_info_pb2",
     "visio_schema.v1.sensor.tactile_raw_pb2",
     "visio_schema.v1.calibration.imu_pb2",
     "visio_schema.v1.calibration.encoder_pb2",
@@ -51,8 +52,10 @@ VISIO_MODULES = [
     "visio_schema.v1.input.quest_controller_state_pb2",
     "visio_schema.v1.geometry.twist_pb2",
     "visio_schema.v1.control.command_pb2",
+    "visio_schema.v1.control.command_result_pb2",
     "visio_schema.v1.service.device_info.device_info_pb2",
     "visio_schema.v1.service.heartbeat.heartbeat_pb2",
+    "visio_schema.v1.service.ota.ota_pb2",
 ]
 
 # A representative subset of foxglove.* modules we depend on. They ship
@@ -85,4 +88,20 @@ if failures:
         print(f"  - {module_name}: {reason}", file=sys.stderr)
     raise SystemExit(1)
 
-print(f"OK: imported {len(VISIO_MODULES) + len(FOXGLOVE_MODULES)} modules")
+# The runtime payload registry is the other hand-maintained module list.
+# Importing it eagerly imports every module it names (raising on the first
+# failure — after the per-module loop above so listed modules still get
+# individual reports), and the drift note below keeps the two lists honest
+# without requiring every registry entry to be duplicated here.
+try:
+    from visio_schema.wire.schema import _PAYLOAD_MODULES
+except Exception as exc:  # noqa: BLE001
+    print(f"FAIL: payload-registry import: {type(exc).__name__}: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+drift = sorted(set(_PAYLOAD_MODULES) - set(VISIO_MODULES) - set(FOXGLOVE_MODULES))
+if drift:
+    print(f"note: {len(drift)} registry module(s) imported via the registry only "
+          f"(not in this script's explicit lists): {', '.join(drift)}")
+
+print(f"OK: imported {len(VISIO_MODULES) + len(FOXGLOVE_MODULES)} modules "
+      f"+ {len(_PAYLOAD_MODULES)} registry entries")

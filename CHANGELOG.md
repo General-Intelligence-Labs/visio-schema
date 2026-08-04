@@ -1,13 +1,111 @@
 # Changelog
 
+All notable wire-contract changes to `visio-schema`. Versioning follows
+[`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
+bump the MINOR version.
+
+## 0.7.1 — 2026-08-03
+
+### Added `Command.set_recording_heartbeat` (tag 37) + `DeviceState.recording_heartbeat` (tag 33)
+
+App-facing toggle for the tick-tock voice heartbeat a speaker-equipped board plays
+while recording. Persisted device-side, applied without a reboot; only the heartbeat
+is affected — start/stop announcements and error notices keep playing.
+
+`DeviceState.recording_heartbeat` is tri-state (like `audio_recording` /
+`status_report`): `UNSUPPORTED` covers speakerless boards and pre-toggle firmware, so
+the app hides the switch instead of rendering one it cannot move. Purely additive;
+ships with the matching `visio-embedded` device change.
+
+### Added `visio_schema.v1.sensor.SystemHealth.disk_total_bytes` (tag 10)
+
+Total size of the recording volume — the denominator that `disk_free_bytes` (tag 6) has
+always lacked. A consumer holding only the free byte count cannot say how full the card
+is; the app's storage row wants "N of M free", and `DeviceState.disk_free_pct` carries
+only a rounded percentage.
+
+Both disk fields are emitted only when there is a real recording medium to measure — a
+device whose recording root has degraded to its own rootfs (card yanked, or never
+present) sends neither, rather than reporting the rootfs's geometry as the card's.
+
+Purely additive: an old consumer ignores tag 10, and a new consumer treats an absent
+`disk_total_bytes` exactly as it already treats an absent `disk_free_bytes`. Ships with
+the matching `visio-embedded` producer change.
+
+### Changed (docs) `TestStorage` — credential probe is a list, not a HEAD
+
+No wire change — the comment now matches what the device does. It validates storage
+credentials with a `max-keys=1` list under the recordings prefix instead of a HEAD of
+the bucket, so the key needs only put + list grants (on Aliyun OSS: no
+`oss:GetBucketInfo`), and the probe exercises exactly the grant the app's cloud
+recordings list depends on.
+
+**The required grant changed with it**, which the "no wire change" above does not cover:
+a key minted for the new probe has no `oss:GetBucketInfo`, so firmware older than this
+release — which HEADs the bucket — fails its storage Test against that key. Re-issuing a
+fleet's device policy is therefore coupled to its firmware version.
+
+## 0.7.0 — 2026-08-01
+
+### Changed (BREAKING) `visio_schema.v1.sensor.CameraFrameInfo` — one join key
+
+Trimmed to a single identifier contract. `timestamp` is now the **only** join key and is
+unique per stream *by construction*; `isp_frame_id` survives as a diagnostic only.
+
+- **Removed `frame_id` (tag 2)** — a coordinate frame NAME (the ROS/foxglove
+  `Header.frame_id` convention), copied from the sibling video topic. Exposure and gains
+  are not expressed in any coordinate frame, so it anchored nothing, and its similarity to
+  `isp_frame_id` (a counter) actively misled. Number and name reserved.
+- **Removed `vi_time_ref` (tag 4)** — the drain frame's counter, published so
+  `vi_time_ref != isp_frame_id` could flag a substitute-stamped entry. The producer no
+  longer substitute-stamps at all, and on real recordings that flag was aliased with the
+  healthy case: a one-frame drain latency is the normal majority state, so the inequality
+  distinguished nothing. Number and name reserved.
+- **Join rule corrected.** The 0.6.12 rule described a fallback path — an entry the
+  producer could not bind to its frame was stamped with the *drain* frame's PTS. That
+  structurally manufactured duplicate timestamps (measured at 4-7% of frames), because the
+  substitute PTS is also some other entry's correct one. The producer now **drops** an
+  entry it cannot bind, so every entry on the wire carries its own frame's PTS and
+  `timestamp` is a safe equality join. A dropped or lost entry shows as an `isp_frame_id`
+  gap, which consumers should interpolate across rather than join on.
+
+**Safe to break:** no consumer joins on the removed fields — `CameraFrameInfo` is
+referenced only by the firmware that produces it. (Recordings carrying the stream do
+exist, from boards with `[frame_info] enable=1`; they simply carry two fields nothing
+reads, and a 0.7.0 consumer ignores them.) Ships with the matching `visio-embedded`
+producer change, which is what makes `timestamp` unique by construction.
+
+## 0.6.12 — 2026-07-28
+
 ### Added `Command.set_recording_destination` (tag 36)
 
 - Selects device/SD or phone-only recording behavior. Phone mode is leased so
   disconnecting the controlling app automatically restores device recording.
 
-All notable wire-contract changes to `visio-schema`. Versioning follows
-[`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
-bump the MINOR version.
+### Added `visio_schema.v1.sensor.CameraFrameInfo` — per-frame exposure + sensor timing (wire-compatible)
+
+- **New payload type** on `/<device>/camera/<idx>/frame_info`, a sibling of the
+  `CompressedVideo` topic: exposure actually in effect for the frame
+  (integration time, analog/digital/ISP gains, ISO, integration lines) plus the
+  sensor timing that makes any clip self-contained for rolling-shutter work
+  (HTS / VTS / pixel clock — line time = `line_length_pixels /
+  (pixel_clock_mhz * 1e6)`).
+- **Deliberately a sibling topic, not a field on `foxglove.CompressedVideo`.**
+  That schema is adopted as-is from the pinned foxglove-sdk submodule
+  ([foxglove_compat.md](docs/protocol/foxglove_compat.md)); a same-name superset
+  would collide in any consumer's descriptor pool that also loads the official
+  definition. A sibling is also independently filterable via `SetStreamPolicy`.
+- **Join rule**: `timestamp` is byte-identical to the described frame's video
+  message — a plain equality join. The producer drains its ISP stats queue every
+  frame and binds each entry to its frame by exact counter match against recent
+  capture history (self-validating — no assumed offset); an unmatched entry
+  (unknown-SDK safety net) is stamped with the drain frame's PTS and flagged by
+  `vi_time_ref != isp_frame_id`. `vi_time_ref - isp_frame_id` doubles as the
+  drain latency in frames.
+  **⚠️ Superseded by 0.7.0** — real recordings showed the fallback produces
+  duplicate timestamps and the flag is aliased with the healthy case. See above.
+- New message on a new topic: wire-compatible in both directions. Old consumers
+  ignore the unknown channel; the announce self-describes it for new ones.
 
 ## 0.6.11 — 2026-07-27
 

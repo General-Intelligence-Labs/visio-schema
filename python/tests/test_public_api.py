@@ -56,6 +56,7 @@ REQUIRED_COMMAND_BODIES = frozenset(
         "set_notice_lang",
         "set_resolution",
         "set_recording_destination",
+        "set_recording_heartbeat",
     }
 )
 
@@ -163,6 +164,16 @@ def test_proto_command_schema_present():
     assert command_pb2.Command.DESCRIPTOR.fields_by_name["set_recording_destination"].number == 36
     assert destination.DESTINATION_DEVICE == 0
     assert destination.DESTINATION_PHONE == 1
+
+    heartbeat = command_pb2.SetRecordingHeartbeat
+    assert body_to_type["set_recording_heartbeat"] == heartbeat.DESCRIPTOR.name
+    assert command_pb2.Command.DESCRIPTOR.fields_by_name["set_recording_heartbeat"].number == 37
+
+    state = command_result_pb2.DeviceState
+    assert state.RECORDING_HEARTBEAT_UNSUPPORTED == 0
+    assert state.RECORDING_HEARTBEAT_ENABLED == 1
+    assert state.RECORDING_HEARTBEAT_DISABLED == 2
+    assert state.DESCRIPTOR.fields_by_name["recording_heartbeat"].number == 33
 
 
 def test_proto_wire_and_device_info_present():

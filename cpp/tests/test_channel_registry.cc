@@ -147,6 +147,42 @@ TEST(ChannelRegistry, SelfInfoIsOwnOnly) {
   EXPECT_EQ(r.Resolve(learned)->topic, "/child/imus/0/quat");
 }
 
+TEST(ChannelRegistry, SelfInfoReflectsMutationsAfterCaching) {
+  // SelfInfo() is cached between calls; every mutation that changes the
+  // announce content must invalidate it. Each SelfInfo() call here re-primes
+  // the cache, so each of the three reset sites (Declare, SetMetadata,
+  // own-id Forget) is individually load-bearing.
+  ChannelRegistry r("dev");
+  const std::uint32_t id0 = r.Declare("/dev/imus/0/raw", "S");
+  ChannelRegistry::DeviceView v;
+  ASSERT_TRUE(ChannelRegistry::Decode(r.SelfInfo(), &v));
+  ASSERT_EQ(v.channels.size(), 1u);
+
+  r.Declare("/dev/imus/1/raw", "S");
+  ASSERT_TRUE(ChannelRegistry::Decode(r.SelfInfo(), &v));
+  EXPECT_EQ(v.channels.size(), 2u);
+
+  r.SetMetadata("glove_left", "fw2", "hw", "sn", 7);
+  ASSERT_TRUE(ChannelRegistry::Decode(r.SelfInfo(), &v));
+  EXPECT_EQ(v.equipment_type, "glove_left");
+  EXPECT_EQ(v.firmware_version, "fw2");
+
+  r.Forget({id0});
+  ASSERT_TRUE(ChannelRegistry::Decode(r.SelfInfo(), &v));
+  ASSERT_EQ(v.channels.size(), 1u);
+  EXPECT_EQ(v.channels[0].topic, "/dev/imus/1/raw");
+}
+
+TEST(ChannelRegistry, LearnRejectsOwnIdCollision) {
+  // A learned id colliding with an own output would silently corrupt
+  // OwnChannels() (and serve a stale SelfInfo); Learn must refuse loudly.
+  // OnAnnounce catches the throw, so a garbage peer announce cannot crash.
+  ChannelRegistry r("dev");
+  const std::uint32_t own = r.Declare("/dev/imus/0/raw", "S");
+  EXPECT_THROW(r.Learn(MakeChannel(own, "/peer/imus/0/raw")),
+               DuplicateTopicError);
+}
+
 TEST(ChannelRegistry, WellKnownDeviceInfoChannelResolves) {
   // The DeviceInfo control stream resolves to a built-in well-known channel so a
   // recorder can write forwarded announces on "/device_info" — without it being
@@ -167,4 +203,21 @@ TEST(ChannelRegistry, LinkLocalControlMembership) {
   EXPECT_TRUE(visio_schema::IsLinkLocalControl(visio_schema::kHeartbeat));
   EXPECT_FALSE(visio_schema::IsLinkLocalControl(visio_schema::kDeviceInfo));
   EXPECT_FALSE(visio_schema::IsLinkLocalControl(visio_schema::kCommand));
+}
+
+TEST(ChannelRegistry, SelfInfoSharedIsStableAndOldBuffersSurviveInvalidation) {
+  // The 1 Hz announce adopts this buffer by refcount (wire::Payload), so the
+  // zero-copy contract lives HERE: same pointer while nothing changed (no
+  // re-encode per announce), a fresh buffer after a mutation, and the old
+  // buffer's bytes intact — an announce already in an outbox must not see
+  // the registry re-encoding underneath it.
+  ChannelRegistry r("dev");
+  r.Declare("/dev/imu/0/raw", "S");
+  auto first = r.SelfInfoShared();
+  EXPECT_EQ(r.SelfInfoShared().get(), first.get());
+  const std::string held = *first;
+  r.Declare("/dev/imu/1/raw", "S");  // invalidates the cache
+  auto second = r.SelfInfoShared();
+  EXPECT_NE(second.get(), first.get());
+  EXPECT_EQ(*first, held);
 }

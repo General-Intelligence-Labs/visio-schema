@@ -11,12 +11,92 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "google/protobuf/timestamp.pb.h"    // nanopb: google_protobuf_Timestamp
 #include "visio_schema/v1/wire/header.pb.h"   // nanopb: Header + ControlStream
 
 namespace visio_schema::wire {
+
+// The payload bytes of a Message, shared and immutable.
+//
+// A message fans out to several sinks (framed legs, the MCAP recorder), and
+// some of them must RETAIN it beyond the fanout call — as a plain string that
+// retention was a full copy of every payload byte per retaining sink (~2 MB/s
+// of memcpy on a busy camera device, on the dispatch thread). Payload makes
+// the bytes exist ONCE: copying a Payload (and therefore a Message) is a
+// refcount, and immutability is what makes the sharing sound.
+//
+// Ergonomics are string-shaped on purpose: construct from the std::string a
+// producer just built (buffer moved in, never copied), read through `str()`
+// or the implicit `const std::string&` conversion. An empty Payload reads as
+// the empty string.
+//
+// Lifetime of the returned reference: it is the shared buffer itself, valid
+// while ANY Payload (or adopted shared_ptr) still references it — but two
+// string-member habits do not carry over: (a) binding `const std::string&`
+// to a temporary's payload does not lifetime-extend through the conversion
+// function; (b) reassigning the last Payload that references a buffer
+// invalidates references previously taken from it.
+class Payload {
+ public:
+  Payload() = default;
+  // Producers hand over a built buffer; the string's storage moves, no copy.
+  Payload(std::string bytes)
+      : bytes_(std::make_shared<const std::string>(std::move(bytes))) {}
+  // Copying ctor for byte ranges that do not outlive the call (an inbound
+  // decode window).
+  Payload(std::string_view bytes) : Payload(std::string(bytes)) {}
+  // TEXT literals only (strlen-terminated — an embedded NUL truncates);
+  // binary bytes go through the string/string_view constructors.
+  Payload(const char* bytes) : Payload(std::string(bytes)) {}
+  // Zero-copy adoption of an already-shared buffer (e.g. a cached announce
+  // re-published every second). Explicit: sharing a buffer the producer may
+  // still be able to reach is a deliberate act.
+  explicit Payload(std::shared_ptr<const std::string> shared)
+      : bytes_(std::move(shared)) {}
+
+  const std::string& str() const {
+    static const std::string kEmpty;
+    return bytes_ ? *bytes_ : kEmpty;
+  }
+  operator const std::string&() const { return str(); }
+  const char* data() const { return str().data(); }
+  std::size_t size() const { return bytes_ ? bytes_->size() : 0; }
+  bool empty() const { return size() == 0; }
+
+  // Byte-wise equality. Exact-type overloads (not one string_view catch-all)
+  // for two C++17 reasons: a `const char*` operand converts equally well to
+  // string_view and to Payload, so a generic overload is ambiguous wherever
+  // the implicit constructors are visible (gtest's EXPECT_EQ included); and
+  // the conversion operator above makes std::string's own comparison
+  // operators rival candidates, so only overloads exact on BOTH sides
+  // resolve cleanly.
+  friend bool operator==(const Payload& a, const Payload& b) {
+    return a.str() == b.str();
+  }
+  friend bool operator==(const Payload& a, const std::string& b) {
+    return a.str() == b;
+  }
+  friend bool operator==(const std::string& a, const Payload& b) {
+    return b.str() == a;
+  }
+  friend bool operator==(const Payload& a, const char* b) {
+    return a.str() == b;
+  }
+  friend bool operator==(const char* a, const Payload& b) {
+    return b.str() == a;
+  }
+  friend bool operator!=(const Payload& a, const Payload& b) { return !(a == b); }
+  friend bool operator!=(const Payload& a, const std::string& b) { return !(a == b); }
+  friend bool operator!=(const std::string& a, const Payload& b) { return !(a == b); }
+  friend bool operator!=(const Payload& a, const char* b) { return !(a == b); }
+  friend bool operator!=(const char* a, const Payload& b) { return !(a == b); }
+
+ private:
+  std::shared_ptr<const std::string> bytes_;
+};
 
 // A stream is named globally by a topic string and labelled on the wire by a
 // compact per-link `stream_id` (control ids < CONTROL_STREAM_FIRST_DYNAMIC are
@@ -26,7 +106,9 @@ struct Message {
   std::uint32_t seq = 0;
   google_protobuf_Timestamp timestamp = google_protobuf_Timestamp_init_zero;
 
-  std::string payload;
+  // The inner message's serialized bytes — shared, immutable, copied by
+  // refcount (see Payload above).
+  Payload payload;
 
   // In-memory only (NOT serialized into the wire Header): marks a high-bandwidth
   // bulk stream (camera video). A split-outbox endpoint sends non-bulk CONTROL
@@ -42,12 +124,16 @@ struct Message {
   // producer alongside `bulk`.
   bool keyframe = false;
 
-  // In-memory only (NOT serialized): this message is SAFE TO SHED. Set by the
-  // producer for per-sample derived streams (fused IMU quaternions) whose
-  // ground truth ships full-rate elsewhere (the raw bundles), so losing one
-  // costs nothing recoverable. A live sink drops these on a STALLED link, where
-  // framing them is pure waste — nothing is being delivered anyway. Recording
-  // sinks ignore it; recordings stay lossless.
+  // In-memory only (NOT serialized): this message is SAFE TO SHED — a
+  // periodic stream whose stale backlog is worthless to a recovering reader,
+  // because the next message supersedes it (fused IMU quaternions, whose
+  // ground truth ships full-rate in the raw bundles) or because it is only
+  // meaningful live (audio playback; per-frame metadata paired with video
+  // that is itself shed). A live sink drops these at the door on a STALLED
+  // link, where framing them is pure waste — nothing is being delivered
+  // anyway. One-shot events (ButtonEvent) and ground-truth bundles must NOT
+  // set this: they queue through the stall and deliver on recovery.
+  // Recording sinks ignore it; recordings stay lossless.
   //
   // Rate is NOT decided here — a client caps streams by topic
   // (transport/stream_policy.hpp).

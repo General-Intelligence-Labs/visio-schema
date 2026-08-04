@@ -125,15 +125,23 @@ class McapWriter:
         `ChannelRegistry.resolved` yield — so a read round-trips to a write without
         reordering.
 
+        Channels are deduplicated by **topic**, not by `channel.id`, so merging
+        several sources into one file is safe.
+
         Args:
             msg: The `Message` to record; its `payload` is stored verbatim and its
                 `timestamp` becomes the MCAP log time.
             channel: The `Channel` (topic + schema) to record it on — from a read row
                 or built with `make_channel`.
 
+        Raises:
+            ValueError: The topic was already written with a different schema.
+
         Example:
-            for msg, channel in read_mcap("in.mcap"):
-                writer.write(msg, channel)
+            # copy, or merge several sources into one file
+            for src in ("rec.mcap", "depth.mcap", "vio.mcap"):
+                for msg, channel in read_mcap(src):
+                    writer.write(msg, channel)
         """
         if self._closed:
             return
@@ -150,14 +158,27 @@ class McapWriter:
             )
             self._schema_ids[channel.schema_name] = schema_id
 
-        channel_id = self._channel_ids.get(channel.id)
+        # Keyed by TOPIC, never by `channel.id`: that id is only unique within one
+        # file (`read_mcap` fills it from the MCAP channel) or one bus (`make_channel`
+        # fills it with a stream id), so keying on it aliases channels across merged
+        # sources.
+        channel_id = self._channel_ids.get(channel.topic)
         if channel_id is None:
             channel_id = self._writer.register_channel(
                 topic=channel.topic,
                 message_encoding=channel.encoding or "protobuf",
                 schema_id=schema_id,
             )
-            self._channel_ids[channel.id] = channel_id
+            self._channel_ids[channel.topic] = channel_id
+            self._channel_schemas[channel.topic] = channel.schema_name
+        elif self._channel_schemas[channel.topic] != channel.schema_name:
+            # One topic carrying two schemas is an unreadable file, not a merge —
+            # surface it instead of silently binding to whichever arrived first.
+            raise ValueError(
+                f"topic {channel.topic!r} already registered with schema "
+                f"{self._channel_schemas[channel.topic]!r}; refusing to also write "
+                f"{channel.schema_name!r} to it"
+            )
 
         ts = msg.timestamp.ToNanoseconds()
         self._writer.add_message(
@@ -195,7 +216,8 @@ class McapWriter:
     def _open_part(self) -> None:
         # Each part re-registers its own schemas/channels so it stands alone.
         self._schema_ids: dict[str, int] = {}
-        self._channel_ids: dict[int, int] = {}
+        self._channel_ids: dict[str, int] = {}  # topic -> this part's channel id
+        self._channel_schemas: dict[str, str] = {}  # topic -> schema, to catch conflicts
         self._part_start_ns = time.monotonic_ns()
         self._part_bytes = 0
         if self._path is not None:

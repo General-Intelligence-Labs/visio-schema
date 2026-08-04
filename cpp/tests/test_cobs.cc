@@ -88,4 +88,28 @@ TEST(Cobs, GoldenVectors) {
             std::vector<std::uint8_t>(510, 0xFF));
 }
 
+// The pre-sized pointer-fill encoder is tightest exactly at the all-zero and
+// block-boundary cases — pin them so an off-by-one in the worst-case bound
+// fails a test instead of writing past the buffer.
+TEST(Cobs, GoldenVectorsZerosAndBlockBoundaries) {
+  using visio_schema::wire::CobsEncode;
+  // All-zero input: n zeros -> n+1 code bytes of 0x01 (max code-byte ratio,
+  // the tightest fit against the worst-case allocation).
+  EXPECT_EQ(CobsEncode(std::string_view("\0", 1)),
+            (std::vector<std::uint8_t>{0x01, 0x01}));
+  EXPECT_EQ(CobsEncode(std::string(32, '\0')),
+            std::vector<std::uint8_t>(33, 0x01));
+  // One under the block boundary: 0xFE code + 253 data, closed by the input
+  // ending rather than the 0xFF flush.
+  std::vector<std::uint8_t> exp253{0xFE};
+  exp253.insert(exp253.end(), 253, 0xFF);
+  EXPECT_EQ(CobsEncode(std::string(253, '\xff')), exp253);
+  // A zero right after a full block: the flush's speculative block closes as
+  // 0x01, then the zero opens the final empty block.
+  std::vector<std::uint8_t> exp254z(255, 0xFF);
+  exp254z.push_back(0x01);
+  exp254z.push_back(0x01);
+  EXPECT_EQ(CobsEncode(std::string(254, '\xff') + '\0'), exp254z);
+}
+
 }  // namespace
