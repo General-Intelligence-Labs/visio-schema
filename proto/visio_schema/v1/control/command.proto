@@ -305,7 +305,8 @@ message SetResolution {
 // Persisted; takes effect on the next recording or reboot (does NOT retag the
 // in-progress session). An explicit StartRecording.{task,location} overrides
 // these defaults for that one session. Answered by a CommandResult (ok +
-// DeviceState echoing the persisted values).
+// DeviceState echoing the persisted labels — the fleet ids below are the one
+// exception, see there).
 message SetRecordingMeta {
   string task     = 1;  // free-text capture task / label
   string location = 2;  // human-readable place (user-entered)
@@ -321,6 +322,24 @@ message SetRecordingMeta {
   double longitude             = 5;  // GPS; 0 when unknown (keeps stored value)
   int64  client_unix_us        = 6;  // host reference timestamp (us since epoch)
   sint32 client_utc_offset_min = 7;  // minutes east of UTC (+480 = UTC+8)
+
+  // Fleet identifiers: which operator account and which environment/site a rig
+  // is capturing under. They ride into every session's capture metadata beside
+  // the labels above, but no user-facing client sets them — they are for
+  // provisioning tooling and fleet scripts, over this same command. Unlike the
+  // labels, they are NOT echoed on DeviceState: a setter confirms them by
+  // reading a recording, not from the ack.
+  //
+  // `optional` is load-bearing, not decoration. A client sends this message as
+  // a whole and the device REPLACES the stored text with what arrives, so a
+  // plain field would be cleared by every app or web-page "Set" — wiping an id
+  // that UI never showed and whoever is holding the phone cannot restore.
+  // With presence: ABSENT keeps the stored value, PRESENT replaces it, and
+  // present-but-empty clears it. That makes clearing an id an explicit act by
+  // a client that knows the field exists, which is the same protection the
+  // 0-means-keep rule gives the coordinates above.
+  optional string operator_id    = 9;
+  optional string environment_id = 10;
 }
 
 // Set the device's wall clock + UTC offset. RV1106 boards have no RTC and boot

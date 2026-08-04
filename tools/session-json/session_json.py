@@ -192,6 +192,10 @@ def session_json_text(meta: dict[str, str]) -> str:
     ones, so a missing key renders as the blank the sidecar always carried. The one
     renamed field is ``serial`` in the record, which was ``device_id`` in the sidecar.
 
+    Fields added after the layout was frozen go at the END, matching the firmware's
+    own table: everything ahead of them stays byte-identical, so a recording made
+    before they existed rebuilds to the same prefix it always did, blanks and all.
+
     Args:
         meta: Key/values from `read_capture_metadata`.
 
@@ -219,6 +223,8 @@ def session_json_text(meta: dict[str, str]) -> str:
         ("client_unix_us", _integer(meta, "client_unix_us")),
         ("client_utc_offset_min", _integer(meta, "client_utc_offset_min")),
         ("fps", _integer(meta, "fps")),
+        ("operator_id", _quote(meta.get("operator_id", ""))),
+        ("environment_id", _quote(meta.get("environment_id", ""))),
     )
     return "{" + ",".join(f"{_quote(k)}:{v}" for k, v in fields) + "}\n"
 

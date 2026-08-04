@@ -73,6 +73,8 @@ visio_schema.v1.control.SetRecordingMeta.task         max_size:64
 visio_schema.v1.control.SetRecordingMeta.location     max_size:128
 visio_schema.v1.control.SetRecordingMeta.message      max_size:256
 visio_schema.v1.control.SetRecordingMeta.capturer     max_size:64
+visio_schema.v1.control.SetRecordingMeta.operator_id    max_size:64
+visio_schema.v1.control.SetRecordingMeta.environment_id max_size:64
 
 # FormatStorage: target filesystem name ("", "ext4", "exfat", "vfat").
 visio_schema.v1.control.FormatStorage.fs_type         max_size:8

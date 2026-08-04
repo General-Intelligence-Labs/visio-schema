@@ -169,6 +169,18 @@ def test_proto_command_schema_present():
     assert body_to_type["set_recording_heartbeat"] == heartbeat.DESCRIPTOR.name
     assert command_pb2.Command.DESCRIPTOR.fields_by_name["set_recording_heartbeat"].number == 37
 
+    # The fleet ids carry explicit presence, and the device reads absence as
+    # "keep what is stored" — so a client that never sets them cannot clear an
+    # id it has no field for. Dropping `optional` here would silently turn
+    # every app-side Set into a wipe; pin it where the contract lives.
+    meta = command_pb2.SetRecordingMeta.DESCRIPTOR.fields_by_name
+    assert meta["operator_id"].has_presence and meta["operator_id"].number == 9
+    assert meta["environment_id"].has_presence and meta["environment_id"].number == 10
+    assert not meta["capturer"].has_presence   # the labels replace wholesale
+    blank = command_pb2.SetRecordingMeta(operator_id="")
+    assert blank.HasField("operator_id")             # present-and-empty clears
+    assert not blank.HasField("environment_id")      # absent keeps
+
     state = command_result_pb2.DeviceState
     assert state.RECORDING_HEARTBEAT_UNSUPPORTED == 0
     assert state.RECORDING_HEARTBEAT_ENABLED == 1

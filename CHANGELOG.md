@@ -4,6 +4,26 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.7.2 — 2026-08-04
+
+### Added `SetRecordingMeta.operator_id` (tag 9) + `SetRecordingMeta.environment_id` (tag 10)
+
+Fleet identifiers — which operator account and which environment/site a rig is
+capturing under — persisted device-side beside the existing recording-metadata
+defaults and stamped into every new session's `session.json` and `visio.capture` MCAP
+record. Nothing user-facing sets them: provisioning tooling and fleet scripts do, over
+this same command.
+
+Both are `optional` (proto3 presence), and that is the point rather than a style
+choice. A client sends `SetRecordingMeta` whole and the device replaces the stored
+text with what arrives, so a plain field would be cleared by every app or device-web
+"Set" — wiping an id no UI shows and nobody there can restore. **Absent keeps the
+stored value; present replaces it; present-but-empty clears it.** Existing clients
+send neither and so can no longer clobber them.
+
+Purely additive: an old device ignores both tags, and an old client's messages decode
+unchanged. Ships with the matching `visio-embedded` producer change.
+
 ## 0.7.1 — 2026-08-03
 
 ### Added `Command.set_recording_heartbeat` (tag 37) + `DeviceState.recording_heartbeat` (tag 33)
