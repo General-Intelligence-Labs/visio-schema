@@ -74,6 +74,17 @@ class CloexecFileWriter final : public ::mcap::IWritable {
       ::close(fd);
       return ::mcap::Status(::mcap::StatusCode::OpenFailed, msg);
     }
+    // 256 KiB stdio buffer instead of the default (st_blksize, ~4 KiB): the
+    // recorder streams ~1 MB/s to SD through fwrite, and 4 KiB buffering
+    // makes every chunk hundreds of small write(2)s on a saturated single
+    // core. One part is open at a time, so this is a bounded one-buffer
+    // cost. Loss window on power cut grows to ≤256 KiB of tail — the torn
+    // part is already mcap_repair territory either way. Failure only costs
+    // the optimization (default buffering stands), but say so — a silently
+    // absent buffer looks exactly like the fix not working.
+    if (::setvbuf(file_, nullptr, _IOFBF, 256 * 1024) != 0) {
+      std::fprintf(stderr, "mcap: setvbuf(256KiB) failed — default buffering\n");
+    }
     return ::mcap::StatusCode::Success;
   }
 
