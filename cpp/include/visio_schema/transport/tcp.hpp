@@ -71,6 +71,15 @@ class TcpAcceptor {
   using OnAccept =
       std::function<void(std::shared_ptr<Endpoint>, const AcceptedLeg&)>;
 
+  // Pre-admission check, called on the accept thread with each connection's
+  // leg identity BEFORE the endpoint (socket options, outboxes) is built.
+  // Return false to refuse: the fd is closed on the spot and the listen
+  // socket is left unpolled for one tick, so a client redialing in a tight
+  // loop (a reconnect storm) costs a handful of syscalls per tick instead of
+  // an endpoint construction per attempt. No gate = admit everything;
+  // on_accept still makes the final attach/refuse decision either way.
+  using AdmissionGate = std::function<bool(const AcceptedLeg&)>;
+
   explicit TcpAcceptor(std::uint16_t port,
                        WritePolicy policy = WritePolicy::drop_oldest());
   ~TcpAcceptor();
@@ -78,7 +87,9 @@ class TcpAcceptor {
   TcpAcceptor(const TcpAcceptor&) = delete;
   TcpAcceptor& operator=(const TcpAcceptor&) = delete;
 
-  void Start(OnAccept on_accept);  // spawn the accept thread
+  // Spawn the accept thread. The gate is fixed for the acceptor's lifetime —
+  // passing it here (rather than a setter) makes that structural.
+  void Start(OnAccept on_accept, AdmissionGate gate = {});
   void Stop();                     // stop + join
 
  private:
@@ -89,6 +100,7 @@ class TcpAcceptor {
   WritePolicy policy_;
   int listen_fd_ = -1;
   WakeFd wake_;
+  AdmissionGate gate_;
   OnAccept on_accept_;
   std::thread thread_;
   std::atomic<bool> stop_{false};

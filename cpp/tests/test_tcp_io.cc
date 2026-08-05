@@ -5,7 +5,12 @@
 // than polling. The acceptor produces one fresh FramedFdEndpoint per accepted
 // connection; the server side must Start() that endpoint and Send() to it.
 #include <gtest/gtest.h>
+#include <sys/socket.h>
 
+#include <chrono>
+#include <thread>
+
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <memory>
@@ -36,6 +41,7 @@ constexpr std::uint16_t kPortReconnect = 51235;
 constexpr std::uint16_t kPortDeadPort = 51236;
 constexpr std::uint16_t kPortStalled = 51237;
 constexpr std::uint16_t kPortMulti = 51238;
+constexpr std::uint16_t kPortGate = 51239;
 
 // Holds the endpoint the acceptor hands us for one accepted connection, plus a
 // collector for what that endpoint receives. on_accept Start()s the endpoint
@@ -279,5 +285,107 @@ TEST(TcpIo, StalledClientSheddsWithoutBlockingOrDropping) {
 
   client.Stop();
   peer.stop();
+  server.Stop();
+}
+
+// A gated acceptor refuses BEFORE building an endpoint: the refused client's
+// connect completes (the kernel backlog does that much) but it then sees a
+// prompt close, on_accept never runs, and the acceptor — after its one-tick
+// listen back-off — admits the next client normally. Refusal must neither
+// wedge the accept loop nor strand the refused socket.
+TEST(TcpIo, AdmissionGateRefusesCheaplyAndRecovers) {
+  TcpAcceptor server(kPortGate);
+  std::atomic<bool> admit{false};
+  std::atomic<int> gate_calls{0};
+  MultiAccept accepted;
+  server.Start(accepted.on_accept(),
+               [&](const visio_schema::transport::AcceptedLeg& who) {
+                 gate_calls.fetch_add(1);
+                 EXPECT_FALSE(who.peer_ip.empty());  // leg identity reaches it
+                 return admit.load();
+               });
+
+  {
+    TcpEndpoint refused("127.0.0.1", kPortGate);
+    InboundCollector rx;
+    refused.Start(rx.fn(), rx.on_closed());
+    EXPECT_TRUE(rx.wait_closed())
+        << "a refused client never saw the connection close";
+    refused.Stop();
+  }
+  EXPECT_GE(gate_calls.load(), 1);
+  EXPECT_FALSE(accepted.wait_count(1, std::chrono::milliseconds(250)))
+      << "a refused connection must not reach on_accept";
+
+  admit.store(true);
+  TcpEndpoint client("127.0.0.1", kPortGate);
+  InboundCollector rx2;
+  client.Start(rx2.fn(), rx2.on_closed());
+  ASSERT_TRUE(accepted.wait_count(1))
+      << "an admitted client after a refusal never got its endpoint";
+
+  client.Stop();
+  accepted.stop_all();
+  server.Stop();
+}
+
+// kMaxAcceptsPerPass bounds one poll pass, not admission: a burst larger than
+// the cap must still be admitted in full across passes (the level-triggered
+// poll re-fires while connections are pending). A regression here strands
+// every client past the cap.
+TEST(TcpIo, AnAcceptFloodAdmitsEveryClientAcrossPasses) {
+  constexpr std::uint16_t kPortFlood = 51240;
+  TcpAcceptor server(kPortFlood);
+  MultiAccept accepted;
+  server.Start(accepted.on_accept());
+
+  std::vector<int> fds;
+  for (int i = 0; i < 24; ++i) {
+    const int fd = visio_schema::transport::DialTcpFd("127.0.0.1", kPortFlood);
+    ASSERT_GE(fd, 0);
+    fds.push_back(fd);
+  }
+  EXPECT_TRUE(accepted.wait_count(24, std::chrono::seconds(5)))
+      << "clients beyond kMaxAcceptsPerPass were never accepted";
+
+  for (const int fd : fds) visio_schema::transport::CloseFd(fd);
+  accepted.stop_all();
+  server.Stop();
+}
+
+// After a refusal the acceptor leaves the listen socket unpolled for one tick,
+// so a flat-out redialing client is paced to one small backlog-sized batch per
+// kTickMs (200 ms) instead of a per-attempt chase. Unpaced, this window fits
+// hundreds of dial/refuse cycles; paced, a few dozen at most. Deleting
+// defer_accept passes every other test — this one pins the back-off itself.
+TEST(TcpIo, RefusedRedialStormIsPacedToTheTick) {
+  constexpr std::uint16_t kPortPaced = 51241;
+  TcpAcceptor server(kPortPaced);
+  std::atomic<int> gate_calls{0};
+  MultiAccept accepted;
+  server.Start(accepted.on_accept(),
+               [&](const visio_schema::transport::AcceptedLeg&) {
+                 gate_calls.fetch_add(1);
+                 return false;
+               });
+
+  std::atomic<bool> run{true};
+  std::thread dialer([&] {
+    while (run.load()) {
+      const int fd =
+          visio_schema::transport::DialTcpFd("127.0.0.1", kPortPaced);
+      if (fd < 0) continue;
+      char b;
+      ::recv(fd, &b, 1, 0);  // parked until the acceptor closes us
+      visio_schema::transport::CloseFd(fd);
+    }
+  });
+  std::this_thread::sleep_for(std::chrono::milliseconds(700));
+  run.store(false);
+  dialer.join();
+
+  EXPECT_GE(gate_calls.load(), 1);
+  EXPECT_LE(gate_calls.load(), 40)
+      << "refusals were not paced — the accept loop is chasing the redialer";
   server.Stop();
 }

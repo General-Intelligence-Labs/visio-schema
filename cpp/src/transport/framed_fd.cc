@@ -316,12 +316,13 @@ bool FramedFdEndpoint::ReadInbound(int fd) {
   const long r = ReadSome(fd, chunk, sizeof(chunk));
   if (r == 0) return false;  // EAGAIN: nothing ready
   if (r < 0) {               // EOF / dead fd
-    if (factory_) {
-      MarkLinkDead();         // reopenable: self-heal on the next Tick
-      return false;
-    }
-    ReportClosedOnce();                // fixed fd: owner detaches us
-    return true;                       // thread exits
+    // One teardown for both ways a link dies (see MarkLinkDead): a fixed fd
+    // must CLOSE here, not just report — reporting alone left the socket in
+    // CLOSE_WAIT until the bus's deferred reap got around to Stop(), and a
+    // reconnect-storming client piled those up device-side.
+    const bool fixed_link = !factory_;
+    MarkLinkDead();  // reopenable: self-heal on Tick; fixed: close + report
+    return fixed_link;  // fixed fd: on_closed fired, thread exits
   }
   rx_buf_.insert(rx_buf_.end(), chunk, chunk + r);
   for (auto& m : ExtractFrames(rx_buf_)) {
