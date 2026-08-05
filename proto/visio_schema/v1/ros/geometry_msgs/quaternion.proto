@@ -22,8 +22,8 @@
 //
 // No frame_id: each IMU's body frame is implicit per (DeviceClass,
 // stream_index), and the fusion output is always expressed in a
-// gravity-aligned world frame (chip NDOF for BNO055; gravity-aligned
-// yaw-drifting world for host VQF).
+// gravity-aligned world frame (on-chip fusion where the part provides it;
+// a gravity-aligned, yaw-drifting world for host-side fusion).
 
 syntax = "proto3";
 

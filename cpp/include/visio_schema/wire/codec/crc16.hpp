@@ -12,7 +12,7 @@ namespace visio_schema::wire {
 // Compute CRC-16/CCITT-FALSE over `n` bytes at `data`.
 //
 // Byte-pointer (not std::span) so the wire codec stays C++17 — the embeddable
-// target (RV1106 HDK vendor toolchain) is gcc 8.3 / -std=c++17, which has no
+// target's vendor toolchain is gcc 8.3 / -std=c++17, which has no
 // <span>.
 std::uint16_t Crc16(const void* data, std::size_t n) noexcept;
 

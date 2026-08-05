@@ -93,8 +93,8 @@ learns a channel, so a rule also covers leaves a hub discovers later.
 Use a **leading `**`** when the topic depth is not yours to know. Relayed leaf
 topics normally arrive unchanged — they already carry the leaf's `device_name`
 (`/head/camera/0`) — but a relay MAY namespace them under it
-(`/GILABS-AABBCCDD/head/camera/0`). That is `prefix_topics_with_device_name`,
-**off by default** and opted into for multi-device bring-up, where two same-role
+(`/GILABS-AABBCCDD/head/camera/0`). That is an opt-in relay setting, **off by
+default**, used for multi-device bring-up where two same-role
 units would collide on every topic. `**/camera/0` matches both forms;
 `*/camera/0` only the unprefixed one.
 

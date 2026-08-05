@@ -63,7 +63,7 @@ unique per stream *by construction*; `isp_frame_id` survives as a diagnostic onl
   distinguished nothing. Number and name reserved.
 - **Join rule corrected.** The 0.6.12 rule described a fallback path — an entry the
   producer could not bind to its frame was stamped with the *drain* frame's PTS. That
-  structurally manufactured duplicate timestamps (measured at 4-7% of frames), because the
+  structurally manufactured duplicate timestamps on a measurable fraction of frames, because the
   substitute PTS is also some other entry's correct one. The producer now **drops** an
   entry it cannot bind, so every entry on the wire carries its own frame's PTS and
   `timestamp` is a safe equality join. A dropped or lost entry shows as an `isp_frame_id`
@@ -71,7 +71,7 @@ unique per stream *by construction*; `isp_frame_id` survives as a diagnostic onl
 
 **Safe to break:** no consumer joins on the removed fields — `CameraFrameInfo` is
 referenced only by the firmware that produces it. (Recordings carrying the stream do
-exist, from boards with `[frame_info] enable=1`; they simply carry two fields nothing
+exist, from boards with the frame-info stream enabled; they simply carry two fields nothing
 reads, and a 0.7.0 consumer ignores them.) Ships with the matching `visio-embedded`
 producer change, which is what makes `timestamp` unique by construction.
 
@@ -161,7 +161,7 @@ aimed, hot, or filling their card without touching them.
   the recordings leg; the two share credentials and nothing else.
 - **`DeviceState.status_report`**: **tri-state**, not a bool, for the same reason
   as `audio_recording` — `UNSUPPORTED` covers both pre-status-report firmware and
-  `[status_report] enable=0` in the board config, letting the app hide a control it
+  status reporting disabled in the board config, letting the app hide a control it
   cannot move rather than render a switch in the wrong position.
 - **`DeviceState.storage_status_prefix`**: echoed so the app can show where health
   reports land.
@@ -240,7 +240,7 @@ having to move 26 → 27 for the same reason.
   are re-resolved whenever a peer learns a channel, so a rule covers leaves a hub has
   not discovered yet. Prefer a **leading** `**` when the depth is not yours to know:
   relayed leaf topics normally arrive unchanged, but a relay MAY namespace them under
-  the leaf's `device_name` (`prefix_topics_with_device_name`, off by default, opted
+  the leaf's `device_name` (an opt-in relay setting, off by default, opted
   into for multi-device bring-up). `**/camera/0` matches both forms.
 - **`max_rate_hz` is ignored for camera video.** H.265 is inter-coded: shedding
   arbitrary P-frames costs the decoder its reference chain and blanks the viewer for a
@@ -258,10 +258,10 @@ having to move 26 → 27 for the same reason.
   `command_id` is worse than none.
 - **Why**: silence is indistinguishable from a slow link, so a newer host spends
   its full command timeout *and* its retry budget on something that can never
-  succeed. Measured: the app's stream-policy gate burned ~47 s over three attempts
-  against firmware predating tag 32, then silently gave up — losing the
-  non-video-screen pause and the join-keyframe with only a console warning. This
-  makes a version mismatch fail fast and legibly instead of on a stopwatch.
+  succeed — against firmware predating tag 32 the app's stream-policy gate did
+  exactly that, then silently gave up, losing the non-video-screen pause and the
+  join-keyframe with only a console warning. This makes a version mismatch fail
+  fast and legibly instead of on a stopwatch.
 - Wire-compatible: no field or tag changes, only a contract the `error_code`
   string already had room for.
 
@@ -314,9 +314,9 @@ accumulated `0.5.0`–`0.6.4` (see those entries), including the **breaking `0.6
 - The writer thread had no exception handling. `McapWriter` throws when it cannot
   open the next part, so a card that fills up — or that the kernel flips read-only
   after an integrity error — threw out of the thread's entry function, which is
-  `std::terminate`. Observed in the field: a FAT-corrupt SD card went read-only
-  mid-recording and the whole firmware died on the next part rotation, taking the
-  bus and the cameras with it.
+  `std::terminate`. A card that goes read-only mid-recording therefore took down
+  the whole process on the next part rotation rather than failing the recording
+  alone.
 - The failure is now caught and **latched** behind a new `write_failed(reason)`
   query; the thread stays alive to shed what is queued so `Send()`/`Stop()` stay
   well-behaved, and the owner polls the latch and stops the recording. `Stop()`
@@ -341,11 +341,11 @@ accumulated `0.5.0`–`0.6.4` (see those entries), including the **breaking `0.6
 
 ## 0.6.4 — 2026-07-23
 
-### Added `SetCalibration.camera_tuning` — per-unit ISP measurement (wire-compatible)
+### Added `SetCalibration.camera_tuning` — per-unit camera measurement (wire-compatible)
 
 - **New `visio_schema.v1.calibration.CameraTuning` (`WbMeasurement` + `WbPoint`)**,
   carried on the `SetCalibration` artifact oneof at **tag 15**, `sensor_kind =
-  CAMERA`. A lens+IR-cut varies unit to unit, so one per-model iqfile cannot be
+  CAMERA`. Optics vary unit to unit, so one per-model tuning cannot be
   correct for every part; this is how a fixture tells a device what its own
   optics measured.
 - **Set-only — the first `SetCalibration` artifact that is never re-published.**
@@ -356,27 +356,25 @@ accumulated `0.5.0`–`0.6.4` (see those entries), including the **breaking `0.6
   multiplier" field, because two ways of stating a correction can disagree and
   nothing would arbitrate. With `awb_mode = LIVE` a correct pipeline renders a
   neutral target at `rg = bg = 1.0` — that is what AWB is for — so a point's
-  `rg` *is* the residual error, and a chosen ×1.0565 red gain is simply the point
-  `rg = 1/1.0565`. A later fixture measurement then replaces it at the same CCT
+  `rg` *is* the residual error, and a chosen red gain of G is simply the point
+  `rg = 1/G`. A later fixture measurement then replaces it at the same CCT
   without the record changing shape. At least one point is required.
 - **Carries measurements and nothing else.** The model that extends a
-  measurement across colour temperature and the resulting ISP values live on the
-  device, so improving either is an OTA rather than a re-push of every unit.
-- **Indexed by CCT**, not by illuminant name or iqfile light-source slot, so
-  changing a sensor's light-source list does not reinterpret stored records.
+  measurement across colour temperature and the resulting pipeline values live on
+  the device, so improving either is an OTA rather than a re-push of every unit.
+- **Indexed by CCT**, not by illuminant name or a pipeline-side light-source slot,
+  so changing that light-source list does not reinterpret stored records.
   `mired` is absent (derivable as `1e6/cct`; carrying both invites a record whose
   two indices disagree).
 - **One record per unit, not per camera.** `sensor_index` is still required by
-  `SetCalibration` but selects nothing here: the ISP shares a single AWB gain
-  table across a rig's sensors, measured on an RV1106 stereo ego — a record
-  naming `cam0` alone moved *both* cameras by the same factor, under camgroup and
-  under per-sensor free-run alike. A per-camera artifact would have promised what
-  the hardware cannot do.
+  `SetCalibration` but selects nothing here: the correction applies to the unit as
+  a whole, so a per-camera artifact would have promised a granularity the hardware
+  does not offer.
 - **`lens_model` / `lens_batch` are the only identity fields on the wire**,
   because the lens is the one thing no device can sense. `lens_model` is required;
   `lens_batch` is recorded and logged but **never gates**, since correcting a unit
   from a new lens batch is the entire purpose.
-- **Deliberately NOT on the wire**: the sensor and the ISP tuning revision. A
+- **Deliberately NOT on the wire**: the sensor and the tuning revision. A
   host tool can observe neither, so a value it sent would be an assertion about
   state it cannot see. The device stamps its own when it stores a record and
   re-checks at apply, catching a reflash between calibration and use.
@@ -425,7 +423,7 @@ accumulated `0.5.0`–`0.6.4` (see those entries), including the **breaking `0.6
   action, not a mode: the stored credentials are erased (no rejoin on the next
   boot), any STA association is dropped, and the AP comes back up.
 - Like `ConnectWifi`, the result usually never reaches a caller on the STA link
-  — the device tears that link down to switch radios (single-radio RTL8821CS),
+  — the device tears that link down to switch radios (it cannot hold an AP and an STA association at once),
   so a post-send transport drop means success, not failure.
 
 ## 0.6.0 — 2026-07-16
@@ -606,7 +604,7 @@ this is non-breaking (MINOR).
 ### `SystemHealth.realtime` wall-clock field (additive)
 
 - **`SystemHealth.realtime = 9`** — device wall-clock timestamp, so consumers can
-  read the board's real time (RV1106 boots to 1970 until SetTime).
+  read the board's real time (the boards boot to 1970 until SetTime).
 
 ### Camera bitrate control (additive, wire-compatible)
 

@@ -12,19 +12,18 @@
 // CommandResult model and too heavy for the small-message COMMAND stream, so
 // OTA gets a dedicated stream that carries both control and data frames.
 //
-// Two-phase, NO persistent staging (see ota-plan.md):
-//   * Normal mode (full umi_embedded) verifies the signed OtaBegin MANIFEST
+// Two-phase, NO persistent staging:
+//   * Normal mode (the full firmware) verifies the signed OtaBegin MANIFEST
 //     only (a few hundred bytes), then reboots into recovery. Nothing large is
 //     staged across the reboot.
 //   * Recovery runs a slim receiver speaking this same protocol, and writes each
-//     OtaChunk STRAIGHT to its target MTD partition (flash_erase once, then
-//     nandwrite sequentially). The bulk stream is consumed live; the device
-//     never holds the whole image in RAM or on disk.
+//     OtaChunk STRAIGHT to its target flash partition. The bulk stream is
+//     consumed live; the device never holds the whole image in RAM or on disk.
 //
 // Payload opacity: the bytes are an already-signed, already-encrypted image (the
 // SoC decrypts at boot via its OTP key; the device never decrypts). `sha256` and
 // the per-partition digests cover the bytes AS STORED (ciphertext); the manifest
-// `signature` makes authenticity independent of bus auth.
+// `signature` makes authenticity independent of the transport it arrived on.
 
 syntax = "proto3";
 
@@ -62,7 +61,7 @@ message OtaMessage {
 // a restart.
 message OtaBegin {
   string fw_version  = 1;  // version being delivered (free-form semver)
-  string board       = 2;  // MUST equal the device board, e.g. "hdk_ego_v1"
+  string board       = 2;  // MUST equal the device's own board identifier
   uint64 total_bytes = 3;  // sum of partition image sizes (the streamed bytes)
   uint32 chunk_bytes = 4;  // sender's chunk size hint (32–64 KiB typical)
   bytes  sha256      = 5;  // digest of the whole stream as sent

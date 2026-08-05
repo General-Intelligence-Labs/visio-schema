@@ -53,8 +53,8 @@ _OP_METADATA = 0x0C
 # per part, to learn nothing.
 _OP_DATA_BEGINS = frozenset({0x05, 0x06, 0x0F})
 _CAPTURE_RECORD = "visio.capture"
-# Same budget and caps as the device's own reader (visio-embedded
-# src/recordings.cpp): two readers of one record shouldn't disagree about what a
+# Same budget and caps as the device's own reader: two readers of one record
+# shouldn't disagree about what a
 # valid file is. The real record is ~200 bytes and sits at index 1.
 _MAX_RECORDS = 64
 _MIN_PAYLOAD = 8

@@ -103,7 +103,7 @@ normative algorithm is [../docs/protocol/timesync.md](../docs/protocol/timesync.
 
 `cpp/serial_consumer.cc` reads COBS-framed core frames from a serial port,
 decodes each Header, and prints it — the shape a Linux-class embedded board
-(e.g. an RV1106 gripper) would use. It links the single `visio_schema` CMake
+(e.g. a gripper) would use. It links the single `visio_schema` CMake
 target.
 
 ```bash

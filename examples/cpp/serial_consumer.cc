@@ -2,10 +2,10 @@
 //
 // Reads COBS-delimited core frames (visio-schema/docs/protocol/framing.md §3.2) from a
 // serial port, decodes each, and resolves it to a topic. This is the shape a
-// Linux-class embedded board (e.g. an RV1106 gripper) would use: a blocking
+// Linux-class embedded board (e.g. a gripper) would use: a blocking
 // read loop, no bus, no threads, depending only on the single `visio_schema`
 // target (nanopb bindings + framing codec + routing) — no libprotobuf, no
-// abseil, the same code path that cross-compiles for the RV1106 / HDK.
+// abseil, the same code path that cross-compiles for the device.
 //
 // The wire Header addresses every message by a compact `stream_id` (control ids
 // < CONTROL_STREAM_FIRST_DYNAMIC are hop-local; data ids are negotiated and

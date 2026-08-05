@@ -27,7 +27,7 @@ NANOPB := $(PYTHON) third_party/nanopb/generator/nanopb_generator.py
 # Generated bindings live INSIDE the packages (one wholistic tree per
 # language), not in a separate gen/ dir.
 PY_PKG  := python
-# nanopb C bindings for the embeddable C++ build (RV1106 / HDK) — no full
+# nanopb C bindings for the embeddable C++ build — no full
 # libprotobuf. This covers the WHOLE schema, not just the wire Header: the bus
 # RELAYS payloads as opaque bytes, but a device ORIGINATES them (camera frames,
 # IMU/encoder batches, DeviceInfo, ...) and must encode each type. Per-field
@@ -124,7 +124,7 @@ gen: lint
 	# No host full-protobuf C++ output: the only C++ consumer is the embeddable
 	# stack, which is nanopb-only. Host-side full-protobuf tooling is Python.
 	# ---- C++ (embeddable/nanopb): the WHOLE schema (our protos + the foxglove
-	# types our streams use + the WKT timestamp). This is what the RV1106 (HDK)
+	# types our streams use + the WKT timestamp). This is what the embedded
 	# build links — no full libprotobuf. nanopb won't create nested output dirs,
 	# so mirror the proto tree first. --error-on-unmatched guards the options
 	# file against drift (a renamed field silently losing its bound).

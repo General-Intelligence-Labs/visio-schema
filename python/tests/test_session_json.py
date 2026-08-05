@@ -40,7 +40,7 @@ session_json_text = session_json.session_json_text
 
 GOLDEN = (
     '{"session_name":"session_00003","device_id":"e41cafabfa29d482",'
-    '"hostname":"GILABS-ZnR4U9yc","kernel":"Linux 5.10.160 armv7l","app_version":"1.0.2",'
+    '"hostname":"GILABS-AABBCCDD","kernel":"Linux 5.10.160 armv7l","app_version":"1.0.2",'
     '"start_time_unix":1782646865.137482,"task":"","location":"","message":"","capturer":"",'
     '"latitude":0.0000000,"longitude":0.0000000,'
     '"client_unix_us":0,"client_utc_offset_min":0,"fps":30}\n'
@@ -51,7 +51,7 @@ GOLDEN = (
 GOLDEN_META = {
     "session_name": "session_00003",
     "serial": "e41cafabfa29d482",
-    "hostname": "GILABS-ZnR4U9yc",
+    "hostname": "GILABS-AABBCCDD",
     "kernel": "Linux 5.10.160 armv7l",
     "app_version": "1.0.2",
     "start_time_unix": "1782646865.137482",
@@ -63,7 +63,7 @@ GOLDEN_META = {
 # all-defaults take, so on its own it pins almost no number.
 GOLDEN_GPS = (
     '{"session_name":"session_00012","device_id":"751332c91c5ad2c3",'
-    '"hostname":"GILABS-cXC6nykN","kernel":"Linux 5.10.160 armv7l","app_version":"1.0.4",'
+    '"hostname":"GILABS-11223344","kernel":"Linux 5.10.160 armv7l","app_version":"1.0.4",'
     '"start_time_unix":1784079342.883779,"task":"test","location":"Test 1",'
     '"message":"10 mbps","capturer":"Shumo",'
     '"latitude":37.7698784,"longitude":-122.4029038,'
@@ -76,7 +76,7 @@ GOLDEN_GPS = (
 GOLDEN_GPS_META = {
     "session_name": "session_00012",
     "serial": "751332c91c5ad2c3",
-    "hostname": "GILABS-cXC6nykN",
+    "hostname": "GILABS-11223344",
     "kernel": "Linux 5.10.160 armv7l",
     "app_version": "1.0.4",
     "start_time_unix": "1784079342.883779",
