@@ -56,6 +56,7 @@ message Command {
     ClearCameraTuning clear_camera_tuning = 35;
     SetRecordingDestination set_recording_destination = 36;
     SetRecordingHeartbeat set_recording_heartbeat = 37;
+    SetNoticeVolume set_notice_volume = 38;
   }
 }
 
@@ -482,6 +483,29 @@ message SetNoticeLang {
   // Lowercase ISO 639-1 code of the primary language ("en", "zh"). Region
   // subtags are ignored by the device ("zh-CN" -> "zh").
   string lang = 1;
+}
+
+// Set the loudness of the device's spoken voice notices. Persisted to a
+// device-side sidecar (notice_volume.json under the device state dir) and
+// applied WITHOUT a reboot — the next notice plays at the new volume. Every
+// notice is affected: announcements, error notices, and the recording
+// heartbeat alike.
+//
+// Only boards with a speaker + voice notices accept this; every other device
+// rejects it ("unsupported"), which is EXPECTED. A volume above 100 is
+// rejected ("out_of_range"). The current value is reported in
+// DeviceState.notice_volume, whose presence also tells the app whether to
+// offer the control at all.
+//
+// Note on downgrade: the sidecar survives a rollback to firmware that
+// predates this command, and such firmware plays notices at the board
+// config's full loudness — so a device that was turned down (or muted)
+// comes back loud until re-upgraded.
+message SetNoticeVolume {
+  // 0-100. 100 plays at the board config's full loudness; values in between
+  // scale the codec's playback gain; 0 MUTES notices entirely (the hardware
+  // floor is quiet but not silent, so the device skips playback instead).
+  uint32 volume = 1;
 }
 
 // Persist one piece of sensor calibration (effective on next boot). The target

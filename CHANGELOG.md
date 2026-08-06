@@ -4,6 +4,21 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.7.3 — 2026-08-06
+
+### Added `Command.set_notice_volume` (tag 38) + `DeviceState.notice_volume` (tag 34)
+
+App-facing loudness control for the voice notices a speaker-equipped board plays,
+0-100. Persisted device-side, applied without a reboot; every notice is affected —
+announcements, errors, and the recording heartbeat alike. 0 is a true mute: the
+codec's gain floor is quiet but not silent, so the device skips playback instead.
+
+`DeviceState.notice_volume` is `optional` for the same reason the toggles are
+tri-state: absence covers speakerless boards and pre-volume firmware, so the app
+hides the control instead of rendering one it cannot move — and 0 could not be the
+sentinel here because it is a legal value (mute) as well as the proto3 default.
+Purely additive; ships with the matching `visio-embedded` device change.
+
 ## 0.7.2 — 2026-08-04
 
 ### Added `SetRecordingMeta.operator_id` (tag 9) + `SetRecordingMeta.environment_id` (tag 10)

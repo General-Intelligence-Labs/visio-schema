@@ -225,6 +225,16 @@ message DeviceState {
     RECORDING_HEARTBEAT_DISABLED    = 2;
   }
   RecordingHeartbeat recording_heartbeat = 33;
+
+  // ── notice volume ──
+  // Voice-notice loudness, 0-100 (SetNoticeVolume; 0 = muted).
+  //
+  // `optional` for the same reason the toggles above are tri-state: absence
+  // covers both "this board has no speaker / voice notices" and "this
+  // firmware predates the setting", and lets the app HIDE the control rather
+  // than render one it cannot actually move. A plain uint32 could not say
+  // that, because 0 is a legal value (mute) as well as the proto3 default.
+  optional uint32 notice_volume = 34;
 }
 
 // The single ack a device emits per Command on /<device>/command_result.
