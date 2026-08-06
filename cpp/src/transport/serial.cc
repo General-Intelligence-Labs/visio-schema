@@ -35,7 +35,7 @@ void SerialEndpoint::Tick(std::int64_t now_ns) {
   watchdog_.on_reopen_result(link_up_unlocked());
 }
 
-// Mirrors umi_embedded/src/collector.cpp::read_usb_state.
+// Mirrors the device firmware's own USB-state read.
 std::string SerialEndpoint::ReadUsbState() {
   auto read_trim_upper = [](const char* path) -> std::string {
     FILE* f = std::fopen(path, "r");

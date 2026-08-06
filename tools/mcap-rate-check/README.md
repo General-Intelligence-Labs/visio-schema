@@ -16,7 +16,7 @@ python mcap_rate_check.py <file|dir|glob> [-v] [--json out.json]
 
 ```
 === ego_0000.mcap  (274 MB)
-    session_name=session_00023-... app_version=dev hostname=GILABS-o5yf1fhK fps=30
+    session_name=session_00023-... app_version=dev hostname=GILABS-AABBCCDD fps=30
     topic                             n   rate Hz   cadence   dt ms     sd      max  gaps    lost   loss%
     -----------------------------------------------------------------------------------------------------
     /ego/audio/0                   7847     62.50     62.50  16.000  0.000     16.0     0       0    0.00
@@ -56,11 +56,11 @@ Each of these manufactures a fake fault if missed.
   *bundle* cadence, not the sample rate. Samples are un-bundled to
   `first_sample_time + t_offset_ns` before any rate maths. The bundle-size
   histogram is reported separately: a bundle count pinned at a power of two
-  (256/512/2048) is the signature of the producer's `OutputRing` overflowing,
+  (256/512/2048) is the signature of a producer-side ring buffer overflowing,
   not of a sensor fault.
-- **The nominal rate is not the true rate.** An LSM6DSV trimmed by
-  `INTERNAL_FREQ_FINE` emits ~470.6 Hz against a configured 480, and the ego
-  camera runs its own PWM-derived grid. Every rate here is measured from the
+- **The nominal rate is not the true rate.** A factory-trimmed IMU emits
+  measurably off its configured ODR, and a camera driven by an external sync
+  signal runs its own grid. Every rate here is measured from the
   data; a declared rate is shown as context and never drives the verdict.
 - **Sensor time is not write time.** Gaps are computed on each message's own
   capture timestamp. The MCAP `log_time` feeds only the write-lag column, which
@@ -80,20 +80,17 @@ Each of these manufactures a fake fault if missed.
 - **IMU raw vs quat** — the two are one stream emitted twice, so identical gap
   windows point at the single shared publisher rather than at the sensor.
 
-## Reference numbers (healthy ego)
+## Reference numbers
 
-Useful for telling "unusual" from "broken":
+There is no fixed table here on purpose: every rate depends on the device's
+configuration, and the tool measures each stream's own grid from the data. Run it
+once on a recording you trust and use that as the baseline for "unusual" versus
+"broken" — a local-rate swing well under a tenth of a percent is what a healthy
+clock-disciplined stream looks like.
 
-| Stream | Rate | Cadence | Local-rate swing |
-|---|---|---|---|
-| camera 0/1 | 29.90 Hz | 33.440–33.441 ms | 0.01 % |
-| imu raw/quat | 470.15 Hz | 2.127 ms | 0.00–0.05 % |
-| audio | 62.50 Hz | 16.000 ms | 0.00 % |
-| stereo offset | — | 0.01 ms median | — |
-
-`--warn-swing` defaults to 0.5 %, which sits an order of magnitude above every
-healthy figure above and well below a real excursion (a board showing a clock
-step measured 1.4 %).
+`--warn-swing` defaults to 0.5 %, which sits an order of magnitude above a
+healthy stream and well below a real excursion (a board showing a clock step
+measured 1.4 %).
 
 ## Options
 
@@ -112,5 +109,5 @@ Copy over **MTP**, not `adb pull` — sustained adb I/O perturbs the very rates
 being measured:
 
 ```
-/run/user/1000/gvfs/mtp:host=rockchip_<hostname>_<adbserial>/SD Card/data/
+/run/user/1000/gvfs/mtp:host=<vendor>_<hostname>_<adbserial>/SD Card/data/
 ```

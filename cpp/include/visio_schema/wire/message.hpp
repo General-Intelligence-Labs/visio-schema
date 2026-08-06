@@ -2,7 +2,7 @@
 // the opaque payload bytes.
 //
 // The C++ wire library is nanopb-only (no full libprotobuf) so it links on the
-// RV1106. Fields use the nanopb-generated enum + Timestamp types directly;
+// device. Fields use the nanopb-generated enum + Timestamp types directly;
 // `payload` is the inner message's serialized bytes, which this layer never
 // parses. Higher layers (e.g. the Bus) own sequence stamping and the timesync
 // `timestamp` rewrite.

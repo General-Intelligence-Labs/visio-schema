@@ -74,8 +74,8 @@ value, so a dead sensor never renders as a healthy zero.
 
 ```json
 { "schema": "gilabs.status_report/1",
-  "device_uid": "428bc596a423996a", "device_label": "GILABS-o5yf1fhK",
-  "equipment": "ego", "design_version": "audio_ego_v3",
+  "device_uid": "0011223344556677", "device_label": "GILABS-AABBCCDD",
+  "equipment": "ego", "design_version": "<board design>",
   "firmware_version": "1.0.7",
   "seq": 412, "captured_at_us": 1785053700000000, "clock_synced": true,
   "uptime_s": 12345, "interval_s": 300,

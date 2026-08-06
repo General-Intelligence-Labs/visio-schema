@@ -37,7 +37,7 @@ TEST(TopicMatch, SingleStarIsExactlyOneSegment) {
 }
 
 // A relay MAY namespace relayed leaf topics under the leaf's device_name
-// (prefix_topics_with_device_name — off by default, opted into for multi-device
+// (device-name prefixing — off by default, opted into for multi-device
 // bring-up). One pattern has to cover both depths; a trailing-only '**' could
 // express neither.
 TEST(TopicMatch, DoubleStarMatchesEitherTopicDepth) {

@@ -4,10 +4,10 @@
 // temperature) from a single IMU instance. Published on STREAM_IMU_RAW
 // with the wire Header's `stream_index` identifying which IMU.
 //
-// Why bundled: emitting one wire message per sample at 200 Hz × 16
-// IMUs burns header bytes and wastes message slots; bundling N samples
-// per message preserves per-sample fidelity (via `t_offset_ns`) while
-// amortizing the Header.
+// Why bundled: on a device carrying many IMUs, emitting one wire message
+// per sample burns header bytes and wastes message slots; bundling N
+// samples per message preserves per-sample fidelity (via `t_offset_ns`)
+// while amortizing the Header.
 //
 // Bundle period is a producer-side knob, chosen at config time, not
 // part of the schema. Two sensible operating points:
@@ -30,8 +30,8 @@
 // Foxglove does not ship a raw-IMU schema, so this is a gap-filler.
 //
 // Magnetometer policy: include `magnetic_field` only when the IMU
-// produces mag at the SAME cadence as gyro/accel (BNO055-style
-// integrated mag). For separate-rate mag chips, leave it unset and
+// produces mag at the SAME cadence as gyro/accel (an integrated-mag
+// part). For separate-rate mag chips, leave it unset and
 // publish mag on a future visio_schema.v1.sensor.MagneticField stream — do
 // NOT resample mag to match gyro/accel at the publisher.
 
@@ -62,8 +62,8 @@ message ImuRawSample {
   // gyro/accel.
   //
   // Unit note: Visio uses µT to match UMI v3 and the native output
-  // range of BNO055 / LSM6DSV / ICM45686 mag channels (no embedded-
-  // side scaling needed). This is a deliberate departure from ROS
+  // range of common integrated mag channels (no embedded-side scaling
+  // needed). This is a deliberate departure from ROS
   // sensor_msgs/MagneticField, which uses Tesla — consumers that
   // interop with ROS-flavored pipelines need to multiply by 1e-6.
   foxglove.Vector3 magnetic_field = 4;

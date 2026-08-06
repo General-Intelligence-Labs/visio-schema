@@ -200,10 +200,10 @@ message DeviceState {
   // prefix (SetStatusReport).
   //
   // Tri-state for the same reason as AudioRecording above: UNSUPPORTED covers
-  // both "this firmware predates status reports" and "[status_report] enable=0
-  // in the board config", and lets the app HIDE the control rather than render a
-  // switch it cannot actually move. A bool would read false on old firmware,
-  // which is indistinguishable from "supported but off".
+  // both "this firmware predates status reports" and "status reporting is
+  // disabled in the board config", and lets the app HIDE the control rather
+  // than render a switch it cannot actually move. A bool would read false on
+  // old firmware, which is indistinguishable from "supported but off".
   enum StatusReport {
     STATUS_REPORT_UNSUPPORTED = 0;
     STATUS_REPORT_ENABLED     = 1;
