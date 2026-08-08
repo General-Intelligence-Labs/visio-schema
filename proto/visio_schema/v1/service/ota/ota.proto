@@ -12,18 +12,26 @@
 // CommandResult model and too heavy for the small-message COMMAND stream, so
 // OTA gets a dedicated stream that carries both control and data frames.
 //
-// Two-phase, NO persistent staging:
-//   * Normal mode (the full firmware) verifies the signed OtaBegin MANIFEST
-//     only (a few hundred bytes), then reboots into recovery. Nothing large is
-//     staged across the reboot.
-//   * Recovery runs a slim receiver speaking this same protocol, and writes each
-//     OtaChunk STRAIGHT to its target flash partition. The bulk stream is
-//     consumed live; the device never holds the whole image in RAM or on disk.
+// STAGE-THEN-FLASH. The whole image crosses this stream ONCE, into normal mode:
+//   * Normal mode receives every OtaChunk and streams it to a staging file on a
+//     partition the update never writes (userdata), decrypting and hashing as it
+//     goes — so the image is never held whole in RAM, but it IS held whole on
+//     disk across the reboot. On OtaCommit it verifies the decrypted image, arms
+//     recovery, and reboots.
+//   * Recovery reads that staged file and flashes the inactive A/B slot. It
+//     speaks NO protocol and touches no network: the receiving half of an
+//     earlier design, in which recovery re-received the stream itself, was
+//     dropped precisely because a Wi-Fi OTA would then need a network stack (and
+//     the decryption key) inside a tiny recovery ramdisk.
 //
-// Payload opacity: the bytes are an already-signed, already-encrypted image (the
-// SoC decrypts at boot via its OTP key; the device never decrypts). `sha256` and
-// the per-partition digests cover the bytes AS STORED (ciphertext); the manifest
-// `signature` makes authenticity independent of the transport it arrived on.
+// A power loss at any point leaves the staged image intact and recovery still
+// armed, so the flash simply re-runs; the active slot is never written.
+//
+// Payload opacity: the bytes are one opaque encrypted image. The host is a BLIND
+// RELAY — it pulls the file from the cloud and pushes it unchanged, and only the
+// device holds the key. Authenticity rests on that shared key (only a key holder
+// can produce a ciphertext that decrypts to a valid image with the declared
+// digest), which is why no field here carries a signature.
 
 syntax = "proto3";
 
@@ -52,51 +60,55 @@ message OtaMessage {
   }
 }
 
-// Sent once to open a session. Pins everything the device needs to validate
-// the package before applying it. `signature` is Ed25519 over the canonical
-// manifest (fw_version, board, total_bytes, chunk_bytes, sha256, min_version);
-// the verifying public key is baked into the image, so the untrusted relay app
-// cannot forge an acceptable package. Re-sending OtaBegin with the same
-// session_id while a matching staging file exists is idempotent (resume), not
-// a restart.
+// Sent once to open a session, naming what is about to arrive. Fields 1-4 are
+// the whole live contract: the device decides from fw_version whether it even
+// needs the transfer (already running it → SUCCESS; it is what the other A/B
+// slot holds → instant revert, no bytes), rejects an image marked for another
+// board, and sizes its staging free-space check from total_bytes.
+//
+// Fields 5-8 are RESERVED BUT UNUSED by the shipped protocol, and neither end
+// reads or writes them. They describe the earlier design in which the host sent
+// a signed manifest plus a partition map and recovery received the stream
+// itself. Integrity and authenticity now live INSIDE the opaque payload — its
+// envelope carries the plaintext length and digest, and possession of the shared
+// key is the forgery gate — so nothing here needs to be signed. Kept rather than
+// removed because dropping a field number is a wire break for no gain; do not
+// start populating them without a design that says what verifies what.
 message OtaBegin {
   string fw_version  = 1;  // version being delivered (free-form semver)
   string board       = 2;  // MUST equal the device's own board identifier
-  uint64 total_bytes = 3;  // sum of partition image sizes (the streamed bytes)
+  uint64 total_bytes = 3;  // size of the opaque payload, in bytes
   uint32 chunk_bytes = 4;  // sender's chunk size hint (32–64 KiB typical)
-  bytes  sha256      = 5;  // digest of the whole stream as sent
-  bytes  signature   = 6;  // Ed25519 over the manifest, verified on device
-  uint32 min_version = 7;  // anti-rollback floor; device rejects current < this
-
-  // Flash layout the streamed bytes map onto, in stream order. Recovery erases
-  // and writes these target MTD partitions directly — there is NO bundle file on
-  // the device and no untar step. OtaChunk.offset is the absolute offset into
-  // the concatenation of these images in this order, so recovery routes each
-  // byte range to the right partition. The signature covers this list too.
-  repeated OtaPartition partitions = 8;
+  bytes  sha256      = 5;  // UNUSED — the payload envelope carries the digest
+  bytes  signature   = 6;  // UNUSED — see above; the shared key is the gate
+  uint32 min_version = 7;  // UNUSED — no anti-rollback floor is enforced here
+  repeated OtaPartition partitions = 8;  // UNUSED — the payload names its own
 }
 
-// One target partition's image within the stream.
+// UNUSED — see OtaBegin.partitions. The flash layout is read out of the image
+// itself on the device, not declared on the wire.
 message OtaPartition {
   string name   = 1;  // MTD partition name, e.g. "boot", "rootfs"
   uint64 size   = 2;  // bytes of this partition's image in the stream
   bytes  sha256 = 3;  // per-partition digest (early corruption detection)
 }
 
-// One slice of the stream, at the ABSOLUTE byte offset into the concatenated
-// partition images (not a running counter) so retransmits are idempotent and
-// resume needs no per-chunk bookkeeping. In recovery the byte at `offset` is
-// written straight to its target MTD partition — never to a staging file. No
-// whole-image RAM or disk buffering on the device.
+// One slice of the opaque payload, at its ABSOLUTE byte offset (not a running
+// counter) so retransmits are idempotent and a resume needs no per-chunk
+// bookkeeping. Chunks are fed strictly IN ORDER: the device decrypts as a
+// stream, so a chunk beyond its high-water mark is a gap, answered with
+// NEEDS_RESUME carrying the offset to rewind to, and one before it is a
+// harmless duplicate. There is no per-chunk digest — a corrupted frame fails the
+// wire CRC and simply becomes a gap.
 message OtaChunk {
-  uint64 offset = 1;  // absolute offset into the concatenated images
+  uint64 offset = 1;  // absolute offset into the opaque payload
   bytes  data   = 2;  // chunk_bytes payload (last chunk may be short)
 }
 
-// All bytes delivered. Device verifies sha256 + Ed25519 signature + board +
-// anti-rollback over the staged file, stages it, then triggers `reboot
-// recovery`. Carries no fields — the session is identified by
-// OtaMessage.session_id.
+// All bytes delivered. The device finishes decrypting, checks the payload
+// against the length and digest its envelope declares, publishes the staged
+// image for recovery, then arms recovery and reboots. Carries no fields — the
+// session is identified by OtaMessage.session_id.
 message OtaCommit {}
 
 // Cancel the in-flight session; device deletes the staging file and returns to
@@ -121,12 +133,13 @@ message OtaStatus {
   enum State {
     IDLE       = 0;  // no session
     RECEIVING  = 1;  // accepting chunks
-    VERIFYING  = 2;  // checking sha256 + signature on OtaCommit
+    VERIFYING  = 2;  // checking the payload against its envelope on OtaCommit
     STAGED     = 3;  // verified, about to reboot into recovery
     APPLYING   = 4;  // recovery is flashing (reported on next normal boot)
     SUCCESS    = 5;  // new firmware booted and checked in
     FAILED     = 6;  // see error_code/error_message
-    NEEDS_RESUME = 7;  // staging file missing/short; host should re-Begin
+    NEEDS_RESUME = 7;  // a gap (or a short image at commit): rewind to
+                       // bytes_received and resend from there
   }
   State state = 3;
 
@@ -135,7 +148,8 @@ message OtaStatus {
 
   // Machine- then human-readable failure detail (empty unless FAILED), matching
   // CommandResult's error_code/error_message convention. Codes e.g.
-  // "verify_failed", "sha256_mismatch", "stage_write_failed", "no_space".
+  // "verify_failed", "decrypt_failed", "stage_write_failed", "no_space",
+  // "wrong_board", "no_session", "revert_failed".
   string error_code    = 6;
   string error_message = 7;
 
