@@ -101,8 +101,8 @@ void FramedFdEndpoint::Send(const Message& msg) {
   // what is shed-safe by marking it (message.hpp); the on-device MCAP sink is
   // not a framed leg, but a downstream recorder over TCP IS subject to this
   // gate after a >3 s reader wedge — door_dropped() makes that gap visible.
-  if (link_stalled_.load(std::memory_order_relaxed) &&
-      (msg.bulk || msg.decimatable)) {
+  const bool stalled = link_stalled_.load(std::memory_order_relaxed);
+  if (stalled && (msg.bulk || msg.decimatable)) {
     door_dropped_.fetch_add(1, std::memory_order_relaxed);
     return;
   }
@@ -127,7 +127,13 @@ void FramedFdEndpoint::Send(const Message& msg) {
   // Bulk (camera video) -> lossy video queue; everything else -> the control
   // queue, which Pump() drains ahead of video. thread-safe; no I/O.
   (msg.bulk ? outbox_ : ctrl_outbox_).Enqueue(msg.framed, msg.keyframe);
-  Wake();
+  // A stalled link drains nothing, so waking vs_ep_io per message only burns
+  // a futex+poll cycle per enqueue (tens/s on a readerless serial leg,
+  // forever). The kTickMs idle tick already retries the in-flight probe
+  // write, and the first accepted write clears link_stalled_ — so recovery
+  // needs no per-message wake either; it costs at most one tick of latency
+  // on the first frames after a reader returns.
+  if (!stalled) Wake();
 }
 
 void FramedFdEndpoint::Wake() { wake_.Signal(); }
@@ -316,12 +322,13 @@ bool FramedFdEndpoint::ReadInbound(int fd) {
   const long r = ReadSome(fd, chunk, sizeof(chunk));
   if (r == 0) return false;  // EAGAIN: nothing ready
   if (r < 0) {               // EOF / dead fd
-    if (factory_) {
-      MarkLinkDead();         // reopenable: self-heal on the next Tick
-      return false;
-    }
-    ReportClosedOnce();                // fixed fd: owner detaches us
-    return true;                       // thread exits
+    // One teardown for both ways a link dies (see MarkLinkDead): a fixed fd
+    // must CLOSE here, not just report — reporting alone left the socket in
+    // CLOSE_WAIT until the bus's deferred reap got around to Stop(), and a
+    // reconnect-storming client piled those up device-side.
+    const bool fixed_link = !factory_;
+    MarkLinkDead();  // reopenable: self-heal on Tick; fixed: close + report
+    return fixed_link;  // fixed fd: on_closed fired, thread exits
   }
   rx_buf_.insert(rx_buf_.end(), chunk, chunk + r);
   for (auto& m : ExtractFrames(rx_buf_)) {

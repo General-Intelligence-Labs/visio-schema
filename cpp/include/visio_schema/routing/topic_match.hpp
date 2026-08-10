@@ -12,7 +12,7 @@
 // `**` works in a LEADING position, not just a trailing one, because a client
 // does not always know a topic's depth. Relayed leaf topics normally arrive
 // unchanged, but a relay MAY namespace them under the leaf's device_name
-// (`Bus::RemapAnnounce` with prefix_topics_with_device_name — off by default,
+// (`Bus::RemapAnnounce` with device-name prefixing — off by default,
 // opted into for multi-device bring-up). `**/camera/0` matches either form.
 //
 // "cam*" is NOT a prefix glob; it is a literal segment that only equals the text

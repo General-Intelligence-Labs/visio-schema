@@ -17,7 +17,7 @@
 // Embeddable: the vendored header-only mcap writer is pulled into the .cc alone
 // (lz4/zstd compiled out, Compression::None), and this header does NOT expose
 // any mcap type, so consumers (and the visio McapEndpoint adapter) compile with
-// no MCAP include and the whole sink cross-compiles for the RV1106.
+// no MCAP include and the whole sink cross-compiles for the device.
 #pragma once
 
 #include <atomic>

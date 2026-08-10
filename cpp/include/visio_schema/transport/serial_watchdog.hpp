@@ -8,8 +8,8 @@
 //     /dev/ttyGS0 appears asynchronously after gadget bind) — periodic retry.
 //
 // I/O-free by design so unit tests drive it deterministically; the caller does
-// the sysfs read, the reopen, and the logging. Ported from
-// umi_embedded/src/serial_watchdog.hpp (the proven RV1106 implementation).
+// the sysfs read, the reopen, and the logging. Ported from the device
+// firmware's proven implementation.
 #pragma once
 
 #include <cstddef>

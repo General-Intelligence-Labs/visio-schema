@@ -477,3 +477,41 @@ TEST(McapWriter, WritesChunksWithZeroCrc) {
   EXPECT_GE(chunks, 1) << "chunking must stay ON (seek index)";
   std::remove(path.c_str());
 }
+
+// The part file rides a 256 KiB stdio buffer (CloexecFileWriter::open). Cross
+// that buffer several times AND rotate mid-stream, then prove every part was
+// fully flushed: each must end with the MCAP trailing magic — a truncated
+// buffered tail would leave a torn footer that read_mcap rejects. The tiny
+// writes in the other tests never fill the buffer even once.
+TEST(McapWriter, LargeBufferedWritesFlushAcrossCloseAndRotation) {
+  const std::string stem = "visio_schema_mcap_bigbuf";
+  const std::string path = TempPath(stem + ".mcap");
+  RemoveParts(stem);
+  const Channel ch = MakeChannel(kFirstDynamic, "/dev/imu/0/raw");
+  {
+    McapWriter w(path, /*max_bytes=*/400 * 1024);
+    // ~1 MB total -> at least three parts, each crossing the buffer.
+    for (int i = 0; i < 64; ++i) {
+      w.Write(ch, Data(kFirstDynamic, std::string(16 * 1024, char('a' + i % 26))));
+    }
+    w.Close();
+  }
+  static const char kMagic[] = "\x89MCAP0\r\n";
+  int parts = 0;
+  for (int i = 0; i < 8; ++i) {
+    char buf[8];
+    std::snprintf(buf, sizeof(buf), "_%04d", i);
+    const std::string p = TempPath(stem + buf + ".mcap");
+    if (!fs::exists(p)) break;
+    ++parts;
+    std::ifstream f(p, std::ios::binary);
+    ASSERT_TRUE(f.good()) << p;
+    f.seekg(-8, std::ios::end);
+    char tail[8] = {0};
+    f.read(tail, 8);
+    EXPECT_EQ(std::memcmp(tail, kMagic, 8), 0)
+        << p << " lacks the trailing magic — buffered tail lost";
+  }
+  EXPECT_GE(parts, 3) << "expected rotation across the stdio buffer";
+  RemoveParts(stem);
+}

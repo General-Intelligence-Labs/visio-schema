@@ -53,8 +53,8 @@ _OP_METADATA = 0x0C
 # per part, to learn nothing.
 _OP_DATA_BEGINS = frozenset({0x05, 0x06, 0x0F})
 _CAPTURE_RECORD = "visio.capture"
-# Same budget and caps as the device's own reader (visio-embedded
-# src/recordings.cpp): two readers of one record shouldn't disagree about what a
+# Same budget and caps as the device's own reader: two readers of one record
+# shouldn't disagree about what a
 # valid file is. The real record is ~200 bytes and sits at index 1.
 _MAX_RECORDS = 64
 _MIN_PAYLOAD = 8
@@ -192,6 +192,10 @@ def session_json_text(meta: dict[str, str]) -> str:
     ones, so a missing key renders as the blank the sidecar always carried. The one
     renamed field is ``serial`` in the record, which was ``device_id`` in the sidecar.
 
+    Fields added after the layout was frozen go at the END, matching the firmware's
+    own table: everything ahead of them stays byte-identical, so a recording made
+    before they existed rebuilds to the same prefix it always did, blanks and all.
+
     Args:
         meta: Key/values from `read_capture_metadata`.
 
@@ -219,6 +223,8 @@ def session_json_text(meta: dict[str, str]) -> str:
         ("client_unix_us", _integer(meta, "client_unix_us")),
         ("client_utc_offset_min", _integer(meta, "client_utc_offset_min")),
         ("fps", _integer(meta, "fps")),
+        ("operator_id", _quote(meta.get("operator_id", ""))),
+        ("environment_id", _quote(meta.get("environment_id", ""))),
     )
     return "{" + ",".join(f"{_quote(k)}:{v}" for k, v in fields) + "}\n"
 

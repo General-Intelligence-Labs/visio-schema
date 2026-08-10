@@ -19,12 +19,12 @@ Four traps this gets right, all of which manufacture fake faults if missed:
     cadence, not the sample rate. Samples are un-bundled to
     first_sample_time + t_offset_ns before any rate math. The bundle-size
     histogram is reported separately, because a bundle count pinned at a power
-    of two (256 / 512 / 2048) is the signature of the producer's OutputRing
+    of two (256 / 512 / 2048) is the signature of a producer-side ring buffer
     overflowing rather than of a sensor fault.
 
-  * The nominal rate is NOT the true rate. An LSM6DSV trimmed by
-    INTERNAL_FREQ_FINE emits 470.6 Hz against a configured 480, and the ego
-    camera runs its own PWM-derived grid. Every rate here is measured from the
+  * The nominal rate is NOT the true rate. A factory-trimmed IMU runs measurably
+    off its configured ODR, and a camera driven by an external sync signal runs
+    its own grid. Every rate here is measured from the
     data (median inter-sample period); a declared rate, where the file carries
     one, is shown alongside as INFO only and never drives the verdict.
 
@@ -140,9 +140,9 @@ def fit_grid(ts, period0, max_resid_frac=0.35):
     two samples" from "one slot holds none".
 
     The grid is `t = period * slot + offset`, seeded from the median interval and
-    refined by least squares (the true rate is never the nominal one -- an
-    LSM6DSV runs 470.6 Hz against a configured 480, so a hard-coded grid would
-    manufacture a drop every few seconds).
+    refined by least squares (the true rate is never the nominal one -- a
+    factory-trimmed IMU runs measurably off its configured ODR, so a hard-coded
+    grid would manufacture a drop every few seconds).
 
     Returns None when the samples do not lie on one grid at all -- a stream whose
     rate changes mid-recording, where the caller must fall back to intervals
@@ -644,7 +644,7 @@ def main():
     p.add_argument("--fail-loss", type=float, default=1.0, help="FAIL at this %% loss (default 1.0)")
     p.add_argument("--warn-swing", type=float, default=0.5,
                    help="WARN when the local rate swings this %% of a period (default 0.5; "
-                        "a healthy ego camera measures 0.01%%, its IMU 0.00-0.05%%)")
+                        "a healthy clock-disciplined stream sits well under 0.1%%)")
     p.add_argument("--all", action="store_true", help="include non-sensor streams too")
     p.add_argument("-v", "--verbose", action="store_true", help="list gaps, per-second rate, lag")
     p.add_argument("--max-gaps", type=int, default=12, help="gaps to list per stream (default 12)")

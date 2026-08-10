@@ -420,3 +420,40 @@ TEST(Backpressure, AFixedLinkDyingOnAWriteReportsClosed) {
     EXPECT_EQ(closed_calls.load(), 1);
     CloseFd(b);
 }
+
+// The read-EOF twin of the test above: dying on a READ must tear the link down
+// the same way dying on a write does — reporting closed is not enough, the fd
+// itself must close. When it didn't, a peer's half-close left the accepted
+// socket in CLOSE_WAIT until the owner's deferred Stop(), and a phone redialing
+// in a loop piled those up on the device.
+//
+// shutdown(b, SHUT_WR) is the probe: it delivers EOF to the endpoint while b
+// stays open, so b sees a FIN back (read returns 0) only once the endpoint
+// actually closes its fd — exactly the CLOSE_WAIT shape, made observable.
+TEST(Backpressure, AFixedLinkDyingOnAReadEofClosesItsFd) {
+    auto [a, b] = MakeFdPair();
+    ASSERT_GE(a, 0);
+    ASSERT_GE(b, 0);
+    std::atomic<int> closed_calls{0};
+    FramedFdEndpoint ep(a);  // fixed fd: no factory
+    ep.Start([](Message, visio_schema::transport::Endpoint*) {},
+             [&closed_calls](visio_schema::transport::Endpoint*) {
+                 closed_calls.fetch_add(1);
+             });
+    ASSERT_EQ(::shutdown(b, SHUT_WR), 0);  // EOF to the endpoint; b stays open
+    // The endpoint's next poll wake must close a: b then reads a FIN promptly.
+    char c;
+    long r = -1;
+    for (int i = 0; i < 400; ++i) {
+        r = ::recv(b, &c, 1, MSG_DONTWAIT);
+        if (r == 0) break;  // FIN from a: the fd is really closed
+        std::this_thread::sleep_for(1ms);
+    }
+    EXPECT_EQ(r, 0)
+        << "a fixed link that saw read EOF reported closed but left its fd "
+           "open — the socket sits in CLOSE_WAIT until the deferred reap";
+    EXPECT_EQ(closed_calls.load(), 1);
+    ep.Stop();
+    EXPECT_EQ(closed_calls.load(), 1);  // one-shot across both report paths
+    CloseFd(b);
+}

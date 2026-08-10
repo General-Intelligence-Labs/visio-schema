@@ -43,8 +43,9 @@ TcpAcceptor::TcpAcceptor(std::uint16_t port, WritePolicy policy)
 
 TcpAcceptor::~TcpAcceptor() { Stop(); }
 
-void TcpAcceptor::Start(OnAccept on_accept) {
+void TcpAcceptor::Start(OnAccept on_accept, AdmissionGate gate) {
   on_accept_ = std::move(on_accept);
+  gate_ = std::move(gate);
   wake_.Open();
   stop_.store(false);
   thread_ = std::thread([this] { Loop(); });
@@ -65,17 +66,42 @@ void TcpAcceptor::Wake() { wake_.Signal(); }
 
 void TcpAcceptor::Loop() {
   SetCurrentThreadName("vs_tcp_accept");
+  // After a refused connection, skip polling the listen socket for one tick.
+  // A storming client redials the instant it sees our close; without the
+  // pause this loop and the client chase each other flat out, and pending
+  // connects sit in the (small) kernel backlog anyway. One tick still admits
+  // a legitimate takeover client well inside its 10 s user-timeout budget.
+  bool defer_accept = false;
   while (!stop_.load()) {
     pollfd pfds[2] = {{wake_.poll_fd(), POLLIN, 0}, {listen_fd_, POLLIN, 0}};
-    ::poll(pfds, 2, kTickMs);
+    ::poll(pfds, defer_accept ? 1 : 2, kTickMs);
+    defer_accept = false;
     if (pfds[0].revents & POLLIN) wake_.Drain();
     if (stop_.load()) break;
     if (!(pfds[1].revents & POLLIN)) continue;
 
-    // Accept every pending connection; each becomes its own endpoint.
-    for (;;) {
+    // Accept pending connections; each admitted one becomes its own
+    // endpoint. Bounded per pass so an accept flood cannot monopolize the
+    // thread — the level-triggered poll returns straight away while more
+    // are pending.
+    constexpr int kMaxAcceptsPerPass = 16;
+    for (int pass = 0; pass < kMaxAcceptsPerPass; ++pass) {
       int cfd = AcceptCloexec(listen_fd_);
       if (cfd < 0) break;  // EAGAIN: no more pending
+      // Leg identity first: the admission gate needs it, and it must be read
+      // before anything can close the fd.
+      AcceptedLeg who;
+      who.local_ip = SocketIpv4(cfd, ::getsockname);
+      who.peer_ip = SocketIpv4(cfd, ::getpeername);
+      // Refuse BEFORE the socket options and endpoint construction — the
+      // whole point of the gate is that a rejected connection costs almost
+      // nothing (finding: a phone bug redialing every few seconds piled up
+      // endpoint builds and CLOSE_WAIT fds on a saturated device).
+      if (gate_ && !gate_(who)) {
+        ::close(cfd);
+        defer_accept = true;
+        continue;
+      }
       int one = 1;
       ::setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
       // Bound the kernel send buffer so a slow/lossy client can't bank seconds
@@ -104,11 +130,6 @@ void TcpAcceptor::Loop() {
       ::setsockopt(cfd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl_s, sizeof(intvl_s));
       ::setsockopt(cfd, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt));
 #endif
-      // Read the addresses BEFORE handing cfd over: from here on the endpoint
-      // owns it and its I/O thread may close it at any moment.
-      AcceptedLeg who;
-      who.local_ip = SocketIpv4(cfd, ::getsockname);
-      who.peer_ip = SocketIpv4(cfd, ::getpeername);
       // Fixed fd (no factory): a client EOF reports on_closed once and the
       // endpoint's I/O thread exits; the bus forgets it. The acceptor keeps
       // listening for the next client. FramedFdEndpoint takes ownership of cfd

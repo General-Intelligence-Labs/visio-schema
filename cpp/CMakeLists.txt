@@ -11,7 +11,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # The embeddable wire library is nanopb-only — no full libprotobuf, no abseil —
-# so it cross-compiles for the RV1106 (HDK / vendor SDK, uClibc armv7). The wire
+# so it cross-compiles for the embedded target (uClibc armv7). The wire
 # codec only (de)serializes the Header, but a device ORIGINATES payloads (camera
 # frames, IMU/encoder batches, DeviceInfo, ...) and needs their nanopb structs
 # too — so we compile the WHOLE generated tree. Per-field encoding (zero-copy
@@ -34,7 +34,7 @@ endif()
 
 # ---- vendored mcap (header-only) -------------------------------------------
 # The MCAP C++ writer, lz4/zstd compiled out (we only ever use Compression::None)
-# so the recording layer cross-compiles for the RV1106 with no extra deps. The
+# so the recording layer cross-compiles for the device with no extra deps. The
 # .inl implementation is pulled into mcap_writer.cc alone, and mcap_writer.hpp
 # does NOT expose any mcap type, so this include stays PRIVATE to the library.
 # Header-only mcap submodule, pinned to v1.4.1 (see .gitmodules for the pin).

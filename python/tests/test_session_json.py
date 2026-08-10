@@ -1,9 +1,11 @@
 """Rebuilding the ``session.json`` sidecar from a recording's embedded capture metadata.
 
-The golden line below is a byte-for-byte copy of a sidecar written by a device before
-the firmware stopped emitting them — key order and number formatting included. That
-exact layout is the contract: customer pipelines parse these files, so the rebuild has
-to reproduce it, not merely produce equivalent JSON.
+``LEGACY`` below is a byte-for-byte copy of a sidecar written by a device before the
+firmware stopped emitting them — key order and number formatting included. That exact
+layout is the contract: customer pipelines parse these files, so the rebuild has to
+reproduce it, not merely produce equivalent JSON. Fields added since are spliced onto
+that literal rather than edited into it, so the goldens keep holding the bytes a device
+really wrote and a key inserted mid-layout fails instead of rewriting the pin.
 
 The other theme here is damaged input. This tool exists to recover recordings off
 cards that were yanked or lost power mid-write, so a torn part, a garbage length, or
@@ -38,37 +40,42 @@ read_capture_metadata = session_json.read_capture_metadata
 rebuild_session = session_json.rebuild_session
 session_json_text = session_json.session_json_text
 
-GOLDEN = (
+# The device-written bytes, less the closing brace. Keys added after the layout was
+# frozen append to this; see the module docstring.
+LEGACY = (
     '{"session_name":"session_00003","device_id":"e41cafabfa29d482",'
-    '"hostname":"GILABS-ZnR4U9yc","kernel":"Linux 5.10.160 armv7l","app_version":"1.0.2",'
+    '"hostname":"GILABS-AABBCCDD","kernel":"Linux 5.10.160 armv7l","app_version":"1.0.2",'
     '"start_time_unix":1782646865.137482,"task":"","location":"","message":"","capturer":"",'
     '"latitude":0.0000000,"longitude":0.0000000,'
-    '"client_unix_us":0,"client_utc_offset_min":0,"fps":30}\n'
+    '"client_unix_us":0,"client_utc_offset_min":0,"fps":30'
 )
+FLEET_IDS_BLANK = '"operator_id":"","environment_id":""'
+GOLDEN = f"{LEGACY},{FLEET_IDS_BLANK}}}\n"
 
 # What the firmware embeds for that session: it omits the empty/zero fields, which the
 # sidecar nonetheless always carried.
 GOLDEN_META = {
     "session_name": "session_00003",
     "serial": "e41cafabfa29d482",
-    "hostname": "GILABS-ZnR4U9yc",
+    "hostname": "GILABS-AABBCCDD",
     "kernel": "Linux 5.10.160 armv7l",
     "app_version": "1.0.2",
     "start_time_unix": "1782646865.137482",
     "fps": "30",
 }
 
-# A second real sidecar, this one with everything filled in: a GPS fix, a negative UTC
-# offset, a 16-digit microsecond epoch, and free-text labels. GOLDEN above is an
-# all-defaults take, so on its own it pins almost no number.
-GOLDEN_GPS = (
+# A second real sidecar, this one with every field the layout then had filled in: a GPS
+# fix, a negative UTC offset, a 16-digit microsecond epoch, and free-text labels. LEGACY
+# above is an all-defaults take, so on its own it pins almost no number.
+LEGACY_GPS = (
     '{"session_name":"session_00012","device_id":"751332c91c5ad2c3",'
-    '"hostname":"GILABS-cXC6nykN","kernel":"Linux 5.10.160 armv7l","app_version":"1.0.4",'
+    '"hostname":"GILABS-11223344","kernel":"Linux 5.10.160 armv7l","app_version":"1.0.4",'
     '"start_time_unix":1784079342.883779,"task":"test","location":"Test 1",'
     '"message":"10 mbps","capturer":"Shumo",'
     '"latitude":37.7698784,"longitude":-122.4029038,'
-    '"client_unix_us":1783818378802000,"client_utc_offset_min":-420,"fps":30}\n'
+    '"client_unix_us":1783818378802000,"client_utc_offset_min":-420,"fps":30'
 )
+GOLDEN_GPS = f"{LEGACY_GPS},{FLEET_IDS_BLANK}}}\n"
 
 # The same session as the MCAP record carries it. Note lat/lon: the firmware embeds
 # them with std::to_string, which is "%f" — SIX decimals — while the sidecar was
@@ -76,7 +83,7 @@ GOLDEN_GPS = (
 GOLDEN_GPS_META = {
     "session_name": "session_00012",
     "serial": "751332c91c5ad2c3",
-    "hostname": "GILABS-cXC6nykN",
+    "hostname": "GILABS-11223344",
     "kernel": "Linux 5.10.160 armv7l",
     "app_version": "1.0.4",
     "start_time_unix": "1784079342.883779",
@@ -168,7 +175,18 @@ def test_renderer_fills_every_key_the_record_omits():
     assert '"session_name":"session_00007","device_id":"","hostname":""' in rendered
     assert '"start_time_unix":0.000000' in rendered
     assert '"latitude":0.0000000,"longitude":0.0000000' in rendered
-    assert '"client_unix_us":0,"client_utc_offset_min":0,"fps":0}' in rendered
+    assert '"client_unix_us":0,"client_utc_offset_min":0,"fps":0' in rendered
+    assert rendered.endswith('"operator_id":"","environment_id":""}\n')
+
+
+def test_fleet_ids_render_after_the_frozen_layout(tmp_path):
+    """The set case for the pair GOLDEN pins blank: they render LAST, appended to the
+    layout a device wrote, so nothing ahead of them moves when a record carries them."""
+    session = _session(tmp_path, "session_00003",
+                       {**GOLDEN_META, "operator_id": "op-7", "environment_id": "warehouse-b"})
+    assert rebuild_session(session)[0] == REBUILT
+    raw = (session / SIDECAR_NAME).read_text(encoding="utf-8")
+    assert raw == LEGACY + ',"operator_id":"op-7","environment_id":"warehouse-b"}\n'
 
 
 def test_record_serial_becomes_the_sidecars_device_id():

@@ -213,7 +213,7 @@ def _result_to_dict(res: command_result_pb2.CommandResult) -> dict:
 def _scan_host_wifi() -> list[dict]:
     """Scan for Wi-Fi networks visible to THIS host (the operator's PC), so they can pick
     one to provision onto the device. We scan host-side, NOT via the device's ScanWifi,
-    because the device usually can't scan while it's in single-radio AP-fallback — and the
+    because the device usually can't scan while it's serving its AP fallback — and the
     PC is co-located with the device, so it sees the same networks the device could join.
     Returns ``[{ssid, signal(0-100), security}]`` strongest-first; raises if no host
     scanner is available (the page then falls back to manual SSID entry)."""
@@ -845,7 +845,7 @@ async def _config_wifi(request: web.Request) -> web.Response:
 
 async def _config_time(request: web.Request) -> web.Response:
     # The launcher runs on the operator's machine, so the server's own clock IS the host
-    # time to push — no input needed. RV1106 boards boot to 1970, so this fixes recording
+    # time to push — no input needed. The boards boot to 1970, so this fixes recording
     # timestamps in one click.
     now = datetime.now().astimezone()
     offset_min = int(now.utcoffset().total_seconds() // 60) if now.utcoffset() else 0

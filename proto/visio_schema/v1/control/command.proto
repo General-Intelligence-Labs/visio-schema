@@ -56,23 +56,24 @@ message Command {
     ClearCameraTuning clear_camera_tuning = 35;
     SetRecordingDestination set_recording_destination = 36;
     SetRecordingHeartbeat set_recording_heartbeat = 37;
+    SetNoticeVolume set_notice_volume = 38;
   }
 }
 
 // Enable/disable the periodic tick-tock voice heartbeat a speaker-equipped
 // board plays while it is recording (the recording_tick_tock notice, every
-// 5 s). Persisted to a device-side sidecar (recording_heartbeat.json under the
-// device state dir) and applied WITHOUT a reboot — an in-flight recording goes
-// quiet (or starts ticking) on the next beat. Only the heartbeat is affected:
-// recording start/stop announcements and error notices keep playing.
+// 5 s). Persisted to a device-side sidecar and applied WITHOUT a reboot — an
+// in-flight recording goes quiet (or starts ticking) on the next beat. Only the
+// heartbeat is affected: recording start/stop announcements and error notices
+// keep playing.
 //
 // Only boards with a speaker + voice notices accept this; every other device
 // rejects it ("unsupported"), which is EXPECTED. The boot default comes from
-// the board config ([audio] heartbeat_default — shipping egos default OFF, so
-// the wearer opts in from the app); once the app has set a value, the
-// persisted sidecar wins over the config default on every later boot. The
-// current value is reported in DeviceState.recording_heartbeat, which also
-// tells the app whether to offer the control at all.
+// the board config (shipping boards default OFF, so the wearer opts in from
+// the app); once the app has set a value, the persisted sidecar wins over the
+// config default on every later boot. The current value is reported in
+// DeviceState.recording_heartbeat, which also tells the app whether to offer
+// the control at all.
 //
 // Note on downgrade: the sidecar survives a rollback to firmware that
 // predates this command, and such firmware plays the heartbeat
@@ -225,9 +226,7 @@ message SetImuLiveRate {
 // ── Provisioning / control surface folded from the old HTTP setup API ───────
 // Each of these is answered by a CommandResult on the target's
 // /<device>/command_result channel (see command_result.proto), correlated by
-// Command.command_id. SECURITY: ConnectWifi.passphrase and SetStorage secret
-// keys traverse the (unauthenticated) bus — acceptable on USB, but widens
-// exposure on the TCP leg; bus auth is tracked separately.
+// Command.command_id.
 
 // Set the auto-start-at-boot recording policy (persisted; next-boot effect,
 // does not toggle the current session). Replaces POST /recording/auto_start.
@@ -236,7 +235,7 @@ message SetAutoStart {
 }
 
 // Enable/disable automatic S3 upload of finished recordings. Persisted to a
-// device-side sidecar (/userdata/.../auto_upload.json) and applied without a
+// device-side sidecar and applied without a
 // reboot: while disabled the uploader starts no new uploads and stays idle (an
 // in-flight upload finishes; the stored creds + queue are NOT cleared), so
 // re-enabling resumes. Default is enabled. The current value is reported in
@@ -253,10 +252,10 @@ message SetAutoUpload {
 }
 
 // Enable/disable microphone capture reaching recordings. Persisted to a
-// device-side sidecar (audio_recording.json under the device state dir) and
-// applied WITHOUT a reboot: the capture thread keeps draining the ACODEC (so
-// re-enabling is sample-accurate and never replays a stale backlog) and simply
-// stops publishing. Because both the device's own MCAP and the phone-side MCAP
+// device-side sidecar and applied WITHOUT a reboot: the capture thread keeps
+// draining the audio codec (so re-enabling is sample-accurate and never replays
+// a stale backlog) and simply stops publishing. Because both the device's own
+// MCAP and the phone-side MCAP
 // record what reaches the bus, this one switch covers both — a recording made
 // while disabled has no audio channel at all, not an empty one.
 //
@@ -275,37 +274,35 @@ message SetAudioRecording {
   bool enabled = 1;
 }
 
-// Persist the camera H.265 target bitrate to a device-side sidecar
-// (/root/umi_embedded.bitrate.json), applied to EVERY camera. Like
-// SetAutoStart, this is persisted but takes effect on the NEXT BOOT only — the
-// running encoder is not retuned live — so the app should tell the user to
-// reboot the device for the new bitrate to apply. The current persisted value
-// is echoed back in DeviceState.video_bitrate_kbps.
+// Persist the camera H.265 target bitrate to a device-side sidecar, applied to
+// EVERY camera. Like SetAutoStart, this is persisted but takes effect on the
+// NEXT BOOT only — the running encoder is not retuned live — so the app should
+// tell the user to reboot the device for the new bitrate to apply. The current
+// persisted value is echoed back in DeviceState.video_bitrate_kbps.
 message SetBitrate {
   uint32 bitrate_kbps = 1;  // target CBR bitrate (kbit/s) for all cameras
 }
 
-// Persist the camera capture resolution to a device-side sidecar
-// (resolution.json under the device state dir, a flat sibling of
-// bitrate.json), applied to EVERY camera. Like SetBitrate, this is persisted
-// but takes effect on the NEXT BOOT only — the running ISP/encoder pipeline is
-// not reconfigured live — so the app should tell the user to reboot the device
-// for the new resolution to apply. The sensor driver must support the
-// requested geometry (e.g. SC3336: 1920x1080, 1600x1296, 1600x1200); an
-// unsupported size is snapped to the sensor's default mode at boot. The
-// current persisted value is echoed back in DeviceState.video_width/height.
+// Persist the camera capture resolution to a device-side sidecar, applied to
+// EVERY camera. Like SetBitrate, this is persisted but takes effect on the NEXT
+// BOOT only — the running ISP/encoder pipeline is not reconfigured live — so
+// the app should tell the user to reboot the device for the new resolution to
+// apply. The sensor driver must support the requested geometry; an unsupported
+// size is snapped to the sensor's default mode at boot. The current persisted
+// value is echoed back in DeviceState.video_width/height.
 message SetResolution {
   uint32 width  = 1;  // capture width in pixels, for all cameras
   uint32 height = 2;  // capture height in pixels, for all cameras
 }
 
-// Persist default recording metadata to a device-side sidecar
-// (/root/umi_embedded/recording_meta.json). Applied to EVERY new session until
-// changed — including auto-started boot recordings, which carry no app input.
+// Persist default recording metadata to a device-side sidecar. Applied to
+// EVERY new session until changed — including auto-started boot recordings,
+// which carry no app input.
 // Persisted; takes effect on the next recording or reboot (does NOT retag the
 // in-progress session). An explicit StartRecording.{task,location} overrides
 // these defaults for that one session. Answered by a CommandResult (ok +
-// DeviceState echoing the persisted values).
+// DeviceState echoing the persisted labels — the fleet ids below are the one
+// exception, see there).
 message SetRecordingMeta {
   string task     = 1;  // free-text capture task / label
   string location = 2;  // human-readable place (user-entered)
@@ -321,9 +318,27 @@ message SetRecordingMeta {
   double longitude             = 5;  // GPS; 0 when unknown (keeps stored value)
   int64  client_unix_us        = 6;  // host reference timestamp (us since epoch)
   sint32 client_utc_offset_min = 7;  // minutes east of UTC (+480 = UTC+8)
+
+  // Fleet identifiers: which operator account and which environment/site a rig
+  // is capturing under. They ride into every session's capture metadata beside
+  // the labels above, but no user-facing client sets them — they are for
+  // provisioning tooling and fleet scripts, over this same command. Unlike the
+  // labels, they are NOT echoed on DeviceState: a setter confirms them by
+  // reading a recording, not from the ack.
+  //
+  // `optional` is load-bearing, not decoration. A client sends this message as
+  // a whole and the device REPLACES the stored text with what arrives, so a
+  // plain field would be cleared by every app or web-page "Set" — wiping an id
+  // that UI never showed and whoever is holding the phone cannot restore.
+  // With presence: ABSENT keeps the stored value, PRESENT replaces it, and
+  // present-but-empty clears it. That makes clearing an id an explicit act by
+  // a client that knows the field exists, which is the same protection the
+  // 0-means-keep rule gives the coordinates above.
+  optional string operator_id    = 9;
+  optional string environment_id = 10;
 }
 
-// Set the device's wall clock + UTC offset. RV1106 boards have no RTC and boot
+// Set the device's wall clock + UTC offset. The boards have no RTC and boot
 // to 1970-01-01, so a host pushes the real time (typically right after it
 // connects, before recording) so session timestamps are correct. Answered by a
 // CommandResult (ok + DeviceState).
@@ -388,8 +403,8 @@ message ForgetWifi {
 //
 // Like ConnectWifi, the CommandResult usually never reaches a caller that is
 // talking over the STA link, because the device tears that link down to switch
-// radios (the RTL8821CS is single-radio). Callers should treat a post-send
-// transport drop as success and rediscover the device on its AP.
+// radios (it cannot hold an AP and an STA association at once). Callers should
+// treat a post-send transport drop as success and rediscover the device on its AP.
 message ResetToAp {
 }
 
@@ -446,23 +461,53 @@ message GetState {
 // Answered by a CommandResult (ok + DeviceState; disk_free_pct reflects the
 // freshly-formatted card). The device needs the matching mkfs on its rootfs
 // (ext4/exfat/vfat); an unsupported type is refused (ok=false).
+//
+// A card with NO partition table is partitioned first (one primary partition
+// spanning the card, 4 MiB-aligned) — otherwise there would be no partition
+// device for mkfs to act on, and a sealed unit could never accept a wiped card.
+// A card that already carries any partition keeps its table; one that is
+// physically absent is refused ("no_sdcard").
 message FormatStorage {
   // Target filesystem. Empty = preserve the card's current type (detected from
   // the on-disk superblock; a blank card or an unsupported filesystem falls
-  // back to FAT32/vfat). Explicit "ext4" / "exfat" / "vfat" forces a type.
+  // back to FAT32/vfat). Explicit "ext4" / "exfat" / "vfat" forces a type —
+  // ask for ext4 on a card that will be recorded to hard, since FAT32 does not
+  // journal through a mid-write power-off.
   string fs_type = 1;
 }
 
 // Select the language of the device's spoken voice notices (boards with a
-// speaker, e.g. audio_ego_v3; speakerless boards accept and ignore it).
-// Applied immediately AND persisted to a device-side sidecar
-// (/root/umi_embedded.notice_lang.json). The app typically sends its phone
-// locale right after connecting. An unknown/unshipped language falls back to
-// the device default (English). Answered by a CommandResult (ok + DeviceState).
+// speaker; speakerless boards accept and ignore it). Applied immediately AND
+// persisted to a device-side sidecar. The app typically sends its phone locale
+// right after connecting. An unknown/unshipped language falls back to the
+// device default (English). Answered by a CommandResult (ok + DeviceState).
 message SetNoticeLang {
   // Lowercase ISO 639-1 code of the primary language ("en", "zh"). Region
   // subtags are ignored by the device ("zh-CN" -> "zh").
   string lang = 1;
+}
+
+// Set the loudness of the device's spoken voice notices. Persisted to a
+// device-side sidecar (notice_volume.json under the device state dir) and
+// applied WITHOUT a reboot — the next notice plays at the new volume. Every
+// notice is affected: announcements, error notices, and the recording
+// heartbeat alike.
+//
+// Only boards with a speaker + voice notices accept this; every other device
+// rejects it ("unsupported"), which is EXPECTED. A volume above 100 is
+// rejected ("out_of_range"). The current value is reported in
+// DeviceState.notice_volume, whose presence also tells the app whether to
+// offer the control at all.
+//
+// Note on downgrade: the sidecar survives a rollback to firmware that
+// predates this command, and such firmware plays notices at the board
+// config's full loudness — so a device that was turned down (or muted)
+// comes back loud until re-upgraded.
+message SetNoticeVolume {
+  // 0-100. 100 plays at the board config's full loudness; values in between
+  // scale the codec's playback gain; 0 MUTES notices entirely (the hardware
+  // floor is quiet but not silent, so the device skips playback instead).
+  uint32 volume = 1;
 }
 
 // Persist one piece of sensor calibration (effective on next boot). The target

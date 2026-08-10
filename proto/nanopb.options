@@ -50,14 +50,21 @@ visio_schema.v1.control.ForgetWifi.ssid               max_size:33
 visio_schema.v1.control.SetStorage.endpoint_url       max_size:128
 visio_schema.v1.control.SetStorage.region             max_size:32
 visio_schema.v1.control.SetStorage.bucket             max_size:64
-visio_schema.v1.control.SetStorage.access_key_id      max_size:32
+# 64, not 32: max_size counts the NUL, so 32 allowed only 31 characters — and a
+# Tencent COS SecretId is 36. An oversized field does not truncate, it fails
+# pb_decode, so the device discarded the WHOLE Command and answered nothing at
+# all; the app then timed out with no error to show. Verified on hardware: the
+# same key cut to 31 chars decoded and reached Tencent (403 InvalidAccessKeyId),
+# the real 36-char one was dropped. Aliyun (24) and AWS (20) fit either way,
+# which is why only Tencent broke. Keep all three access_key_id caps equal.
+visio_schema.v1.control.SetStorage.access_key_id      max_size:64
 visio_schema.v1.control.SetStorage.secret_access_key  max_size:64
 visio_schema.v1.control.SetStorage.prefix             max_size:128
 visio_schema.v1.control.SetStorage.status_prefix      max_size:128
 visio_schema.v1.control.TestStorage.endpoint_url      max_size:128
 visio_schema.v1.control.TestStorage.region            max_size:32
 visio_schema.v1.control.TestStorage.bucket            max_size:64
-visio_schema.v1.control.TestStorage.access_key_id     max_size:32
+visio_schema.v1.control.TestStorage.access_key_id     max_size:64
 visio_schema.v1.control.TestStorage.secret_access_key max_size:64
 visio_schema.v1.control.TestStorage.prefix            max_size:128
 visio_schema.v1.control.TestStorage.status_prefix     max_size:128
@@ -73,6 +80,8 @@ visio_schema.v1.control.SetRecordingMeta.task         max_size:64
 visio_schema.v1.control.SetRecordingMeta.location     max_size:128
 visio_schema.v1.control.SetRecordingMeta.message      max_size:256
 visio_schema.v1.control.SetRecordingMeta.capturer     max_size:64
+visio_schema.v1.control.SetRecordingMeta.operator_id    max_size:64
+visio_schema.v1.control.SetRecordingMeta.environment_id max_size:64
 
 # FormatStorage: target filesystem name ("", "ext4", "exfat", "vfat").
 visio_schema.v1.control.FormatStorage.fs_type         max_size:8
@@ -108,7 +117,10 @@ visio_schema.v1.control.DeviceState.storage_endpoint           max_size:128
 visio_schema.v1.control.DeviceState.storage_bucket             max_size:64
 visio_schema.v1.control.DeviceState.storage_prefix             max_size:128
 visio_schema.v1.control.DeviceState.storage_status_prefix      max_size:128
-visio_schema.v1.control.DeviceState.storage_access_key_id      max_size:32
+# Matches the SetStorage/TestStorage cap above — this is the SAME key echoed
+# back, so a smaller cap here would make the device unable to report a key it
+# had just accepted.
+visio_schema.v1.control.DeviceState.storage_access_key_id      max_size:64
 visio_schema.v1.control.DeviceState.upload_last_error          max_size:128
 
 # ---- Control: variable-length result lists — FT_POINTER (mirror DeviceInfo):
@@ -158,13 +170,13 @@ visio_schema.v1.calibration.TactileLayout.points          max_count:160
 visio_schema.v1.calibration.TactileLayout.Group.fields    max_count:4
 visio_schema.v1.calibration.TactileLayout.Point.part      max_size:16
 foxglove.PackedElementField.name                          max_size:16
-# CameraTuning (per-unit ISP measurement, inbound on SetCalibration): bound
+# CameraTuning (per-unit measurement, inbound on SetCalibration): bound
 # everything so it stays FT_STATIC like the artifacts above — this rides the same
 # Command decode path, and a pb_callback_t there would mean hand-written decode
 # callbacks on an inbound control message.
 # points headroom 8 > the 7-illuminant ladder (HZ/A/TL84/CWF/D50/D65/D75).
-# illuminant is a label only (cct is the key), sized to rkaiq's own
-# CALD_AWB_ILLUMINATION_NAME (20). utc holds an ISO-8601 stamp ("...T09:14:00Z").
+# illuminant is a label only (cct is the key), sized to the longest illuminant
+# name a pipeline is likely to use (20). utc holds an ISO-8601 stamp ("...T09:14:00Z").
 visio_schema.v1.calibration.WbMeasurement.points          max_count:8
 visio_schema.v1.calibration.WbMeasurement.fixture         max_size:24
 visio_schema.v1.calibration.WbMeasurement.utc             max_size:24

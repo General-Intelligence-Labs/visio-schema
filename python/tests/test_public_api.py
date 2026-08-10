@@ -57,6 +57,7 @@ REQUIRED_COMMAND_BODIES = frozenset(
         "set_resolution",
         "set_recording_destination",
         "set_recording_heartbeat",
+        "set_notice_volume",
     }
 )
 
@@ -169,11 +170,35 @@ def test_proto_command_schema_present():
     assert body_to_type["set_recording_heartbeat"] == heartbeat.DESCRIPTOR.name
     assert command_pb2.Command.DESCRIPTOR.fields_by_name["set_recording_heartbeat"].number == 37
 
+    volume = command_pb2.SetNoticeVolume
+    assert body_to_type["set_notice_volume"] == volume.DESCRIPTOR.name
+    assert command_pb2.Command.DESCRIPTOR.fields_by_name["set_notice_volume"].number == 38
+
+    # The fleet ids carry explicit presence, and the device reads absence as
+    # "keep what is stored" — so a client that never sets them cannot clear an
+    # id it has no field for. Dropping `optional` here would silently turn
+    # every app-side Set into a wipe; pin it where the contract lives.
+    meta = command_pb2.SetRecordingMeta.DESCRIPTOR.fields_by_name
+    assert meta["operator_id"].has_presence and meta["operator_id"].number == 9
+    assert meta["environment_id"].has_presence and meta["environment_id"].number == 10
+    assert not meta["capturer"].has_presence   # the labels replace wholesale
+    blank = command_pb2.SetRecordingMeta(operator_id="")
+    assert blank.HasField("operator_id")             # present-and-empty clears
+    assert not blank.HasField("environment_id")      # absent keeps
+
     state = command_result_pb2.DeviceState
     assert state.RECORDING_HEARTBEAT_UNSUPPORTED == 0
     assert state.RECORDING_HEARTBEAT_ENABLED == 1
     assert state.RECORDING_HEARTBEAT_DISABLED == 2
     assert state.DESCRIPTOR.fields_by_name["recording_heartbeat"].number == 33
+
+    # notice_volume carries explicit presence: absence means "no speaker or
+    # pre-volume firmware" and hides the app control, which a plain uint32
+    # could not express because 0 is a legal value (mute) as well as the
+    # proto3 default. Dropping `optional` would make every old device look
+    # muted instead of unsupported; pin it where the contract lives.
+    nv = state.DESCRIPTOR.fields_by_name["notice_volume"]
+    assert nv.has_presence and nv.number == 34
 
 
 def test_proto_wire_and_device_info_present():
