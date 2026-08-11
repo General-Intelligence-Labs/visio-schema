@@ -17,7 +17,7 @@ codec's gain floor is quiet but not silent, so the device skips playback instead
 tri-state: absence covers speakerless boards and pre-volume firmware, so the app
 hides the control instead of rendering one it cannot move — and 0 could not be the
 sentinel here because it is a legal value (mute) as well as the proto3 default.
-Purely additive; ships with the matching `visio-embedded` device change.
+Purely additive; ships with the matching device firmware change.
 
 ## 0.7.2 — 2026-08-04
 
@@ -37,7 +37,7 @@ stored value; present replaces it; present-but-empty clears it.** Existing clien
 send neither and so can no longer clobber them.
 
 Purely additive: an old device ignores both tags, and an old client's messages decode
-unchanged. Ships with the matching `visio-embedded` producer change.
+unchanged. Ships with the matching firmware producer change.
 
 ## 0.7.1 — 2026-08-03
 
@@ -50,7 +50,7 @@ is affected — start/stop announcements and error notices keep playing.
 `DeviceState.recording_heartbeat` is tri-state (like `audio_recording` /
 `status_report`): `UNSUPPORTED` covers speakerless boards and pre-toggle firmware, so
 the app hides the switch instead of rendering one it cannot move. Purely additive;
-ships with the matching `visio-embedded` device change.
+ships with the matching device firmware change.
 
 ### Added `visio_schema.v1.sensor.SystemHealth.disk_total_bytes` (tag 10)
 
@@ -65,7 +65,7 @@ present) sends neither, rather than reporting the rootfs's geometry as the card'
 
 Purely additive: an old consumer ignores tag 10, and a new consumer treats an absent
 `disk_total_bytes` exactly as it already treats an absent `disk_free_bytes`. Ships with
-the matching `visio-embedded` producer change.
+the matching firmware producer change.
 
 ### Changed (docs) `TestStorage` — credential probe is a list, not a HEAD
 
@@ -107,7 +107,7 @@ unique per stream *by construction*; `isp_frame_id` survives as a diagnostic onl
 **Safe to break:** no consumer joins on the removed fields — `CameraFrameInfo` is
 referenced only by the firmware that produces it. (Recordings carrying the stream do
 exist, from boards with the frame-info stream enabled; they simply carry two fields nothing
-reads, and a 0.7.0 consumer ignores them.) Ships with the matching `visio-embedded`
+reads, and a 0.7.0 consumer ignores them.) Ships with the matching firmware
 producer change, which is what makes `timestamp` unique by construction.
 
 ## 0.6.12 — 2026-07-28

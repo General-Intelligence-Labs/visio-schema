@@ -9,7 +9,7 @@ and hid it. The invariants below are the ones stated in that file's comments;
 this is what makes them true rather than aspirational.
 
 buf never reads this file (`make lint`/`make breaking` are proto operations), so
-without these tests the caps are pinned by nothing that CI runs. visio-companion
+without these tests the caps are pinned by nothing that CI runs. The companion app
 carries its own copy of the storage caps and cross-checks it against this file,
 but only when the sibling checkout is present — which its CI does not do.
 """

@@ -133,7 +133,8 @@ def _tactile_scene(data, placement, frame_id, timestamp):
 # --------------------------------------------------------------------------- #
 # Quest hand skeleton: FrameTransforms -> spheres + bones SceneUpdate          #
 # --------------------------------------------------------------------------- #
-# XrHandJointEXT ordinal -> child_frame_id, ported from visio-quest VisioPublisher.
+# XrHandJointEXT ordinal -> child_frame_id, ported from the Quest recorder's
+# VisioPublisher.
 _LH_FRAMES = [
     "lh_palm", "lh_wrist",
     "lh_thumb_meta", "lh_thumb_prox", "lh_thumb_dist", "lh_thumb_tip",
@@ -160,7 +161,8 @@ _HAND_BONES = [
 class HandSkeletonDeriver:
     """Turn a Quest 26-joint /skeleton/hand_* FrameTransforms into its SceneUpdate
     viz twin on .../scene — one 8mm sphere per tracked joint + a LINE_LIST of the
-    bones (left cyan, right amber). Ported from visio-quest's kHandSceneSchema."""
+    bones (left cyan, right amber). Ported from the Quest recorder's
+    kHandSceneSchema."""
 
     def __init__(self):
         self._scene_ch = {}

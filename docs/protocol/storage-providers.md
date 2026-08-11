@@ -9,12 +9,12 @@ There is no backend. Devices and the app hold the customer's own credential and
 sign their own requests, so the same contract is implemented independently, and
 each implementation MUST conform to the table below:
 
-| Implementation | Where | Conforms |
+| Implementation | Language | Conforms |
 |---|---|---|
-| device (C++) | `visio-embedded/src/sigv4.{hpp,cpp}`, `src/s3_object.{hpp,cpp}` | all three clouds |
-| companion app (TS) | `visio-companion/src/lib/storage/{providers,sigv4}.ts`, `src/lib/ota/oss-sign.ts` | all three clouds |
-| provisioning tools (Python) | `visio-embedded/scripts/gen_settings_qr.py` (the one copy; `visio-setup/src/setup_gui/provision.py` imports it) | all three clouds |
-| fleet-status dashboard (browser JS) | `visio-schema/tools/fleet-status/index.html` | **Aliyun OSS + AWS S3 only** |
+| device firmware | C++ | all three clouds |
+| companion app | TypeScript | all three clouds |
+| provisioning tools | Python | all three clouds |
+| fleet-status dashboard (`tools/fleet-status/index.html`) | browser JS | **Aliyun OSS + AWS S3 only** |
 
 The dashboard is the outlier: it folds signature flavor and bucket addressing
 into a single boolean (`isOssHost`) and hardcodes `list-type=2`, so it
@@ -180,22 +180,14 @@ Resource identifiers:
 
 **Nobody gets a delete or a bucket-info grant**, and no implementation may add an
 operation that would need one — in particular the storage probe must stay a list
-and must not become a HEAD or GET. `visio-embedded/scripts/oss_setup.py`
-provisions this end to end for Aliyun; AWS and Tencent are configured by hand
-from the tables above.
+and must not become a HEAD or GET. The Aliyun RAM policy above is scriptable end
+to end; AWS and Tencent are configured by hand from the tables above.
 
 ## 5. Conformance
 
-Each implementation pins this table in its own tests:
-
-| Implementation | Tests |
-|---|---|
-| device | `visio-embedded/tests/test_s3_object.cpp` |
-| app | `visio-companion/src/test/{providers,sigv4,oss-sign,upload-config,ota-releases,ota-oss}.test.ts` |
-| app ↔ native uploaders | `visio-companion/src/test/native-put-headers.test.ts` |
-| tools | `visio-embedded/scripts/tests/test_gen_settings_qr.py`, `visio-setup/tests/test_provision.py` |
-
-Nothing yet checks the C++, TS and Python tables against **each other** — they
+Each implementation — device firmware, companion app (including its handoff to
+the native uploaders) and the provisioning tools — pins this table in its own
+test suite. Nothing yet checks the C++, TS and Python tables against **each other** — they
 agree by review. A shared golden table next to this document, pinned by each
 implementation, is the obvious fix if they ever drift.
 
