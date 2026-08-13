@@ -356,10 +356,11 @@ def test_layout_data_is_shipped() -> None:
     json.loads(vd._LAYOUT_PATH.read_text())  # parses as JSON
 
 
-def test_pyproject_declares_console_script_and_default_deps() -> None:
+def test_pyproject_declares_console_script_and_display_extra() -> None:
     """Guard the packaging contract: the `visio-display` console script stays
-    declared, and the viewer + MCAP deps ship as base dependencies (installed by
-    default) rather than behind feature extras."""
+    declared, the wire-contract deps install by default, and the viewer/`--serve`
+    deps ship in the `display` extra (NOT the base install) — they are imported
+    lazily by `visio_schema.display` alone, so a codec consumer never pulls them."""
     import sys
 
     if sys.version_info >= (3, 11):
@@ -370,9 +371,14 @@ def test_pyproject_declares_console_script_and_default_deps() -> None:
     pyproject = _THIS.parent / "pyproject.toml"
     data = tomllib.loads(pyproject.read_text())
     assert data["project"]["scripts"]["visio-display"] == "visio_schema.display:run"
+
     deps = " ".join(data["project"]["dependencies"])
-    for pkg in ("mcap", "pyserial", "foxglove-sdk", "rerun-sdk", "av",
-                "aiohttp", "zeroconf"):
-        assert pkg in deps, f"{pkg} should be a default dependency"
-    # No feature-gating extras — they were folded into the default install.
-    assert set(data["project"].get("optional-dependencies", {})) == {"dev"}
+    for pkg in ("protobuf", "cobs", "mcap", "pyserial", "foxglove-sdk"):
+        assert pkg in deps, f"{pkg} should be a default (wire-contract) dependency"
+
+    extras = data["project"].get("optional-dependencies", {})
+    assert set(extras) == {"display", "dev"}
+    display = " ".join(extras["display"])
+    for pkg in ("rerun-sdk", "av", "aiohttp", "zeroconf"):
+        assert pkg in display, f"{pkg} should live in the display extra"
+        assert pkg not in deps, f"{pkg} must NOT be a default dependency"

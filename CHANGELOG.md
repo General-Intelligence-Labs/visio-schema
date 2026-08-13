@@ -19,6 +19,20 @@ hides the control instead of rendering one it cannot move — and 0 could not be
 sentinel here because it is a legal value (mute) as well as the proto3 default.
 Purely additive; ships with the matching device firmware change.
 
+### Moved the `visio-display` viewer deps into a `display` extra
+
+`rerun-sdk`, `av`, `aiohttp` and `zeroconf` are no longer default dependencies —
+they move to `pip install visio-schema[display]`. All four are imported lazily by
+`visio_schema.display` alone (the wire codec never touches them), so a plain
+`pip install visio-schema` ships the contract without ~600 MB of viewer libraries
+(rerun-sdk + its pyarrow) that a stage image or training pipeline never opens. The
+`visio-display` command still installs; run without the extra it exits with the
+one-line `pip install 'visio-schema[display]'` fix instead of a traceback.
+
+Not a wire-contract or public-API change (`test_public_api.py` untouched) — a
+packaging fix bundled into this release. Consumers that run the viewer must add
+`[display]`; consumers that only read the contract get a smaller install, no action.
+
 ## 0.7.2 — 2026-08-04
 
 ### Added `SetRecordingMeta.operator_id` (tag 9) + `SetRecordingMeta.environment_id` (tag 10)
