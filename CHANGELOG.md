@@ -4,6 +4,64 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.8.0 — 2026-08-14
+
+### Added `visio_schema.reader` — the element layer over `read_mcap` / `read_serial`
+
+Both row sources already yield the same `(Message, Channel)` shape. This adds the
+layer directly above them, turning rows into **elements**: decoded, unbundled,
+clock-normalized values that share one interface.
+
+    rows       (Message, Channel)          read_mcap / read_serial
+    elements   Frame | ImuSample | Record  Session.stream
+
+`Session` merges a recording's chunks and any sidecars onto one timeline with a
+reorder window measured from the chunk seams; `sync` / `resample` / `prefetch`
+reshape that single stream with bounded state and an explicit tolerance.
+`Element.t_ns` IS the wire stamp — no read-time correction is applied here.
+
+Ported wholesale from visio-post-processing, which now consumes it, and verified
+**byte-identical** on a real ego session: the element stream, calibration and
+keyframe cadence hash the same before and after across 88,799 elements.
+
+Not exported from the `visio_schema` facade — import it explicitly as
+`visio_schema.reader`. The frozen public API is unchanged, so the surface can
+still settle before it is pinned.
+
+New: a **registered adapter table** maps a wire schema to element(s), replacing a
+fixed if/elif dispatch. `Session.open(..., adapters={schema: factory})` adds typed
+elements for one session only; registering globally would retype every existing
+consumer's elements, which breaks readers that assert they receive a `Record`.
+
+### Added `McapWriter.add_metadata` and `Message.stamped`
+
+`add_metadata(name, kv)` writes an MCAP metadata record — where provenance
+belongs, readable without decoding a message — and re-emits it into every rolled
+part so each part stands alone. `Message.stamped(payload, t_ns, *, seq)` is the
+write-side mirror of `message_class`. `McapWriter` also takes optional `profile`
+and `library`; both default to what it already produced, so existing output is
+unchanged.
+
+### Added `visio_schema.build` — foxglove message builders
+
+`pose_in_frame` · `compressed_video` · `compressed_image` · `raw_image_mono16` ·
+`camera_calibration` · `frame_transform`. Values in, protobuf message out, so the
+same builder serves an MCAP write and a live bus send. Lives at the package root
+because `visio_schema/foxglove/` is generated and gitignored.
+
+### `av` is now pinned exactly (`av==12.3.0`), not floored
+
+**Behaviour-affecting.** A different PyAV decodes a different H.265 frame set:
+measured on a real ego session, 12.3.0 vs 17.0.0 give identical element counts,
+identical topics and an identical undecoded pass, but different pixels in every
+decode mode. Anything comparing two runs is void if they used different PyAVs.
+The decoder also warns at runtime when the installed version differs, and
+`tests/reader/test_av_pin.py` keeps that constant in step with this pin.
+
+New extras: `[reader]` (scipy, for the one lazy import in the extrinsics parse)
+and `[gpu]` (cupy + PyNvVideoCodec for NVDEC). `numpy` becomes a base dependency.
+The viewer/MCAP surface stays in the default install.
+
 ## 0.7.3 — 2026-08-06
 
 ### Added `Command.set_notice_volume` (tag 38) + `DeviceState.notice_volume` (tag 34)

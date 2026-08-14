@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "visio-schema"
-version = "0.7.3"
+version = "0.8.0"
 description = "Visio wire contract — generated protobuf bindings + the framing codec"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -30,30 +30,64 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
     "Typing :: Typed",
 ]
-# Everything the package needs at runtime, installed by default (no feature
-# extras): the wire codec + generated bindings, MCAP read/write, and the
-# `visio-display` viewer + `--serve` launcher deps. The heavy/serve-only libs
-# (rerun, av, aiohttp, zeroconf) are imported lazily, so they cost nothing until
-# the viewer or the launcher is actually run.
+# Installed by default: the wire codec + generated bindings, MCAP read/write, the
+# `visio-display` viewer + `--serve` launcher deps, and what `visio_schema.reader`
+# needs to decode. The heavy/serve-only libs (rerun, av, aiohttp, zeroconf) are
+# imported lazily, so they cost nothing until the viewer, the launcher or the
+# reader is actually run. Only genuinely optional surfaces are extras — see below.
 dependencies = [
     "protobuf>=5.26",
     "cobs>=1.2",
     "mcap>=1.1",
+    # `visio_schema.reader`'s element types are numpy-shaped (decoded frames, IMU
+    # vectors, calibration matrices) and `display` already assumes it. Base rather
+    # than an extra: it is small, universal, and half the package would need a
+    # guard around it otherwise.
+    "numpy>=1.24",
     "pyserial>=3.5",
     "foxglove-sdk>=0.10",
     "rerun-sdk>=0.24",
-    "av>=11",
+    # PINNED EXACTLY, not floored, and load-bearing: a different PyAV decodes a
+    # DIFFERENT H.265 frame set, silently making two runs' outputs incomparable.
+    # Measured on a real ego session — av 12.3.0 vs 17.0.0 give identical element
+    # counts, identical topics and identical undecoded passes, but different
+    # pixels in every decode mode. `visio_schema.reader`'s determinism ("N runs ->
+    # byte-identical MCAPs" downstream) rests on this. Do not relax without
+    # re-measuring.
+    "av==12.3.0",
     "aiohttp>=3.9",     # `--serve` launcher web app
     "zeroconf>=0.130",  # `--serve` mDNS device discovery
 ]
 
 [project.optional-dependencies]
+# The viewer/MCAP deps stay BASE (a user should not have to know an extra exists
+# to read a recording). These two are extras because they are genuinely optional
+# and one of them is enormous — not feature-gating for its own sake.
+reader = [
+    # One lazy import, reached only by recordings carrying FrameTransform
+    # extrinsics (`_parse_frame_transform`). Kept rather than hand-rolled: a numpy
+    # quaternion->matrix mirroring scipy's formula is bit-identical on only
+    # ~89% of random quaternions (worst 6.7e-16), and this feeds the STEREO
+    # EXTRINSIC, so a last-bit shift propagates into rectification and depth.
+    "scipy>=1.10",
+]
+# Device-resident NVDEC decode (`Session.stream(gpu=True)`). Heavy (~GB), from
+# NVIDIA's index; lazy-imported so the reader stays CPU-only without it.
+gpu = [
+    "cupy-cuda13x>=14,<15",
+    "PyNvVideoCodec>=2.2",
+]
 dev = [
     "pytest>=8.0",
     "mypy>=1.10",
     "ruff>=0.5",
     "build>=1.0",
     "tomli>=2.0; python_version < '3.11'",
+    # Enforces the reader's layering contract (see [tool.importlinter]).
+    "import-linter>=2",
+    # The reader's tests synthesize recordings: JPEG stills (cv2) and the
+    # quaternion helpers (scipy). Test-time only.
+    "opencv-python-headless>=4.8,<5",
 ]
 
 [project.scripts]
@@ -88,12 +122,40 @@ markers = [
     "pty: drives a serial device over a pseudo-terminal; auto-skipped on macOS (see tests/conftest.py)",
 ]
 
+# The reader's layering contract (run via `lint-imports`): imports point downward
+# only, no lower layer depends on a higher one. This came across with the reader
+# from visio-post-processing, where it was machine-checked; without it here the
+# ordering would have been silently unenforced after the move. `domain` is the
+# floor and imports nothing else in the package.
+[tool.importlinter]
+root_package = "visio_schema"
+
+[[tool.importlinter.contracts]]
+name = "reader layers depend downward only"
+type = "layers"
+layers = [
+    "visio_schema.reader.ops",
+    "visio_schema.reader.session",
+    "visio_schema.reader.adapters",
+    "visio_schema.reader.domain",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# The reader was ported from visio-post-processing and is verified byte-identical
+# against a real recording (element-stream hashes over 88k elements). These two
+# are pure style — `zip(x, x[1:])` vs `itertools.pairwise`, and `int()` on a value
+# ruff can prove is already an int — and neither repo's suite would catch a
+# mistake made while restyling them. Restyle deliberately, with the fingerprint
+# re-run, rather than as a drive-by lint fix.
+"visio_schema/reader/*.py" = ["RUF007", "RUF046"]
+"tests/reader/*.py" = ["RUF043", "RUF046"]
 
 # Version-specific wheels (cp310–cp313), NOT abi3: the zero-copy Frame exports the
 # buffer protocol, which the CPython Limited API lacks at the cp310 floor (PEP 688

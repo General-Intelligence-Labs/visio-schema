@@ -54,7 +54,10 @@ jobs:
       # the shipped reader would get zero CI while looking covered.
       - name: Install package (builds native _creader)
         run: |
-          pip install -e python
+          # [reader] pulls scipy, which tests/reader/ imports at collection time —
+          # without it the whole reader suite errors out rather than running.
+          # [dev] carries import-linter for the layering contract.
+          pip install -e "python[dev,reader]"
           python -c "from visio_schema.transport import HAVE_NATIVE; assert HAVE_NATIVE, 'native _creader not built'"
 
       - run: make pytest

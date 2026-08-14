@@ -374,5 +374,21 @@ def test_pyproject_declares_console_script_and_default_deps() -> None:
     for pkg in ("mcap", "pyserial", "foxglove-sdk", "rerun-sdk", "av",
                 "aiohttp", "zeroconf"):
         assert pkg in deps, f"{pkg} should be a default dependency"
-    # No feature-gating extras — they were folded into the default install.
-    assert set(data["project"].get("optional-dependencies", {})) == {"dev"}
+    # The viewer/MCAP surface is NOT behind an extra — that was the original
+    # point, and it still holds: everything above is a default dependency.
+    #
+    # Extras are allowed, but only for surfaces a normal install genuinely should
+    # not carry, and each one is named here so adding a third is a deliberate act
+    # rather than a drift back to feature-gating:
+    #   reader — scipy, for the one lazy import in the extrinsics parse
+    #   gpu    — cupy + PyNvVideoCodec for NVDEC decode, ~GB, NVIDIA's index
+    assert set(data["project"].get("optional-dependencies", {})) == {
+        "dev", "reader", "gpu",
+    }
+    for extra in ("reader", "gpu"):
+        joined = " ".join(data["project"]["optional-dependencies"][extra])
+        for pkg in ("mcap", "pyserial", "foxglove-sdk", "rerun-sdk", "aiohttp"):
+            assert pkg not in joined, (
+                f"{pkg} is a default dependency; it must not also be gated "
+                f"behind the {extra!r} extra"
+            )
