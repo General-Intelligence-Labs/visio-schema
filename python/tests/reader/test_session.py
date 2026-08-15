@@ -264,3 +264,18 @@ def test_strip_prefix_passes_canonical_and_drops_a_foreign_device():
     # a different device's topic is still genuinely not ours
     assert strip("/GILABS-99999999/ego/camera/0", dev) is None
     assert strip("/ego/camera/0", None) == "/ego/camera/0"
+
+
+def test_a_clip_starting_at_the_epoch_keeps_its_bounds(rec):
+    """`message_start_time` of 0 is a legal first stamp, not "unknown".
+
+    The summary leaves both bounds at 0 for an EMPTY file, so the emptiness test
+    is the message count. Testing the timestamps for truthiness instead erased
+    the span of any clip whose clock starts at the epoch — a synthesized fixture,
+    or a device that recorded before its time source came up — and
+    `SessionMeta.duration_ns` silently became None.
+    """
+    path = rec("epoch.mcap").add_camera("/cam", indexed_frames(4), t0=0).write()
+    meta = Session(path).metadata
+    assert meta.start_ns == 0
+    assert meta.duration_ns == 3 * FRAME_DT

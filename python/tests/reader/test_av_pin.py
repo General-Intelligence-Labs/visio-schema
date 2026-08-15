@@ -1,14 +1,19 @@
-"""The PyAV pin has exactly one spelling.
+"""The PyAV bound has exactly one spelling.
 
-`_decode.PINNED_AV` is what the decoder's output was measured against and what it
-warns about at runtime; `pyproject.toml` is what actually gets installed. Two
-independently-maintained copies of a version is the drift this codebase keeps
-paying for elsewhere — so assert the round trip rather than trusting they match.
+`_decode.AV_DECODE_CHANGED_AT` is where the decoder's output was measured to
+move; `pyproject.toml` is what actually gets installed. Two independently
+maintained copies of a version is the drift this codebase keeps paying for
+elsewhere — so assert the round trip rather than trusting they match.
 
-Why the pin exists at all: running the same reader over the same recording under
-PyAV 12.3.0 and 17.0.0 gives identical element counts, identical topics and an
-identical undecoded pass, but DIFFERENT pixels in every decode mode. Anything
-downstream that compares two runs is void if they used different PyAVs.
+Why the bound exists: running the same reader over the same recording gives
+identical pixels for every PyAV below 17.0.0 (12.3.0, 13.1.0, 14.x, 15.x, 16.x
+were all measured to the same bytes over 300 real ego access units) and different
+pixels at and above it. Anything downstream that compares two runs is void if
+they straddle that line.
+
+The dependency's FLOOR is a different constraint with a different owner — the
+viewer's `av.codec.hwaccel` probe, absent before 14.2 — so it is asserted
+separately here rather than folded into one number.
 """
 
 from __future__ import annotations
@@ -19,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from visio_schema.reader._decode import PINNED_AV
+from visio_schema.reader._decode import AV_DECODE_CHANGED_AT, _version_tuple
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -29,28 +34,38 @@ else:
 _PYPROJECT = Path(__file__).resolve().parents[2] / "pyproject.toml"
 
 
-def _declared_av_pin() -> str:
+def _declared_av_range() -> tuple[str, str]:
+    """The ``>=lo,<hi`` bounds declared for `av`, as written."""
     data = tomllib.loads(_PYPROJECT.read_text())
     for dep in data["project"]["dependencies"]:
-        m = re.fullmatch(r"av==([0-9][0-9.]*)", dep.strip())
+        m = re.fullmatch(r"av>=([0-9][0-9.]*),<([0-9][0-9.]*)", dep.strip())
         if m:
-            return m.group(1)
+            return m.group(1), m.group(2)
     raise AssertionError(
-        "no exact `av==` pin in [project.dependencies]. The reader's decode "
-        "output is only reproducible against one PyAV; a floor or a range there "
-        "silently makes two runs incomparable."
+        "no `av>=lo,<hi` range in [project.dependencies]. The upper bound is "
+        "what makes two runs' decoded output comparable; an open ceiling "
+        "silently lets a release through that changes every pixel."
     )
 
 
-def test_pinned_av_matches_the_declared_dependency():
-    assert PINNED_AV == _declared_av_pin(), (
-        "visio_schema.reader._decode.PINNED_AV and the `av==` pin in "
-        "pyproject.toml disagree. Update both, and re-measure before changing "
-        "the version at all."
+def test_the_declared_ceiling_is_where_decode_was_measured_to_change():
+    _lo, hi = _declared_av_range()
+    assert _version_tuple(hi) == AV_DECODE_CHANGED_AT[: len(_version_tuple(hi))], (
+        "`_decode.AV_DECODE_CHANGED_AT` and the `av<` ceiling in pyproject.toml "
+        "disagree. Update both, and re-measure decode output before moving "
+        "either."
     )
 
 
-def test_the_runtime_guard_fires_on_a_mismatch(caplog):
+def test_the_declared_floor_admits_the_viewers_hwaccel_api():
+    """`av.codec.hwaccel` does not exist before 14.2, and `display._make_decoder`
+    reaches for it unguarded. A lower floor ships a viewer that raises
+    `AttributeError` on its first transcode."""
+    lo, _hi = _declared_av_range()
+    assert _version_tuple(lo) >= (14, 2)
+
+
+def test_the_runtime_guard_fires_above_the_bound(caplog):
     """The warning must actually reach a log — a guard nobody sees is not one."""
     import logging
     import types
@@ -60,14 +75,31 @@ def test_the_runtime_guard_fires_on_a_mismatch(caplog):
     _decode._av_checked = False
     try:
         with caplog.at_level(logging.WARNING, logger="visio_schema.reader"):
-            _decode._check_av_version(types.SimpleNamespace(__version__="0.0.0-fake"))
-        assert "0.0.0-fake" in caplog.text
-        assert PINNED_AV in caplog.text
+            _decode._check_av_version(types.SimpleNamespace(__version__="17.0.0"))
+        assert "17.0.0" in caplog.text
     finally:
         _decode._av_checked = False
 
 
-def test_the_runtime_guard_is_quiet_on_a_match(caplog):
+def test_the_runtime_guard_is_quiet_across_the_whole_compatible_set(caplog):
+    """Every version below the bound decodes the same, so none of them is worth
+    a word — warning on "not the exact one I was built against" was noise that
+    trained people to ignore the one case that matters."""
+    import logging
+    import types
+
+    from visio_schema.reader import _decode
+
+    for version in ("12.3.0", "13.1.0", "14.2.0", "15.1.0", "16.1.0"):
+        caplog.clear()
+        _decode._av_checked = False
+        with caplog.at_level(logging.WARNING, logger="visio_schema.reader"):
+            _decode._check_av_version(types.SimpleNamespace(__version__=version))
+        assert caplog.text == "", f"warned about {version}, which decodes the same"
+    _decode._av_checked = False
+
+
+def test_an_unreadable_version_is_reported_rather_than_assumed(caplog):
     import logging
     import types
 
@@ -76,7 +108,7 @@ def test_the_runtime_guard_is_quiet_on_a_match(caplog):
     _decode._av_checked = False
     try:
         with caplog.at_level(logging.WARNING, logger="visio_schema.reader"):
-            _decode._check_av_version(types.SimpleNamespace(__version__=PINNED_AV))
-        assert caplog.text == ""
+            _decode._check_av_version(types.SimpleNamespace(__version__=""))
+        assert "Cannot determine" in caplog.text
     finally:
         _decode._av_checked = False

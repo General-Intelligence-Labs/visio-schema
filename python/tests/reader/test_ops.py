@@ -1,11 +1,11 @@
-"""Layer 1 ops: sync (N-way, drop, passthrough) + resample (hold_last)."""
+"""Layer 1 ops: sync (N-way match, drop, passthrough) + prefetch."""
 
 from __future__ import annotations
 
 import numpy as np
 from _helpers import FRAME_DT, T0
 
-from visio_schema.reader import Frame, ImuSample, SyncGroup, resample, sync
+from visio_schema.reader import Frame, ImuSample, SyncGroup, sync
 
 
 def _frame(topic, t):
@@ -59,7 +59,10 @@ def test_sync_without_passthrough_drops_nonkeys():
     assert len(out) == 1
 
 
-def test_resample_hold_last():
+def test_hold_last_resampling_is_a_sync_option():
+    """What the removed standalone `resample` did, as the `hold_last`, zero-lag
+    corner of `sync` — one op, so a caller cannot pick the alignment semantics and
+    the grouping semantics independently and get them out of step."""
     stream = [
         _pose("/pose", T0),
         _frame("/c0", T0 + 1_000_000),
@@ -67,11 +70,10 @@ def test_resample_hold_last():
         _pose("/pose", T0 + 3_000_000),
         _frame("/c0", T0 + 4_000_000),
     ]
-    out = list(resample(stream, onto="/c0", attach=["/pose"]))
+    out = list(sync(stream, ["/c0"], resample={"/pose": "hold_last"}, tol_ns=0))
     assert len(out) == 3
-    assert out[0][1]["/pose"].t_ns == T0
-    assert out[1][1]["/pose"].t_ns == T0
-    assert out[2][1]["/pose"].t_ns == T0 + 3_000_000
+    assert [g["/pose"].t_ns for g in out] == [T0, T0, T0 + 3_000_000]
+    assert {g.by_topic["/pose"].method for g in out} == {"held"}
 
 
 # --- prefetch (threaded overlap primitive) --------------------------------- #

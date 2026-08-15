@@ -28,6 +28,7 @@ This module is the bottom layer: it imports nothing else in
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 
@@ -45,6 +46,8 @@ FRAME_INFO_SCHEMA = "visio_schema.v1.sensor.CameraFrameInfo"
 CAM_CALIB_SCHEMA = "foxglove.CameraCalibration"
 FRAME_TF_SCHEMA = "foxglove.FrameTransform"
 IMU_CALIB_SCHEMA = "visio_schema.v1.calibration.ImuCalibration"
+POSE_SCHEMA = "foxglove.PoseInFrame"
+JOINT_STATES_SCHEMA = "foxglove.JointStates"
 
 
 
@@ -171,9 +174,77 @@ class Record:
     data: bytes = b""  # wire payload; populated by raw mode ONLY
 
 
+@dataclass(frozen=True, eq=False)
+class Pose:
+    """A 6-DoF pose, parsed from ``foxglove.PoseInFrame``.
+
+    Typed rather than left as a `Record` because a pose is the one element kind a
+    consumer needs to *resample between* — and interpolation is dispatched on the
+    element type (`interp`), so a pose arriving as an opaque `Record` can only ever
+    be held or picked nearest. Position lerps; orientation slerps.
+
+    ``orientation`` is ``(x, y, z, w)`` — foxglove's order and scipy's, so it
+    round-trips through `build.pose_in_frame` with no reordering.
+    """
+
+    topic: str
+    t_ns: Ns  # the wire stamp, same clock as Frame/ImuSample
+    position: np.ndarray  # (3,) metres
+    orientation: np.ndarray  # (4,) xyzw, unit
+    frame_id: str = ""
+
+    def pose7(self) -> np.ndarray:
+        """``[x, y, z, qx, qy, qz, qw]`` — the flat row consumers pack."""
+        return np.concatenate([self.position, self.orientation])
+
+
+@dataclass(frozen=True, eq=False)
+class JointState:
+    """Named joint positions at one instant, from ``foxglove.JointStates``.
+
+    Sparse by design: the proto's ``position``/``velocity``/``effort`` are
+    `optional double`, so a joint that published none is ABSENT from these dicts
+    rather than present as 0.0 — a real gripper width of 0.0 (fully closed) is
+    otherwise indistinguishable from "the producer said nothing".
+
+    That is also why interpolation runs per joint over the *intersection* of two
+    samples: a joint present at one end of a bracket has nothing to blend against.
+    """
+
+    topic: str
+    t_ns: Ns
+    positions: dict[str, float]
+    velocities: dict[str, float] | None = None
+    efforts: dict[str, float] | None = None
+
+
+@dataclass(frozen=True, eq=False)
+class Tick:
+    """A bare clock mark — an instant with no measurement attached.
+
+    For a loop with NO image in it — teleop, an intervention controller, a
+    recorder, a safety monitor. The loop pushes one of these at its control rate
+    and they become the ``match`` key, so its own clock both defines the group
+    instants and advances the watermark that releases them; a live stream then
+    self-drives through the same `sync` call a recording uses, with no pull API.
+
+    NOT the right grid for a vision policy. There the camera is the match key on
+    both sides, because the training rows were built on the camera's instants and
+    serving on a tick would align the policy's inputs differently from how they
+    were baked — and would let a frame silently repeat when the loop runs faster
+    than the camera.
+
+    Deliberately NOT interpolable: a tick marks a time, it does not measure
+    anything, so there is no value between two of them.
+    """
+
+    topic: str
+    t_ns: Ns
+
+
 # What the streaming pass yields — a closed union (isinstance-routable in
 # `sync` passthrough). A new element kind (e.g. an AudioSample) extends this.
-Element = Frame | ImuSample | Record
+Element = Frame | ImuSample | Record | Pose | JointState | Tick
 
 
 @dataclass(frozen=True, eq=False)
@@ -286,18 +357,80 @@ class SessionMeta:
         return self.end_ns - self.start_ns
 
 
+# How one key's value in a group was obtained. The distinction IS the point: a
+# consumer that cannot tell an interpolated pose from a 400 ms-stale held one has
+# no way to gate on it.
+#
+#   matched       a real element the sync matcher picked. Never blended — this is
+#                 what a `match` key always yields, and the only honest answer for
+#                 a decoded frame
+#   exact         a resampled source sample landed exactly on the group time
+#   interpolated  bracketed on both sides, blended by the type's interpolator
+#   nearest       bracketed, but the type has no interpolator — or `mode="nearest"`
+#                 was asked for. Also the head-of-stream case, where the only
+#                 sample lies AFTER the group time: a large `residual_ns` marks it
+#   held          no sample after the group time — the last one before it, carried
+#                 forward. The only causal choice, so the low-latency default
+#   extrapolated  no sample after the group time — projected from the last two
+SampleMethod = Literal[
+    "matched", "exact", "interpolated", "nearest", "held", "extrapolated"
+]
+
+
+@dataclass(frozen=True, eq=False)
+class Sampled:
+    """One key's value at the group time, and how it was obtained."""
+
+    element: Element
+    method: SampleMethod
+    # Distance from the group time to the NEAREST contributing source stamp. Zero
+    # on an exact hit; for an interpolated value it is the distance to the closer
+    # bracket end, so it bounds the error the blend can hide; for a matched key it
+    # is that member's own offset from the group time.
+    residual_ns: Ns
+
+
 @dataclass(frozen=True, eq=False)
 class SyncGroup:
-    """A time-matched set of elements, one per sync key (alignment §8.1).
+    """Every key's value at one instant — matched or resampled.
 
-    Usually frames, but a key may name any streamed topic — a derived sidecar
-    topic joins its frames through this same grouping rather than a second
-    lookup mechanism.
+    The single output of `sync`, whichever way a key contributes. A stereo pair is
+    *matched*: two real frames that fired together, picked, never blended. A wrist
+    pose is *resampled*: evaluated at this group's instant, because it runs on its
+    own asynchronous clock and no element of it exists at exactly this time. Both
+    land here, each carrying `Sampled.method` so a consumer can tell which it got.
+
+    One type rather than two because the consumer's question is the same either
+    way — "what was everything at this instant" — and a second group type would
+    force every downstream op to handle both.
+
+    ``missing`` is explicit rather than an absent key: a topic that never published
+    and one whose only sample is 10 s stale are different failures, and both differ
+    from a healthy value. Staleness (`stale_ns`) is what moves a key into it.
     """
 
-    t_ns: Ns  # the group time (min member t_ns)
-    by_topic: dict[str, Element]
-    residual_ns: Ns  # max pairwise timestamp spread within the group
+    t_ns: Ns  # the group time — the earliest matched member's stamp
+    by_topic: dict[str, Sampled]
+    missing: tuple[str, ...] = ()
 
     def __getitem__(self, topic: str) -> Element:
-        return self.by_topic[topic]
+        """The value itself — the common case. `by_topic` has the provenance."""
+        return self.by_topic[topic].element
+
+    def __contains__(self, topic: str) -> bool:
+        return topic in self.by_topic
+
+    @property
+    def complete(self) -> bool:
+        return not self.missing
+
+    @property
+    def residual_ns(self) -> Ns:
+        """Worst distance from the group time to any key's real source stamp.
+
+        For matched keys alone this is exactly the old pairwise-spread definition:
+        the group time is the earliest member, so the largest ``|t_key - t_ns|``
+        IS the spread. Extending it over resampled keys therefore changes no
+        existing number while giving one staleness gate over the whole group.
+        """
+        return max((s.residual_ns for s in self.by_topic.values()), default=0)

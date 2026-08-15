@@ -13,7 +13,15 @@ import numpy as np
 import pytest
 from _helpers import IMU_RAW, indexed_frames
 
-from visio_schema.reader import IMAGE_SCHEMA, IMU_RAW_SCHEMA, VIDEO_SCHEMA, Record, Session
+from visio_schema.reader import (
+    IMAGE_SCHEMA,
+    IMU_RAW_SCHEMA,
+    JOINT_STATES_SCHEMA,
+    POSE_SCHEMA,
+    VIDEO_SCHEMA,
+    Record,
+    Session,
+)
 from visio_schema.reader.adapters import (
     _REGISTRY,
     AdapterContext,
@@ -26,7 +34,19 @@ QUAT = "visio_schema.v1.ros.geometry_msgs.Quaternion"
 
 
 def test_builtins_are_registered():
-    assert registered_schemas() == {VIDEO_SCHEMA, IMAGE_SCHEMA, IMU_RAW_SCHEMA}
+    """The whole shipped table, pinned by name.
+
+    Adding one is a real behaviour change for every consumer — a topic that used
+    to arrive as an opaque `Record` starts arriving typed — so it lands here
+    deliberately rather than being noticed downstream.
+    """
+    assert registered_schemas() == {
+        VIDEO_SCHEMA,
+        IMAGE_SCHEMA,
+        IMU_RAW_SCHEMA,
+        POSE_SCHEMA,
+        JOINT_STATES_SCHEMA,
+    }
 
 
 def test_unknown_schema_falls_back_to_record():

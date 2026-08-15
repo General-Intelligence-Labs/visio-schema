@@ -619,7 +619,7 @@ def _make_decoder(av, codec: str):
             dec = av.CodecContext.create(codec, "r", hwaccel=hw)
         except Exception:      # GPU device couldn't be created — try the next backend / software
             continue
-        if dec.is_hwaccel:                     # same PyAV (12+) that has HWAccel has this
+        if dec.is_hwaccel:                     # `av.codec.hwaccel` implies this (av >= 14.2)
             return dec, True
     dec = av.CodecContext.create(codec, "r")
     dec.thread_count = 0

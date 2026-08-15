@@ -45,6 +45,9 @@ from visio_schema.reader.domain import (
     IMAGE_SCHEMA as COMPRESSED_IMAGE,
 )
 from visio_schema.reader.domain import (
+    POSE_SCHEMA as POSE_IN_FRAME,
+)
+from visio_schema.reader.domain import (
     VIDEO_SCHEMA as COMPRESSED_VIDEO,
 )
 from visio_schema.wire.schema import message_class
@@ -64,9 +67,8 @@ __all__ = [
     "raw_image_mono16",
 ]
 
-# The two the reader has no name for; the other four are aliased from it above.
+# The one the reader has no name for; the rest are aliased from it above.
 RAW_IMAGE = "foxglove.RawImage"
-POSE_IN_FRAME = "foxglove.PoseInFrame"
 
 # Resolved once. `decodable_formats` rebuilds its frozenset per call, and these are
 # fixed for the life of the process.

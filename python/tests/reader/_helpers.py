@@ -32,6 +32,8 @@ FRAME_TF = "foxglove.FrameTransform"
 IMU_CALIB = "visio_schema.v1.calibration.ImuCalibration"
 FRAME_INFO = "visio_schema.v1.sensor.CameraFrameInfo"
 QUAT = "visio_schema.v1.ros.geometry_msgs.Quaternion"
+POSE_IN_FRAME = "foxglove.PoseInFrame"
+JOINT_STATES = "foxglove.JointStates"
 
 # Plausible ego-like fisheye intrinsics (not a real rig).
 CAM_K = [[460.0, 0, 320.0], [0, 460.0, 240.0], [0, 0, 1.0]]
@@ -198,6 +200,50 @@ class RecBuilder:
             t = t0 + i * dt
             m.timestamp.FromNanoseconds(t)
             self._rows.append((self._topic(topic), QUAT, t, m.SerializeToString()))
+        return self
+
+    def add_poses(self, topic, *, n, t0=T0, dt=FRAME_DT, step=(0.01, 0.0, 0.0),
+                  yaw_step_deg=1.0, frame_id="odom"):
+        """A robot/VIO pose track: position ramps, yaw rotates a fixed step.
+
+        Both quantities advance LINEARLY in the index so an interpolated sample at
+        a known fraction has a closed-form expected value — an interpolator that
+        merely returns a neighbour is otherwise indistinguishable from one that
+        blends, at any sample rate.
+        """
+        for i in range(n):
+            m = message_class(POSE_IN_FRAME)()
+            t = t0 + i * dt
+            m.timestamp.FromNanoseconds(t)
+            m.frame_id = frame_id
+            m.pose.position.x = i * step[0]
+            m.pose.position.y = i * step[1]
+            m.pose.position.z = i * step[2]
+            q = Rotation.from_euler("z", i * yaw_step_deg, degrees=True).as_quat()
+            (m.pose.orientation.x, m.pose.orientation.y,
+             m.pose.orientation.z, m.pose.orientation.w) = (float(v) for v in q)
+            self._rows.append(
+                (self._topic(topic), POSE_IN_FRAME, t, m.SerializeToString()))
+        return self
+
+    def add_joint_states(self, topic, *, n, t0=T0, dt=FRAME_DT,
+                         joints=("left", "right"), start=0.0, step=0.05,
+                         with_velocity=False):
+        """A gripper/joint track. `position` only by default: it is `optional` on
+        the wire, and telling an absent field from a real 0.0 is the point of the
+        adapter, so a fixture that always sets everything cannot show it."""
+        for i in range(n):
+            m = message_class(JOINT_STATES)()
+            t = t0 + i * dt
+            m.timestamp.FromNanoseconds(t)
+            for k, name in enumerate(joints):
+                j = m.joints.add()
+                j.name = name
+                j.position = start + (i * step) + k
+                if with_velocity:
+                    j.velocity = float(i)
+            self._rows.append(
+                (self._topic(topic), JOINT_STATES, t, m.SerializeToString()))
         return self
 
     def add_camera_calib(self, topic, *, K=CAM_K, D=CAM_D, w=CAM_W, h=CAM_H,

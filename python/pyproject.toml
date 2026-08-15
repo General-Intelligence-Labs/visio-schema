@@ -47,14 +47,18 @@ dependencies = [
     "pyserial>=3.5",
     "foxglove-sdk>=0.10",
     "rerun-sdk>=0.24",
-    # PINNED EXACTLY, not floored, and load-bearing: a different PyAV decodes a
-    # DIFFERENT H.265 frame set, silently making two runs' outputs incomparable.
-    # Measured on a real ego session — av 12.3.0 vs 17.0.0 give identical element
-    # counts, identical topics and identical undecoded passes, but different
-    # pixels in every decode mode. `visio_schema.reader`'s determinism ("N runs ->
-    # byte-identical MCAPs" downstream) rests on this. Do not relax without
-    # re-measuring.
-    "av==12.3.0",
+    # A RANGE, and a measured one. Two constraints meet here:
+    #   >= 14.2  `av.codec.hwaccel` — the display transcoder's GPU probe — first
+    #            exists here. 14.0.0 does not have it.
+    #   <  17    decode output changes at 17.0.0. Measured over 300 real ego
+    #            H.265 access units: 12.3.0, 13.1.0, 14.x, 15.x and 16.x all
+    #            decode to the SAME bytes; 17.0.0 and 18.0.0 differ — and 16.1.0
+    #            and 17.0.0 share libavcodec 62.11.100, so that is a PyAV change,
+    #            not an FFmpeg one.
+    # The upper bound is what `visio_schema.reader`'s determinism rests on ("N
+    # runs -> byte-identical MCAPs" downstream); the lower is what the viewer
+    # rests on. Do not widen either without re-running that decode comparison.
+    "av>=14.2,<17",
     "aiohttp>=3.9",     # `--serve` launcher web app
     "zeroconf>=0.130",  # `--serve` mDNS device discovery
 ]
@@ -137,6 +141,10 @@ layers = [
     "visio_schema.reader.ops",
     "visio_schema.reader.session",
     "visio_schema.reader.adapters",
+    # Blending elements is below the ops that schedule it and beside the adapters
+    # that build them: `interp` must not reach `session`, or "what is the value
+    # between these two" would start depending on where they were read from.
+    "visio_schema.reader.interp",
     "visio_schema.reader.domain",
 ]
 

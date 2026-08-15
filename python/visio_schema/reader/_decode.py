@@ -130,18 +130,42 @@ def is_keyframe(fmt: str, access_unit: bytes) -> bool | None:
 # so two runs under different PyAVs are silently incomparable. Kept in step with
 # the dependency pin by `tests/reader/test_av_pin.py`, which is the only thing
 # stopping this from becoming a second, drifting copy of the version.
-PINNED_AV = "12.3.0"
+# PyAV versions BELOW this all decode identically; 17.0.0 changed the output.
+# Measured over 300 real ego H.265 access units: 12.3.0, 13.1.0, 14.x, 15.x and
+# 16.x produce the same bytes, 17.0.0 and 18.0.0 produce different ones — and
+# 16.1.0 and 17.0.0 ship the same libavcodec (62.11.100), so the change is PyAV's,
+# not FFmpeg's. `pyproject.toml` caps the dependency here for that reason; its
+# FLOOR (14.2) is a separate matter, set by an API the viewer needs.
+AV_DECODE_CHANGED_AT = (17, 0, 0)
 _av_checked = False
 
 
-def _check_av_version(av) -> None:
-    """Warn once if the installed PyAV is not the measured one.
+def _version_tuple(version: str) -> tuple[int, ...] | None:
+    """Leading numeric components of a version string, or None if unreadable."""
+    parts: list[int] = []
+    for chunk in version.split("."):
+        digits = ""
+        for ch in chunk:
+            if not ch.isdigit():
+                break
+            digits += ch
+        if not digits:
+            break
+        parts.append(int(digits))
+    return tuple(parts) or None
 
-    A warning, not a raise: a different PyAV still decodes, and refusing would
-    break every legitimate use that does not care about cross-run comparability.
-    But it must not be SILENT — the whole determinism claim downstream ("N runs ->
-    byte-identical MCAPs") is void the moment this differs, and nothing else in the
-    stack would ever say so.
+
+def _check_av_version(av) -> None:
+    """Warn once if the installed PyAV decodes differently from the measured set.
+
+    A warning, not a raise: a newer PyAV still decodes, and refusing would break
+    every legitimate use that does not care about cross-run comparability. But it
+    must not be SILENT — the determinism claim downstream ("N runs ->
+    byte-identical MCAPs") is void the moment the decoder's output moves, and
+    nothing else in the stack would ever say so.
+
+    Scoped to the UPPER bound, because that is the one the output depends on. An
+    older PyAV inside the compatible set is not worth a word.
     """
     global _av_checked
     if _av_checked:
@@ -154,18 +178,20 @@ def _check_av_version(av) -> None:
     # version is the ONE case where you genuinely do not know what you are running,
     # which is exactly what this exists to say out loud.
     installed = getattr(av, "__version__", "")
-    if not installed:
+    parsed = _version_tuple(installed) if installed else None
+    if parsed is None:
         log.warning(
-            "Cannot determine the installed PyAV version; this decoder was "
-            "measured against %s and output is only comparable across runs on "
-            "that version.", PINNED_AV,
+            "Cannot determine the installed PyAV version; this decoder's output "
+            "was measured below %s and is only comparable across runs within "
+            "that set.",
+            ".".join(str(p) for p in AV_DECODE_CHANGED_AT),
         )
-    elif installed != PINNED_AV:
+    elif parsed >= AV_DECODE_CHANGED_AT:
         log.warning(
-            "PyAV %s is installed, but this decoder was measured against %s. "
-            "Decoded pixels differ between PyAV versions, so output from this "
-            "run is NOT comparable with output produced under %s.",
-            installed, PINNED_AV, PINNED_AV,
+            "PyAV %s is installed, but this decoder's output was measured below "
+            "%s — decoded pixels changed at that release, so output from this "
+            "run is NOT comparable with output produced under an earlier one.",
+            installed, ".".join(str(p) for p in AV_DECODE_CHANGED_AT),
         )
 
 

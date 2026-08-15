@@ -58,6 +58,8 @@ from .domain import (
     IMAGE_SCHEMA,
     IMU_CALIB_SCHEMA,
     IMU_RAW_SCHEMA,
+    JOINT_STATES_SCHEMA,
+    POSE_SCHEMA,
     VIDEO_SCHEMA,
     Calibration,
     CameraCalib,
@@ -100,7 +102,18 @@ _DECODABLE = frozenset({VIDEO_SCHEMA, IMU_RAW_SCHEMA})
 # What `_iter_file` decodes natively rather than parsing into a `Record`. Wider
 # than `_DECODABLE` so a NAMED image topic yields a `Frame` without joining the
 # default selection.
-_DECODED = _DECODABLE | {IMAGE_SCHEMA}
+# Adapters built unconditionally — see `_build_adapters`. Spelled once and used
+# both to build them and to skip them in the per-topic loop there: the two must
+# agree, and while they were both `_DECODED` a schema added to that set silently
+# lost its adapter instead of gaining a better one.
+_PREBUILT = (VIDEO_SCHEMA, IMAGE_SCHEMA, IMU_RAW_SCHEMA)
+_DECODED = frozenset(_PREBUILT)
+# Schemas this package ships generated code for, so `class_for` resolves them from
+# the global descriptor pool. A dynamic class built from the file's own descriptor
+# set has identical field access, but is a DIFFERENT type object every session —
+# and `interp` dispatches on element type, so the elements these produce have to
+# come from the one generated class.
+_NATIVE_SCHEMAS = _DECODED | {POSE_SCHEMA, JOINT_STATES_SCHEMA}
 
 # `keyframe_cadence`'s probe budget. Five keyframes give four spacings to take a
 # median of, which on a real recording is ~150 access units — well inside the
@@ -207,9 +220,17 @@ class _FileIndex:
         for cid, c in summary.channels.items():
             self.chan[cid] = (c.topic, schemas.get(c.schema_id, ""))
         if summary.statistics is not None:
-            self.counts = dict(summary.statistics.channel_message_counts)
-            self.start_ns = summary.statistics.message_start_time or None
-            self.end_ns = summary.statistics.message_end_time or None
+            stats = summary.statistics
+            self.counts = dict(stats.channel_message_counts)
+            # Gate on the COUNT, not on the timestamps being truthy. MCAP leaves
+            # both bounds at 0 for an empty file, but 0 is also a perfectly legal
+            # first stamp — a clip whose clock starts at the epoch, which is what
+            # a synthesized fixture and a device with no time source both write.
+            # `x or None` erased those bounds, so the session reported no span at
+            # all and `SessionMeta.duration_ns` came back None.
+            if stats.message_count:
+                self.start_ns = stats.message_start_time
+                self.end_ns = stats.message_end_time
 
     def _scan(self) -> None:
         """Fallback for a file with no summary section (rare): one pass."""
@@ -292,12 +313,11 @@ class Session:
         self._exposure: dict[str, _ExposureTrack] | None = None
         self._exposure_cams_set: frozenset[str] | None = None
         self._cadence: dict[str, KeyframeCadence | None] = {}
-        # Opt-in typed adapters for THIS session only. Deliberately not the global
-        # registry: registering, say, a `foxglove.PoseInFrame` -> Pose adapter
-        # globally would silently retype every existing consumer's elements, and a
-        # consumer that asserts `isinstance(el, Record)` would start failing. So a
-        # reader that wants richer types asks for them per session, and the
-        # defaults stay exactly what they were.
+        # Typed adapters for THIS session only, overriding the global table — for a
+        # pass that wants a schema typed DIFFERENTLY from the shared answer (the
+        # raw proto of something now typed, or a new kind before it is registered
+        # for everyone). A type every consumer wants belongs in the global table
+        # instead; see `adapters.build_adapter`.
         self._adapters = dict(adapters or {})
         # A typo in an override key is otherwise indistinguishable from "that
         # schema is not in this recording": you get Records, no error, and a pass
@@ -832,20 +852,19 @@ class Session:
             # Either the global descriptor pool (types this reader knows by name)
             # or the file's own embedded FileDescriptorSet (anything derived), so
             # a sidecar carrying a type this process never imported still reads.
-            if name in _DECODED:
+            if name in _NATIVE_SCHEMAS:
                 return message_class(name)
             return _resolve_message_class(idx.schema_rec[name])
 
         ctx = AdapterContext(make_decoders=make_decoders, message_class_for=class_for)
         over = self._adapters
         adapters = {
-            name: build_adapter(name, ctx, overrides=over)
-            for name in (VIDEO_SCHEMA, IMAGE_SCHEMA, IMU_RAW_SCHEMA)
+            name: build_adapter(name, ctx, overrides=over) for name in _PREBUILT
         }
         for topic, schema_name, _n in idx.topics():
             if topic not in wanted or schema_name in adapters:
                 continue
-            if schema_name not in _DECODED and schema_name in idx.schema_rec:
+            if schema_name not in _PREBUILT and schema_name in idx.schema_rec:
                 adapters[schema_name] = build_adapter(schema_name, ctx, overrides=over)
         return adapters
 

@@ -37,10 +37,14 @@ import numpy as np
 from .domain import (
     IMAGE_SCHEMA,
     IMU_RAW_SCHEMA,
+    JOINT_STATES_SCHEMA,
+    POSE_SCHEMA,
     VIDEO_SCHEMA,
     Element,
     ImuSample,
+    JointState,
     Ns,
+    Pose,
     Record,
 )
 
@@ -99,10 +103,16 @@ def build_adapter(
 ) -> ElementAdapter:
     """The adapter for `schema_name`, or the opaque-`Record` fallback.
 
-    `overrides` wins over the global table. That precedence is the point: a
-    consumer opts into richer typing for its own pass without retyping everyone
-    else's elements. Registering a `foxglove.PoseInFrame` -> Pose adapter globally
-    would break any reader that asserts it receives a `Record` — and one does.
+    `overrides` wins over the global table. That precedence is for a consumer that
+    wants a schema typed *differently* from the shared answer — a stage that needs
+    the raw proto of something the table now types, or one experimenting with a
+    kind before it is registered for everybody.
+
+    It is not the place to put a type every consumer wants. A schema typed only
+    behind an override is typed for nobody by default: `interp` dispatches on the
+    element type, so a pose that arrives as a `Record` cannot be interpolated at
+    all, and each consumer would have to opt in to a capability separately before
+    the same recording read the same way twice.
     """
     factory = (overrides or {}).get(schema_name) or _REGISTRY.get(schema_name)
     if factory is None:
@@ -187,6 +197,80 @@ def _imu_samples(topic: str, anchor_ns: Ns, m) -> Iterator[tuple[Ns, ImuSample]]
         )
 
 
+# ── robot side channels: pose + joints ─────────────────────────────────── #
+
+
+class _PoseAdapter:
+    """`foxglove.PoseInFrame` -> `Pose`.
+
+    Typed rather than left to the `Record` fallback because interpolation
+    dispatches on the element type: a pose arriving as an opaque `Record` can only
+    be held or picked nearest, never blended, so the reader would be structurally
+    unable to answer "where was the wrist at this frame's timestamp".
+
+    A fresh message per call, like `_RecordAdapter` and for the same reason — the
+    arrays below are built from it, but `frame_id` is a Python str borrowed from
+    the parse and the element outlives the call.
+    """
+
+    def __init__(self, schema_name: str, ctx: AdapterContext) -> None:
+        self._cls = ctx.message_class_for(schema_name)
+
+    def emit(self, data: bytes, topic: str, t_ns: Ns) -> Iterator[Triple]:
+        m = self._cls()
+        m.ParseFromString(data)
+        p, q = m.pose.position, m.pose.orientation
+        yield t_ns, t_ns, Pose(
+            topic=topic,
+            t_ns=t_ns,
+            position=np.array([p.x, p.y, p.z], float),
+            orientation=np.array([q.x, q.y, q.z, q.w], float),
+            frame_id=m.frame_id,
+        )
+
+    def flush(self) -> Iterator[Triple]:
+        return iter(())
+
+
+class _JointStateAdapter:
+    """`foxglove.JointStates` -> `JointState`.
+
+    `position`/`velocity`/`effort` are `optional double` on the wire, so
+    `HasField` is what distinguishes "closed gripper at 0.0" from "the producer
+    published no width". Reading them unconditionally would turn the second into
+    the first — a real value, silently wrong, on exactly the channel a policy acts
+    on. The optional sub-dicts stay None (not empty) when NO joint carried that
+    field, so a consumer can tell "this stream has no velocities" from "this
+    sample's velocities are all absent".
+    """
+
+    def __init__(self, schema_name: str, ctx: AdapterContext) -> None:
+        self._cls = ctx.message_class_for(schema_name)
+
+    def emit(self, data: bytes, topic: str, t_ns: Ns) -> Iterator[Triple]:
+        m = self._cls()
+        m.ParseFromString(data)
+        pos: dict[str, float] = {}
+        vel: dict[str, float] = {}
+        eff: dict[str, float] = {}
+        for j in m.joints:
+            for field, into in (
+                ("position", pos), ("velocity", vel), ("effort", eff)
+            ):
+                if j.HasField(field):
+                    into[j.name] = float(getattr(j, field))
+        yield t_ns, t_ns, JointState(
+            topic=topic,
+            t_ns=t_ns,
+            positions=pos,
+            velocities=vel or None,
+            efforts=eff or None,
+        )
+
+    def flush(self) -> Iterator[Triple]:
+        return iter(())
+
+
 # ── everything else: opaque, but on the same clock ─────────────────────── #
 
 
@@ -220,3 +304,5 @@ class _RecordAdapter:
 element_adapter(VIDEO_SCHEMA)(_DecodedAdapter)
 element_adapter(IMAGE_SCHEMA)(_DecodedAdapter)
 element_adapter(IMU_RAW_SCHEMA)(_ImuAdapter)
+element_adapter(POSE_SCHEMA)(_PoseAdapter)
+element_adapter(JOINT_STATES_SCHEMA)(_JointStateAdapter)
