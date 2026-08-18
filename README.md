@@ -136,7 +136,7 @@ complete surface and the stability guarantee.
 | [`cpp/`](cpp/) | The C++ codec + nanopb bindings for embedded/on-device use. |
 | [`docs/`](docs/) | User guides ([install](docs/install.md), [usage](docs/usage.md)) and the [protocol reference](docs/protocol/). |
 | [`examples/`](examples/) | Runnable Python and C++ demos. |
-| [`tools/`](tools/) | Standalone utilities: the [fleet-status](tools/fleet-status/) dashboard and [session-json](tools/session-json/), which rebuilds a recording's `session.json` sidecar. |
+| [`tools/`](tools/) | Standalone utilities: the [fleet-status](tools/fleet-status/) dashboard, [oss-setup](tools/oss-setup/), which provisions the bucket both of them read, and [session-json](tools/session-json/), which rebuilds a recording's `session.json` sidecar. |
 
 ## Documentation
 

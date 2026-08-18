@@ -98,6 +98,7 @@ Common commands:
 make gen                                   # regenerate Python + C++ (nanopb) bindings
 make pytest                                # Python suite
 cd python && python -m pytest tests -q     # same, directly
+make tools-test                            # the standalone tools/ scripts' own tests
 VISIO_NO_NATIVE=1 python -m pytest tests -q  # force the pure-Python reader
 make cpp                                    # C++ codec tests
 python -m ruff check .                      # lint (config in python/pyproject.toml)

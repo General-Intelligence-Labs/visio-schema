@@ -1,18 +1,23 @@
 """The element reader — rows on one timeline, aligned.
 
 `visio_schema.mcap.read_mcap` and `visio_schema.stream.read_serial` are the two
-**row** sources: both yield ``(Message, Channel)``. This package sits directly on
-top of them and turns rows into **elements** — decoded, unbundled,
-clock-normalized values that share one interface:
+**row** sources in this package, and a Visio bus sink pops the same pairs. This
+package sits directly on top of them and turns rows into **elements** — decoded,
+unbundled, clock-normalized values that share one interface:
 
-    rows       (Message, Channel)          read_mcap / read_serial
-    elements   Frame | ImuSample | Record  Session.stream  ← here
+    rows       (Message, Channel)          read_mcap / read_serial / a bus sink
+    elements   Frame | ImuSample | Record  Session.stream, elements  ← here
 
 That is a real transformation, not a rename. A `Frame` carries a decoded array
 rather than an H.265 access unit; one `ImuRaw` bundle expands to ~200
-`ImuSample`s, each on its own clock; the device topic prefix is stripped; and
-every element exposes ``topic`` and ``t_ns`` so `sync` and `resample` can align
-them without knowing what they are.
+`ImuSample`s, each on its own clock; and every element exposes ``topic`` and
+``t_ns`` so `sync` can align them without knowing what they are.
+
+**Two entry points, one decoder.** `Session` owns a recording — indexed metadata,
+topic-filtered chunk reads, several files merged, the device topic prefix stripped.
+`elements` owns a row *stream* and does none of that, which is what a live loop
+needs; it is also how that loop replays its own recording, so live and offline
+produce the same elements and can be compared group for group.
 
 **The clock.** ``Element.t_ns`` IS the wire stamp — the heartbeat-synchronized
 ``Header.timestamp``, which the MCAP stores as ``log_time``. No sensor-latency or
@@ -71,7 +76,8 @@ from .domain import (
     make_T,
 )
 from .interp import blend, interpolator, slerp_xyzw
-from .ops import prefetch, sync
+from .ops import ResampleMode, prefetch, sync
+from .rows import cpu_video_decoders, elements, resolve_message_class
 from .session import Session, strip_device_topic_prefix
 
 __all__ = [
@@ -102,6 +108,7 @@ __all__ = [
     "NvHevcEncoder",
     "Pose",
     "Record",
+    "ResampleMode",
     "SampleMethod",
     "Sampled",
     "Session",
@@ -111,14 +118,17 @@ __all__ = [
     "TopicInfo",
     "blend",
     "build_adapter",
+    "cpu_video_decoders",
     "decodable_formats",
     "element_adapter",
+    "elements",
     "interpolator",
     "is_keyframe",
     "make_T",
     "make_rect_encoder",
     "prefetch",
     "registered_schemas",
+    "resolve_message_class",
     "slerp_xyzw",
     "strip_device_topic_prefix",
     "sync",

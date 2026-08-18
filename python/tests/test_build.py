@@ -28,6 +28,7 @@ def test_every_builder_round_trips_the_timestamp_exactly():
         build.pose_in_frame(T0, (0, 0, 0), (0, 0, 0, 1), frame_id="odom"),
         build.frame_transform(T0, parent_frame_id="a", child_frame_id="b",
                               translation_m=(0, 0, 0), rotation_xyzw=(0, 0, 0, 1)),
+        build.joint_states(T0, {"left": 0.0}),
     ]
     for msg in made:
         assert msg.timestamp.ToNanoseconds() == T0, type(msg).__name__
@@ -161,3 +162,61 @@ def test_camera_calibration_omits_absent_r_and_p_rather_than_zero_filling():
         R=np.eye(3), P=np.arange(12, dtype=float).reshape(3, 4)))
     assert list(full.R) == [1, 0, 0, 0, 1, 0, 0, 0, 1]
     assert list(full.P) == list(range(12))
+
+
+# ── joint states ───────────────────────────────────────────────────────── #
+
+def _read_back(msg):
+    """The message through the reader's own adapter — the round trip that matters."""
+    from visio_schema import Message, make_channel
+    from visio_schema.reader import elements
+
+    channel = make_channel("/gripper", build.JOINT_STATES, stream_id=16)
+    row = Message(stream_id=16, payload=msg.SerializeToString())
+    row.timestamp.FromNanoseconds(T0)
+    (el,) = list(elements([(row, channel)]))
+    return el
+
+
+def test_joint_states_round_trips_through_the_reader_adapter():
+    el = _read_back(build.joint_states(T0, {"left": 0.25, "right": 0.75}))
+    assert el.positions == {"left": 0.25, "right": 0.75}
+    assert el.velocities is None and el.efforts is None
+    assert el.t_ns == T0
+
+
+def test_joint_states_leaves_an_absent_field_unset_rather_than_zero():
+    """`position` is `optional double`, and the adapter uses `HasField` to tell a
+    closed gripper at 0.0 from a producer that published no width. A builder that
+    wrote a default would collapse the two on the channel a policy acts on."""
+    msg = build.joint_states(T0, {}, velocities={"wrist": 1.5})
+
+    (joint,) = msg.joints
+    assert joint.name == "wrist"
+    assert not joint.HasField("position")
+    assert joint.HasField("velocity")
+    assert _read_back(msg).positions == {}
+
+
+def test_joint_states_keeps_a_real_zero():
+    msg = build.joint_states(T0, {"left": 0.0})
+    assert msg.joints[0].HasField("position")
+    assert _read_back(msg).positions == {"left": 0.0}
+
+
+def test_joint_states_carries_velocity_and_effort_per_joint():
+    el = _read_back(build.joint_states(
+        T0, {"a": 1.0, "b": 2.0},
+        velocities={"a": 0.5}, efforts={"b": -3.0},
+    ))
+    assert el.positions == {"a": 1.0, "b": 2.0}
+    assert el.velocities == {"a": 0.5}
+    assert el.efforts == {"b": -3.0}
+
+
+def test_joint_states_joint_order_follows_positions_then_the_extras():
+    """Order is not semantic — the reader keys by name — but the bytes are stable."""
+    msg = build.joint_states(
+        T0, {"b": 1.0, "a": 2.0}, velocities={"a": 0.0, "z": 9.0}
+    )
+    assert [j.name for j in msg.joints] == ["b", "a", "z"]

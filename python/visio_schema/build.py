@@ -28,6 +28,8 @@ generated and gitignored — a hand-written module there would not survive
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import numpy as np
 from google.protobuf.message import Message as ProtoMessage
 
@@ -45,6 +47,9 @@ from visio_schema.reader.domain import (
     IMAGE_SCHEMA as COMPRESSED_IMAGE,
 )
 from visio_schema.reader.domain import (
+    JOINT_STATES_SCHEMA as JOINT_STATES,
+)
+from visio_schema.reader.domain import (
     POSE_SCHEMA as POSE_IN_FRAME,
 )
 from visio_schema.reader.domain import (
@@ -57,12 +62,14 @@ __all__ = [
     "COMPRESSED_IMAGE",
     "COMPRESSED_VIDEO",
     "FRAME_TRANSFORM",
+    "JOINT_STATES",
     "POSE_IN_FRAME",
     "RAW_IMAGE",
     "camera_calibration",
     "compressed_image",
     "compressed_video",
     "frame_transform",
+    "joint_states",
     "pose_in_frame",
     "raw_image_mono16",
 ]
@@ -191,6 +198,43 @@ def pose_in_frame(
     qx, qy, qz, qw = (float(v) for v in np.asarray(quat_xyzw, float).reshape(4))
     (msg.pose.orientation.x, msg.pose.orientation.y,
      msg.pose.orientation.z, msg.pose.orientation.w) = qx, qy, qz, qw
+    return msg
+
+
+def joint_states(
+    t_ns: int,
+    positions: Mapping[str, float],
+    *,
+    velocities: Mapping[str, float] | None = None,
+    efforts: Mapping[str, float] | None = None,
+) -> ProtoMessage:
+    """Named joint values as ``foxglove.JointStates`` — gripper widths, arm joints.
+
+    Mappings rather than parallel name/value lists, because the reader hands back
+    exactly that (`JointState.positions`) and a round trip should not have to
+    re-pair them.
+
+    **A field absent from its mapping is left unset on the wire, not written as
+    0.0.** `position`/`velocity`/`effort` are `optional double`, and
+    `_JointStateAdapter` uses `HasField` to tell "closed gripper at 0.0" from "the
+    producer published no width" — writing a default here would collapse the two on
+    exactly the channel a policy acts on. A joint that appears only in
+    ``velocities`` or ``efforts`` still gets its entry, carrying just what it has.
+
+    Joint ORDER is not semantic: the reader keys by name. It follows ``positions``,
+    then any velocity/effort-only joints, so the bytes are at least stable.
+    """
+    msg = _stamped(JOINT_STATES, t_ns)
+    for name in dict.fromkeys(
+        (*positions, *(velocities or ()), *(efforts or ()))
+    ):
+        joint = msg.joints.add()
+        joint.name = name
+        for field, values in (
+            ("position", positions), ("velocity", velocities), ("effort", efforts)
+        ):
+            if values is not None and name in values:
+                setattr(joint, field, float(values[name]))
     return msg
 
 

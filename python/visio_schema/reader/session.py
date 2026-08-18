@@ -49,7 +49,7 @@ from mcap.reader import make_reader
 
 from visio_schema import message_class
 
-from ._decode import KEYFRAME_FORMATS, HevcDecoder, is_keyframe
+from ._decode import KEYFRAME_FORMATS, is_keyframe
 from .adapters import AdapterContext, AdapterFactory, build_adapter
 from .domain import (
     CAM_CALIB_SCHEMA,
@@ -73,6 +73,7 @@ from .domain import (
     TopicInfo,
     make_T,
 )
+from .rows import _reorder, cpu_video_decoders, resolve_message_class
 
 FRAME_INFO_SUFFIX = "/frame_info"
 CAPTURE_METADATA = "visio.capture"
@@ -152,38 +153,6 @@ def strip_device_topic_prefix(topic: str, device: str | None) -> str | None:
 
 
 @cache
-def _dynamic_message_class(name: str, data: bytes) -> type:
-    """Build a message class from a schema's OWN embedded `FileDescriptorSet`.
-
-    What makes a sidecar self-describing actually pay off: a container that does
-    not ship the producing stage's generated module can still read its output.
-
-    The pool is PRIVATE and never `descriptor_pool.Default()`. Adding a file whose
-    name collides with an already-registered one raises out of the C++ pool and
-    then poisons every later decode in the process — a failure that surfaces
-    somewhere unrelated rather than at the file that caused it.
-    """
-    from google.protobuf import descriptor_pb2, descriptor_pool, message_factory
-
-    fds = descriptor_pb2.FileDescriptorSet.FromString(data)
-    pool = descriptor_pool.DescriptorPool()
-    return message_factory.GetMessages(list(fds.file), pool=pool)[name]
-
-
-def _resolve_message_class(schema) -> type:
-    """The generated class for `schema.name`, else one from its embedded bytes."""
-    try:
-        return message_class(schema.name)
-    except (KeyError, AttributeError):
-        pass
-    encoding = getattr(schema, "encoding", "")
-    if encoding != "protobuf":
-        raise ValueError(
-            f"cannot decode schema {schema.name!r}: encoding {encoding!r} is not "
-            f"protobuf. Only protobuf sidecars are readable.")
-    return _dynamic_message_class(schema.name, bytes(schema.data))
-
-
 def _detect_device(topics: Iterable[str]) -> str | None:
     """If every topic shares one ``/GILABS-XXXX/`` prefix, return that device."""
     devs = set()
@@ -199,7 +168,7 @@ def _detect_device(topics: Iterable[str]) -> str | None:
 class _FileIndex:
     """Cheap per-file index from the MCAP summary (no message scan)."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, require_index: bool = False) -> None:
         self.path = path
         self.chan: dict[int, tuple[str, str]] = {}  # id -> (topic, schema_name)
         self.counts: dict[int, int] = {}
@@ -213,11 +182,24 @@ class _FileIndex:
         with open(path, "rb") as f:
             summary = make_reader(f).get_summary()
         if summary is None:
+            if require_index:
+                # The caller wants METADATA ONLY, so the fallback below — a full
+                # pass over the file — is not a smaller cost than the thing it
+                # is standing in for. A preflight that scans a 3 GB recording to
+                # tell you it is damaged has already lost.
+                raise ValueError(
+                    f"{path}: no MCAP summary — the file is truncated or was "
+                    "written without an index"
+                )
             self._scan()
             return
         schemas = {sid: s.name for sid, s in summary.schemas.items()}
         self.schema_rec = {s.name: s for s in summary.schemas.values()}
         for cid, c in summary.channels.items():
+            # A channel whose schema_id the summary never defines keeps an empty
+            # name. Under `require_index` that is unambiguous — nothing else
+            # produces one — so a caller can report the broken reference rather
+            # than a schema mismatch against "".
             self.chan[cid] = (c.topic, schemas.get(c.schema_id, ""))
         if summary.statistics is not None:
             stats = summary.statistics
@@ -256,6 +238,7 @@ class Session:
         device: str | None = None,
         reorder_ns: Ns = 50_000_000,
         adapters: Mapping[str, AdapterFactory] | None = None,
+        require_index: bool = False,
     ) -> None:
         """Each positional argument is one **stream**; they share a timeline.
 
@@ -281,6 +264,14 @@ class Session:
         `reorder_ns` is a **floor, not the final window** — see `_seam_slack`.
         A chunk boundary can hand back time, and the window has to cover that or
         the stream is silently out of order for every reader, not just one.
+
+        `require_index` refuses a file with no summary section instead of
+        falling back to a full scan. For a metadata-only caller — a preflight
+        that exists to fail in milliseconds — the fallback costs more than the
+        work it stands in for, and an unindexed file is a fault worth naming
+        rather than working around. It also makes an empty `schema_name` from
+        `topics()` mean exactly one thing: a channel referencing a schema the
+        summary does not define.
         """
         groups = [
             _expand_sources([s] if isinstance(s, str | Path) else s)
@@ -294,7 +285,7 @@ class Session:
         for sid, g in enumerate(groups):
             flat.extend(g)
             owner.extend([sid] * len(g))
-        index = [_FileIndex(p) for p in flat]
+        index = [_FileIndex(p, require_index=require_index) for p in flat]
         # Globally ordered by first-message timestamp: `topics`, calibration and
         # metadata read the flat list and want the recording's own order.
         order = sorted(range(len(flat)), key=lambda i: index[i].start_ns or 0)
@@ -854,7 +845,11 @@ class Session:
             # a sidecar carrying a type this process never imported still reads.
             if name in _NATIVE_SCHEMAS:
                 return message_class(name)
-            return _resolve_message_class(idx.schema_rec[name])
+            rec = idx.schema_rec[name]
+            return resolve_message_class(
+                name, encoding=rec.encoding, descriptor_set=rec.data,
+                where=str(idx.path),
+            )
 
         ctx = AdapterContext(make_decoders=make_decoders, message_class_for=class_for)
         over = self._adapters
@@ -1164,26 +1159,9 @@ class Session:
         if gpu:
             return self._gpu_video_decoders
         pixel_format = "gray" if gray else "rgb24"
-        return lambda proto: self._cpu_video_decoders(proto, pixel_format)
-
-    def _cpu_video_decoders(self, video, pixel_format: str):
-        """Per-camera PyAV decoders: 1-in-1-out, stamped with the current AU's t."""
-        decoders: dict[str, HevcDecoder] = {}
-
-        def emit(canon: str, t: Ns) -> Iterator[tuple[Ns, Ns, Element]]:
-            dec = decoders.get(canon)
-            if dec is None:
-                dec = decoders[canon] = HevcDecoder(video.format, pixel_format)
-            img = dec.decode(video.data)
-            if img is not None:
-                yield t, t, Frame(canon, t, img, video.frame_id,
-                                  exposure=self._exposure_at(canon, t))
-
-        def flush() -> Iterator[tuple[Ns, Ns, Element]]:
-            return
-            yield  # pragma: no cover — CPU path holds no in-flight frames
-
-        return emit, flush
+        return lambda proto: cpu_video_decoders(
+            proto, pixel_format, self._exposure_at
+        )
 
     def _gpu_video_decoders(self, video):
         """Per-camera NVDEC decoders: device RGB frames self-timestamped by PTS."""
@@ -1435,31 +1413,3 @@ def _parse_frame_info(m) -> FrameExposure:
     )
 
 
-def _reorder(
-    items: Iterable[tuple[Ns, Ns, Element]], reorder_ns: Ns
-) -> Iterator[Element]:
-    """Release elements in ``t_ns`` order once safe (bounded watermark heap).
-
-    Each item is ``(t_ns, arrival_ns, element)``. The watermark follows the
-    **arrival** (message log_time), which is monotonic, NOT the element ``t_ns``:
-    a single IMU bundle expands to samples whose ``t_ns`` reaches ~1 s past its
-    arrival, but no *future* message can produce a ``t_ns`` below its own arrival,
-    so an element is safe to release once the arrival watermark has passed its
-    ``t_ns`` by ``reorder_ns`` (the slack covers chunk-seam arrival overlap).
-    Bounded: at most ~one IMU-bundle span of samples (+ a couple of frames) buffered.
-
-    The invariant is unconditional because ``t_ns`` is never shifted off the wire
-    clock (see the module docstring).
-    """
-    heap: list[tuple[Ns, int, Element]] = []
-    seq = 0
-    watermark: Ns = 0
-    for t_ns, arrival, el in items:
-        watermark = max(watermark, arrival)
-        heapq.heappush(heap, (t_ns, seq, el))
-        seq += 1
-        cutoff = watermark - reorder_ns
-        while heap and heap[0][0] <= cutoff:
-            yield heapq.heappop(heap)[2]
-    while heap:  # drain the tail in order
-        yield heapq.heappop(heap)[2]

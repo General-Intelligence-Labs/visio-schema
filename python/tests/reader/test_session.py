@@ -279,3 +279,56 @@ def test_a_clip_starting_at_the_epoch_keeps_its_bounds(rec):
     meta = Session(path).metadata
     assert meta.start_ns == 0
     assert meta.duration_ns == 3 * FRAME_DT
+
+
+# ---- require_index ----------------------------------------------------- #
+
+
+def _unindexed(path):
+    """A VALID mcap with no summary section — what a writer that never closed
+    cleanly leaves behind. Truncating a good file does NOT produce this; it
+    produces a corrupt record, which the reader rejects earlier and for a
+    different reason."""
+    from mcap.writer import IndexType, Writer
+
+    with open(path, "wb") as f:
+        w = Writer(
+            f,
+            index_types=IndexType.NONE,
+            repeat_schemas=False,
+            repeat_channels=False,
+            use_statistics=False,
+            use_summary_offsets=False,
+        )
+        w.start()
+        sid = w.register_schema(
+            name="foxglove.PoseInFrame", encoding="protobuf", data=b""
+        )
+        cid = w.register_channel(
+            topic="/pose/x", message_encoding="protobuf", schema_id=sid
+        )
+        w.add_message(channel_id=cid, log_time=1, data=b"", publish_time=1)
+        w.finish()
+    return path
+
+
+def test_require_index_refuses_a_file_with_no_summary(tmp_path):
+    """A metadata-only caller must not pay for a full scan to learn the file is
+    unindexed — the fallback costs more than the work it replaces."""
+    with pytest.raises(ValueError, match="no MCAP summary"):
+        Session(_unindexed(tmp_path / "nosum.mcap"), require_index=True)
+
+
+def test_a_summaryless_file_still_reads_without_require_index(tmp_path):
+    """The reading path keeps its fallback: a recording is worth recovering
+    even when its index is gone."""
+    session = Session(_unindexed(tmp_path / "nosum.mcap"))
+    assert [t.topic for t in session.topics()] == ["/pose/x"]
+
+
+def test_require_index_leaves_a_healthy_recording_alone(tmp_path):
+    b = RecBuilder(tmp_path / "rec.mcap")
+    b.add_camera("/cam/0", indexed_frames(4))
+    assert [
+        t.topic for t in Session(b.write(), require_index=True).topics()
+    ] == ["/cam/0"]

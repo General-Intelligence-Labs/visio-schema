@@ -44,19 +44,42 @@ unchanged.
 
 ### Added `visio_schema.build` — foxglove message builders
 
-`pose_in_frame` · `compressed_video` · `compressed_image` · `raw_image_mono16` ·
-`camera_calibration` · `frame_transform`. Values in, protobuf message out, so the
-same builder serves an MCAP write and a live bus send. Lives at the package root
-because `visio_schema/foxglove/` is generated and gitignored.
+`pose_in_frame` · `joint_states` · `compressed_video` · `compressed_image` ·
+`raw_image_mono16` · `camera_calibration` · `frame_transform`. Values in, protobuf
+message out, so the same builder serves an MCAP write and a live bus send. Lives at
+the package root because `visio_schema/foxglove/` is generated and gitignored.
 
-### `av` is now pinned exactly (`av==12.3.0`), not floored
+`joint_states` mirrors `_JointStateAdapter`: `position` / `velocity` / `effort` are
+`optional double`, so a name absent from its mapping is left **unset** rather than
+written as 0.0 — otherwise "closed gripper at 0.0" and "the producer published no
+width" collapse into each other on exactly the channel a policy acts on.
 
-**Behaviour-affecting.** A different PyAV decodes a different H.265 frame set:
-measured on a real ego session, 12.3.0 vs 17.0.0 give identical element counts,
-identical topics and an identical undecoded pass, but different pixels in every
-decode mode. Anything comparing two runs is void if they used different PyAVs.
-The decoder also warns at runtime when the installed version differs, and
-`tests/reader/test_av_pin.py` keeps that constant in step with this pin.
+### Added `reader.elements(rows)` — the row pipeline, off any source
+
+`Session` owns a *recording*: indexed metadata, topic-filtered chunk reads, several
+files merged, the device prefix stripped. `elements` owns a row *stream* and does
+none of that, which is what a live consumer can actually offer it:
+
+    elements(read_mcap(path))     # replay
+    elements(bus_rows(bus, sink)) # live, off a Visio bus sink
+
+Both go through the same adapter table, message-class resolution, CPU decoder binder
+and reorder heap — now shared rather than private to `Session` — so a live loop and a
+replay of that loop's own recording produce the same elements and can be compared
+group for group. `reorder_ns` is the lateness budget: for a file it covers chunk-seam
+arrival overlap, for a bus it is the spread in cross-topic delivery jitter. A late
+element is still yielded, out of order, never dropped.
+
+### `av` is now a measured RANGE (`av>=14.2,<17`), not a floor
+
+**Behaviour-affecting.** A different PyAV decodes a different H.265 frame set, so
+the bound is measured rather than guessed: over 300 real ego access units, 12.3.0,
+13.1.0, 14.x, 15.x and 16.x all decode to the *same* bytes and 17.0.0 / 18.0.0
+differ — and since 16.1.0 and 17.0.0 share libavcodec 62.11.100, that is a PyAV
+change, not an FFmpeg one. The floor is separate: `av.codec.hwaccel`, the display
+transcoder's GPU probe, first exists at 14.2. Anything comparing two runs is void
+if they crossed the upper bound. `tests/reader/test_av_pin.py` keeps the constant
+in step with the pin.
 
 New extras: `[reader]` (scipy, for the one lazy import in the extrinsics parse)
 and `[gpu]` (cupy + PyNvVideoCodec for NVDEC). `numpy` becomes a base dependency.

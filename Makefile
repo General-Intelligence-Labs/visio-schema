@@ -39,7 +39,7 @@ NANOPB_OPTIONS := proto/nanopb.options
 NANOPB_WKT_INC := third_party/nanopb/generator/proto
 FOXGLOVE_PROTO := third_party/foxglove-sdk/schemas/proto
 
-.PHONY: lint breaking gen test pytest cpp wheel sdist dist clean help
+.PHONY: lint breaking gen test pytest tools-test cpp wheel sdist dist clean help
 
 help:
 	@echo "make lint      - lint protos"
@@ -47,6 +47,7 @@ help:
 	@echo "make gen       - lint, then regenerate python/visio_schema + cpp/generated_nanopb bindings"
 	@echo "make test      - import every generated Python module (codegen sanity)"
 	@echo "make pytest    - run the Python codec tests (python/tests)"
+	@echo "make tools-test - run the standalone tools' tests (tools/)"
 	@echo "make cpp       - build + run the C++ codec tests (cpp/)"
 	@echo "make wheel     - build the combined visio-schema wheel (gen + codec)"
 	@echo "make sdist     - build the source distribution (sdist)"
@@ -154,6 +155,12 @@ test: gen
 # generated bindings and the hand-written codec, so no path shim is needed.
 pytest: gen
 	cd python && $(PYTHON) -m pytest tests -q
+
+# The tools/ scripts are deliberately standalone — stdlib only, no visio_schema
+# import, no generated bindings — so their tests need no `gen` and are not part
+# of the wheel's suite. Runnable on a bare checkout.
+tools-test:
+	$(PYTHON) -m pytest tools -q
 
 # C++ codec tests. nanopb-only — no libprotobuf/abseil install needed.
 cpp: gen

@@ -14,14 +14,14 @@ default descriptor pool can resolve any payload type by name.
 """
 from __future__ import annotations
 
-from functools import lru_cache
+from functools import cache
 from importlib import import_module
 
 from google.protobuf import descriptor_pb2, symbol_database
 from google.protobuf.descriptor import FileDescriptor
 from google.protobuf.message import Message as _ProtoMessage
 
-__all__ = ["message_class", "file_descriptor_set"]
+__all__ = ["file_descriptor_set", "message_class"]
 
 # Generated payload modules. Importing them registers their descriptors in the
 # default pool so message_class() / file_descriptor_set() can resolve any
@@ -98,7 +98,7 @@ def message_class(proto_type: str) -> type[_ProtoMessage]:
     return symbol_database.Default().GetSymbol(proto_type)
 
 
-@lru_cache(maxsize=None)
+@cache
 def file_descriptor_set(proto_type: str) -> bytes:
     """Serialized ``FileDescriptorSet`` for a type and its transitive dependencies.
 

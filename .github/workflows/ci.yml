@@ -65,4 +65,8 @@ jobs:
       - name: pytest (pure-python fallback)
         run: cd python && VISIO_NO_NATIVE=1 python -m pytest tests -q
 
+      # The tools/ scripts are stdlib-only and import nothing from the package,
+      # so this runs on the bare checkout and is not covered by `make pytest`.
+      - run: make tools-test
+
       - run: make cpp

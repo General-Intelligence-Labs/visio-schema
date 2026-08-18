@@ -97,6 +97,10 @@ from visio_schema import (
     make_channel,
     read_mcap,
 )
+
+# Reconnect-tolerant registry for the relay-multiplex consumer (TCP :50002 viewer
+# + foxglove bridge). A viewer-side policy, so it lives here in display/.
+from visio_schema.display.relay_registry import RelayRegistry
 from visio_schema.foxglove.CompressedImage_pb2 import CompressedImage
 from visio_schema.foxglove.CompressedVideo_pb2 import CompressedVideo
 from visio_schema.foxglove.FrameTransform_pb2 import FrameTransform
@@ -110,10 +114,6 @@ from visio_schema.v1.sensor.system_health_pb2 import SystemHealth
 # Control stream id for DeviceInfo announces — so this tool can surface them on
 # the well-known /device_info channel (see _resolved_with_device_info).
 from visio_schema.wire.control import DEVICE_INFO as _DEVICE_INFO
-
-# Reconnect-tolerant registry for the relay-multiplex consumer (TCP :50002 viewer
-# + foxglove bridge). A viewer-side policy, so it lives here in display/.
-from visio_schema.display.relay_registry import RelayRegistry
 
 # Payload schema names dispatched on (== the protobuf full names on the wire).
 _QUAT_SCHEMA = "visio_schema.v1.ros.geometry_msgs.Quaternion"
@@ -1056,8 +1056,7 @@ def run_bridge(
     if derive_scene:
         # Device-specific scene twins live in display (viewer policy), lazily
         # imported so the base bridge carries no hard dep on them.
-        from visio_schema.display.scene_derivers import (
-            HandSkeletonDeriver, TactileSceneDeriver)
+        from visio_schema.display.scene_derivers import HandSkeletonDeriver, TactileSceneDeriver
         scene = [TactileSceneDeriver(), HandSkeletonDeriver()]
     n = 0
 

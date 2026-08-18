@@ -139,7 +139,11 @@ name = "reader layers depend downward only"
 type = "layers"
 layers = [
     "visio_schema.reader.ops",
+    # `session` reads a recording THROUGH the shared row pipeline, never the other
+    # way round: `rows` must stay usable with no file, index or device behind it,
+    # because that is the whole of what a live source can offer it.
     "visio_schema.reader.session",
+    "visio_schema.reader.rows",
     "visio_schema.reader.adapters",
     # Blending elements is below the ops that schedule it and beside the adapters
     # that build them: `interp` must not reach `session`, or "what is the value
