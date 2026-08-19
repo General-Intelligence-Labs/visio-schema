@@ -13,7 +13,15 @@ import time
 import types
 
 import pytest
-from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
+
+# The launcher serves the `--serve` web app over aiohttp, which ships in the
+# optional `display` extra. On a lean (codec-only) install skip the whole module
+# rather than erroring at collection. importorskip returns the module so the
+# imports below go through it.
+_aiohttp_test_utils = pytest.importorskip("aiohttp.test_utils")
+TestClient = _aiohttp_test_utils.TestClient
+TestServer = _aiohttp_test_utils.TestServer
+make_mocked_request = _aiohttp_test_utils.make_mocked_request
 
 
 def _vd():

@@ -31,8 +31,17 @@ jobs:
         run: make breaking BREAKING_REF=origin/${{ github.base_ref || 'main' }} BREAKING_STRICT=1
 
   tests:
-    name: python + c++ suites
+    # Two legs over the install surface: "" is the lean codec-only install that a
+    # wire-contract consumer gets; "[display]" adds the viewer/`--serve` extra. Only
+    # the `pip install` line differs — the pytest command is identical, and the
+    # `tests/display/` suite runs iff its deps are present (importorskip skips it on
+    # the lean leg), so the lean leg proves `pip install visio-schema` stays green.
+    name: python + c++ suites ${{ matrix.extra || '(base)' }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        extra: ["", "[display]"]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -51,10 +60,11 @@ jobs:
 
       # Editable install builds the native _creader. Without it HAVE_NATIVE is
       # False and the "native" and "fallback" runs below are the same code path —
-      # the shipped reader would get zero CI while looking covered.
+      # the shipped reader would get zero CI while looking covered. A broken/missing
+      # `[display]` extra fails loud here at pip install, not silently at collection.
       - name: Install package (builds native _creader)
         run: |
-          pip install -e python
+          pip install -e "python${{ matrix.extra }}"
           python -c "from visio_schema.transport import HAVE_NATIVE; assert HAVE_NATIVE, 'native _creader not built'"
 
       - run: make pytest

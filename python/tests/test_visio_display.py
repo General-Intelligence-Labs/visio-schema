@@ -338,6 +338,31 @@ def test_run_discards_message_count_and_exits_clean(monkeypatch) -> None:
     assert vd.run() is None  # not SystemExit(7), not the count
 
 
+def test_run_maps_missing_display_dep_to_install_hint(monkeypatch) -> None:
+    """The viewer deps moved to the optional `display` extra, so a lean
+    `pip install visio-schema` reaches `run` but has none of them. When a sink first
+    imports one, `run` maps the ModuleNotFoundError to the one-line
+    `pip install 'visio-schema[display]'` fix rather than leaking a raw traceback."""
+    vd = _vd()
+
+    def _missing_rerun(argv=None):
+        raise ModuleNotFoundError("No module named 'rerun'", name="rerun")
+
+    monkeypatch.setattr(vd, "main", _missing_rerun)
+    with pytest.raises(SystemExit) as ei:
+        vd.run()
+    assert "visio-schema[display]" in str(ei.value)  # actionable, not a traceback
+
+    # A missing module that is NOT a display-extra dep is a genuine error — it must
+    # propagate, not get swallowed behind the install hint.
+    def _missing_other(argv=None):
+        raise ModuleNotFoundError("No module named 'numpy'", name="numpy")
+
+    monkeypatch.setattr(vd, "main", _missing_other)
+    with pytest.raises(ModuleNotFoundError):
+        vd.run()
+
+
 def test_help_exits_zero() -> None:
     """The CLI parser is wired up: `--help` prints usage and exits 0."""
     vd = _vd()
