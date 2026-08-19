@@ -4,6 +4,91 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.8.0 — 2026-08-19
+
+### Added the `visio-seal-v1` sealed envelope + `visio-settings-qr`
+
+A settings QR is a printed artifact handled by field operators, and today it
+carries the OSS `secret_access_key` and the Wi-Fi passphrase in clear JSON —
+its own generator says to "treat the printed code like a written-down
+password". The operator is the adversary here: they hold the rig, the SD card
+and the printout. So the secrets now travel sealed.
+
+`visio_schema.crypto` is a new submodule implementing `visio-seal-v1`: X25519
++ HKDF-SHA256 + ChaCha20-Poly1305 in an ECIES-shaped construction, 56 bytes of
+overhead. A fleet owner seals to a PUBLIC key published in this wheel
+(`visio_schema/crypto/fleet_key.pem`); only a device carrying the private half
+baked into its firmware can open the result. RSA-2048-OAEP was rejected at 256
+B of overhead against a ~1800 B QR budget; RFC 9180 HPKE needs OpenSSL 3.2 and
+the target board is on 1.1.1h. Every primitive was verified present in that
+board's OpenSSL before the format was chosen.
+
+`visio-settings-qr` is a new console script — the QR generator, which lived in
+`visio-embedded/scripts/provision/` and now sits in the same repo as the
+payload spec it implements. It seals by DEFAULT; `--plaintext` still emits the
+legacy v1 form for firmware that predates sealing, and says what that costs.
+New subcommands `keygen` (mint a fleet recording key), `fleet-keygen` and
+`inspect` (read a code's cleartext half, no key required).
+
+### Added `Command.set_recording_key` (tag 39) + `sealed` on Set/TestStorage (tag 8)
+
+`SetRecordingKey` carries only an opaque envelope. The companion app relays
+those bytes verbatim and cannot read them — it holds no key, because any key
+shipped in an app bundle is extractable by the very operator being defended
+against.
+
+`SetStorage.sealed` and `TestStorage.sealed` carry the same envelope for the
+storage secret, on the commands that already own that secret rather than in a
+new god-command. Both, and equally: a credential the device will ACCEPT must
+also be one it can be asked to TEST, or "test before save" breaks for exactly
+the sealed flow. `secret_access_key` stays for v1 QRs and existing tooling.
+
+All three are capped `max_size:384` in `nanopb.options`, and `bytes` needs
+that cap for the same reason a `string` does — unsized, nanopb emits a
+`pb_callback_t` and the firmware's static decode path silently never receives
+the field. A C++ round-trip (`cpp/tests/test_control_nanopb.cc`) proves the
+field really is a static array and that an oversized one fails the WHOLE
+decode rather than truncating. The three fields share one oneof arm each, so
+the 384 B is paid once, and `sizeof(Command)` grows from ~660 B to 1048 B.
+
+The generator enforces that same bound before printing
+(`payload.SEALED_MAX_BYTES`, pinned equal to the nanopb caps by a test):
+repeated `--device` entries can push an envelope past 384 B, and since the
+whole-payload gate is 1800 B the code would otherwise scan perfectly and be
+silently discarded by every device.
+
+### Added `DeviceState.recording_key_fingerprint` (35), `recording_encryption_required` (36), `seal_key_id` (37)
+
+The fingerprint is 16 hex — SHA-256(key)[:8], deliberately the same 8 bytes
+the `VREC` recording container carries in its header, so an admin comparing
+"what my device reports" against "what opens this file" compares one string to
+itself. The key itself is never echoed, the same discretion
+`storage_access_key_id` already follows for a much lower-value secret.
+`seal_key_id` is the capability probe: empty means firmware that predates
+sealing, which lets a host tool warn before printing a code the target fleet
+could never open.
+
+### `qrcode` moved into a `qr` extra
+
+`visio-settings-qr` seals, validates, inspects and mints keys with no
+rasteriser — only the final `--out` render needs one. `pip install
+visio-schema[qr]` adds it; the `dev` extra pulls it too so CI covers the
+render path rather than only `--dry-run`. It was previously imported but
+declared in no dependency group at all.
+
+### `cryptography>=42` is now a core dependency
+
+Unlike the viewer deps that moved OUT to a `display` extra in 0.7.3, this one
+belongs in the base install: a sealed settings QR — and, next, an encrypted
+recording — are artifacts a plain `pip install visio-schema` consumer has to
+be able to open. It is ~4 MB, not ~600.
+
+Purely additive on the wire (`make breaking` clean); the pinned public API in
+`test_public_api.py` is untouched, since `visio_schema.crypto` and
+`visio_schema.settings_qr` are advanced/internal submodules under this repo's
+import model. MINOR rather than PATCH because `SetRecordingKey` is a new
+top-level message type.
+
 ## 0.7.3 — 2026-08-19
 
 ### Added `Command.set_notice_volume` (tag 38) + `DeviceState.notice_volume` (tag 34)

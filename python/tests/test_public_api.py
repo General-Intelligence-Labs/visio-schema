@@ -58,6 +58,7 @@ REQUIRED_COMMAND_BODIES = frozenset(
         "set_recording_destination",
         "set_recording_heartbeat",
         "set_notice_volume",
+        "set_recording_key",
     }
 )
 
@@ -199,6 +200,37 @@ def test_proto_command_schema_present():
     # muted instead of unsupported; pin it where the contract lives.
     nv = state.DESCRIPTOR.fields_by_name["notice_volume"]
     assert nv.has_presence and nv.number == 34
+
+    # ── sealed provisioning (0.8.0) ──
+    # Both consumers hardcode these numbers: visio-embedded through the nanopb
+    # C structs, visio-companion through protobuf-es `case:` strings. Renumber
+    # one and the app applies a setting the device never receives.
+    cmd = command_pb2.Command.DESCRIPTOR.fields_by_name
+    assert cmd["set_recording_key"].number == 39
+    assert cmd["set_recording_key"].message_type.name == "SetRecordingKey"
+
+    # `sealed` is bytes, not string: it carries a binary envelope, and a
+    # string field would mangle it through UTF-8 validation on some runtimes.
+    for message in (command_pb2.SetRecordingKey, command_pb2.SetStorage,
+                    command_pb2.TestStorage):
+        field = message.DESCRIPTOR.fields_by_name["sealed"]
+        assert field.type == field.TYPE_BYTES, message.DESCRIPTOR.name
+    assert command_pb2.SetRecordingKey.DESCRIPTOR.fields_by_name["sealed"].number == 1
+    # SetStorage and TestStorage must agree — a credential the device accepts
+    # must be one it can be asked to test.
+    assert command_pb2.SetStorage.DESCRIPTOR.fields_by_name["sealed"].number == 8
+    assert command_pb2.TestStorage.DESCRIPTOR.fields_by_name["sealed"].number == 8
+
+    st = state.DESCRIPTOR.fields_by_name
+    assert st["recording_key_fingerprint"].number == 35
+    assert st["recording_key_fingerprint"].type == st["recording_key_fingerprint"].TYPE_STRING
+    assert st["recording_encryption_required"].number == 36
+    assert st["recording_encryption_required"].type == st["recording_encryption_required"].TYPE_BOOL
+    assert st["seal_key_id"].number == 37
+    assert st["seal_key_id"].type == st["seal_key_id"].TYPE_STRING
+    # The key itself is never echoed — the same discretion
+    # storage_access_key_id follows, for a far higher-value secret.
+    assert "recording_key" not in st
 
 
 def test_proto_wire_and_device_info_present():

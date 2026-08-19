@@ -396,14 +396,22 @@ def test_pyproject_declares_console_script_and_display_extra() -> None:
     pyproject = _THIS.parent / "pyproject.toml"
     data = tomllib.loads(pyproject.read_text())
     assert data["project"]["scripts"]["visio-display"] == "visio_schema.display:run"
+    assert (data["project"]["scripts"]["visio-settings-qr"]
+            == "visio_schema.settings_qr:run")
 
     deps = " ".join(data["project"]["dependencies"])
     for pkg in ("protobuf", "cobs", "mcap", "pyserial", "foxglove-sdk"):
         assert pkg in deps, f"{pkg} should be a default (wire-contract) dependency"
 
     extras = data["project"].get("optional-dependencies", {})
-    assert set(extras) == {"display", "dev"}
+    assert set(extras) == {"display", "qr", "dev"}
     display = " ".join(extras["display"])
     for pkg in ("rerun-sdk", "av", "aiohttp", "zeroconf"):
         assert pkg in display, f"{pkg} should live in the display extra"
         assert pkg not in deps, f"{pkg} must NOT be a default dependency"
+    # `visio-settings-qr` seals, validates, inspects and mints keys with no
+    # rasteriser; only the final PNG render needs one.
+    assert "qrcode" in " ".join(extras["qr"])
+    assert "qrcode" not in deps, "qrcode must NOT be a default dependency"
+    assert "qrcode" in " ".join(extras["dev"]), (
+        "dev must pull qrcode so CI covers render_qr, not just --dry-run")

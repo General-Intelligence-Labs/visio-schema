@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "visio-schema"
-version = "0.7.3"
+version = "0.8.0"
 description = "Visio wire contract — generated protobuf bindings + the framing codec"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -43,6 +43,12 @@ dependencies = [
     "mcap>=1.1",
     "pyserial>=3.5",
     "foxglove-sdk>=0.10",
+    # Core, not an extra, unlike the viewer deps above: a sealed settings QR
+    # and (next) an encrypted recording are both things a plain
+    # `pip install visio-schema` consumer has to be able to open. A wheel
+    # that reads the contract but not the artifacts the contract describes
+    # would push every consumer to add the extra anyway. ~4 MB, not ~600.
+    "cryptography>=42",
 ]
 
 [project.optional-dependencies]
@@ -56,7 +62,14 @@ display = [
     "aiohttp>=3.9",     # `--serve` launcher web app
     "zeroconf>=0.130",  # `--serve` mDNS device discovery
 ]
+# Rendering a settings QR to PNG. Split out because `visio-settings-qr`
+# validates, seals, inspects and mints keys without it — only the final
+# `--out` render needs a rasteriser.
+qr = [
+    "qrcode[pil]>=7.4",
+]
 dev = [
+    "qrcode[pil]>=7.4",   # so CI covers the render path, not just --dry-run
     "pytest>=8.0",
     "mypy>=1.10",
     "ruff>=0.5",
@@ -67,6 +80,10 @@ dev = [
 [project.scripts]
 # `run` (not `main`) — see its docstring for why the console entry exits 0.
 visio-display = "visio_schema.display:run"
+# Mint the settings QR a fleet owner hands to operators. In-package (not
+# under tools/) precisely so `pip install visio-schema` is the whole setup
+# a customer needs to seal their own credentials.
+visio-settings-qr = "visio_schema.settings_qr:run"
 
 [project.urls]
 Homepage = "https://github.com/General-Intelligence-Labs/visio-schema"
