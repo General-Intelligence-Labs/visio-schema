@@ -57,7 +57,8 @@ class McapWriterEndpoint : public transport::Endpoint {
                      std::uint64_t max_bytes = 0, double max_duration_s = 0.0,
                      transport::WritePolicy policy = transport::WritePolicy::lossless(),
                      std::map<std::string, std::string> metadata = {},
-                     bool rotate_on_keyframe = false, std::int64_t pair_guard_ns = 0);
+                     bool rotate_on_keyframe = false, std::int64_t pair_guard_ns = 0,
+                     std::uint64_t sync_span_bytes = 0);  // see McapWriter
   ~McapWriterEndpoint() override;
 
   McapWriterEndpoint(const McapWriterEndpoint&) = delete;

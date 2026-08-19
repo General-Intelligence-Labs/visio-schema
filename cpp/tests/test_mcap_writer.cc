@@ -91,12 +91,20 @@ Message VideoMsg(std::uint32_t id, std::string payload, bool keyframe,
   return m;
 }
 
+std::string PartPath(const std::string& stem_no_ext, int part) {
+  char buf[8];
+  std::snprintf(buf, sizeof(buf), "_%04d", part);
+  return TempPath(stem_no_ext + buf + ".mcap");
+}
+
+std::string SlurpFile(const std::string& path) {
+  std::ifstream f(path, std::ios::binary);
+  return std::string((std::istreambuf_iterator<char>(f)),
+                     std::istreambuf_iterator<char>());
+}
+
 void RemoveParts(const std::string& stem_no_ext) {
-  for (int i = 0; i < 8; ++i) {
-    char buf[8];
-    std::snprintf(buf, sizeof(buf), "_%04d", i);
-    std::remove(TempPath(stem_no_ext + buf + ".mcap").c_str());
-  }
+  for (int i = 0; i < 8; ++i) std::remove(PartPath(stem_no_ext, i).c_str());
 }
 
 }  // namespace
@@ -114,6 +122,86 @@ TEST(McapWriter, WritesNonEmptyFile) {
   ASSERT_TRUE(fs::exists(path));
   EXPECT_GT(fs::file_size(path), 0u);
   std::remove(path.c_str());
+}
+
+TEST(McapWriter, SyncSpansNeverAlterTheBytes) {
+  // sync_span_bytes changes WHEN pages reach storage, never WHAT is
+  // written. Messages reach the file as ~768 KiB mcap chunk blobs, so
+  // ~3 MB of payload drives several SyncSpan() passes — including the
+  // wait-and-evict of the PREVIOUS span — and the output must stay
+  // byte-identical to the unsynced writer's.
+  const std::string plain = TempPath("visio_schema_mcap_nosync.mcap");
+  const std::string synced = TempPath("visio_schema_mcap_sync.mcap");
+  std::remove(plain.c_str());
+  std::remove(synced.c_str());
+  const Channel ch = MakeChannel(kFirstDynamic, "/dev/imu/0/raw");
+  const std::string payload(3000, 'p');
+  auto write_all = [&](McapWriter& w) {
+    for (int i = 0; i < 1024; ++i) w.Write(ch, Data(kFirstDynamic, payload));
+    w.Close();
+  };
+  {
+    McapWriter w(plain);
+    write_all(w);
+  }
+  {
+    // Byte-identity alone cannot tell a working sync from one that fails
+    // every call; the one-shot failure log can. Its absence is the
+    // liveness half of this pin (syscall effects themselves are verified
+    // on-device via /proc/meminfo Dirty during a recording).
+    testing::internal::CaptureStderr();
+    McapWriter w(synced, 0, 0.0, false, 0, /*sync_span_bytes=*/4096);
+    write_all(w);
+    const std::string logged = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(logged.find("SyncSpan failed"), std::string::npos) << logged;
+    EXPECT_EQ(logged.find("span writeback failed"), std::string::npos)
+        << logged;
+  }
+  const std::string ba = SlurpFile(plain);
+  const std::string bb = SlurpFile(synced);
+  EXPECT_GT(bb.size(), 2u * 1024u * 1024u);  // several spans actually ran
+  ASSERT_EQ(ba.size(), bb.size());
+  // Safety pin only: byte-identity holds whether or not the syscalls fire
+  // (their liveness is verified on-device via /proc/meminfo Dirty during a
+  // recording). Compare without gtest's multi-MB operand dump on failure.
+  const auto mis = std::mismatch(ba.begin(), ba.end(), bb.begin());
+  EXPECT_TRUE(mis.first == ba.end())
+      << "first mismatch at byte " << (mis.first - ba.begin());
+  std::remove(plain.c_str());
+  std::remove(synced.c_str());
+}
+
+TEST(McapWriter, SyncSpansSurviveRotationByteIdentical) {
+  // Every rotated part gets its own writable, so the span knob must reach
+  // part 1, 2, ... — not just part 0. Byte-identity per part pins that.
+  const std::string stem_a = "visio_schema_mcap_rot_nosync";
+  const std::string stem_b = "visio_schema_mcap_rot_sync";
+  RemoveParts(stem_a);
+  RemoveParts(stem_b);
+  const Channel ch = MakeChannel(kFirstDynamic, "/dev/imu/0/raw");
+  const std::string payload(3000, 'p');
+  auto write_all = [&](McapWriter& w) {
+    for (int i = 0; i < 1024; ++i) w.Write(ch, Data(kFirstDynamic, payload));
+    w.Close();
+  };
+  {
+    McapWriter w(TempPath(stem_a + ".mcap"), /*max_bytes=*/1024 * 1024);
+    write_all(w);
+  }
+  {
+    McapWriter w(TempPath(stem_b + ".mcap"), /*max_bytes=*/1024 * 1024, 0.0,
+                 false, 0, /*sync_span_bytes=*/4096);
+    write_all(w);
+  }
+  for (int part = 0; part < 3; ++part) {
+    const std::string pa = PartPath(stem_a, part);
+    const std::string pb = PartPath(stem_b, part);
+    ASSERT_TRUE(fs::exists(pa)) << pa;
+    ASSERT_TRUE(fs::exists(pb)) << pb;
+    EXPECT_TRUE(SlurpFile(pa) == SlurpFile(pb)) << "part " << part;
+  }
+  RemoveParts(stem_a);
+  RemoveParts(stem_b);
 }
 
 TEST(McapWriter, DestructorFinalizes) {
