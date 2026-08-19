@@ -30,24 +30,32 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
     "Typing :: Typed",
 ]
-# Everything the package needs at runtime, installed by default (no feature
-# extras): the wire codec + generated bindings, MCAP read/write, and the
-# `visio-display` viewer + `--serve` launcher deps. The heavy/serve-only libs
-# (rerun, av, aiohttp, zeroconf) are imported lazily, so they cost nothing until
-# the viewer or the launcher is actually run.
+# The wire contract itself — installed by default: the codec + generated
+# bindings, MCAP read/write, and the serial transport. Nothing here pulls a
+# viewer: the `visio-display` deps (rerun, av, aiohttp, zeroconf) live in the
+# `display` extra below, because they are imported lazily by `visio_schema.display`
+# alone and are ~600 MB (rerun-sdk + its pyarrow) that a wire-contract consumer —
+# a stage image, a training pipeline — never opens. `pip install visio-schema` is
+# the codec; `pip install visio-schema[display]` adds the viewer.
 dependencies = [
     "protobuf>=5.26",
     "cobs>=1.2",
     "mcap>=1.1",
     "pyserial>=3.5",
     "foxglove-sdk>=0.10",
+]
+
+[project.optional-dependencies]
+# The `visio-display` viewer + `--serve` launcher. Every entry is imported lazily
+# under `visio_schema/display/` only (rerun/av in `display/__init__`, aiohttp in
+# `serve.py`, zeroconf in `discovery.py`), so the base package imports and the
+# codec runs without any of them. Required to actually run `visio-display`.
+display = [
     "rerun-sdk>=0.24",
     "av>=11",
     "aiohttp>=3.9",     # `--serve` launcher web app
     "zeroconf>=0.130",  # `--serve` mDNS device discovery
 ]
-
-[project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "mypy>=1.10",

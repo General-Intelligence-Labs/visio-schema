@@ -46,11 +46,11 @@ Install from [PyPI](https://pypi.org/project/visio-schema/) with pip:
 pip install visio-schema
 ```
 
-This includes MCAP read/write (`read_mcap` / `McapWriter`), the `visio-display` CLI viewer (next
-section), and an optional native reader for higher throughput (prebuilt wheels for Linux
-`manylinux_2_28` x86_64 and macOS `universal2`, CPython 3.10–3.13; identical pure-Python fallback
-otherwise). For a development checkout building the bindings from source, see
-**[docs/install.md](docs/install.md)**.
+This includes MCAP read/write (`read_mcap` / `McapWriter`) and an optional native reader for higher
+throughput (prebuilt wheels for Linux `manylinux_2_28` x86_64 and macOS `universal2`, CPython
+3.10–3.13; identical pure-Python fallback otherwise). The `visio-display` CLI viewer (next section)
+needs its heavier deps, shipped in the `display` extra — `pip install 'visio-schema[display]'`. For a
+development checkout building the bindings from source, see **[docs/install.md](docs/install.md)**.
 
 ## CLI viewer — `visio-display`
 

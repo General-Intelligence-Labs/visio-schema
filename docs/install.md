@@ -13,7 +13,8 @@ first.
 | | Needed for |
 |---|---|
 | Python ≥ 3.10 | always |
-| `protobuf`, `cobs`, `mcap`, `pyserial`, `foxglove-sdk`, `rerun-sdk`, `av` | always (installed automatically) — the codec, MCAP read/write, and the `visio-display` viewer |
+| `protobuf`, `cobs`, `mcap`, `pyserial`, `foxglove-sdk` | always (installed automatically) — the wire codec + MCAP read/write |
+| `rerun-sdk`, `av`, `aiohttp`, `zeroconf` | only the **`display` extra** (`pip install visio-schema[display]`) — the `visio-display` viewer + `--serve` launcher; not pulled by a plain install |
 | A C/C++ compiler | only for the **optional** native reader; without one you get the pure-Python reader |
 | `git` + submodules, Node/`npm` | only for a **from-source** checkout (to run protobuf codegen) |
 
@@ -29,8 +30,16 @@ Install from [PyPI](https://pypi.org/project/visio-schema/) with pip:
 pip install visio-schema
 ```
 
-This includes the wire codec + generated bindings, MCAP read/write, and the `visio-display` viewer —
-no extras to choose. Prebuilt wheels bundle the optional native reader for Linux `manylinux_2_28`
+This includes the wire codec + generated bindings and MCAP read/write. The `visio-display` viewer
+is **not** pulled by default — its deps (rerun, av, aiohttp, zeroconf, ~600 MB) live in the `display`
+extra, so a wire-contract consumer never installs them:
+
+```bash
+pip install visio-schema           # the codec + MCAP, for pipelines/services
+pip install 'visio-schema[display]'  # + the visio-display viewer & --serve launcher
+```
+
+Prebuilt wheels bundle the optional native reader for Linux `manylinux_2_28`
 x86_64 and macOS `universal2`, CPython 3.10–3.13; anywhere else pip falls back to the sdist, which
 ships the generated bindings (no codegen toolchain required) and installs the pure-Python reader,
 additionally building the native reader for higher throughput when a C/C++ compiler is present.
