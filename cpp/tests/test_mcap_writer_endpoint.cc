@@ -108,6 +108,35 @@ TEST(McapWriterEndpoint, BoundedQueueShedsWhenOverBounded) {
   std::remove(path.c_str());
 }
 
+TEST(McapWriterEndpoint, StatsExposeDropsAndQueueWatermark) {
+  const std::string path = TempPath("visio_mcap_test_stats_drop.mcap");
+  std::remove(path.c_str());
+  std::unordered_map<std::uint32_t, Channel> table{
+      {kFirstDynamic, MakeChannel(kFirstDynamic, "/dev/imu/0/raw")}};
+  auto resolve = [&](std::uint32_t id) -> const Channel* {
+    auto it = table.find(id);
+    return it == table.end() ? nullptr : &it->second;
+  };
+  {
+    // Byte-bounded queue under a burst: stats() must mirror dropped_frames(),
+    // and the enqueue watermark can never exceed the policy's byte bound —
+    // that distance is the margin claim callers log, so it has to be honest.
+    McapWriterEndpoint ep(path, resolve, /*max_bytes=*/0, /*max_duration_s=*/0.0,
+                    visio_schema::transport::WritePolicy::stale_eviction(
+                        256, std::chrono::microseconds(0)));
+    ep.Start(nullptr, nullptr);
+    for (int i = 0; i < 100000; ++i)
+      ep.Send(Data(kFirstDynamic, "0123456789abcdef"));
+    const McapWriterStats st = ep.stats();
+    EXPECT_GT(st.dropped, 0u);
+    EXPECT_EQ(st.dropped, ep.dropped_frames());
+    EXPECT_GT(st.max_pending_bytes, 0u);
+    EXPECT_LE(st.max_pending_bytes, 256u);
+    ep.Stop();
+  }
+  std::remove(path.c_str());
+}
+
 TEST(McapWriterEndpoint, RecordsDeviceInfoViaWellKnownChannel) {
   // A DeviceInfo message resolves (via a real ChannelRegistry) to the well-known
   // /device_info channel and is recorded. No C++ MCAP reader exists, so this
