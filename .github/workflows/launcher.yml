@@ -70,7 +70,10 @@ jobs:
       - name: install package + pyinstaller
         run: |
           python -m pip install --upgrade pip
-          python -m pip install ./python pyinstaller
+          # `[display]` pulls the viewer/`--serve` deps (av, aiohttp, zeroconf) the
+          # spec bundles via collect_all; without it the frozen launcher would ship
+          # gutted. rerun is deliberately excluded in the spec, so it costs nothing.
+          python -m pip install "./python[display]" pyinstaller
       - name: build bundle
         run: pyinstaller packaging/visio-display.spec --noconfirm --distpath dist
       - name: smoke test

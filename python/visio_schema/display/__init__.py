@@ -1204,11 +1204,30 @@ def main(argv: list[str] | None = None) -> int:
     return n
 
 
+# The viewer/`--serve` deps, shipped in the `display` extra (see pyproject). Named
+# here only to turn their absence into a one-line fix rather than a raw traceback.
+_DISPLAY_EXTRA_MODULES = frozenset({"rerun", "av", "aiohttp", "zeroconf"})
+
+
 def run() -> None:
     """Console-script entry point (the ``visio-display`` command).
 
     Runs :func:`main` and exits 0 on a clean finish. :func:`main` returns the
     processed-message count for programmatic/test use, which is not a meaningful
     process exit code — so the installed command goes through this wrapper.
+
+    The viewer deps are lazily imported and live in the optional `display` extra,
+    so a plain `pip install visio-schema` reaches here and only fails when a sink
+    actually needs one — map that to the install line instead of a traceback.
     """
-    main()
+    try:
+        main()
+    except ModuleNotFoundError as e:
+        if (e.name or "").split(".")[0] not in _DISPLAY_EXTRA_MODULES:
+            raise
+        sys.exit(
+            f"visio-display needs the '{e.name}' package, which ships in the "
+            f"optional 'display' extra:\n"
+            f"    pip install 'visio-schema[display]'\n"
+            f"(the base install is the wire codec only — see docs/install.md)."
+        )

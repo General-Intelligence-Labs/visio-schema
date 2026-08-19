@@ -338,6 +338,31 @@ def test_run_discards_message_count_and_exits_clean(monkeypatch) -> None:
     assert vd.run() is None  # not SystemExit(7), not the count
 
 
+def test_run_maps_missing_display_dep_to_install_hint(monkeypatch) -> None:
+    """The viewer deps moved to the optional `display` extra, so a lean
+    `pip install visio-schema` reaches `run` but has none of them. When a sink first
+    imports one, `run` maps the ModuleNotFoundError to the one-line
+    `pip install 'visio-schema[display]'` fix rather than leaking a raw traceback."""
+    vd = _vd()
+
+    def _missing_rerun(argv=None):
+        raise ModuleNotFoundError("No module named 'rerun'", name="rerun")
+
+    monkeypatch.setattr(vd, "main", _missing_rerun)
+    with pytest.raises(SystemExit) as ei:
+        vd.run()
+    assert "visio-schema[display]" in str(ei.value)  # actionable, not a traceback
+
+    # A missing module that is NOT a display-extra dep is a genuine error — it must
+    # propagate, not get swallowed behind the install hint.
+    def _missing_other(argv=None):
+        raise ModuleNotFoundError("No module named 'numpy'", name="numpy")
+
+    monkeypatch.setattr(vd, "main", _missing_other)
+    with pytest.raises(ModuleNotFoundError):
+        vd.run()
+
+
 def test_help_exits_zero() -> None:
     """The CLI parser is wired up: `--help` prints usage and exits 0."""
     vd = _vd()
@@ -356,10 +381,11 @@ def test_layout_data_is_shipped() -> None:
     json.loads(vd._LAYOUT_PATH.read_text())  # parses as JSON
 
 
-def test_pyproject_declares_console_script_and_default_deps() -> None:
+def test_pyproject_declares_console_script_and_display_extra() -> None:
     """Guard the packaging contract: the `visio-display` console script stays
-    declared, and the viewer + MCAP deps ship as base dependencies (installed by
-    default) rather than behind feature extras."""
+    declared, the wire-contract deps install by default, and the viewer/`--serve`
+    deps ship in the `display` extra (NOT the base install) — they are imported
+    lazily by `visio_schema.display` alone, so a codec consumer never pulls them."""
     import sys
 
     if sys.version_info >= (3, 11):
@@ -370,9 +396,14 @@ def test_pyproject_declares_console_script_and_default_deps() -> None:
     pyproject = _THIS.parent / "pyproject.toml"
     data = tomllib.loads(pyproject.read_text())
     assert data["project"]["scripts"]["visio-display"] == "visio_schema.display:run"
+
     deps = " ".join(data["project"]["dependencies"])
-    for pkg in ("mcap", "pyserial", "foxglove-sdk", "rerun-sdk", "av",
-                "aiohttp", "zeroconf"):
-        assert pkg in deps, f"{pkg} should be a default dependency"
-    # No feature-gating extras — they were folded into the default install.
-    assert set(data["project"].get("optional-dependencies", {})) == {"dev"}
+    for pkg in ("protobuf", "cobs", "mcap", "pyserial", "foxglove-sdk"):
+        assert pkg in deps, f"{pkg} should be a default (wire-contract) dependency"
+
+    extras = data["project"].get("optional-dependencies", {})
+    assert set(extras) == {"display", "dev"}
+    display = " ".join(extras["display"])
+    for pkg in ("rerun-sdk", "av", "aiohttp", "zeroconf"):
+        assert pkg in display, f"{pkg} should live in the display extra"
+        assert pkg not in deps, f"{pkg} must NOT be a default dependency"
