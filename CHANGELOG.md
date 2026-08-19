@@ -4,7 +4,7 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
-## 0.7.3 — 2026-08-06
+## 0.7.3 — 2026-08-19
 
 ### Added `Command.set_notice_volume` (tag 38) + `DeviceState.notice_volume` (tag 34)
 
