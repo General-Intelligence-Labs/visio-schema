@@ -226,6 +226,23 @@ message DeviceState {
   }
   RecordingHeartbeat recording_heartbeat = 33;
 
+  // ── hand detection ──
+  // Whether the NPU hand detector runs (SetHandDetection): the preview's hand
+  // boxes and the spoken out-of-view notices.
+  //
+  // Tri-state for the same reason as AudioRecording above: UNSUPPORTED covers
+  // both "this board's config stages no detector model" and "this firmware
+  // predates the toggle", and lets the app HIDE the control rather than render
+  // a switch it cannot actually move. ENABLED/DISABLED is the unit's stored
+  // choice, which the device applies within about a second of the command —
+  // so it also describes what the detector is doing.
+  enum HandDetection {
+    HAND_DETECTION_UNSUPPORTED = 0;
+    HAND_DETECTION_ENABLED     = 1;
+    HAND_DETECTION_DISABLED    = 2;
+  }
+  HandDetection hand_detection = 38;
+
   // ── notice volume ──
   // Voice-notice loudness, 0-100 (SetNoticeVolume; 0 = muted).
   //

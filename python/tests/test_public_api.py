@@ -59,6 +59,7 @@ REQUIRED_COMMAND_BODIES = frozenset(
         "set_recording_heartbeat",
         "set_notice_volume",
         "set_recording_key",
+        "set_hand_detection",
     }
 )
 
@@ -171,6 +172,10 @@ def test_proto_command_schema_present():
     assert body_to_type["set_recording_heartbeat"] == heartbeat.DESCRIPTOR.name
     assert command_pb2.Command.DESCRIPTOR.fields_by_name["set_recording_heartbeat"].number == 37
 
+    hands = command_pb2.SetHandDetection
+    assert body_to_type["set_hand_detection"] == hands.DESCRIPTOR.name
+    assert command_pb2.Command.DESCRIPTOR.fields_by_name["set_hand_detection"].number == 40
+
     volume = command_pb2.SetNoticeVolume
     assert body_to_type["set_notice_volume"] == volume.DESCRIPTOR.name
     assert command_pb2.Command.DESCRIPTOR.fields_by_name["set_notice_volume"].number == 38
@@ -192,6 +197,13 @@ def test_proto_command_schema_present():
     assert state.RECORDING_HEARTBEAT_ENABLED == 1
     assert state.RECORDING_HEARTBEAT_DISABLED == 2
     assert state.DESCRIPTOR.fields_by_name["recording_heartbeat"].number == 33
+
+    # 38 is DeviceState.hand_detection AND Command.set_notice_volume — two
+    # different messages, one transposition away from each other.
+    assert state.HAND_DETECTION_UNSUPPORTED == 0
+    assert state.HAND_DETECTION_ENABLED == 1
+    assert state.HAND_DETECTION_DISABLED == 2
+    assert state.DESCRIPTOR.fields_by_name["hand_detection"].number == 38
 
     # notice_volume carries explicit presence: absence means "no speaker or
     # pre-volume firmware" and hides the app control, which a plain uint32

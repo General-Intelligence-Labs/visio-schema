@@ -58,6 +58,7 @@ message Command {
     SetRecordingHeartbeat set_recording_heartbeat = 37;
     SetNoticeVolume set_notice_volume = 38;
     SetRecordingKey set_recording_key = 39;
+    SetHandDetection set_hand_detection = 40;
   }
 }
 
@@ -272,6 +273,30 @@ message SetAutoUpload {
 // this command, and such firmware records audio unconditionally — so a device
 // downgraded while disabled resumes recording audio until re-upgraded.
 message SetAudioRecording {
+  bool enabled = 1;
+}
+
+// Enable/disable the on-device NPU hand detector (the boxes the app overlays on
+// the preview, and the spoken "hand out of view" notices that ride on it).
+//
+// Persisted to a device-side sidecar and applied LIVE, within about a second —
+// no reboot. A capable device always carries the detector's camera tap; the
+// switch starts and stops the NPU context behind it, so switched OFF the
+// detector holds no model, no memory and no thread, and the tap costs the
+// capture pipeline a single atomic read per frame.
+//
+// Default is DISABLED: running it costs NPU memory bandwidth and a block of
+// contiguous memory the camera pipeline would otherwise have, so it is opt-in
+// per unit rather than a property of the image.
+//
+// Only boards whose config stages a detector model accept this; every other
+// device rejects it, which is EXPECTED. The current value is reported in
+// DeviceState.hand_detection, which also tells the app whether to offer the
+// control at all.
+//
+// ALWAYS address this to a specific device: an empty Command.target_device is
+// a broadcast, which on a suit would flip every detector-capable board at once.
+message SetHandDetection {
   bool enabled = 1;
 }
 

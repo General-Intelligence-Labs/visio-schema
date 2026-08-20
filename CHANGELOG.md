@@ -6,6 +6,18 @@ bump the MINOR version.
 
 ## Unreleased
 
+### SetHandDetection — the NPU hand detector becomes a per-unit switch
+
+`Command.set_hand_detection` (tag 40) and `DeviceState.hand_detection`
+(field 38, the usual UNSUPPORTED/ENABLED/DISABLED tri-state) let a host turn
+the device's hand detector — the preview's hand boxes and the spoken
+out-of-view notices — on and off per unit, persisted device-side and applied
+live. It is OFF unless asked for: running it costs NPU memory bandwidth and a
+block of contiguous memory the camera pipeline would otherwise have.
+UNSUPPORTED covers both "this image stages no detector model" and "firmware
+predating the command", so a host hides the control rather than rendering one
+it cannot move.
+
 ### FramedFdEndpoint: keyframes-only congestion tier
 
 A congestion tier between healthy and stalled (internal transport surface, no
