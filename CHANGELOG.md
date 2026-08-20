@@ -6,6 +6,41 @@ bump the MINOR version.
 
 ## Unreleased
 
+### Storage providers: Google Cloud Storage and Azure Blob
+
+`docs/protocol/storage-providers.md` — the canonical `SetStorage` contract —
+gains two clouds, and the settings-QR generator gains their endpoint rows. No
+wire change: both are carried by the five fields that already exist, dispatched
+by the same endpoint host-suffix rule (`storage.googleapis.com` → `GoogleGcs`,
+`.blob.core.windows.net` → `AzureBlob`).
+
+GCS is the AWS row with a different overwrite guard
+(`x-goog-if-generation-match: 0`, since it does not honour `If-None-Match: *`)
+and no region in its host, so the operator's `region` field stands alone —
+`auto` is the value to type. Azure shares neither axis of the signature ×
+addressing table and is specified separately in §3.1: `SharedKey` rather than a
+SigV4 flavor, an account-prefixed canonicalized resource, a signed
+`Content-Length`, and an `<EnumerationResults>` list document that a parser
+looking for `<Contents><Key>` reads as an empty bucket rather than an error.
+
+The generator's provider table becomes typed (`Provider`, `RegionSource`) so
+a row can say which of three things its region is: encoded in the host, typed
+by the operator, or not signed at all. Two states could not tell the last two
+apart, and the interactive prompt is where that showed — it asked every cloud
+for a "region (e.g. cn-hangzhou)" and substituted the answer into the host, so
+choosing Azure and answering `eastus` produced a clean-validating QR for
+`https://eastus.blob.core.windows.net`, a host that does not exist. Each row
+now names the thing its host actually carries (Azure asks for a storage
+account; GCS, having one fixed endpoint, is asked nothing and defaults its
+region to `auto`), and `validate()` no longer demands a region for the one
+cloud that signs none. `settings_qr.payload` is an internal surface, not part
+of the pinned facade.
+
+Two gaps are stated rather than hidden. An Azure account key is 88 base64
+characters against a 63-byte `SetStorage.secret_access_key`, so it MUST ride
+the sealed envelope until that cap is raised; and the fleet-status dashboard
+still serves Aliyun OSS and AWS S3 only.
+
 ### SetHandDetection — the NPU hand detector becomes a per-unit switch
 
 `Command.set_hand_detection` (tag 40) and `DeviceState.hand_detection`

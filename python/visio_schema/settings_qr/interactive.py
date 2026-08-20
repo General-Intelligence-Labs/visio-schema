@@ -13,11 +13,14 @@ import sys
 from .payload import (
     BITRATE_KBPS,
     DEFAULT_STORAGE_PREFIX,
-    ENDPOINT_TEMPLATES,
     META_FIELDS,
     PAYLOAD_TYPE,
     PLAINTEXT_VERSION,
+    PROVIDERS,
     RESOLUTION_PX,
+    Provider,
+    RegionSource,
+    region_from_endpoint,
 )
 
 __all__ = ["interactive"]
@@ -48,6 +51,25 @@ def _ask_int(prompt: str, default: str, lo: int, hi: int) -> int:
         print(f"  out of range ({lo}-{hi}): {val}", file=sys.stderr)
 
 
+def _ask_endpoint_and_region(provider: Provider) -> tuple[str, str]:
+    """Ask for the one thing this cloud's HOST names, then its region.
+
+    The two are asked separately because they are not always the same
+    answer: an OSS/COS/S3 host encodes its region, so the single value serves
+    both; GCS's host encodes none, so the region is its own question; and
+    Azure's host names a storage ACCOUNT while signing no region at all, so
+    asking for one would invite an operator to type a geography where the
+    account belongs and get a QR for a host that does not exist.
+    """
+    host_value = _ask(provider.host_prompt) if provider.host_prompt else ""
+    endpoint = provider.endpoint_for(host_value)
+    if provider.region_source is RegionSource.FROM_HOST:
+        return endpoint, region_from_endpoint(endpoint)
+    if provider.region_source is RegionSource.OPERATOR:
+        return endpoint, _ask('region (bucket location, or "auto")', "auto")
+    return endpoint, ""
+
+
 def interactive() -> dict:
     """Prompt for each section; empty answers omit the field/section.
 
@@ -64,13 +86,13 @@ def interactive() -> dict:
         cfg["meta"] = {k: v for k, v in meta.items() if v}
 
     if _ask_yn("Configure cloud upload (OSS/S3)?"):
-        providers = [*ENDPOINT_TEMPLATES, "custom"]
+        providers = [*PROVIDERS, "custom"]
         choice = _ask(f"provider {providers}", providers[0])
-        region = _ask("region (e.g. cn-hangzhou)")
-        if choice in ENDPOINT_TEMPLATES:
-            endpoint = ENDPOINT_TEMPLATES[choice].format(region=region)
+        if choice in PROVIDERS:
+            endpoint, region = _ask_endpoint_and_region(PROVIDERS[choice])
         else:
             endpoint = _ask("endpoint_url (https://...)")
+            region = _ask("region (e.g. cn-hangzhou)")
         storage = {
             "endpoint_url": endpoint,
             "region": region,

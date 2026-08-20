@@ -31,9 +31,12 @@ from visio_schema.settings_qr import (
 from visio_schema.settings_qr.cli import main
 from visio_schema.settings_qr.interactive import interactive
 from visio_schema.settings_qr.payload import (
-    ENDPOINT_TEMPLATES,
+    PROVIDERS,
+    RegionSource,
     normalize_storage_prefix,
+    provider_from_endpoint,
     region_from_endpoint,
+    region_must_be_typed,
 )
 
 # The test fleet keypair from test_seal.py — never the shipped one.
@@ -330,18 +333,123 @@ class TestEndpointsAndRegions:
         ("https://s3.eu-west-1.amazonaws.com", "eu-west-1"),
         ("https://s3-eu-west-1.amazonaws.com", "eu-west-1"),
         ("https://s3.amazonaws.com", "us-east-1"),      # legacy global
+        # The two whose host names no region: GCS has one global endpoint,
+        # and Azure's leading label is the storage account.
+        ("https://storage.googleapis.com", ""),
+        ("https://myaccount.blob.core.windows.net", ""),
         ("https://minio.internal.example", ""),          # not derivable
         ("not-a-url", ""),
     ])
     def test_region_from_endpoint(self, endpoint: str, region: str) -> None:
         assert region_from_endpoint(endpoint) == region
 
-    def test_every_provider_template_yields_a_derivable_region(self) -> None:
+    @pytest.mark.parametrize("name", list(PROVIDERS))
+    def test_a_template_round_trips_a_region_iff_its_row_has_a_pattern(
+            self, name: str) -> None:
         """The round trip the operator relies on: pick a cloud, type a
-        region, and the generator must read that same region back."""
-        for template in ENDPOINT_TEMPLATES.values():
-            assert region_from_endpoint(
-                template.format(region="cn-hangzhou")) == "cn-hangzhou"
+        region, and the generator reads that same region back — but only for
+        the rows whose HOST carries one. A row's pattern is the declaration
+        of which it is, so a row cannot quietly claim a region it does not
+        carry, and no row's pattern may reach into another row's host.
+
+        It does NOT catch a row that grows a {region} host without a pattern
+        — for a patternless row both sides of this assertion are "" — and it
+        cannot, while Azure's {region} slot is an account name rather than a
+        geography. `test_the_five_documented_clouds_each_have_a_row` is what
+        keeps the table itself from shrinking.
+        """
+        provider = PROVIDERS[name]
+        endpoint = provider.endpoint_for("cn-hangzhou")
+        assert region_from_endpoint(endpoint) == (
+            "cn-hangzhou" if provider.region_pattern is not None else "")
+
+    @pytest.mark.parametrize("name", list(PROVIDERS))
+    def test_a_row_has_a_region_pattern_exactly_when_its_host_carries_one(
+            self, name: str) -> None:
+        """`region_source` and `region_pattern` are two fields describing one
+        fact, so they are pinned to agree: a FROM_HOST row without a pattern
+        would read its region back as '' and silently demand a typed one,
+        and a pattern on any other row would be dead code claiming a region
+        that host does not have.
+        """
+        provider = PROVIDERS[name]
+        assert (provider.region_pattern is not None) == (
+            provider.region_source is RegionSource.FROM_HOST)
+
+    @pytest.mark.parametrize("name", list(PROVIDERS))
+    def test_a_row_asks_for_its_slot_exactly_when_it_has_one(
+            self, name: str) -> None:
+        """A template that grows a substitution must grow the prompt that
+        fills it, or `endpoint_for` returns a URL with a literal `{...}` in
+        the host. The inverse too: GCS has one fixed endpoint, so asking the
+        operator anything about it would be a question with no answer.
+        """
+        provider = PROVIDERS[name]
+        assert ("{" in provider.endpoint_template) == (
+            provider.host_prompt is not None)
+
+    @pytest.mark.parametrize("endpoint,name", [
+        ("https://oss-cn-hangzhou.aliyuncs.com", "Aliyun OSS"),
+        ("https://cos.ap-guangzhou.myqcloud.com", "Tencent COS"),
+        ("https://s3.eu-west-1.amazonaws.com", "AWS S3"),
+        ("https://storage.googleapis.com", "Google Cloud Storage"),
+        ("https://myaccount.blob.core.windows.net", "Azure Blob"),
+        # Anything unrecognized is plain path-style S3, per §2.
+        ("https://minio.internal.example", "AWS S3"),
+        # NOT GCS: the virtual-hosted form is a different addressing mode,
+        # so it falls through rather than being signed as the global host.
+        ("https://mybucket.storage.googleapis.com", "AWS S3"),
+    ])
+    def test_provider_from_endpoint(self, endpoint: str, name: str) -> None:
+        assert provider_from_endpoint(endpoint) is PROVIDERS[name]
+
+    def test_a_string_that_is_not_a_url_names_no_provider(self) -> None:
+        """Distinct from the fallback: '' is not an endpoint at all, and the
+        caller must not sign it as if it were a private S3 host."""
+        assert provider_from_endpoint("not-a-url") is None
+
+    @pytest.mark.parametrize("endpoint,must_type", [
+        ("https://oss-cn-hangzhou.aliyuncs.com", False),  # host carries it
+        ("https://s3.amazonaws.com", False),              # legacy global
+        ("https://storage.googleapis.com", True),         # operator's field
+        ("https://myaccount.blob.core.windows.net", False),   # signs none
+        ("https://minio.internal.example", True),         # unrecognized
+    ])
+    def test_region_must_be_typed(self, endpoint: str,
+                                  must_type: bool) -> None:
+        """Two different reasons to answer False — the host already encodes a
+        region, or the cloud signs none — must not be conflated: Azure is the
+        only row where an operator who types nothing is finished.
+        """
+        assert region_must_be_typed(endpoint) is must_type
+
+    def test_the_five_documented_clouds_each_have_a_row(self) -> None:
+        """Literal names, because every other test here parametrizes OFF
+        PROVIDERS and so deletes its own case along with the row. This is
+        the table's floor: docs/protocol/storage-providers.md and three
+        sibling implementations claim five clouds, and a rebase that drops
+        one must not leave a green suite behind.
+        """
+        assert set(PROVIDERS) == {
+            "Aliyun OSS", "Tencent COS", "AWS S3",
+            "Google Cloud Storage", "Azure Blob",
+        }
+
+    def test_azure_needs_no_region_but_gcs_does(self, config) -> None:
+        """The spec says Azure signs no region, so demanding one would block
+        a QR on a field nothing reads. GCS is the opposite case with the same
+        empty host pattern: its region has no other source, so it is the one
+        cloud where a missing region must still be an error.
+        """
+        config["storage"]["endpoint_url"] = \
+            "https://gilabs.blob.core.windows.net"
+        config["storage"].pop("region", None)
+        assert validate(config) == []
+
+        config["storage"]["endpoint_url"] = "https://storage.googleapis.com"
+        assert any("region" in e for e in validate(config))
+        config["storage"]["region"] = "auto"
+        assert validate(config) == []
 
     def test_an_underivable_region_must_be_typed(self, config) -> None:
         config["storage"]["endpoint_url"] = "https://minio.internal.example"
@@ -537,10 +645,47 @@ class TestInteractive:
         err = capsys.readouterr().err
         assert "not a number" in err and "out of range" in err
 
+    def test_the_azure_row_asks_for_an_account_not_a_region(
+            self, monkeypatch) -> None:
+        """The bug this row's naming exists to prevent: asked for a "region",
+        an operator types a geography, and the QR points at
+        https://eastus.blob.core.windows.net — a host that does not exist,
+        and one that fails only against a live container.
+        """
+        self._script(monkeypatch, [
+            "n",
+            "y", "Azure Blob", "gilabscaptures", "recordings",
+            "gilabscaptures", "prefix/", "n",
+            "n", "n", "n",
+        ], [SECRET])
+        cfg = interactive()
+        assert validate(cfg) == []
+        assert cfg["storage"]["endpoint_url"] == \
+            "https://gilabscaptures.blob.core.windows.net"
+        # Azure signs no region, so none was asked for and none is carried.
+        assert "region" not in cfg["storage"]
+
+    def test_the_gcs_row_asks_no_endpoint_question_and_defaults_to_auto(
+            self, monkeypatch) -> None:
+        """GCS has one global endpoint, so there is nothing to ask about it —
+        but its region has no source other than this prompt.
+        """
+        self._script(monkeypatch, [
+            "n",
+            "y", "Google Cloud Storage", "", "gilabs-captures",
+            "GOOG1EEXAMPLE", "recordings/", "n",
+            "n", "n", "n",
+        ], [SECRET])
+        cfg = interactive()
+        assert validate(cfg) == []
+        assert cfg["storage"]["endpoint_url"] == \
+            "https://storage.googleapis.com"
+        assert cfg["storage"]["region"] == "auto"
+
     def test_a_custom_provider_asks_for_the_endpoint(self, monkeypatch) -> None:
         self._script(monkeypatch, [
             "n",
-            "y", "custom", "us-east-1", "https://minio.internal.example",
+            "y", "custom", "https://minio.internal.example", "us-east-1",
             "b", "AKID", "recordings/", "n",
             "n", "n", "n",
         ], [SECRET])

@@ -13,7 +13,7 @@ package, start with [`../usage.md`](../usage.md); read these when you implement 
 | [`timesync.md`](timesync.md) | The NTP-style clock-offset algorithm folded into the heartbeat beacon, the sliding-window RTT filter, and the receive-side timestamp rewrite. (To *use* it rather than implement it, see [`../timesync_client.md`](../timesync_client.md).) |
 | [`foxglove_compat.md`](foxglove_compat.md) | Which [Foxglove](https://foxglove.dev) schema types Visio adopts as-is, which it mirrors, and which it defines itself — and how MCAP schema names are chosen so Foxglove Studio resolves them. |
 | [`versioning.md`](versioning.md) | The semver policy (what bumps PATCH / MINOR / MAJOR), the per-package `vN` strategy, and the `buf` breaking-change checks. The Python public API surface is pinned separately (see [`../../AGENTS.md`](../../AGENTS.md)). |
-| [`storage-providers.md`](storage-providers.md) | The customer storage destination `SetStorage` names: how AWS S3 / Aliyun OSS / Tencent COS are told apart from the endpoint host, and what each one's signature, bucket addressing, overwrite guard and list version are. Also the shared list+put permission contract. |
+| [`storage-providers.md`](storage-providers.md) | The customer storage destination `SetStorage` names: how AWS S3 / Aliyun OSS / Tencent COS / Google Cloud Storage / Azure Blob are told apart from the endpoint host, and what each one's signature, bucket addressing, overwrite guard and list version are. Also the shared list+put permission contract. |
 
 The codec in `visio_schema.wire.codec` is the executable form of `framing.md`; the
 golden test vectors in `python/tests` and `cpp/tests` tie the implementations to these specs.

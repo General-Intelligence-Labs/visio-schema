@@ -24,8 +24,10 @@ newer apps.
 
 from __future__ import annotations
 
+import enum
 import json
 import re
+from typing import NamedTuple
 
 __all__ = [
     "BITRATE_KBPS",
@@ -41,9 +43,13 @@ __all__ = [
     "SEALED_MAX_BYTES",
     "SEALED_VERSION",
     "WARN_BYTES",
+    "Provider",
+    "RegionSource",
     "encode",
     "normalize_storage_prefix",
+    "provider_from_endpoint",
     "region_from_endpoint",
+    "region_must_be_typed",
     "validate",
 ]
 
@@ -102,34 +108,137 @@ SEALED_MAX_BYTES = 384
 
 DEFAULT_STORAGE_PREFIX = "recordings/"
 
-# The provider -> endpoint mapping. The app has its own in
+
+class RegionSource(enum.Enum):
+    """Where a destination's credential-scope region comes from.
+
+    Three states, because two cannot tell the difference between "the host
+    does not carry a region, so the operator must supply one" and "this
+    cloud does not sign a region at all" — and a generator that confuses
+    them either blocks an Azure QR on a field nothing reads, or prints a GCS
+    QR whose scope region was never asked for.
+    """
+
+    FROM_HOST = "from-host"     # the endpoint host encodes it
+    OPERATOR = "operator"       # the host does not; the operator types it
+    UNUSED = "unused"           # this cloud signs no region (Azure)
+
+
+class Provider(NamedTuple):
+    """One cloud's endpoint shape, as the operator meets it.
+
+    `endpoint_template` has at most one substitution, named for what it
+    actually is — `{region}` where the host encodes a geography, `{account}`
+    for Azure, and no slot at all for the single global GCS host — so
+    `host_prompt` can ask for that thing by its real name.
+    """
+
+    endpoint_template: str
+    region_source: RegionSource
+    # Detection, per storage-providers.md §2, matched against the host.
+    # `None` on the row that is the fallback for every unrecognized host.
+    host_pattern: str | None = None
+    # Reads the region back out of a host; group 1 is the region. Set on
+    # exactly the FROM_HOST rows (`test_settings_qr.py` pins that).
+    region_pattern: str | None = None
+    # What to ask the operator for the template's slot; None where there is
+    # no slot to fill and so nothing to ask.
+    host_prompt: str | None = "region (e.g. cn-hangzhou)"
+
+    def endpoint_for(self, host_value: str) -> str:
+        """The endpoint URL for what the operator typed at `host_prompt`.
+
+        Both slot names are offered so one call serves every row; a template
+        carries at most one of them, and the unused keyword is ignored.
+        """
+        return self.endpoint_template.format(
+            region=host_value, account=host_value)
+
+
+# One row per cloud. The app has its own table in
 # src/lib/storage/providers.ts, the device its own in
-# src/storage/s3_object.hpp and visio-setup its own in
-# src/setup_gui/provision.py, because they are different languages; all four
-# conform to docs/protocol/storage-providers.md. One row per cloud: the
-# endpoint template the operator's choice fills in, and the pattern that
-# reads the region back out of a host. Two parallel tables would be two
-# things to keep in step; a host matching no row has no derivable region and
-# the operator must type one.
+# src/storage/s3_object.hpp, because they are different languages; all
+# conform to docs/protocol/storage-providers.md.
 PROVIDERS = {
-    "Aliyun OSS": (
+    "Aliyun OSS": Provider(
         "https://oss-{region}.aliyuncs.com",
-        r"^oss-([a-z0-9-]+?)(?:-internal)?\.aliyuncs\.com$",
+        RegionSource.FROM_HOST,
+        host_pattern=r"\.aliyuncs\.com$",
+        region_pattern=r"^oss-([a-z0-9-]+?)(?:-internal)?\.aliyuncs\.com$",
     ),
-    "Tencent COS": (
+    "Tencent COS": Provider(
         "https://cos.{region}.myqcloud.com",
+        RegionSource.FROM_HOST,
+        host_pattern=r"\.myqcloud\.com$",
         # The leading label is optional so an already-virtual-hosted COS host
         # (<bucket>-<appid>.cos.<region>.myqcloud.com) resolves like the bare
         # one.
-        r"(?:^|\.)cos\.([a-z0-9-]+)\.myqcloud\.com$",
+        region_pattern=r"(?:^|\.)cos\.([a-z0-9-]+)\.myqcloud\.com$",
     ),
-    "AWS S3": (
+    "AWS S3": Provider(
         "https://s3.{region}.amazonaws.com",
-        r"^s3[.-]([a-z0-9-]+)\.amazonaws\.com$",
+        RegionSource.FROM_HOST,
+        # No host_pattern: this row is where every unrecognized host lands
+        # (MinIO, R2, B2, Wasabi), per §2.
+        region_pattern=r"^s3[.-]([a-z0-9-]+)\.amazonaws\.com$",
+    ),
+    "Google Cloud Storage": Provider(
+        # No slot at all: GCS has ONE global XML-API endpoint, and the
+        # bucket's location is not part of it.
+        "https://storage.googleapis.com",
+        RegionSource.OPERATOR,
+        # Anchored BOTH ends — the only exact-host row. The virtual-hosted
+        # form (<bucket>.storage.googleapis.com) is a different addressing
+        # mode that this row would sign wrongly.
+        host_pattern=r"^storage\.googleapis\.com$",
+        host_prompt=None,
+    ),
+    "Azure Blob": Provider(
+        # The slot is the storage ACCOUNT, not a geography, and it is named
+        # for that: Azure signs no region at all.
+        "https://{account}.blob.core.windows.net",
+        RegionSource.UNUSED,
+        host_pattern=r"\.blob\.core\.windows\.net$",
+        host_prompt="storage account name",
     ),
 }
 
-ENDPOINT_TEMPLATES = {name: tpl for name, (tpl, _) in PROVIDERS.items()}
+ENDPOINT_TEMPLATES = {
+    name: p.endpoint_template for name, p in PROVIDERS.items()}
+
+# Compiled once. `None` rather than an unmatchable regex on the rows that have
+# no such pattern: a pattern that exists invites someone to "fix" it into one
+# that matches, and there is nothing there to match.
+_REGION_PATTERNS = tuple(
+    re.compile(p.region_pattern) for p in PROVIDERS.values()
+    if p.region_pattern is not None)
+_HOST_PATTERNS = tuple(
+    (re.compile(p.host_pattern), p) for p in PROVIDERS.values()
+    if p.host_pattern is not None)
+# The row every unrecognized host falls through to, per §2.
+_FALLBACK_PROVIDER = PROVIDERS["AWS S3"]
+
+
+def _host_of(endpoint_url: str) -> str:
+    """Lowercased host of an http(s) URL, or '' if it is not one."""
+    m = re.match(r"^https?://([^/]+)", endpoint_url)
+    return m.group(1).lower() if m else ""
+
+
+def provider_from_endpoint(endpoint_url: str) -> Provider | None:
+    """The cloud an endpoint names, by the host rule in storage-providers.md
+    §2, or None if the string is not an http(s) URL at all.
+
+    Anything that parses but matches no row is the fallback (plain path-style
+    S3: MinIO, R2, B2, Wasabi), which is what the device does with it.
+    """
+    host = _host_of(endpoint_url)
+    if not host:
+        return None
+    for pattern, provider in _HOST_PATTERNS:
+        if pattern.search(host):
+            return provider
+    return _FALLBACK_PROVIDER
 
 
 def region_from_endpoint(endpoint_url: str) -> str:
@@ -137,17 +246,31 @@ def region_from_endpoint(endpoint_url: str) -> str:
 
     Mirrors regionFromEndpoint in the app's lib/storage/providers.ts.
     """
-    m = re.match(r"^https?://([^/]+)", endpoint_url)
-    if not m:
+    host = _host_of(endpoint_url)
+    if not host:
         return ""
-    host = m.group(1).lower()
     if host == "s3.amazonaws.com":   # legacy global endpoint, no region label
         return "us-east-1"
-    for _, pattern in PROVIDERS.values():
-        hit = re.search(pattern, host)
+    for pattern in _REGION_PATTERNS:
+        hit = pattern.search(host)
         if hit:
             return hit.group(1)
     return ""
+
+
+def region_must_be_typed(endpoint_url: str) -> bool:
+    """Whether the operator still owes a region for this endpoint.
+
+    False in two different cases that a caller must not conflate: the host
+    already encodes one, or the cloud signs none at all (Azure). An
+    unrecognized host owes one — the fallback row signs a region like every
+    other S3 host, and nothing can read it out of a private endpoint.
+    """
+    if region_from_endpoint(endpoint_url):
+        return False
+    provider = provider_from_endpoint(endpoint_url)
+    return (provider is None
+            or provider.region_source is not RegionSource.UNUSED)
 
 
 def _string(errs: list, where: str, v, required: bool = False,
@@ -208,7 +331,7 @@ def _validate_storage(errs: list, storage, version: int) -> None:
     if endpoint and not re.match(r"^https?://", endpoint):
         errs.append("storage.endpoint_url: must be an http(s) URL")
     region = _string(errs, "storage.region", storage.get("region"))
-    if not region and endpoint and not region_from_endpoint(endpoint):
+    if not region and endpoint and region_must_be_typed(endpoint):
         errs.append("storage.region: required "
                     "(not derivable from the endpoint)")
     _string(errs, "storage.bucket", storage.get("bucket"), required=True)
