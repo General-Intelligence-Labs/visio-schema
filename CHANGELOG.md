@@ -4,6 +4,28 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## Unreleased
+
+### FramedFdEndpoint: keyframes-only congestion tier
+
+A congestion tier between healthy and stalled (internal transport surface, no
+facade change): once the I/O thread observes the leg's video outbox EVICT,
+`Send` stops offering non-keyframe video on that leg and delivers keyframes
+only, resuming full rate at the first keyframe after an eviction-free 5 s
+hold. An evicting leg was already lossy — every evicted P-frame breaks the
+viewer's reference chain until the next keyframe — so the viewer trades
+corrupt-then-frozen GOPs for a clean one-per-GOP picture, while the leg's
+offered load collapses. On a shared-radio producer that is what stops a slow
+reader's TCP retransmit churn from starving the capture path while it limps
+under the 3 s stall gate's radar.
+
+A producer that knows some consumer may be RECORDING the stream (so thinning
+would thin a recording, not a preview) marks those frames
+`Message::no_degrade` — a new in-memory flag, never serialized, in the same
+family as `bulk`/`keyframe`/`decimatable`; marked frames pass the gate
+untouched. New diagnostics: `video_degraded()`, `degrade_dropped()`; hold is
+constructor-injectable like `stall_ns`.
+
 ## 0.8.0 — 2026-08-19
 
 ### Added the `visio-seal-v1` sealed envelope + `visio-settings-qr`
