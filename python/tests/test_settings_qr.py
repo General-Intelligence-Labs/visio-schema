@@ -388,6 +388,25 @@ class TestEndpointsAndRegions:
         assert ("{" in provider.endpoint_template) == (
             provider.host_prompt is not None)
 
+    @pytest.mark.parametrize("name,key_id,secret", [
+        # The three rows §1.1 calls out as wrong under S3's words. Pinned by
+        # VALUE per row rather than by "no two rows are alike": two clouds may
+        # legitimately share a vocabulary — an R2 or Wasabi endpoint lands on
+        # the AWS row and correctly reuses its three words — so a uniqueness
+        # assertion fails a correct change while still missing a half-revert.
+        ("Tencent COS", "SecretId", "SecretKey"),
+        ("Google Cloud Storage", "HMAC access key (GOOG1E...)", "HMAC secret"),
+        ("Azure Blob", "storage account name (the same one, again)",
+         "account key"),
+    ])
+    def test_a_row_asks_in_its_own_console_s_words(
+            self, name: str, key_id: str, secret: str) -> None:
+        assert PROVIDERS[name].key_id_prompt == key_id
+        assert PROVIDERS[name].secret_prompt == secret
+
+    def test_the_azure_row_asks_for_a_container_not_a_bucket(self) -> None:
+        assert PROVIDERS["Azure Blob"].bucket_prompt == "container"
+
     @pytest.mark.parametrize("endpoint,name", [
         ("https://oss-cn-hangzhou.aliyuncs.com", "Aliyun OSS"),
         ("https://cos.ap-guangzhou.myqcloud.com", "Tencent COS"),
@@ -612,9 +631,27 @@ class TestInteractive:
     step, so exactly one place decides where a secret ends up."""
 
     @staticmethod
-    def _script(monkeypatch, answers: list[str], secrets: list[str]) -> None:
-        monkeypatch.setattr("builtins.input", lambda *_: answers.pop(0))
-        monkeypatch.setattr("getpass.getpass", lambda *_: secrets.pop(0))
+    def _script(monkeypatch, answers: list[str], secrets: list[str],
+                asked: list[str] | None = None) -> None:
+        """Feed `answers`/`secrets`, optionally recording what was ASKED.
+
+        The prompts are the product for the vocabulary tests, so they are
+        captured here rather than re-patching `input` in each one.
+        """
+        def _record(prompt: str = "") -> None:
+            if asked is not None:
+                asked.append(prompt)
+
+        def _input(prompt: str = "", *_) -> str:
+            _record(prompt)
+            return answers.pop(0)
+
+        def _getpass(prompt: str = "", *_) -> str:
+            _record(prompt)
+            return secrets.pop(0)
+
+        monkeypatch.setattr("builtins.input", _input)
+        monkeypatch.setattr("getpass.getpass", _getpass)
 
     def test_it_builds_a_valid_v1_config(self, monkeypatch) -> None:
         self._script(monkeypatch, [
@@ -682,7 +719,28 @@ class TestInteractive:
             "https://storage.googleapis.com"
         assert cfg["storage"]["region"] == "auto"
 
+    def test_the_prompts_use_the_words_that_cloud_uses(
+            self, monkeypatch) -> None:
+        """The whole flow, not just the table: an operator reading these is
+        looking at an Azure portal, which has containers and a storage
+        account and no bucket anywhere in it.
+        """
+        asked: list[str] = []
+        self._script(monkeypatch, [
+            "n",
+            "y", "Azure Blob", "gilabscaptures", "recordings",
+            "gilabscaptures", "prefix/", "n",
+            "n", "n", "n",
+        ], [SECRET], asked)
+        interactive()
+        storage = " ".join(asked)
+        assert "container" in storage
+        assert "account key" in storage
+        assert "bucket" not in storage
+
     def test_a_custom_provider_asks_for_the_endpoint(self, monkeypatch) -> None:
+        """An unrecognized host lands on the AWS row, which signs a region no
+        private endpoint can carry — so the fallback ask still fires."""
         self._script(monkeypatch, [
             "n",
             "y", "custom", "https://minio.internal.example", "us-east-1",
@@ -691,6 +749,43 @@ class TestInteractive:
         ], [SECRET])
         cfg = interactive()
         assert cfg["storage"]["endpoint_url"] == "https://minio.internal.example"
+        # Asserted, because without it deleting the fallback ask merely shifts
+        # every later answer by one and this test still passes green.
+        assert cfg["storage"]["region"] == "us-east-1"
+        assert cfg["storage"]["bucket"] == "b"
+
+    def test_a_custom_endpoint_is_prompted_in_its_own_row_s_words(
+            self, monkeypatch) -> None:
+        """Typing a known cloud's URL at the custom prompt is not
+        provider-less: the device resolves it by host like any other, so the
+        rest of the flow must follow the row it resolved to — including
+        reading the region off the host instead of asking for it.
+        """
+        asked: list[str] = []
+        self._script(monkeypatch, [
+            "n",
+            "y", "custom", "https://cos.ap-guangzhou.myqcloud.com",
+            "gilabs-captures-1250000000", "AKIDExample", "recordings/", "n",
+            "n", "n", "n",
+        ], [SECRET], asked)
+        cfg = interactive()
+        assert cfg["storage"]["region"] == "ap-guangzhou"
+        storage = " ".join(asked)
+        assert "SecretId" in storage and "SecretKey" in storage
+        assert "region (e.g." not in storage
+
+    def test_a_custom_azure_endpoint_carries_no_region(
+            self, monkeypatch) -> None:
+        """The row's whole point, reached the other way round."""
+        self._script(monkeypatch, [
+            "n",
+            "y", "custom", "https://gilabscaptures.blob.core.windows.net",
+            "recordings", "gilabscaptures", "prefix/", "n",
+            "n", "n", "n",
+        ], [SECRET])
+        cfg = interactive()
+        assert validate(cfg) == []
+        assert "region" not in cfg["storage"]
 
 
 class TestCliRemainingBranches:

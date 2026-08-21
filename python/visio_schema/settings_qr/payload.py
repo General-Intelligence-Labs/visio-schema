@@ -33,11 +33,13 @@ __all__ = [
     "BITRATE_KBPS",
     "DEFAULT_STORAGE_PREFIX",
     "ENDPOINT_TEMPLATES",
+    "FALLBACK_PROVIDER",
     "MAX_BYTES",
     "META_FIELDS",
     "PAYLOAD_TYPE",
     "PLAINTEXT_VERSION",
     "PROVIDERS",
+    "REGION_PROMPT",
     "RESOLUTION_PX",
     "SEALED_HAS",
     "SEALED_MAX_BYTES",
@@ -109,6 +111,12 @@ SEALED_MAX_BYTES = 384
 DEFAULT_STORAGE_PREFIX = "recordings/"
 
 
+# The region ask, shared by `host_prompt` (where the host IS the region) and
+# `region_prompt` (where it is asked separately). One literal, because they are
+# the same question.
+REGION_PROMPT = "region (e.g. cn-hangzhou)"
+
+
 class RegionSource(enum.Enum):
     """Where a destination's credential-scope region comes from.
 
@@ -143,7 +151,21 @@ class Provider(NamedTuple):
     region_pattern: str | None = None
     # What to ask the operator for the template's slot; None where there is
     # no slot to fill and so nothing to ask.
-    host_prompt: str | None = "region (e.g. cn-hangzhou)"
+    host_prompt: str | None = REGION_PROMPT
+    # What to ask for the region, and its default, where the host does not
+    # already answer it. Never reached on a row that signs no region — see
+    # `region_must_be_typed`.
+    region_prompt: str = REGION_PROMPT
+    region_default: str = ""
+    # What THIS cloud's own console calls the three credential fields
+    # (docs/protocol/storage-providers.md §1.1). The wire field names are
+    # provider-agnostic; the values are copied out of consoles that are not,
+    # and prompting every cloud with S3's words is how a Tencent SecretId ends
+    # up in the secret field. Defaults are the AWS row's wording, which is also
+    # the row every unrecognized endpoint falls through to.
+    bucket_prompt: str = "bucket"
+    key_id_prompt: str = "access key ID"
+    secret_prompt: str = "secret access key"
 
     def endpoint_for(self, host_value: str) -> str:
         """The endpoint URL for what the operator typed at `host_prompt`.
@@ -165,6 +187,8 @@ PROVIDERS = {
         RegionSource.FROM_HOST,
         host_pattern=r"\.aliyuncs\.com$",
         region_pattern=r"^oss-([a-z0-9-]+?)(?:-internal)?\.aliyuncs\.com$",
+        key_id_prompt="AccessKey ID",
+        secret_prompt="AccessKey Secret",
     ),
     "Tencent COS": Provider(
         "https://cos.{region}.myqcloud.com",
@@ -174,6 +198,11 @@ PROVIDERS = {
         # (<bucket>-<appid>.cos.<region>.myqcloud.com) resolves like the bare
         # one.
         region_pattern=r"(?:^|\.)cos\.([a-z0-9-]+)\.myqcloud\.com$",
+        # The APPID suffix is part of the name; omitting it is the likeliest
+        # COS misconfiguration, and the device answers it with a 404.
+        bucket_prompt="bucket (name includes the -APPID suffix)",
+        key_id_prompt="SecretId",
+        secret_prompt="SecretKey",
     ),
     "AWS S3": Provider(
         "https://s3.{region}.amazonaws.com",
@@ -192,6 +221,13 @@ PROVIDERS = {
         # mode that this row would sign wrongly.
         host_pattern=r"^storage\.googleapis\.com$",
         host_prompt=None,
+        # The one row whose region has no source but this question.
+        region_prompt='region (bucket location, or "auto")',
+        region_default="auto",
+        # Not a service-account JSON key: the XML API authenticates with an
+        # interoperability HMAC pair, and nothing else works here.
+        key_id_prompt="HMAC access key (GOOG1E...)",
+        secret_prompt="HMAC secret",
     ),
     "Azure Blob": Provider(
         # The slot is the storage ACCOUNT, not a geography, and it is named
@@ -200,6 +236,12 @@ PROVIDERS = {
         RegionSource.UNUSED,
         host_pattern=r"\.blob\.core\.windows\.net$",
         host_prompt="storage account name",
+        bucket_prompt="container",
+        # The account name a second time: Azure carries it in the host AND in
+        # access_key_id, so the prompt says where it came from rather than
+        # leaving the operator hunting for a second, different value.
+        key_id_prompt="storage account name (the same one, again)",
+        secret_prompt="account key",
     ),
 }
 
@@ -215,8 +257,10 @@ _REGION_PATTERNS = tuple(
 _HOST_PATTERNS = tuple(
     (re.compile(p.host_pattern), p) for p in PROVIDERS.values()
     if p.host_pattern is not None)
-# The row every unrecognized host falls through to, per §2.
-_FALLBACK_PROVIDER = PROVIDERS["AWS S3"]
+# The row every unrecognized host falls through to, per §2. Public because a
+# caller that must end up with SOME row (the QR generator, prompting for a
+# hand-typed endpoint) would otherwise name "AWS S3" a second time.
+FALLBACK_PROVIDER = PROVIDERS["AWS S3"]
 
 
 def _host_of(endpoint_url: str) -> str:
@@ -238,7 +282,7 @@ def provider_from_endpoint(endpoint_url: str) -> Provider | None:
     for pattern, provider in _HOST_PATTERNS:
         if pattern.search(host):
             return provider
-    return _FALLBACK_PROVIDER
+    return FALLBACK_PROVIDER
 
 
 def region_from_endpoint(endpoint_url: str) -> str:

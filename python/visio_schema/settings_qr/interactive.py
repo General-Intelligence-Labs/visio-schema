@@ -13,14 +13,16 @@ import sys
 from .payload import (
     BITRATE_KBPS,
     DEFAULT_STORAGE_PREFIX,
+    FALLBACK_PROVIDER,
     META_FIELDS,
     PAYLOAD_TYPE,
     PLAINTEXT_VERSION,
     PROVIDERS,
     RESOLUTION_PX,
     Provider,
-    RegionSource,
+    provider_from_endpoint,
     region_from_endpoint,
+    region_must_be_typed,
 )
 
 __all__ = ["interactive"]
@@ -51,23 +53,24 @@ def _ask_int(prompt: str, default: str, lo: int, hi: int) -> int:
         print(f"  out of range ({lo}-{hi}): {val}", file=sys.stderr)
 
 
-def _ask_endpoint_and_region(provider: Provider) -> tuple[str, str]:
-    """Ask for the one thing this cloud's HOST names, then its region.
+def _region_for(provider: Provider, endpoint: str) -> str:
+    """This cloud's region, asked for only when it is the operator's to give.
 
-    The two are asked separately because they are not always the same
-    answer: an OSS/COS/S3 host encodes its region, so the single value serves
-    both; GCS's host encodes none, so the region is its own question; and
-    Azure's host names a storage ACCOUNT while signing no region at all, so
-    asking for one would invite an operator to type a geography where the
-    account belongs and get a QR for a host that does not exist.
+    `region_must_be_typed` owns that decision — it is what `validate` gates on,
+    so asking on any other basis would let this build a config its own
+    validator rejects. When it says no, the answer is whatever the host
+    encodes: a region for OSS/COS/S3, and '' for the row that signs none.
     """
+    if not region_must_be_typed(endpoint):
+        return region_from_endpoint(endpoint)
+    return _ask(provider.region_prompt, provider.region_default)
+
+
+def _ask_endpoint_and_region(provider: Provider) -> tuple[str, str]:
+    """Ask for the one thing this cloud's HOST names, then its region."""
     host_value = _ask(provider.host_prompt) if provider.host_prompt else ""
     endpoint = provider.endpoint_for(host_value)
-    if provider.region_source is RegionSource.FROM_HOST:
-        return endpoint, region_from_endpoint(endpoint)
-    if provider.region_source is RegionSource.OPERATOR:
-        return endpoint, _ask('region (bucket location, or "auto")', "auto")
-    return endpoint, ""
+    return endpoint, _region_for(provider, endpoint)
 
 
 def interactive() -> dict:
@@ -89,18 +92,26 @@ def interactive() -> dict:
         providers = [*PROVIDERS, "custom"]
         choice = _ask(f"provider {providers}", providers[0])
         if choice in PROVIDERS:
-            endpoint, region = _ask_endpoint_and_region(PROVIDERS[choice])
+            provider = PROVIDERS[choice]
+            endpoint, region = _ask_endpoint_and_region(provider)
         else:
             endpoint = _ask("endpoint_url (https://...)")
-            region = _ask("region (e.g. cn-hangzhou)")
+            # A hand-typed endpoint is not provider-less: the device resolves
+            # it by host like any other, so ask the rest in whichever row it
+            # actually resolved to. `provider_from_endpoint` answers None only
+            # for a string that is not an http(s) URL at all — which `validate`
+            # refuses later — and prompting the rest of the flow in the
+            # fallback row's words beats re-asking after a getpass.
+            provider = provider_from_endpoint(endpoint) or FALLBACK_PROVIDER
+            region = _region_for(provider, endpoint)
         storage = {
             "endpoint_url": endpoint,
             "region": region,
-            "bucket": _ask("bucket"),
-            "access_key_id": _ask("access_key_id"),
+            "bucket": _ask(provider.bucket_prompt),
+            "access_key_id": _ask(provider.key_id_prompt),
             "secret_access_key": getpass.getpass(
-                "  secret_access_key (empty = device keeps its stored "
-                "secret): "),
+                f"  {provider.secret_prompt} (empty = device keeps its "
+                "stored secret): "),
             "prefix": _ask("prefix", DEFAULT_STORAGE_PREFIX),
         }
         cfg["storage"] = {k: v for k, v in storage.items() if v}

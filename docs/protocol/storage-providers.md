@@ -9,12 +9,23 @@ There is no backend. Devices and the app hold the customer's own credential and
 sign their own requests, so the same contract is implemented independently, and
 each implementation MUST conform to the table below:
 
-| Implementation | Language | Conforms |
-|---|---|---|
-| device firmware | C++ | all five clouds |
-| companion app | TypeScript | all five clouds |
-| provisioning tools (`python/visio_schema/settings_qr/payload.py`) | Python | all five clouds |
-| fleet-status dashboard (`tools/fleet-status/index.html`) | browser JS | **Aliyun OSS + AWS S3 only** |
+| Implementation | Language | Conforms | Vocabulary (§1.1) |
+|---|---|---|---|
+| device firmware | C++ | all five clouds | n/a — no UI |
+| companion app | TypeScript | all five clouds | yes — config screen + QR review sheet |
+| provisioning tools (`python/visio_schema/settings_qr/payload.py`) | Python | all five clouds | yes |
+| setup GUI (`visio-setup/src/setup_gui/`) | Python | **Aliyun OSS + AWS S3 only** | **no** |
+| firmware-side QR generator (`visio-embedded/scripts/provision/gen_settings_qr.py`) | Python | **Aliyun OSS + Tencent COS + AWS S3 only** | **no** |
+| fleet-status dashboard (`tools/fleet-status/index.html`) | browser JS | **Aliyun OSS + AWS S3 only** | **no** |
+
+Three of those are behind, and each for the same reason: a **second copy of
+this table** inside the tool. `visio-setup/src/setup_gui/provision.py` carries
+a two-row `ENDPOINT_TEMPLATES`, `gen_settings_qr.py` a three-row `PROVIDERS`,
+and the dashboard a single `isOssHost` boolean. The fix is to delete those
+copies in favour of `visio_schema.settings_qr.payload.PROVIDERS`, which all
+three can import, and not to re-type the new rows into each — tracked, not
+done. Until then a customer on GCS or Azure can be provisioned only by the app
+or by the schema's own generator.
 
 A provisioning tool MAY offer a shorter preset list than five, but it MUST
 accept an arbitrary typed endpoint rather than only its own presets — a preset
@@ -40,6 +51,58 @@ provider field, and there must never be one** — every consumer derives the
 provider from the endpoint host (§2). Adding a provider enum would create a
 second source of truth that can disagree with the URL being dialled.
 
+### 1.1 What the operator is asked for
+
+The wire is provider-agnostic (§1). **The consoles the operator copies these
+values out of are not**, so a UI that asks a human for them MUST use the words
+that cloud's own console uses. Endpoint shapes are §3 and §3.1; where the
+region comes from is "### Region".
+
+| Cloud | `bucket` | `access_key_id` | `secret_access_key` |
+|---|---|---|---|
+| AWS S3 | Bucket | Access key ID | Secret access key |
+| Aliyun OSS | Bucket | AccessKey ID | AccessKey Secret |
+| Tencent COS | Bucket name, **APPID suffix included** | **SecretId** | **SecretKey** |
+| Google GCS | Bucket | **HMAC access key** (`GOOG1E…`) | **HMAC secret** |
+| Azure Blob | **Container** | **Storage account name** | **Account key** (base64) |
+
+Two clouds MAY share a vocabulary — an S3-compatible endpoint (MinIO, R2,
+Wasabi) lands on the AWS row and correctly reuses its three words. The rule is
+"each row uses its own console's words", not "every row differs".
+
+Labelling all five "Bucket / Access key ID / Secret access key" is not merely
+terse, it is **wrong on three of them**, and each way of being wrong ends in an
+opaque failure a long way from the field that caused it:
+
+- an operator hunting for a "bucket" in the Azure portal finds no such thing,
+  and the account name belongs in **two** places (the endpoint host and
+  `access_key_id`) with nothing on a generic screen to say so;
+- Tencent's pair is SecretId/SecretKey, and a SecretId pasted into a field
+  labelled "Secret access key" is the classic COS 403;
+- GCS's own docs lead with a service-account JSON key, which this integration
+  cannot use at all (see below) — a field saying "HMAC access key" is the only
+  thing that redirects the operator to the right page.
+
+GCS's HMAC keys are created per service account under *Cloud Storage →
+Settings → Interoperability*; they are what its S3-compatible XML API
+authenticates with. An organization policy that forbids HMAC keys therefore
+forbids this integration — there is no fallback to a service-account JSON key,
+because that would need OAuth2 token refresh and RSA signing on a device with no
+NTP.
+
+**Where the region is not in the host, the UI must not pretend otherwise.** GCS
+has to ask, because only the operator knows the bucket's location. Azure must
+not ask at all: it signs no region, so a field labelled "Region" collects a
+geography that nothing reads and that will not match the account name the wire
+field actually ends up carrying. A UI that hides it derives the value from the
+endpoint host instead.
+
+This vocabulary is per-row data, not per-screen copy — the app carries it as
+`terms` on its provider row, and the QR generator as that row's prompts — so a
+new cloud arrives with its own words rather than inheriting S3's. Which
+implementations carry it today is the "Vocabulary" column in the
+implementations table at the top of this document.
+
 ## 2. Provider detection
 
 Case-insensitive match on the endpoint host — a **suffix** on every row but
@@ -64,22 +127,8 @@ a second source of truth could disagree with the URL being dialled.
 
 **The five fields carry GCS and Azure unchanged** — no wire change, no new
 `SetStorage` field, no growth in the sealed-QR envelope (Azure's oversized
-account key must ride the sealed one that already exists — §3.1):
-
-| Field | Google Cloud Storage | Azure Blob |
-|---|---|---|
-| `endpoint_url` | `https://storage.googleapis.com` | `https://<account>.blob.core.windows.net` |
-| `bucket` | bucket name | **container** name |
-| `access_key_id` | HMAC access key (`GOOG1E…`) | **storage account name** |
-| `secret_access_key` | HMAC secret | account key (base64) |
-| `region` | bucket location, or `auto` | unused |
-
-GCS's HMAC keys are created per service account under *Cloud Storage →
-Settings → Interoperability*; they are what its S3-compatible XML API
-authenticates with. An organization policy that forbids HMAC keys therefore
-forbids this integration — there is no fallback to a service-account JSON key,
-because that would need OAuth2 token refresh and RSA signing on a device with no
-NTP.
+account key must ride the sealed one that already exists — §3.1). What they are
+CALLED per cloud is §1.1.
 
 A **CNAME custom domain does not match** and falls through to `AwsS3`, which
 will fail against OSS/COS. Provision the provider's own endpoint and the bare
