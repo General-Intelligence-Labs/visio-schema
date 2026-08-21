@@ -14,6 +14,7 @@ from pathlib import Path
 
 from google.protobuf.timestamp_pb2 import Timestamp
 
+from visio_schema.mcap.crypto import open_recording
 from visio_schema.v1.service.device_info.device_info_pb2 import Channel
 from visio_schema.wire.message import Message
 
@@ -52,7 +53,12 @@ def read_mcap(path: str | Path) -> Iterator[tuple[Message, Channel]]:
 
     Raises:
         ImportError: If the ``mcap`` dependency is missing from the environment
-            (``pip install mcap``).
+            (``pip install mcap``), or the recording is encrypted and the
+            ``crypto`` extra is not installed.
+        RecordingKeyUnavailable: If the recording is encrypted and no key was
+            found. See :func:`visio_schema.mcap.crypto.open_recording` for the
+            sources consulted; pass one explicitly by opening the file with
+            ``open_recording(path, key)`` yourself.
 
     Example:
         for msg, channel in read_mcap("run.mcap"):
@@ -60,7 +66,11 @@ def read_mcap(path: str | Path) -> Iterator[tuple[Message, Channel]]:
             payload.ParseFromString(msg.payload)
     """
     make_reader = _reader_api()
-    with open(path, "rb") as f:
+    # open_recording, not open(): a recording may be a `VREC` container, and
+    # this one line is what makes every downstream consumer of read_mcap work
+    # on encrypted footage. A plaintext MCAP comes back as the same plain file
+    # object, needing no key and no `cryptography` install.
+    with open_recording(path) as f:
         for schema, channel, message in make_reader(f).iter_messages():
             if schema is None:
                 log.warning("skip: MCAP channel %r has no schema", channel.topic)

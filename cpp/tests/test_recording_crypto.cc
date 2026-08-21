@@ -12,7 +12,10 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <cstring>
+#include <fstream>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -256,3 +259,132 @@ TEST(RecordingCrypto, ZeroLengthWriteIsANoOp) {
 } // namespace
 } // namespace mcap
 } // namespace visio_schema
+
+namespace visio_schema {
+namespace mcap {
+
+// ─────────────────────────────────────────────────────────────────────────
+// The cross-language pin.
+//
+// The device WRITES a recording here in C++; the client admin READS it in
+// Python (python/visio_schema/mcap/crypto.py). Two implementations of one
+// stream cipher, and a drift between them is SILENT — recordings decrypt to
+// convincing garbage, discovered long after the footage was captured. Both
+// sides assert the same committed bytes so that becomes a build failure.
+//
+// python/tests/test_recording_crypto.py is the other half.
+// ─────────────────────────────────────────────────────────────────────────
+#ifndef VISIO_GOLDEN_DIR
+#error "VISIO_GOLDEN_DIR must be defined by the build (path to tests/golden)"
+#endif
+
+namespace {
+
+std::string VrecFromHex(const std::string& hex) {
+  std::string out;
+  out.reserve(hex.size() / 2);
+  for (std::size_t i = 0; i + 1 < hex.size(); i += 2)
+    out.push_back(static_cast<char>(std::stoi(hex.substr(i, 2), nullptr, 16)));
+  return out;
+}
+
+std::string VrecHex(const std::string& raw) {
+  static const char* kDigits = "0123456789abcdef";
+  std::string out;
+  out.reserve(raw.size() * 2);
+  for (unsigned char c : raw) {
+    out.push_back(kDigits[c >> 4]);
+    out.push_back(kDigits[c & 0x0f]);
+  }
+  return out;
+}
+
+std::map<std::string, std::string> LoadVrecGolden() {
+  std::ifstream f(std::string(VISIO_GOLDEN_DIR) + "/vrec_vectors.txt");
+  EXPECT_TRUE(f.is_open()) << "cannot open vrec_vectors.txt under "
+                           << VISIO_GOLDEN_DIR;
+  std::map<std::string, std::string> out;
+  std::string line;
+  while (std::getline(f, line)) {
+    if (line.empty() || line[0] == '#') continue;
+    const auto eq = line.find('=');
+    if (eq == std::string::npos) continue;
+    out[line.substr(0, eq)] = VrecFromHex(line.substr(eq + 1));
+  }
+  return out;
+}
+
+template <std::size_t N>
+std::array<std::uint8_t, N> ToArray(const std::string& s) {
+  std::array<std::uint8_t, N> a{};
+  EXPECT_EQ(s.size(), N);
+  std::memcpy(a.data(), s.data(), std::min(N, s.size()));
+  return a;
+}
+
+}  // namespace
+
+TEST(RecordingCryptoGolden, FingerprintMatchesTheCommittedVector) {
+  const auto v = LoadVrecGolden();
+  const auto key = ToArray<32>(v.at("vrec_key"));
+  const auto fp = RecordingKeyFingerprint(key);
+  EXPECT_EQ(VrecHex(std::string(fp.begin(), fp.end())),
+            VrecHex(v.at("vrec_key_fp")));
+}
+
+TEST(RecordingCryptoGolden, HeaderSerializationMatchesTheCommittedVector) {
+  const auto v = LoadVrecGolden();
+  VrecHeader h;
+  h.key_fp = ToArray<8>(v.at("vrec_key_fp"));
+  h.nonce = ToArray<12>(v.at("vrec_nonce"));
+  std::array<std::uint8_t, kVrecHeaderBytes> raw{};
+  WriteVrecHeader(h, raw.data());
+  EXPECT_EQ(VrecHex(std::string(raw.begin(), raw.end())),
+            VrecHex(v.at("vrec_header")));
+}
+
+TEST(RecordingCryptoGolden, EncryptingTheCommittedPlaintextYieldsItsCiphertext) {
+  // The direction that matters most: this is literally what the recorder
+  // writes to the card, asserted against what Python will read back.
+  const auto v = LoadVrecGolden();
+  const auto key = ToArray<32>(v.at("vrec_key"));
+  const auto nonce = ToArray<12>(v.at("vrec_nonce"));
+  const std::string& plain = v.at("vrec_plaintext");
+
+  RecordingCipher cipher(key, nonce);
+  ASSERT_TRUE(cipher.valid());
+  std::string got = plain;
+  ASSERT_TRUE(cipher.XorAt(0,
+                           reinterpret_cast<const std::uint8_t*>(got.data()),
+                           got.size(),
+                           reinterpret_cast<std::uint8_t*>(got.data())));
+  EXPECT_EQ(VrecHex(got), VrecHex(v.at("vrec_ciphertext")));
+}
+
+TEST(RecordingCryptoGolden, DecryptingFromAnyOffsetMatchesThePythonReader) {
+  // Offsets chosen to straddle the 64-byte ChaCha20 block (63/64/65) and to
+  // land mid-block (1/100/199) — where an off-by-one in the sub-block skip
+  // lives. The Python suite asserts the SAME offsets.
+  const auto v = LoadVrecGolden();
+  const auto key = ToArray<32>(v.at("vrec_key"));
+  const auto nonce = ToArray<12>(v.at("vrec_nonce"));
+  const std::string& plain = v.at("vrec_plaintext");
+  const std::string& cipher_text = v.at("vrec_ciphertext");
+
+  for (std::size_t at : {std::size_t{0}, std::size_t{1}, std::size_t{63},
+                         std::size_t{64}, std::size_t{65}, std::size_t{100},
+                         std::size_t{199}}) {
+    RecordingCipher cipher(key, nonce);
+    ASSERT_TRUE(cipher.valid());
+    std::string got = cipher_text.substr(at);
+    ASSERT_TRUE(cipher.XorAt(at,
+                             reinterpret_cast<const std::uint8_t*>(got.data()),
+                             got.size(),
+                             reinterpret_cast<std::uint8_t*>(got.data())))
+        << "at " << at;
+    EXPECT_EQ(VrecHex(got), VrecHex(plain.substr(at))) << "at " << at;
+  }
+}
+
+}  // namespace mcap
+}  // namespace visio_schema

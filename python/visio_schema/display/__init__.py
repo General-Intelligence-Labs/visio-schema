@@ -1103,6 +1103,17 @@ def main(argv: list[str] | None = None) -> int:
                      help="run the device-picker launcher: discover connected devices "
                           "(serial / local AP / Wi-Fi), pick one in the browser, and open "
                           "it in Foxglove")
+    # Encrypted recordings. Deliberately NOT under the source group: a key is
+    # a modifier on whichever source is replaying, and --serve needs one too.
+    p.add_argument("--key", metavar="HEX",
+                   help="recording key for an encrypted (VREC) file, 64 hex "
+                        "chars. Prefer --key-file: an argument is visible in "
+                        "`ps` to every user on the machine")
+    p.add_argument("--key-file", metavar="PATH",
+                   help="file holding the recording key as 64 hex chars. "
+                        "Without either, the key is looked up in "
+                        "$VISIO_RECORDING_KEY, $VISIO_RECORDING_KEY_FILE, then "
+                        "~/.config/visio/recording-keys.json")
     p.add_argument("--baud", type=int, default=921600, help="serial baud (default 921600)")
     p.add_argument("--out", metavar="OUT.mcap", help="also record messages to an MCAP file")
     p.add_argument("--foxglove", action="store_true", help="serve live to Foxglove Studio")
@@ -1127,6 +1138,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--rerun-memory", metavar="LIMIT", default="2GB",
                    help="Rerun viewer memory cap; old data drops past it (default 2GB)")
     args = p.parse_args(argv)
+
+    # Publish the key into the SAME resolution chain open_recording already
+    # consults, instead of threading it through _replay, every sink and the
+    # --serve launcher. One place, and it reaches paths that open a file we
+    # never see. Explicit flags win over an inherited environment.
+    if args.key and args.key_file:
+        p.error("--key and --key-file are mutually exclusive")
+    if args.key:
+        os.environ["VISIO_RECORDING_KEY"] = args.key
+    elif args.key_file:
+        os.environ["VISIO_RECORDING_KEY_FILE"] = args.key_file
 
     # --serve is a persistent launcher, not a one-shot pipe: it discovers devices
     # and starts/stops per-device bridges itself. Dispatch before the one-shot

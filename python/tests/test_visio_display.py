@@ -398,6 +398,11 @@ def test_pyproject_declares_console_script_and_display_extra() -> None:
     assert data["project"]["scripts"]["visio-display"] == "visio_schema.display:run"
     assert (data["project"]["scripts"]["visio-settings-qr"]
             == "visio_schema.settings_qr:run")
+    # The only way into an encrypted recording for tools that will never take
+    # a key — Foxglove Studio, the kalibr path, the frozen visio-setup bundle.
+    # Losing this entry point strands that footage.
+    assert (data["project"]["scripts"]["visio-decrypt"]
+            == "visio_schema.mcap.decrypt:run")
 
     deps = " ".join(data["project"]["dependencies"])
     for pkg in ("protobuf", "cobs", "mcap", "pyserial", "foxglove-sdk"):
@@ -415,3 +420,7 @@ def test_pyproject_declares_console_script_and_display_extra() -> None:
     assert "qrcode" not in deps, "qrcode must NOT be a default dependency"
     assert "qrcode" in " ".join(extras["dev"]), (
         "dev must pull qrcode so CI covers render_qr, not just --dry-run")
+    # Core, not an extra: opening a sealed QR and an encrypted recording are
+    # both things a plain `pip install visio-schema` consumer must be able to
+    # do, so this stays in the base dependencies.
+    assert "cryptography" in deps

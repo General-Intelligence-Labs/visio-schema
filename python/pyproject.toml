@@ -44,7 +44,7 @@ dependencies = [
     "pyserial>=3.5",
     "foxglove-sdk>=0.10",
     # Core, not an extra, unlike the viewer deps above: a sealed settings QR
-    # and (next) an encrypted recording are both things a plain
+    # and an encrypted (VREC) recording are both things a plain
     # `pip install visio-schema` consumer has to be able to open. A wheel
     # that reads the contract but not the artifacts the contract describes
     # would push every consumer to add the extra anyway. ~4 MB, not ~600.
@@ -84,6 +84,9 @@ visio-display = "visio_schema.display:run"
 # under tools/) precisely so `pip install visio-schema` is the whole setup
 # a customer needs to seal their own credentials.
 visio-settings-qr = "visio_schema.settings_qr:run"
+# Plaintext copy of an encrypted recording, for the tools that will never take
+# a key: Foxglove Studio, the kalibr path, the frozen visio-setup bundle.
+visio-decrypt = "visio_schema.mcap.decrypt:run"
 
 [project.urls]
 Homepage = "https://github.com/General-Intelligence-Labs/visio-schema"
