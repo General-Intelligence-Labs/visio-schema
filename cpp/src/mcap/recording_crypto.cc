@@ -11,6 +11,7 @@
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
+#include <openssl/rand.h>
 #include <openssl/sha.h>
 
 #include <algorithm>
@@ -97,6 +98,11 @@ bool ParseVrecHeader(const std::uint8_t* data, std::size_t len,
     std::memcpy(out->key_fp.data(), data + 8, out->key_fp.size());
     std::memcpy(out->nonce.data(), data + 16, out->nonce.size());
     return true;
+}
+
+bool RandomNonce(RecordingNonce* out) {
+    if (out == nullptr) return false;
+    return RAND_bytes(out->data(), static_cast<int>(out->size())) == 1;
 }
 
 RecordingCipher::RecordingCipher(const RecordingKey& key,

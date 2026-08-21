@@ -84,6 +84,14 @@ bool ParseVrecHeader(const std::uint8_t* data, std::size_t len,
 // accept both plaintext MCAP ("\x89MCAP") and VREC.
 bool LooksLikeVrec(const std::uint8_t* data, std::size_t len);
 
+// A fresh nonce for a new part, from the CSPRNG.
+//
+// False when the CSPRNG fails, and a caller that cannot get one MUST refuse to
+// record rather than fall back to a fixed or counter nonce: two parts written
+// under the same key and nonce share a keystream, and XORing the two
+// ciphertexts together recovers both plaintexts without any key at all.
+bool RandomNonce(RecordingNonce* out);
+
 // Random-access ChaCha20 over one part.
 //
 // Holds no plaintext and no buffer: the caller supplies both sides, so this

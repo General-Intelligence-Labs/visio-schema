@@ -70,21 +70,20 @@ add_library(visio_schema STATIC
   src/transport/serial.cc
   src/transport/tcp.cc
 )
-# ---- VREC recording encryption (optional) ----------------------------------
-# OFF by default, and that default is load-bearing: this library's whole
-# premise is that it cross-compiles for the device with no extra deps (see the
-# mcap note above), and it ships in an MIT wheel on PyPI. OpenSSL is the one
-# dependency the container needs, so it is opt-in — visio-embedded turns it on
-# and already links -lcrypto for sigv4 and the OTA envelope.
-option(VISIO_SCHEMA_ENABLE_RECORDING_CRYPTO
-       "Build the VREC recording-encryption container (requires OpenSSL)" OFF)
-if(VISIO_SCHEMA_ENABLE_RECORDING_CRYPTO)
-  find_package(OpenSSL REQUIRED)
-  target_sources(visio_schema PRIVATE src/mcap/recording_crypto.cc)
-  target_link_libraries(visio_schema PUBLIC OpenSSL::Crypto)
-  target_compile_definitions(visio_schema
-                             PUBLIC VISIO_SCHEMA_HAS_RECORDING_CRYPTO=1)
-endif()
+# ---- VREC recording encryption ---------------------------------------------
+# Always built. It was briefly a default-OFF option, which was wrong twice
+# over: the PyPI wheel hand-lists its sources in python/setup.py and compiles
+# neither this file nor the writer, so nothing was being kept dependency-free;
+# and a build flag that silently decides whether recordings are encrypted is a
+# foot-gun — one forgotten -D and a customer image ships plaintext with no
+# signal anywhere. The recorder asks for a key or it does not; that is a
+# runtime decision the device reports in DeviceState, not a compile-time one.
+#
+# The cost is one dependency: OpenSSL. visio-embedded already links -lcrypto
+# for sigv4 and the OTA envelope, and the device sysroots stage it.
+find_package(OpenSSL REQUIRED)
+target_sources(visio_schema PRIVATE src/mcap/recording_crypto.cc)
+target_link_libraries(visio_schema PUBLIC OpenSSL::Crypto)
 
 target_include_directories(visio_schema PUBLIC
   "${NANOPB_DIR}"
@@ -137,11 +136,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT CMAKE_CROSSCOMPILI
     tests/test_serial_watchdog.cc
     tests/test_endpoint_reconnect.cc
   )
-  # Gated with the source it covers: without OpenSSL there is no container
-  # to test, and this library must keep configuring with no extra deps.
-  if(VISIO_SCHEMA_ENABLE_RECORDING_CRYPTO)
-    target_sources(visio_schema_tests PRIVATE tests/test_recording_crypto.cc)
-  endif()
+  target_sources(visio_schema_tests PRIVATE tests/test_recording_crypto.cc)
   target_link_libraries(visio_schema_tests
     PRIVATE visio_schema GTest::gtest GTest::gtest_main)
   # Path to the committed cross-language byte fixtures (shared with the Python
