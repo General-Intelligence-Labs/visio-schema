@@ -125,8 +125,8 @@ def slerp_xyzw(q0: np.ndarray, q1: np.ndarray, w: float) -> np.ndarray:
     # the all-zero "no pose here" sentinel that several producers write is the
     # common case: blending it against a real rotation normalizes the result back
     # to unit length, so a sentinel goes IN and a plausible rotation comes OUT.
-    # Every downstream validity check (visio_data's `is_valid_quat`, which tests
-    # `norm > 0.5`) then passes on a pose that was never measured. Refuse instead
+    # A downstream validity check of the usual shape (`norm > 0.5`) then passes
+    # on a pose that was never measured. Refuse instead
     # — an absent sample is `missing`, not something to interpolate through.
     for name, q in (("lo", q0), ("hi", q1)):
         norm = float(np.linalg.norm(q))

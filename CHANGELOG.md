@@ -4,6 +4,26 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## 0.9.0 — 2026-08-22
+
+### Added `visio_schema.dataset` — the episode-dataset layer
+
+A fixed episode spec plus its on-disk storage:
+
+- `dataset.spec` — which channels a dataset carries (world-frame poses,
+  gripper widths in metres, per-slot videos), identity/versioning keys, and
+  `Episode`, the storage-agnostic hand-over shape (`{channel -> (N, D)}`).
+- `dataset.lerobot` — the spec as a LeRobot v2.1 directory: per-episode
+  parquet, per-slot mp4, json(l) meta. Reader and writer in one module.
+  Needs the new `dataset` extra (pyarrow).
+- `dataset.video` — incremental H.264 mp4 encode (`Mp4Writer`, `SlotWriters`)
+  and the shared `scaled_dims` downscale rule, using the same pinned `av`
+  range the reader's decode determinism rests on.
+
+Additive; not exported from the `visio_schema` facade — import it explicitly
+as `visio_schema.dataset`, like `visio_schema.reader`. The frozen public API
+is unchanged.
+
 ## 0.8.0 — 2026-08-14
 
 ### Added `visio_schema.reader` — the element layer over `read_mcap` / `read_serial`
@@ -20,7 +40,7 @@ reorder window measured from the chunk seams; `sync` / `resample` / `prefetch`
 reshape that single stream with bounded state and an explicit tolerance.
 `Element.t_ns` IS the wire stamp — no read-time correction is applied here.
 
-Ported wholesale from visio-post-processing, which now consumes it, and verified
+Ported wholesale from the pipeline that previously owned it, and verified
 **byte-identical** on a real ego session: the element stream, calibration and
 keyframe cadence hash the same before and after across 88,799 elements.
 

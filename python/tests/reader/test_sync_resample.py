@@ -169,9 +169,9 @@ def test_stale_ns_moves_a_stale_value_into_missing():
 
 
 def test_head_of_stream_reports_a_large_residual_rather_than_silence():
-    """An instant BEFORE the first sample has no causal value at all. visio_data's
-    `hold_last_indices` clips the index to 0 here and silently back-extrapolates;
-    this reports `nearest` with the true distance, so `stale_ns` can reject it."""
+    """An instant BEFORE the first sample has no causal value at all. A
+    hold-last that clips the index to 0 here silently back-extrapolates; this
+    reports `nearest` with the true distance, so `stale_ns` can reject it."""
     els = _stream(_frame(T0), _pose(T0 + 40 * MS, 3.0))
     got = _one(els, resample={POSE: "interpolate"}, lag_ns=50 * MS).by_topic[POSE]
     assert (got.method, got.residual_ns) == ("nearest", 40 * MS)
@@ -341,8 +341,8 @@ def test_out_of_order_arrivals_are_ordered_before_bracketing():
 
 
 def test_stereo_matched_with_trajectories_resampled_onto_it(tmp_path):
-    """The visio-data shape in one call: the stereo pair matched, the wrist pose
-    and gripper resampled onto its instants.
+    """The offline-conversion shape in one call: the stereo pair matched, the
+    wrist pose and gripper resampled onto its instants.
 
     Poses run at 3x the frame rate and are offset by half a pose period, so every
     instant falls strictly inside a bracket — the arrangement a device actually
@@ -400,9 +400,9 @@ def test_one_primary_camera_with_the_rest_resampled_nearest():
 
     Matching them all would drop constantly — they never fire together. So one is
     the grid and the others are resampled, where they take the `nearest` fallback
-    (an image cannot be blended) and each reports how far off it was. This is also
-    exactly what visio_data's offline ingest already does by hand: reference
-    camera, `nearest_indices` for the others.
+    (an image cannot be blended) and each reports how far off it was. This is
+    exactly what an offline ingest otherwise does by hand: reference camera,
+    nearest-index lookup for the others.
     """
     primary = [_frame(T0 + i * 33 * MS, "/cam_high") for i in range(4)]
     # A second camera free-running at a different phase AND a different rate.
@@ -449,7 +449,7 @@ def _joints(t_ns, v, topic="/gripper") -> JointState:
 
 
 def test_each_resample_key_can_take_its_own_mode():
-    """The visio-data shape, which needs all three at once: a second camera can
+    """The offline-conversion shape, which needs all three at once: a second camera can
     only be PICKED, a measured trajectory should be BLENDED, and a commanded
     setpoint must be HELD."""
     els = _stream(
@@ -512,8 +512,8 @@ def test_a_mapping_key_may_not_also_be_matched():
 
 
 def test_nearest_prefers_the_earlier_sample_on_an_exact_tie():
-    """Inherited from visio_data's `nearest_indices`, whose `<=` picked the
-    earlier sample when a grid time sat exactly between two. Ported here because
+    """Inherited from the `nearest_indices` op this replaced, whose `<=` picked
+    the earlier sample when a grid time sat exactly between two. Pinned because
     that op is gone and this one replaced it: a silent flip would move a whole
     dataset's frame-to-sample assignment by one, with nothing to notice it."""
     els = _stream(

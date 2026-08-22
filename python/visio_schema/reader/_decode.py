@@ -10,9 +10,8 @@ timestamp with it (leave a gap, never shift later frames). An earlier FIFO that
 re-indexed dropped AUs drifted a clip by ~7.7 s.
 
 One decoder instance per camera stream — never feed two cameras through one.
-Ported from ``slam-algo mcap_io._VideoDecoder`` / ``visio-data CameraDecoder``;
-neither is importable from here, so the logic lives with the wire contract that
-both of them read.
+Consolidated from the per-consumer decoders that each used to carry a copy of
+this logic; it lives with the wire contract they all read.
 """
 
 from __future__ import annotations

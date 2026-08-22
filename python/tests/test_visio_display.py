@@ -378,14 +378,15 @@ def test_pyproject_declares_console_script_and_default_deps() -> None:
     # point, and it still holds: everything above is a default dependency.
     #
     # Extras are allowed, but only for surfaces a normal install genuinely should
-    # not carry, and each one is named here so adding a third is a deliberate act
+    # not carry, and each one is named here so adding another is a deliberate act
     # rather than a drift back to feature-gating:
-    #   reader — scipy, for the one lazy import in the extrinsics parse
-    #   gpu    — cupy + PyNvVideoCodec for NVDEC decode, ~GB, NVIDIA's index
+    #   reader  — scipy, for the one lazy import in the extrinsics parse
+    #   gpu     — cupy + PyNvVideoCodec for NVDEC decode, ~GB, NVIDIA's index
+    #   dataset — pyarrow (large), for the episode-dataset parquet storage
     assert set(data["project"].get("optional-dependencies", {})) == {
-        "dev", "reader", "gpu",
+        "dev", "reader", "gpu", "dataset",
     }
-    for extra in ("reader", "gpu"):
+    for extra in ("reader", "gpu", "dataset"):
         joined = " ".join(data["project"]["optional-dependencies"][extra])
         for pkg in ("mcap", "pyserial", "foxglove-sdk", "rerun-sdk", "aiohttp"):
             assert pkg not in joined, (

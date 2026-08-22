@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "visio-schema"
-version = "0.8.0"
+version = "0.9.0"
 description = "Visio wire contract — generated protobuf bindings + the framing codec"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -81,6 +81,11 @@ gpu = [
     "cupy-cuda13x>=14,<15",
     "PyNvVideoCodec>=2.2",
 ]
+# `visio_schema.dataset` stores episode tables as parquet. An extra because
+# pyarrow is large and the wire/reader surfaces never need it.
+dataset = [
+    "pyarrow>=14",
+]
 dev = [
     "pytest>=8.0",
     "mypy>=1.10",
@@ -152,6 +157,19 @@ layers = [
     "visio_schema.reader.domain",
 ]
 
+[[tool.importlinter.contracts]]
+name = "dataset layers depend downward only"
+type = "layers"
+layers = [
+    # Storage and encode are independent siblings above the spec: `lerobot`
+    # knows the spec and the parquet layout, `video` knows frames and paths
+    # and neither the spec nor the storage. `geometry` is the floor — a pure
+    # arithmetic rule both the encoder and a live pipeline size frames with.
+    "visio_schema.dataset.lerobot : visio_schema.dataset.video",
+    "visio_schema.dataset.spec",
+    "visio_schema.dataset.geometry",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"
@@ -184,7 +202,7 @@ skip = "*-musllinux*"
 # half is still tested natively; both halves are still built.
 test-skip = "*_universal2:x86_64"
 build-frontend = "build"
-test-requires = ["pytest>=8", "pytest-timeout>=2.3", "protobuf>=5.26", "cobs>=1.2", "mcap>=1.1"]
+test-requires = ["pytest>=8", "pytest-timeout>=2.3", "protobuf>=5.26", "cobs>=1.2", "mcap>=1.1", "pyarrow>=14"]
 # Run the in-wheel suite native-on, then forced onto the pure-Python fallback, so
 # both readers are exercised against the installed wheel.
 # --timeout is a hard guard well above any real test time: it turns a platform-specific

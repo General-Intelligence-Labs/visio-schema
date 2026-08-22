@@ -148,8 +148,8 @@ def test_a_sentinel_quaternion_is_refused_not_normalized_into_a_pose():
     """The bug this guard exists for. Several producers write an all-zero
     quaternion for "no pose here". Slerping it against a real rotation
     renormalizes the result to unit length, so a sentinel goes in and a plausible
-    rotation comes out — and every downstream validity check (visio_data's
-    `is_valid_quat`, i.e. `norm > 0.5`) then passes on a pose nothing measured."""
+    rotation comes out — and a downstream validity check of the usual shape
+    (`norm > 0.5`) then passes on a pose nothing measured."""
     real = _pose(T1, (1, 1, 1), _rot_z(45))
     sentinel = _pose(T0, (0, 0, 0), np.zeros(4))
     with pytest.raises(ValueError, match="not a rotation"):
