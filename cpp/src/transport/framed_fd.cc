@@ -50,18 +50,24 @@ WritePolicy ControlPolicy() {
 }  // namespace
 
 FramedFdEndpoint::FramedFdEndpoint(int fd, WritePolicy policy,
-                                   std::int64_t stall_ns)
-    : ctrl_outbox_(ControlPolicy()), outbox_(policy), stall_ns_(stall_ns) {
+                                   std::int64_t stall_ns,
+                                   std::int64_t degrade_hold_ns)
+    : ctrl_outbox_(ControlPolicy()),
+      outbox_(policy),
+      stall_ns_(stall_ns),
+      degrade_hold_ns_(degrade_hold_ns) {
   AdoptFd(fd);
 }
 
 FramedFdEndpoint::FramedFdEndpoint(FdFactory factory, WritePolicy policy,
                                    std::int64_t reopen_backoff_ns,
-                                   std::int64_t stall_ns)
+                                   std::int64_t stall_ns,
+                                   std::int64_t degrade_hold_ns)
     : factory_(std::move(factory)),
       ctrl_outbox_(ControlPolicy()),
       outbox_(policy),
       stall_ns_(stall_ns),
+      degrade_hold_ns_(degrade_hold_ns),
       reopen_backoff_ns_(reopen_backoff_ns) {
   if (factory_) AdoptFd(factory_());
 }
@@ -106,6 +112,37 @@ void FramedFdEndpoint::Send(const Message& msg) {
     door_dropped_.fetch_add(1, std::memory_order_relaxed);
     return;
   }
+  // Congested but not stalled: the video outbox has been EVICTING, so this
+  // leg is already lossy — and every evicted P-frame breaks the viewer's
+  // reference chain until the next keyframe anyway. Offering only keyframes
+  // costs the viewer nothing they were still getting (a clean one-per-GOP
+  // picture beats corrupt-then-frozen GOPs) and collapses the offered load,
+  // which on a shared-radio producer is what stops a choked leg's TX/
+  // retransmit churn from starving the CAPTURE path while a slow reader
+  // limps along under the stall gate's radar. Cleared here, at the first
+  // keyframe after an eviction-free hold, so full rate resumes exactly at a
+  // sync point the viewer can decode from.
+  if (msg.bulk && !msg.no_degrade) {
+    std::int64_t hold_ns =
+        degrade_hold_until_ns_.load(std::memory_order_relaxed);
+    if (hold_ns != 0) {
+      if (!msg.keyframe) {
+        degrade_dropped_.fetch_add(1, std::memory_order_relaxed);
+        return;
+      } else if (MonotonicNs() >= hold_ns) {
+        // First keyframe past an eviction-free hold: resume full rate at this
+        // sync point. A lost CAS means the I/O thread just re-armed on a
+        // fresh eviction — stay latched.
+        if (degrade_hold_until_ns_.compare_exchange_strong(
+                hold_ns, 0, std::memory_order_relaxed)) {
+          std::cerr << "visio-schema: link congestion cleared — resuming "
+                       "full-rate video ("
+                    << degrade_dropped_.load(std::memory_order_relaxed)
+                    << " frames shed at the keyframes-only gate)\n";
+        }
+      }
+    }
+  }
   // Absent rule = keep at full rate, so a stream announced after the policy was
   // resolved is delivered rather than silently dropped.
   const StreamRule* rule = RuleFor(msg.stream_id);
@@ -134,6 +171,11 @@ void FramedFdEndpoint::Send(const Message& msg) {
   // needs no per-message wake either; it costs at most one tick of latency
   // on the first frames after a reader returns.
   if (!stalled) Wake();
+}
+
+void FramedFdEndpoint::RequestVideoDegrade() {
+  degrade_hold_until_ns_.store(MonotonicNs() + degrade_hold_ns_,
+                               std::memory_order_relaxed);
 }
 
 void FramedFdEndpoint::Wake() { wake_.Signal(); }
@@ -199,6 +241,22 @@ void FramedFdEndpoint::Pump() {
 
 void FramedFdEndpoint::UpdateStallState(long accepted) {
   const std::int64_t now_ns = MonotonicNs();
+  // Congestion latch (Send's keyframes-only gate): any NEW eviction from the
+  // video outbox arms/extends the degrade hold. Eviction — not queue depth or
+  // age — is the trigger, because transient CPU-starvation stalls routinely
+  // age frames right up to the cap without loss (measured: ~1 s ages once a
+  // second at 0% idle), while an eviction means the viewer's picture is
+  // already breaking. Only outbox_ counts: control-queue drops say nothing
+  // about video congestion.
+  const std::uint64_t evicted = outbox_.Dropped();
+  if (evicted != evictions_seen_) {
+    evictions_seen_ = evicted;
+    if (degrade_hold_until_ns_.exchange(now_ns + degrade_hold_ns_,
+                                        std::memory_order_relaxed) == 0) {
+      std::cerr << "visio-schema: link congested (video outbox evicting) — "
+                   "degrading to keyframes-only\n";
+    }
+  }
   const bool pending = ctrl_outbox_.HasPending() || outbox_.HasPending();
   if (accepted > 0 || !pending) {
     last_progress_ns_ = now_ns;
@@ -260,6 +318,10 @@ void FramedFdEndpoint::MarkLinkDead() {
   next_reopen_ns_ = 0;  // reopen ASAP on the next Tick
   // A fresh link starts unstalled and re-arms its own stall clock.
   link_stalled_.store(false, std::memory_order_relaxed);
+  // ...and undegraded: the dead link's evictions say nothing about the next
+  // one. Resync the eviction cursor so they can't re-latch it either.
+  degrade_hold_until_ns_.store(0, std::memory_order_relaxed);
+  evictions_seen_ = outbox_.Dropped();
   // Last, with the endpoint's own state already settled: the owner detaches us
   // from inside this call. Once per link — a second MarkLinkDead (fd_ already
   // -1) must not re-report a closure the owner has acted on.

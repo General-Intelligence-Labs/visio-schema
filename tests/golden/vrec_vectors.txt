@@ -1,0 +1,33 @@
+# Cross-language golden vectors for the `VREC` recording container
+# (one `key=hexbytes` per line).
+#
+# Generated from the Python reference implementation
+# (python/visio_schema/mcap/crypto.py). Both python/tests/
+# test_recording_crypto.py and cpp/tests/test_recording_crypto.cc load
+# these bytes and assert THEIR implementation reproduces them.
+#
+# This is the fixture that matters most in the recording-encryption work.
+# The device WRITES these bytes in C++ and the admin READS them in Python,
+# and the two are separate implementations of one stream cipher. A drift
+# between them does not fail loudly: it produces a card full of recordings
+# that decrypt to convincing garbage, discovered long after the shift.
+# Pinning both directions against committed bytes makes that a build
+# failure instead.
+#
+# The key and nonce are deliberately recognisable counting patterns. They
+# are TEST values; a real recording key is minted per client and never
+# enters this repo.
+
+vrec_key=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+vrec_nonce=404142434445464748494a4b
+vrec_key_fp=630dcd2966c43366
+# HMAC-SHA256(key, b'visio-rec-v1' + nonce) — the per-part key that
+# actually runs the cipher, so one part's key reveals nothing about
+# another's.
+vrec_file_key=cf38b582f522f3b3d8651147b145086480aa604e1cc82e10db3589b559bad8e8
+# The 32-byte plaintext header, exactly as written to the head of a part.
+vrec_header=5652454301010000630dcd2966c43366404142434445464748494a4b00000000
+# 200 bytes: crosses three ChaCha20 blocks and ends unaligned, so an
+# off-by-one in block indexing or in the sub-block skip cannot pass.
+vrec_plaintext=030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dae1e8eff6fd040b121920272e353c434a51585f666d74
+vrec_ciphertext=11a7386d806fb36650bc4e6f47523e1de3706a44861b2bae4578c7274f74770c1a59aa1b572bc39fa2c7e91a146870de8aafd8beb7d1efd03d97db695ed4ee796f98e87e5075eb733312f89043593557c56d7e5d1c9f8d6b4a0d37c3573399ee8e663237dde49728d8b1f231711e9d931772638de823a77d7b4597757185be4639279086a00430c14c08c99e1c6d117b81b3daf02140c4c1d551de846ebbab2c4cb936045716823c7fb4d9f0322c33aa60255816f06d8f5e7687bf720b435edf12a64cb35bf9f1a4

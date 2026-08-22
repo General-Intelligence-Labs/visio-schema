@@ -1,6 +1,17 @@
 """Fixtures for the dataset-layer tests. scipy-free on purpose: these run
 inside the built wheel, whose test env carries only the base deps + pyarrow."""
 
+# CI runs one leg with NO extras, to prove the wire contract installs and
+# passes on its own. This suite needs the [dataset] extra (pyarrow for the
+# episode tables, av for the mp4 writer),
+# so without it the directory is skipped rather than failing at collection
+# — an ImportError here would read as a broken package rather than an
+# absent optional dependency.
+import importlib.util as _iu
+
+if any(_iu.find_spec(p) is None for p in ("pyarrow", "av")):
+    collect_ignore_glob = ["*.py"]
+
 import numpy as np
 import pytest
 

@@ -35,17 +35,41 @@ _PYPROJECT = Path(__file__).resolve().parents[2] / "pyproject.toml"
 
 
 def _declared_av_range() -> tuple[str, str]:
-    """The ``>=lo,<hi`` bounds declared for `av`, as written."""
+    """The ``>=lo,<hi`` bounds declared for `av`, as written.
+
+    `av` is a decoder, not the wire contract, so it sits in the extras that
+    decode rather than in the base dependencies — today `display`, `reader` and
+    `dataset`. PEP 621 has no way to state a requirement once and reference it,
+    so those are literal copies, and copies drift. Every one of them is read
+    here and they must agree: a `reader` pinned below a `display` that moved
+    would put two installs of the same package on opposite sides of the line
+    this whole module exists to hold.
+    """
     data = tomllib.loads(_PYPROJECT.read_text())
-    for dep in data["project"]["dependencies"]:
-        m = re.fullmatch(r"av>=([0-9][0-9.]*),<([0-9][0-9.]*)", dep.strip())
-        if m:
-            return m.group(1), m.group(2)
-    raise AssertionError(
-        "no `av>=lo,<hi` range in [project.dependencies]. The upper bound is "
-        "what makes two runs' decoded output comparable; an open ceiling "
-        "silently lets a release through that changes every pixel."
+    groups = {"[project.dependencies]": data["project"]["dependencies"]}
+    groups.update({f"[{k}] extra": v
+                   for k, v in data["project"]
+                   .get("optional-dependencies", {}).items()})
+
+    found: dict[str, tuple[str, str]] = {}
+    for where, deps in groups.items():
+        for dep in deps:
+            m = re.fullmatch(r"av>=([0-9][0-9.]*),<([0-9][0-9.]*)", dep.strip())
+            if m:
+                found[where] = (m.group(1), m.group(2))
+    if not found:
+        raise AssertionError(
+            "no `av>=lo,<hi` range anywhere in pyproject.toml. The upper bound "
+            "is what makes two runs' decoded output comparable; an open ceiling "
+            "silently lets a release through that changes every pixel."
+        )
+    ranges = set(found.values())
+    assert len(ranges) == 1, (
+        f"the declared `av` ranges disagree: {found}. Every place that pins av "
+        f"must pin the SAME range, or which extra a consumer installed decides "
+        f"whether its decoded output is comparable with anyone else's."
     )
+    return ranges.pop()
 
 
 def test_the_declared_ceiling_is_where_decode_was_measured_to_change():

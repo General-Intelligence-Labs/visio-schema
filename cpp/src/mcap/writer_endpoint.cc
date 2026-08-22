@@ -21,10 +21,13 @@ McapWriterEndpoint::McapWriterEndpoint(std::string_view path, StreamResolver res
                                        std::uint64_t max_bytes, double max_duration_s,
                                        transport::WritePolicy policy,
                                        std::map<std::string, std::string> metadata,
-                                       bool rotate_on_keyframe, std::int64_t pair_guard_ns)
+                                       bool rotate_on_keyframe, std::int64_t pair_guard_ns,
+                                       std::uint64_t sync_span_bytes,
+                                       std::optional<RecordingKey> recording_key)
     : resolve_(std::move(resolve)),
       writer_(std::make_unique<visio_schema::mcap::McapWriter>(
-          path, max_bytes, max_duration_s, rotate_on_keyframe, pair_guard_ns)),
+          path, max_bytes, max_duration_s, rotate_on_keyframe, pair_guard_ns,
+          sync_span_bytes, std::move(recording_key))),
       policy_(policy) {
   // Written on this (constructing) thread, before Start() spawns the writer
   // thread — so it lands in the file ahead of any message, no locking needed.
@@ -98,6 +101,8 @@ void McapWriterEndpoint::Send(const Message& msg) {
     if (const std::size_t evicted = before - queue_.size()) NoteDrop(evicted);
     queue_.push_back(Entry{std::move(ch), msg});
     queue_bytes_ += len;
+    if (queue_bytes_ > stat_max_pending_bytes_.load(std::memory_order_relaxed))
+      stat_max_pending_bytes_.store(queue_bytes_, std::memory_order_relaxed);
     was_empty = before == 0;
   }
   // Signal only the empty→non-empty edge: the writer swaps the WHOLE queue
@@ -195,6 +200,8 @@ McapWriterStats McapWriterEndpoint::stats() const {
   s.blocked_ns = stat_blocked_ns_.load(std::memory_order_relaxed);
   s.max_block_ns = stat_max_block_ns_.load(std::memory_order_relaxed);
   s.slow_writes = stat_slow_writes_.load(std::memory_order_relaxed);
+  s.dropped = dropped_.load(std::memory_order_relaxed);
+  s.max_pending_bytes = stat_max_pending_bytes_.load(std::memory_order_relaxed);
   return s;
 }
 

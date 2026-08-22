@@ -30,11 +30,13 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
     "Typing :: Typed",
 ]
-# Installed by default: the wire codec + generated bindings, MCAP read/write, the
-# `visio-display` viewer + `--serve` launcher deps, and what `visio_schema.reader`
-# needs to decode. The heavy/serve-only libs (rerun, av, aiohttp, zeroconf) are
-# imported lazily, so they cost nothing until the viewer, the launcher or the
-# reader is actually run. Only genuinely optional surfaces are extras — see below.
+# The wire contract itself — installed by default: the codec + generated
+# bindings, MCAP read/write, and the serial transport. Nothing here pulls a
+# viewer: the `visio-display` deps (rerun, av, aiohttp, zeroconf) live in the
+# `display` extra below, because they are imported lazily by `visio_schema.display`
+# alone and are ~600 MB (rerun-sdk + its pyarrow) that a wire-contract consumer —
+# a stage image, a training pipeline — never opens. `pip install visio-schema` is
+# the codec; `pip install visio-schema[display]` adds the viewer.
 dependencies = [
     "protobuf>=5.26",
     "cobs>=1.2",
@@ -46,6 +48,20 @@ dependencies = [
     "numpy>=1.24",
     "pyserial>=3.5",
     "foxglove-sdk>=0.10",
+    # Core, not an extra, unlike the viewer deps above: a sealed settings QR
+    # and an encrypted (VREC) recording are both things a plain
+    # `pip install visio-schema` consumer has to be able to open. A wheel
+    # that reads the contract but not the artifacts the contract describes
+    # would push every consumer to add the extra anyway. ~4 MB, not ~600.
+    "cryptography>=42",
+]
+
+[project.optional-dependencies]
+# The `visio-display` viewer + `--serve` launcher. Every entry is imported lazily
+# under `visio_schema/display/` only (rerun/av in `display/__init__`, aiohttp in
+# `serve.py`, zeroconf in `discovery.py`), so the base package imports and the
+# codec runs without any of them. Required to actually run `visio-display`.
+display = [
     "rerun-sdk>=0.24",
     # A RANGE, and a measured one. Two constraints meet here:
     #   >= 14.2  `av.codec.hwaccel` — the display transcoder's GPU probe — first
@@ -62,18 +78,19 @@ dependencies = [
     "aiohttp>=3.9",     # `--serve` launcher web app
     "zeroconf>=0.130",  # `--serve` mDNS device discovery
 ]
+# `av` also appears in the extras below. It cannot live in base (it is a decoder,
+# not the wire contract) and it cannot live only in `display` (the reader and the
+# dataset writer both decode video). The range and its rationale are stated once,
+# above; the duplicates below are pins, not decisions.
 
-[project.optional-dependencies]
-# The viewer/MCAP deps stay BASE (a user should not have to know an extra exists
-# to read a recording). These two are extras because they are genuinely optional
-# and one of them is enormous — not feature-gating for its own sake.
+# One lazy import, reached only by recordings carrying FrameTransform
+# extrinsics (`_parse_frame_transform`). Kept rather than hand-rolled: a numpy
+# quaternion->matrix mirroring scipy's formula is bit-identical on only
+# ~89% of random quaternions (worst 6.7e-16), and this feeds the STEREO
+# EXTRINSIC, so a last-bit shift propagates into rectification and depth.
 reader = [
-    # One lazy import, reached only by recordings carrying FrameTransform
-    # extrinsics (`_parse_frame_transform`). Kept rather than hand-rolled: a numpy
-    # quaternion->matrix mirroring scipy's formula is bit-identical on only
-    # ~89% of random quaternions (worst 6.7e-16), and this feeds the STEREO
-    # EXTRINSIC, so a last-bit shift propagates into rectification and depth.
     "scipy>=1.10",
+    "av>=14.2,<17",
 ]
 # Device-resident NVDEC decode (`Session.stream(gpu=True)`). Heavy (~GB), from
 # NVIDIA's index; lazy-imported so the reader stays CPU-only without it.
@@ -81,12 +98,21 @@ gpu = [
     "cupy-cuda13x>=14,<15",
     "PyNvVideoCodec>=2.2",
 ]
-# `visio_schema.dataset` stores episode tables as parquet. An extra because
-# pyarrow is large and the wire/reader surfaces never need it.
+# `visio_schema.dataset` stores episode tables as parquet and decodes source
+# video to build them. An extra because pyarrow is large and the wire surface
+# never needs it.
 dataset = [
     "pyarrow>=14",
+    "av>=14.2,<17",
+]
+# Rendering a settings QR to PNG. Split out because `visio-settings-qr`
+# validates, seals, inspects and mints keys without it — only the final
+# `--out` render needs a rasteriser.
+qr = [
+    "qrcode[pil]>=7.4",
 ]
 dev = [
+    "qrcode[pil]>=7.4",   # so CI covers the render path, not just --dry-run
     "pytest>=8.0",
     "mypy>=1.10",
     "ruff>=0.5",
@@ -102,6 +128,13 @@ dev = [
 [project.scripts]
 # `run` (not `main`) — see its docstring for why the console entry exits 0.
 visio-display = "visio_schema.display:run"
+# Mint the settings QR a fleet owner hands to operators. In-package (not
+# under tools/) precisely so `pip install visio-schema` is the whole setup
+# a customer needs to seal their own credentials.
+visio-settings-qr = "visio_schema.settings_qr:run"
+# Plaintext copy of an encrypted recording, for the tools that will never take
+# a key: Foxglove Studio, the kalibr path, the frozen visio-setup bundle.
+visio-decrypt = "visio_schema.mcap.decrypt:run"
 
 [project.urls]
 Homepage = "https://github.com/General-Intelligence-Labs/visio-schema"

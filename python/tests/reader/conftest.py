@@ -2,6 +2,17 @@
 
 from __future__ import annotations
 
+# CI runs one leg with NO extras, to prove the wire contract installs and
+# passes on its own. This suite needs the [reader] extra (scipy at import
+# time in _helpers, av to decode),
+# so without it the directory is skipped rather than failing at collection
+# — an ImportError here would read as a broken package rather than an
+# absent optional dependency.
+import importlib.util as _iu
+
+if any(_iu.find_spec(p) is None for p in ("scipy", "av")):
+    collect_ignore_glob = ["*.py"]
+
 import pytest
 from _helpers import RecBuilder, indexed_frames, stereo_calib_builder
 

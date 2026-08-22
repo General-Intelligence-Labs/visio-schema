@@ -70,6 +70,21 @@ add_library(visio_schema STATIC
   src/transport/serial.cc
   src/transport/tcp.cc
 )
+# ---- VREC recording encryption ---------------------------------------------
+# Always built. It was briefly a default-OFF option, which was wrong twice
+# over: the PyPI wheel hand-lists its sources in python/setup.py and compiles
+# neither this file nor the writer, so nothing was being kept dependency-free;
+# and a build flag that silently decides whether recordings are encrypted is a
+# foot-gun — one forgotten -D and a customer image ships plaintext with no
+# signal anywhere. The recorder asks for a key or it does not; that is a
+# runtime decision the device reports in DeviceState, not a compile-time one.
+#
+# The cost is one dependency: OpenSSL. visio-embedded already links -lcrypto
+# for sigv4 and the OTA envelope, and the device sysroots stage it.
+find_package(OpenSSL REQUIRED)
+target_sources(visio_schema PRIVATE src/mcap/recording_crypto.cc)
+target_link_libraries(visio_schema PUBLIC OpenSSL::Crypto)
+
 target_include_directories(visio_schema PUBLIC
   "${NANOPB_DIR}"
   "${NANOPB_GEN}"
@@ -114,12 +129,14 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT CMAKE_CROSSCOMPILI
     tests/test_topic_match.cc
     tests/test_golden_vectors.cc
     tests/test_calibration_nanopb.cc
+    tests/test_control_nanopb.cc
     tests/test_sensor_nanopb.cc
     tests/test_tcp_io.cc
     tests/test_backpressure.cc
     tests/test_serial_watchdog.cc
     tests/test_endpoint_reconnect.cc
   )
+  target_sources(visio_schema_tests PRIVATE tests/test_recording_crypto.cc)
   target_link_libraries(visio_schema_tests
     PRIVATE visio_schema GTest::gtest GTest::gtest_main)
   # Path to the committed cross-language byte fixtures (shared with the Python

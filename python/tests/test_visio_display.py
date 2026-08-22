@@ -338,6 +338,31 @@ def test_run_discards_message_count_and_exits_clean(monkeypatch) -> None:
     assert vd.run() is None  # not SystemExit(7), not the count
 
 
+def test_run_maps_missing_display_dep_to_install_hint(monkeypatch) -> None:
+    """The viewer deps moved to the optional `display` extra, so a lean
+    `pip install visio-schema` reaches `run` but has none of them. When a sink first
+    imports one, `run` maps the ModuleNotFoundError to the one-line
+    `pip install 'visio-schema[display]'` fix rather than leaking a raw traceback."""
+    vd = _vd()
+
+    def _missing_rerun(argv=None):
+        raise ModuleNotFoundError("No module named 'rerun'", name="rerun")
+
+    monkeypatch.setattr(vd, "main", _missing_rerun)
+    with pytest.raises(SystemExit) as ei:
+        vd.run()
+    assert "visio-schema[display]" in str(ei.value)  # actionable, not a traceback
+
+    # A missing module that is NOT a display-extra dep is a genuine error — it must
+    # propagate, not get swallowed behind the install hint.
+    def _missing_other(argv=None):
+        raise ModuleNotFoundError("No module named 'numpy'", name="numpy")
+
+    monkeypatch.setattr(vd, "main", _missing_other)
+    with pytest.raises(ModuleNotFoundError):
+        vd.run()
+
+
 def test_help_exits_zero() -> None:
     """The CLI parser is wired up: `--help` prints usage and exits 0."""
     vd = _vd()
@@ -356,10 +381,11 @@ def test_layout_data_is_shipped() -> None:
     json.loads(vd._LAYOUT_PATH.read_text())  # parses as JSON
 
 
-def test_pyproject_declares_console_script_and_default_deps() -> None:
+def test_pyproject_declares_console_script_and_display_extra() -> None:
     """Guard the packaging contract: the `visio-display` console script stays
-    declared, and the viewer + MCAP deps ship as base dependencies (installed by
-    default) rather than behind feature extras."""
+    declared, the wire-contract deps install by default, and the viewer/`--serve`
+    deps ship in the `display` extra (NOT the base install) — they are imported
+    lazily by `visio_schema.display` alone, so a codec consumer never pulls them."""
     import sys
 
     if sys.version_info >= (3, 11):
@@ -370,26 +396,54 @@ def test_pyproject_declares_console_script_and_default_deps() -> None:
     pyproject = _THIS.parent / "pyproject.toml"
     data = tomllib.loads(pyproject.read_text())
     assert data["project"]["scripts"]["visio-display"] == "visio_schema.display:run"
+    assert (data["project"]["scripts"]["visio-settings-qr"]
+            == "visio_schema.settings_qr:run")
+    # The only way into an encrypted recording for tools that will never take
+    # a key — Foxglove Studio, the kalibr path, the frozen visio-setup bundle.
+    # Losing this entry point strands that footage.
+    assert (data["project"]["scripts"]["visio-decrypt"]
+            == "visio_schema.mcap.decrypt:run")
+
     deps = " ".join(data["project"]["dependencies"])
-    for pkg in ("mcap", "pyserial", "foxglove-sdk", "rerun-sdk", "av",
-                "aiohttp", "zeroconf"):
-        assert pkg in deps, f"{pkg} should be a default dependency"
-    # The viewer/MCAP surface is NOT behind an extra — that was the original
-    # point, and it still holds: everything above is a default dependency.
-    #
-    # Extras are allowed, but only for surfaces a normal install genuinely should
-    # not carry, and each one is named here so adding another is a deliberate act
-    # rather than a drift back to feature-gating:
-    #   reader  — scipy, for the one lazy import in the extrinsics parse
+    for pkg in ("protobuf", "cobs", "mcap", "pyserial", "foxglove-sdk"):
+        assert pkg in deps, f"{pkg} should be a default (wire-contract) dependency"
+
+    extras = data["project"].get("optional-dependencies", {})
+    # Named exhaustively so adding an extra is a deliberate act rather than a
+    # drift back to feature-gating.
+    #   display — the viewer + `--serve` launcher (~600 MB with rerun's pyarrow)
+    #   reader  — scipy for the extrinsics parse, av to decode
     #   gpu     — cupy + PyNvVideoCodec for NVDEC decode, ~GB, NVIDIA's index
-    #   dataset — pyarrow (large), for the episode-dataset parquet storage
-    assert set(data["project"].get("optional-dependencies", {})) == {
-        "dev", "reader", "gpu", "dataset",
-    }
+    #   dataset — pyarrow for the episode tables, av for the mp4 writer
+    #   qr      — a rasteriser, for the final PNG render only
+    assert set(extras) == {"display", "reader", "gpu", "dataset", "qr", "dev"}
+    display = " ".join(extras["display"])
+    for pkg in ("rerun-sdk", "av", "aiohttp", "zeroconf"):
+        assert pkg in display, f"{pkg} should live in the display extra"
+        assert pkg not in deps, f"{pkg} must NOT be a default dependency"
+    # av is the one package in more than one extra, and deliberately so: it is a
+    # decoder, so it cannot sit in base, and the reader and the dataset writer
+    # both decode video without ever opening the viewer. Pinning it in only one
+    # of them would make `pip install visio-schema[reader]` install broken.
+    for extra in ("reader", "dataset"):
+        assert "av>=" in " ".join(extras[extra]), (
+            f"the {extra!r} extra decodes video, so it must pin av itself")
+    # Nothing that is already a default dependency may ALSO be gated behind an
+    # extra, or a plain install would look like it were missing something.
     for extra in ("reader", "gpu", "dataset"):
-        joined = " ".join(data["project"]["optional-dependencies"][extra])
+        joined = " ".join(extras[extra])
         for pkg in ("mcap", "pyserial", "foxglove-sdk", "rerun-sdk", "aiohttp"):
             assert pkg not in joined, (
                 f"{pkg} is a default dependency; it must not also be gated "
                 f"behind the {extra!r} extra"
             )
+    # `visio-settings-qr` seals, validates, inspects and mints keys with no
+    # rasteriser; only the final PNG render needs one.
+    assert "qrcode" in " ".join(extras["qr"])
+    assert "qrcode" not in deps, "qrcode must NOT be a default dependency"
+    assert "qrcode" in " ".join(extras["dev"]), (
+        "dev must pull qrcode so CI covers render_qr, not just --dry-run")
+    # Core, not an extra: opening a sealed QR and an encrypted recording are
+    # both things a plain `pip install visio-schema` consumer must be able to
+    # do, so this stays in the base dependencies.
+    assert "cryptography" in deps

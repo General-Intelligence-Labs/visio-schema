@@ -70,15 +70,70 @@ def test_access_key_id_fits_a_tencent_secret_id(sizes: dict[str, int]) -> None:
     assert sizes["SetStorage.access_key_id"] - 1 >= _TENCENT_SECRET_ID_LEN
 
 
-# A string field with no max_size becomes a pb_callback_t, which the firmware's
-# static decode path cannot use — the field silently never arrives.
-@pytest.mark.parametrize("message", ["SetStorage", "TestStorage"])
-def test_every_storage_string_field_is_sized(sizes: dict[str, int], message: str) -> None:
+# A string OR bytes field with no max_size becomes a pb_callback_t, which the
+# firmware's static decode path cannot use — the field silently never arrives.
+# Bytes matter as much as strings here: the sealed provisioning envelope is a
+# `bytes` field, and an unsized one would make a v2 settings QR appear to apply
+# while setting nothing at all.
+@pytest.mark.parametrize("message",
+                         ["SetStorage", "TestStorage", "SetRecordingKey"])
+def test_every_inbound_field_is_sized(sizes: dict[str, int], message: str) -> None:
     from visio_schema.v1.control import command_pb2
 
     descriptor = getattr(command_pb2, message).DESCRIPTOR
     for field in descriptor.fields:
-        if field.type == field.TYPE_STRING:
+        if field.type in (field.TYPE_STRING, field.TYPE_BYTES):
             assert f"{message}.{field.name}" in sizes, (
                 f"{message}.{field.name} has no max_size — it would decode as a callback"
             )
+
+
+# The sealed envelope caps are a MEASUREMENT, not a guess: this builds the
+# largest body the generator can actually emit and checks it fits. A cap set
+# too low does not truncate — nanopb fails the whole decode, so the device
+# discards the Command and answers nothing, exactly the Tencent failure above.
+def test_sealed_cap_matches_the_generators_enforced_bound(
+        sizes: dict[str, int]) -> None:
+    """The generator refuses to emit an envelope over SEALED_MAX_BYTES. That
+    constant and these caps are the same number in two files, and nothing but
+    this test stops them drifting — at which point the generator would happily
+    print a QR that every device silently discards."""
+    from visio_schema.settings_qr.payload import SEALED_MAX_BYTES
+
+    for field in ("SetStorage.sealed", "TestStorage.sealed",
+                  "SetRecordingKey.sealed"):
+        assert sizes[field] == SEALED_MAX_BYTES, (
+            f"{field} max_size:{sizes[field]} != payload.SEALED_MAX_BYTES "
+            f"({SEALED_MAX_BYTES})"
+        )
+
+
+def test_a_realistic_worst_case_envelope_fits_the_cap(
+        sizes: dict[str, int]) -> None:
+    """A full body — the longest secret SetStorage accepts, both recording
+    keys, an expiry — must still fit, or the cap is unusably tight."""
+    import json
+
+    from visio_schema.crypto import generate_keypair, seal
+    from visio_schema.settings_qr import SealedSecrets
+
+    body = SealedSecrets(
+        storage_secret="x" * (sizes["SetStorage.secret_access_key"] - 1),
+        recording_key=bytes(32),
+        old_recording_key=bytes(32),
+        expires_at=1786000000,
+    ).to_body()
+    _, pub = generate_keypair()
+    blob = seal(json.dumps(body, separators=(",", ":")).encode(), pub)
+    assert len(blob) <= sizes["SetStorage.sealed"], (
+        f"a full envelope is {len(blob)} B, over the "
+        f"{sizes['SetStorage.sealed']} B cap"
+    )
+
+
+# All three sealed fields decode through the same C++ Unseal, and the device
+# reuses one static buffer for them; a mismatch would size that buffer wrong.
+def test_every_sealed_cap_agrees(sizes: dict[str, int]) -> None:
+    sealed = {k: v for k, v in sizes.items() if k.endswith(".sealed")}
+    assert len(sealed) == 3, f"expected three sealed fields, found {sorted(sealed)}"
+    assert len(set(sealed.values())) == 1, sealed

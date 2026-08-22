@@ -69,6 +69,21 @@ visio_schema.v1.control.TestStorage.secret_access_key max_size:64
 visio_schema.v1.control.TestStorage.prefix            max_size:128
 visio_schema.v1.control.TestStorage.status_prefix     max_size:128
 
+# ---- Control: sealed provisioning envelopes ------------------------------
+# A `visio-seal-v1` blob: 56 B of framing (magic + kid + ephemeral pubkey +
+# Poly1305 tag) over a compact JSON body — a storage secret plus up to two
+# 32-byte recording keys and the optional dev/exp replay guards. A realistic
+# body seals to ~300 B; 384 leaves headroom without approaching the QR's own
+# 1800 B budget, which binds first anyway.
+#
+# `bytes` needs a max_size for exactly the reason a `string` does: unsized, it
+# becomes a pb_callback_t and the firmware's static decode path silently never
+# receives the field. The three live in one oneof arm each, and a oneof is a C
+# union, so this 384 is paid once across the whole Command.
+visio_schema.v1.control.SetStorage.sealed             max_size:384
+visio_schema.v1.control.TestStorage.sealed            max_size:384
+visio_schema.v1.control.SetRecordingKey.sealed        max_size:384
+
 # StartRecording capture metadata: bounded so they decode into the static
 # struct (session_name stays the nanopb default callback — firmware ignores it).
 visio_schema.v1.control.StartRecording.task           max_size:64
@@ -122,6 +137,12 @@ visio_schema.v1.control.DeviceState.storage_status_prefix      max_size:128
 # had just accepted.
 visio_schema.v1.control.DeviceState.storage_access_key_id      max_size:64
 visio_schema.v1.control.DeviceState.upload_last_error          max_size:128
+# 17 = 16 hex characters + NUL. This is SHA-256(recording_key)[:8], the same
+# 8 bytes the VREC container header carries, so the two are comparable as
+# printed strings.
+visio_schema.v1.control.DeviceState.recording_key_fingerprint  max_size:17
+# 9 = 8 hex characters + NUL: the 4-byte fleet key id.
+visio_schema.v1.control.DeviceState.seal_key_id                max_size:9
 
 # ---- Control: variable-length result lists — FT_POINTER (mirror DeviceInfo):
 #      malloc only what's sent, freed with the message; keeps CommandResult's

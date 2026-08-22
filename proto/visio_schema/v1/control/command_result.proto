@@ -226,6 +226,23 @@ message DeviceState {
   }
   RecordingHeartbeat recording_heartbeat = 33;
 
+  // ── hand detection ──
+  // Whether the NPU hand detector runs (SetHandDetection): the preview's hand
+  // boxes and the spoken out-of-view notices.
+  //
+  // Tri-state for the same reason as AudioRecording above: UNSUPPORTED covers
+  // both "this board's config stages no detector model" and "this firmware
+  // predates the toggle", and lets the app HIDE the control rather than render
+  // a switch it cannot actually move. ENABLED/DISABLED is the unit's stored
+  // choice, which the device applies within about a second of the command —
+  // so it also describes what the detector is doing.
+  enum HandDetection {
+    HAND_DETECTION_UNSUPPORTED = 0;
+    HAND_DETECTION_ENABLED     = 1;
+    HAND_DETECTION_DISABLED    = 2;
+  }
+  HandDetection hand_detection = 38;
+
   // ── notice volume ──
   // Voice-notice loudness, 0-100 (SetNoticeVolume; 0 = muted).
   //
@@ -235,6 +252,40 @@ message DeviceState {
   // than render one it cannot actually move. A plain uint32 could not say
   // that, because 0 is a legal value (mute) as well as the proto3 default.
   optional uint32 notice_volume = 34;
+
+  // ── recording encryption ──
+  // Fingerprint of the key this unit encrypts recordings under: 16 lowercase
+  // hex, SHA-256(key)[:8]. Empty means no key is set and recordings are
+  // written in the clear.
+  //
+  // Deliberately the SAME bytes the `VREC` container writes into its `key_fp`
+  // header, so an admin comparing "what my device reports" against "what
+  // opens this file" is comparing one string to itself rather than two
+  // encodings of the same thing. The key itself is NEVER echoed — the same
+  // discretion storage_access_key_id follows above, for a far higher-value
+  // secret: whoever holds it can read every recording the fleet has made.
+  string recording_key_fingerprint = 35;
+
+  // Whether this unit REFUSES to record at all while it has no key (the
+  // device's [transport] require_encryption setting). Customer images set it
+  // so that a freshly flashed rig — which has lost its key, /userdata being
+  // wiped by a cable flash — is useless to an operator rather than liberated
+  // by one.
+  //
+  // A plain bool needs no tri-state: on firmware that predates encryption
+  // this reads false and recording_key_fingerprint reads empty, which is
+  // exactly the truth about such a unit.
+  bool recording_encryption_required = 36;
+
+  // Which fleet key generation this unit can open sealed payloads with — 8
+  // lowercase hex (the envelope's `kid`) — or empty on firmware that predates
+  // sealing.
+  //
+  // This is the capability probe, and the reason it is a separate field: a
+  // host tool reads it to warn BEFORE printing a QR that the target fleet
+  // could never open, instead of letting that surface in a factory as an
+  // unexplained "bad_envelope" on a rig.
+  string seal_key_id = 37;
 }
 
 // The single ack a device emits per Command on /<device>/command_result.

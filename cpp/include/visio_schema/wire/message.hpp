@@ -139,6 +139,16 @@ struct Message {
   // (transport/stream_policy.hpp).
   bool decimatable = false;
 
+  // In-memory only (NOT serialized): some consumer may be RECORDING this
+  // bulk stream at full rate right now, so a congested leg must NOT thin it
+  // — the keyframes-only congestion tier (transport/framed_fd.hpp) passes
+  // these frames untouched. Set by the producer per frame while that holds
+  // (e.g. a device whose phone client leases the recording destination), so
+  // there is no state to go stale: each frame carries its own truth. The
+  // stall gate still applies — framing into a socket nobody reads helps no
+  // recorder.
+  bool no_degrade = false;
+
   // In-memory only (NOT serialized): cache of EncodeFramed(*this), filled by
   // the FIRST framed sink to send this message and reused by every other one.
   // Outbound framed bytes are byte-identical across sinks (the header is

@@ -40,6 +40,13 @@ struct McapWriterStats {
   std::uint64_t blocked_ns = 0;
   std::uint64_t max_block_ns = 0;
   std::uint64_t slow_writes = 0;
+  // Frames shed by the bounded queue (same count as dropped_frames()) — any
+  // nonzero value means the recording is missing data.
+  std::uint64_t dropped = 0;
+  // Enqueue-side high watermark of queued bytes: how much of the policy's
+  // byte bound the storage device's stalls have ever consumed. The distance
+  // to max_bytes is the recording's proven margin against loss.
+  std::uint64_t max_pending_bytes = 0;
 };
 
 class McapWriterEndpoint : public transport::Endpoint {
@@ -50,7 +57,11 @@ class McapWriterEndpoint : public transport::Endpoint {
                      std::uint64_t max_bytes = 0, double max_duration_s = 0.0,
                      transport::WritePolicy policy = transport::WritePolicy::lossless(),
                      std::map<std::string, std::string> metadata = {},
-                     bool rotate_on_keyframe = false, std::int64_t pair_guard_ns = 0);
+                     bool rotate_on_keyframe = false, std::int64_t pair_guard_ns = 0,
+                     std::uint64_t sync_span_bytes = 0,
+                     // Present -> each part is a VREC container instead of
+                     // plaintext MCAP. Passthrough; see McapWriter.
+                     std::optional<RecordingKey> recording_key = std::nullopt);
   ~McapWriterEndpoint() override;
 
   McapWriterEndpoint(const McapWriterEndpoint&) = delete;
@@ -105,6 +116,8 @@ class McapWriterEndpoint : public transport::Endpoint {
 
   std::atomic<bool> failed_{false};   // unrecoverable storage error, latched
   std::atomic<std::uint64_t> dropped_{0};
+  // Written only under mu_ (Send), read lock-free by stats().
+  std::atomic<std::uint64_t> stat_max_pending_bytes_{0};
   std::atomic<std::uint64_t> stat_writes_{0};
   std::atomic<std::uint64_t> stat_blocked_ns_{0};
   std::atomic<std::uint64_t> stat_max_block_ns_{0};

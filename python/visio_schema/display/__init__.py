@@ -1102,6 +1102,17 @@ def main(argv: list[str] | None = None) -> int:
                      help="run the device-picker launcher: discover connected devices "
                           "(serial / local AP / Wi-Fi), pick one in the browser, and open "
                           "it in Foxglove")
+    # Encrypted recordings. Deliberately NOT under the source group: a key is
+    # a modifier on whichever source is replaying, and --serve needs one too.
+    p.add_argument("--key", metavar="HEX",
+                   help="recording key for an encrypted (VREC) file, 64 hex "
+                        "chars. Prefer --key-file: an argument is visible in "
+                        "`ps` to every user on the machine")
+    p.add_argument("--key-file", metavar="PATH",
+                   help="file holding the recording key as 64 hex chars. "
+                        "Without either, the key is looked up in "
+                        "$VISIO_RECORDING_KEY, $VISIO_RECORDING_KEY_FILE, then "
+                        "~/.config/visio/recording-keys.json")
     p.add_argument("--baud", type=int, default=921600, help="serial baud (default 921600)")
     p.add_argument("--out", metavar="OUT.mcap", help="also record messages to an MCAP file")
     p.add_argument("--foxglove", action="store_true", help="serve live to Foxglove Studio")
@@ -1126,6 +1137,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--rerun-memory", metavar="LIMIT", default="2GB",
                    help="Rerun viewer memory cap; old data drops past it (default 2GB)")
     args = p.parse_args(argv)
+
+    # Publish the key into the SAME resolution chain open_recording already
+    # consults, instead of threading it through _replay, every sink and the
+    # --serve launcher. One place, and it reaches paths that open a file we
+    # never see. Explicit flags win over an inherited environment.
+    if args.key and args.key_file:
+        p.error("--key and --key-file are mutually exclusive")
+    if args.key:
+        os.environ["VISIO_RECORDING_KEY"] = args.key
+    elif args.key_file:
+        os.environ["VISIO_RECORDING_KEY_FILE"] = args.key_file
 
     # --serve is a persistent launcher, not a one-shot pipe: it discovers devices
     # and starts/stops per-device bridges itself. Dispatch before the one-shot
@@ -1203,11 +1225,30 @@ def main(argv: list[str] | None = None) -> int:
     return n
 
 
+# The viewer/`--serve` deps, shipped in the `display` extra (see pyproject). Named
+# here only to turn their absence into a one-line fix rather than a raw traceback.
+_DISPLAY_EXTRA_MODULES = frozenset({"rerun", "av", "aiohttp", "zeroconf"})
+
+
 def run() -> None:
     """Console-script entry point (the ``visio-display`` command).
 
     Runs :func:`main` and exits 0 on a clean finish. :func:`main` returns the
     processed-message count for programmatic/test use, which is not a meaningful
     process exit code — so the installed command goes through this wrapper.
+
+    The viewer deps are lazily imported and live in the optional `display` extra,
+    so a plain `pip install visio-schema` reaches here and only fails when a sink
+    actually needs one — map that to the install line instead of a traceback.
     """
-    main()
+    try:
+        main()
+    except ModuleNotFoundError as e:
+        if (e.name or "").split(".")[0] not in _DISPLAY_EXTRA_MODULES:
+            raise
+        sys.exit(
+            f"visio-display needs the '{e.name}' package, which ships in the "
+            f"optional 'display' extra:\n"
+            f"    pip install 'visio-schema[display]'\n"
+            f"(the base install is the wire codec only — see docs/install.md)."
+        )

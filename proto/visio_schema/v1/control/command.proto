@@ -57,6 +57,8 @@ message Command {
     SetRecordingDestination set_recording_destination = 36;
     SetRecordingHeartbeat set_recording_heartbeat = 37;
     SetNoticeVolume set_notice_volume = 38;
+    SetRecordingKey set_recording_key = 39;
+    SetHandDetection set_hand_detection = 40;
   }
 }
 
@@ -274,6 +276,30 @@ message SetAudioRecording {
   bool enabled = 1;
 }
 
+// Enable/disable the on-device NPU hand detector (the boxes the app overlays on
+// the preview, and the spoken "hand out of view" notices that ride on it).
+//
+// Persisted to a device-side sidecar and applied LIVE, within about a second —
+// no reboot. A capable device always carries the detector's camera tap; the
+// switch starts and stops the NPU context behind it, so switched OFF the
+// detector holds no model, no memory and no thread, and the tap costs the
+// capture pipeline a single atomic read per frame.
+//
+// Default is DISABLED: running it costs NPU memory bandwidth and a block of
+// contiguous memory the camera pipeline would otherwise have, so it is opt-in
+// per unit rather than a property of the image.
+//
+// Only boards whose config stages a detector model accept this; every other
+// device rejects it, which is EXPECTED. The current value is reported in
+// DeviceState.hand_detection, which also tells the app whether to offer the
+// control at all.
+//
+// ALWAYS address this to a specific device: an empty Command.target_device is
+// a broadcast, which on a suit would flip every detector-capable board at once.
+message SetHandDetection {
+  bool enabled = 1;
+}
+
 // Persist the camera H.265 target bitrate to a device-side sidecar, applied to
 // EVERY camera. Like SetAutoStart, this is persisted but takes effect on the
 // NEXT BOOT only — the running encoder is not retuned live — so the app should
@@ -422,6 +448,18 @@ message SetStorage {
   // the device's default ("status/"). The two legs are independent: a device may
   // upload recordings only, report status only, or both.
   string status_prefix     = 7;
+
+  // A `visio-seal-v1` envelope carrying this destination's SECRET access key
+  // (the format lives in visio_schema.crypto.envelope). Written by a v2 settings
+  // QR, which never prints the secret: the companion app relays these bytes
+  // verbatim and cannot read them, and only a device holding the fleet
+  // private key can open them.
+  //
+  // Takes precedence over `secret_access_key` when both are set. An envelope
+  // that carries no `sk` leaves the stored secret alone, exactly as an empty
+  // `secret_access_key` does — so a "just repoint my bucket" QR needs no
+  // credential at all.
+  bytes sealed = 8;
 }
 
 // Validate S3 credentials WITHOUT persisting (a max-keys=1 list under the
@@ -440,6 +478,12 @@ message TestStorage {
   // the device's default ("status/"). The two legs are independent: a device may
   // upload recordings only, report status only, or both.
   string status_prefix     = 7;
+
+  // The same envelope as SetStorage.sealed. A credential the device will
+  // ACCEPT must also be one it can be asked to TEST, or "test before save"
+  // breaks for exactly the sealed flow that needs it most.
+  // tests/test_nanopb_options.py pins the two caps equal.
+  bytes sealed = 8;
 }
 
 // List recorded sessions + their upload state; the CommandResult carries
@@ -563,4 +607,31 @@ message SetCalibration {
 // so "clear" must be a separate, ungated verb. No fields — tuning is one record
 // per unit.
 message ClearCameraTuning {
+}
+
+// Set, rotate or clear the symmetric key this unit encrypts its recordings
+// under (the `VREC` container's key).
+//
+// The key never travels in the clear. It rides inside a `visio-seal-v1`
+// envelope (visio_schema.crypto.envelope) that only a device holding the fleet
+// private key can open, so the operator who scans the QR — and the companion
+// app that relays it — handle an opaque blob. That is the point: the operator
+// is the adversary this whole path exists to defend against.
+//
+// The sealed body is compact JSON. `rk` is the new key (base64, 32 raw
+// bytes; "" clears it), `rko` the key currently on the device. Setting a key
+// where one is ALREADY set requires a matching `rko`, and that rule is the
+// only integrity control in the design — the fleet public key is published,
+// so without it anyone could seal their own key and re-key a rig they are
+// holding. An `rko` mismatch answers error_code "bad_old_key"; an envelope
+// that will not open answers "bad_envelope". Keep those distinct: one means
+// "you do not own this device", the other "this QR is for a different key
+// generation", and conflating them costs a support call.
+//
+// Applies from the NEXT recording part onward. Parts already on the card
+// carry the old key's fingerprint in their `VREC` header and stay readable
+// only under that key — so a fleet owner's key archive is append-only, and
+// rotating is not a licence to discard the previous key.
+message SetRecordingKey {
+  bytes sealed = 1;
 }

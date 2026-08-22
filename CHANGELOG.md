@@ -4,6 +4,75 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## Unreleased
+
+### Storage providers: Google Cloud Storage and Azure Blob
+
+`docs/protocol/storage-providers.md` — the canonical `SetStorage` contract —
+gains two clouds, and the settings-QR generator gains their endpoint rows. No
+wire change: both are carried by the five fields that already exist, dispatched
+by the same endpoint host-suffix rule (`storage.googleapis.com` → `GoogleGcs`,
+`.blob.core.windows.net` → `AzureBlob`).
+
+GCS is the AWS row with a different overwrite guard
+(`x-goog-if-generation-match: 0`, since it does not honour `If-None-Match: *`)
+and no region in its host, so the operator's `region` field stands alone —
+`auto` is the value to type. Azure shares neither axis of the signature ×
+addressing table and is specified separately in §3.1: `SharedKey` rather than a
+SigV4 flavor, an account-prefixed canonicalized resource, a signed
+`Content-Length`, and an `<EnumerationResults>` list document that a parser
+looking for `<Contents><Key>` reads as an empty bucket rather than an error.
+
+The generator's provider table becomes typed (`Provider`, `RegionSource`) so
+a row can say which of three things its region is: encoded in the host, typed
+by the operator, or not signed at all. Two states could not tell the last two
+apart, and the interactive prompt is where that showed — it asked every cloud
+for a "region (e.g. cn-hangzhou)" and substituted the answer into the host, so
+choosing Azure and answering `eastus` produced a clean-validating QR for
+`https://eastus.blob.core.windows.net`, a host that does not exist. Each row
+now names the thing its host actually carries (Azure asks for a storage
+account; GCS, having one fixed endpoint, is asked nothing and defaults its
+region to `auto`), and `validate()` no longer demands a region for the one
+cloud that signs none. `settings_qr.payload` is an internal surface, not part
+of the pinned facade.
+
+Two gaps are stated rather than hidden. An Azure account key is 88 base64
+characters against a 63-byte `SetStorage.secret_access_key`, so it MUST ride
+the sealed envelope until that cap is raised; and the fleet-status dashboard
+still serves Aliyun OSS and AWS S3 only.
+
+### SetHandDetection — the NPU hand detector becomes a per-unit switch
+
+`Command.set_hand_detection` (tag 40) and `DeviceState.hand_detection`
+(field 38, the usual UNSUPPORTED/ENABLED/DISABLED tri-state) let a host turn
+the device's hand detector — the preview's hand boxes and the spoken
+out-of-view notices — on and off per unit, persisted device-side and applied
+live. It is OFF unless asked for: running it costs NPU memory bandwidth and a
+block of contiguous memory the camera pipeline would otherwise have.
+UNSUPPORTED covers both "this image stages no detector model" and "firmware
+predating the command", so a host hides the control rather than rendering one
+it cannot move.
+
+### FramedFdEndpoint: keyframes-only congestion tier
+
+A congestion tier between healthy and stalled (internal transport surface, no
+facade change): once the I/O thread observes the leg's video outbox EVICT,
+`Send` stops offering non-keyframe video on that leg and delivers keyframes
+only, resuming full rate at the first keyframe after an eviction-free 5 s
+hold. An evicting leg was already lossy — every evicted P-frame breaks the
+viewer's reference chain until the next keyframe — so the viewer trades
+corrupt-then-frozen GOPs for a clean one-per-GOP picture, while the leg's
+offered load collapses. On a shared-radio producer that is what stops a slow
+reader's TCP retransmit churn from starving the capture path while it limps
+under the 3 s stall gate's radar.
+
+A producer that knows some consumer may be RECORDING the stream (so thinning
+would thin a recording, not a preview) marks those frames
+`Message::no_degrade` — a new in-memory flag, never serialized, in the same
+family as `bulk`/`keyframe`/`decimatable`; marked frames pass the gate
+untouched. New diagnostics: `video_degraded()`, `degrade_dropped()`; hold is
+constructor-injectable like `stall_ns`.
+
 ## 0.9.0 — 2026-08-22
 
 ### Added `visio_schema.dataset` — the episode-dataset layer
@@ -24,7 +93,10 @@ Additive; not exported from the `visio_schema` facade — import it explicitly
 as `visio_schema.dataset`, like `visio_schema.reader`. The frozen public API
 is unchanged.
 
-## 0.8.0 — 2026-08-14
+The reader layer below was written against an unreleased `0.8.0` and never
+shipped under that number — 0.8.0 went to the sealed envelope instead. It is
+folded in here rather than renumbered, so there is one 0.8.0 and one history.
+
 
 ### Added `visio_schema.reader` — the element layer over `read_mcap` / `read_serial`
 
@@ -101,11 +173,98 @@ transcoder's GPU probe, first exists at 14.2. Anything comparing two runs is voi
 if they crossed the upper bound. `tests/reader/test_av_pin.py` keeps the constant
 in step with the pin.
 
-New extras: `[reader]` (scipy, for the one lazy import in the extrinsics parse)
-and `[gpu]` (cupy + PyNvVideoCodec for NVDEC). `numpy` becomes a base dependency.
-The viewer/MCAP surface stays in the default install.
+New extras: `[reader]` (scipy, for the one lazy import in the extrinsics parse;
+plus `av` to decode) and `[gpu]` (cupy + PyNvVideoCodec for NVDEC). `numpy`
+becomes a base dependency. The MCAP surface stays in the default install; the
+viewer's deps moved to `[display]` in 0.7.3, and `av` is pinned by each extra
+that decodes rather than shared from there.
 
-## 0.7.3 — 2026-08-06
+## 0.8.0 — 2026-08-19
+
+### Added the `visio-seal-v1` sealed envelope + `visio-settings-qr`
+
+A settings QR is a printed artifact handled by field operators, and today it
+carries the OSS `secret_access_key` and the Wi-Fi passphrase in clear JSON —
+its own generator says to "treat the printed code like a written-down
+password". The operator is the adversary here: they hold the rig, the SD card
+and the printout. So the secrets now travel sealed.
+
+`visio_schema.crypto` is a new submodule implementing `visio-seal-v1`: X25519
++ HKDF-SHA256 + ChaCha20-Poly1305 in an ECIES-shaped construction, 56 bytes of
+overhead. A fleet owner seals to a PUBLIC key published in this wheel
+(`visio_schema/crypto/fleet_key.pem`); only a device carrying the private half
+baked into its firmware can open the result. RSA-2048-OAEP was rejected at 256
+B of overhead against a ~1800 B QR budget; RFC 9180 HPKE needs OpenSSL 3.2 and
+the target board is on 1.1.1h. Every primitive was verified present in that
+board's OpenSSL before the format was chosen.
+
+`visio-settings-qr` is a new console script — the QR generator, which lived in
+`visio-embedded/scripts/provision/` and now sits in the same repo as the
+payload spec it implements. It seals by DEFAULT; `--plaintext` still emits the
+legacy v1 form for firmware that predates sealing, and says what that costs.
+New subcommands `keygen` (mint a fleet recording key), `fleet-keygen` and
+`inspect` (read a code's cleartext half, no key required).
+
+### Added `Command.set_recording_key` (tag 39) + `sealed` on Set/TestStorage (tag 8)
+
+`SetRecordingKey` carries only an opaque envelope. The companion app relays
+those bytes verbatim and cannot read them — it holds no key, because any key
+shipped in an app bundle is extractable by the very operator being defended
+against.
+
+`SetStorage.sealed` and `TestStorage.sealed` carry the same envelope for the
+storage secret, on the commands that already own that secret rather than in a
+new god-command. Both, and equally: a credential the device will ACCEPT must
+also be one it can be asked to TEST, or "test before save" breaks for exactly
+the sealed flow. `secret_access_key` stays for v1 QRs and existing tooling.
+
+All three are capped `max_size:384` in `nanopb.options`, and `bytes` needs
+that cap for the same reason a `string` does — unsized, nanopb emits a
+`pb_callback_t` and the firmware's static decode path silently never receives
+the field. A C++ round-trip (`cpp/tests/test_control_nanopb.cc`) proves the
+field really is a static array and that an oversized one fails the WHOLE
+decode rather than truncating. The three fields share one oneof arm each, so
+the 384 B is paid once, and `sizeof(Command)` grows from ~660 B to 1048 B.
+
+The generator enforces that same bound before printing
+(`payload.SEALED_MAX_BYTES`, pinned equal to the nanopb caps by a test):
+repeated `--device` entries can push an envelope past 384 B, and since the
+whole-payload gate is 1800 B the code would otherwise scan perfectly and be
+silently discarded by every device.
+
+### Added `DeviceState.recording_key_fingerprint` (35), `recording_encryption_required` (36), `seal_key_id` (37)
+
+The fingerprint is 16 hex — SHA-256(key)[:8], deliberately the same 8 bytes
+the `VREC` recording container carries in its header, so an admin comparing
+"what my device reports" against "what opens this file" compares one string to
+itself. The key itself is never echoed, the same discretion
+`storage_access_key_id` already follows for a much lower-value secret.
+`seal_key_id` is the capability probe: empty means firmware that predates
+sealing, which lets a host tool warn before printing a code the target fleet
+could never open.
+
+### `qrcode` moved into a `qr` extra
+
+`visio-settings-qr` seals, validates, inspects and mints keys with no
+rasteriser — only the final `--out` render needs one. `pip install
+visio-schema[qr]` adds it; the `dev` extra pulls it too so CI covers the
+render path rather than only `--dry-run`. It was previously imported but
+declared in no dependency group at all.
+
+### `cryptography>=42` is now a core dependency
+
+Unlike the viewer deps that moved OUT to a `display` extra in 0.7.3, this one
+belongs in the base install: a sealed settings QR — and, next, an encrypted
+recording — are artifacts a plain `pip install visio-schema` consumer has to
+be able to open. It is ~4 MB, not ~600.
+
+Purely additive on the wire (`make breaking` clean); the pinned public API in
+`test_public_api.py` is untouched, since `visio_schema.crypto` and
+`visio_schema.settings_qr` are advanced/internal submodules under this repo's
+import model. MINOR rather than PATCH because `SetRecordingKey` is a new
+top-level message type.
+
+## 0.7.3 — 2026-08-19
 
 ### Added `Command.set_notice_volume` (tag 38) + `DeviceState.notice_volume` (tag 34)
 
@@ -119,6 +278,20 @@ tri-state: absence covers speakerless boards and pre-volume firmware, so the app
 hides the control instead of rendering one it cannot move — and 0 could not be the
 sentinel here because it is a legal value (mute) as well as the proto3 default.
 Purely additive; ships with the matching device firmware change.
+
+### Moved the `visio-display` viewer deps into a `display` extra
+
+`rerun-sdk`, `av`, `aiohttp` and `zeroconf` are no longer default dependencies —
+they move to `pip install visio-schema[display]`. All four are imported lazily by
+`visio_schema.display` alone (the wire codec never touches them), so a plain
+`pip install visio-schema` ships the contract without ~600 MB of viewer libraries
+(rerun-sdk + its pyarrow) that a stage image or training pipeline never opens. The
+`visio-display` command still installs; run without the extra it exits with the
+one-line `pip install 'visio-schema[display]'` fix instead of a traceback.
+
+Not a wire-contract or public-API change (`test_public_api.py` untouched) — a
+packaging fix bundled into this release. Consumers that run the viewer must add
+`[display]`; consumers that only read the contract get a smaller install, no action.
 
 ## 0.7.2 — 2026-08-04
 
