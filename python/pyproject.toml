@@ -220,6 +220,12 @@ select = ["E", "F", "I", "B", "UP", "RUF"]
 "visio_schema/reader/*.py" = ["RUF007", "RUF046"]
 "tests/reader/*.py" = ["RUF043", "RUF046"]
 
+# RUF001 flags fullwidth punctuation as "ambiguous unicode". In a Chinese
+# translation table it is correct typography — （）：？ are what a Chinese
+# reader expects, and substituting ASCII would be the actual error. The rule
+# is about ambiguity in CODE; this file is data.
+"visio_schema/settings_qr/i18n.py" = ["RUF001"]
+
 # Version-specific wheels (cp310–cp313), NOT abi3: the zero-copy Frame exports the
 # buffer protocol, which the CPython Limited API lacks at the cp310 floor (PEP 688
 # added it in 3.11, and we still target 3.10). So we ship per-version wheels like the

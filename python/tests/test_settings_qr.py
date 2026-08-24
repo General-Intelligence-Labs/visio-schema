@@ -1019,3 +1019,312 @@ class TestCliRemainingBranches:
     def test_inspect_rejects_non_payload_input(self, capsys) -> None:
         assert main(["inspect", "{not json"]) == 1
         assert "not a settings payload" in capsys.readouterr().err
+
+
+def test_inspecting_the_generated_image_says_what_to_do_instead(tmp_path):
+    """`inspect code.png` is the obvious thing to try after `--out code.png`.
+
+    It used to answer with a UnicodeDecodeError traceback. Decoding the image
+    would mean a QR *reader* dependency in a wheel that otherwise only writes
+    them, so the contract is a legible error that names the alternative.
+    """
+    from visio_schema.settings_qr import cli
+
+    png = tmp_path / "code.png"
+    png.write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(range(200)))
+    with pytest.raises(cli.CliError) as e:
+        cli._read_payload(str(png))
+    assert "not UTF-8 text" in str(e.value)
+    assert "--dry-run" in str(e.value), "the error must name the way forward"
+
+
+def test_a_payload_with_cjk_labels_reads_regardless_of_locale(tmp_path,
+                                                              monkeypatch):
+    """Decoding is UTF-8, not the platform locale.
+
+    `read_text()` would have used cp936/cp1252 on a non-UTF-8 box: a PNG then
+    decodes into mojibake so the image guard never fires, while a payload with
+    Chinese task names (which `encode()` emits un-escaped) hits that guard and
+    is told it is an image.
+    """
+    from visio_schema.settings_qr import cli
+
+    monkeypatch.setenv("LC_ALL", "C")
+    payload = tmp_path / "p.json"
+    payload.write_text('{"t":"visio-settings","v":1,"meta":{"task":"抓取"}}',
+                       encoding="utf-8")
+    assert "抓取" in cli._read_payload(str(payload))
+
+
+def test_the_help_example_for_inspect_is_a_command_that_works():
+    # The epilog used to reference a `.payload.json` that `qr --out` never
+    # writes, so following the documented workflow failed on a missing file.
+    from visio_schema.settings_qr import cli
+
+    # The examples live in `description` (RawDescriptionHelpFormatter), not
+    # `epilog` — assert against the text the user is actually shown.
+    helptext = cli.build_parser().format_help()
+    assert "inspect -" in helptext
+    assert ".payload.json" not in helptext, (
+        "the help must not name a file the tool never writes")
+
+
+class TestInteractiveRecordingKey:
+    """The guided flow must be able to set encryption.
+
+    The flags always existed, but a guided run is where a fleet owner learns a
+    feature exists — and leaving encryption out of the prompts made the QR's
+    most security-relevant payload the one thing you had to already know to
+    ask for.
+    """
+
+    @staticmethod
+    def _args(**over):
+        import argparse
+        base = dict(recording_key_file=None, old_recording_key_file=None,
+                    clear_recording_key=False, first_provision=False)
+        base.update(over)
+        return argparse.Namespace(**base)
+
+    @staticmethod
+    def _run(args, answers, tmp_path):
+        from visio_schema.settings_qr import interactive as it
+        it_answers = list(answers)
+        minted = {}
+
+        def mint():
+            minted["key"] = b"\x11" * 32
+            return minted["key"]
+
+        def write(path, key):
+            minted["path"] = path
+
+        orig_input = __builtins__["input"] if isinstance(__builtins__, dict) \
+            else __builtins__.input
+        import builtins
+        builtins.input = lambda *a, **k: it_answers.pop(0)
+        try:
+            it.interactive_recording_key(args, mint, write)
+        finally:
+            builtins.input = orig_input
+        return minted
+
+    def test_explicit_flags_are_never_second_guessed(self, tmp_path):
+        # Scripted callers pass flags; prompting over them would hang CI.
+        args = self._args(recording_key_file="given.key")
+        self._run(args, [], tmp_path)          # no answers => no prompts
+        assert args.recording_key_file == "given.key"
+
+    def test_declining_leaves_the_fleet_unencrypted(self, tmp_path):
+        args = self._args()
+        self._run(args, ["n"], tmp_path)
+        assert args.recording_key_file is None
+        assert not args.clear_recording_key
+
+    def test_a_fresh_fleet_mints_a_key_and_needs_no_proof(self, tmp_path):
+        # Blank current-key file IS the "never keyed" answer — no separate
+        # question about remote device state to get wrong.
+        args = self._args()
+        out = self._run(args, ["y", "", "", "new.key"], tmp_path)
+        assert args.first_provision is True
+        assert args.old_recording_key_file is None
+        assert args.recording_key_file == "new.key"
+        assert out["key"] == b"\x11" * 32
+
+    def test_an_already_keyed_fleet_must_prove_the_current_key(self, tmp_path):
+        args = self._args()
+        self._run(args, ["y", "held.key", "n", "", "next.key"], tmp_path)
+        assert args.old_recording_key_file == "held.key"
+        assert args.recording_key_file == "next.key"
+        assert args.first_provision is False
+
+    def test_stopping_encryption_still_requires_the_current_key(self, tmp_path):
+        args = self._args()
+        self._run(args, ["y", "held.key", "y"], tmp_path)
+        assert args.clear_recording_key is True
+        assert args.old_recording_key_file == "held.key"
+
+    def test_clearing_is_only_offered_once_a_current_key_is_held(self, tmp_path):
+        # There is nothing to clear on a fleet that was never keyed, and
+        # offering it would invite a code the device answers bad_old_key.
+        args = self._args()
+        self._run(args, ["y", "", "", "new.key"], tmp_path)
+        assert not args.clear_recording_key
+
+    def test_the_flow_asks_about_files_not_about_device_state(self, tmp_path):
+        """Regression: it used to ask "is this fleet ALREADY encrypting?".
+
+        An operator frequently cannot see that — the QR script runs with no
+        device attached — and a wrong guess only surfaced as `bad_old_key` on a
+        rig, after the code was printed and handed out. Asserted on the prompts
+        the operator is actually shown, not on the source text: the strings now
+        come from the translation table, and a source grep would both miss a
+        reworded question and break on a purely mechanical change.
+        """
+        import builtins
+
+        from visio_schema.settings_qr import interactive as it
+
+        seen: list[str] = []
+        answers = iter(["y", "", "", "new.key"])
+
+        def record(prompt="", *a, **k):
+            seen.append(prompt)
+            return next(answers)
+
+        orig = builtins.input
+        builtins.input = record
+        try:
+            it.interactive_recording_key(self._args(), lambda: b"\x11" * 32,
+                                         lambda path, key: None)
+        finally:
+            builtins.input = orig
+
+        asked = " ".join(seen).lower()
+        assert "already encrypting" not in asked
+        assert "current key" in asked, seen
+        assert "fingerprint" in asked, "the keyring shortcut must be offered"
+
+
+class TestProviderPrompt:
+    """Choosing a cloud must not silently answer a different question.
+
+    The keys are display names with spaces and capitals ("Tencent COS"), and
+    exact matching sent a typed "tencent" into the custom-endpoint branch —
+    which then asks for a URL the operator does not have and cannot guess.
+    """
+
+    @staticmethod
+    def _choose(answer):
+        import builtins
+
+        from visio_schema.settings_qr import interactive as it
+        answers = iter([answer])
+        orig = builtins.input
+        builtins.input = lambda *a, **k: next(answers)
+        try:
+            return it._ask_provider()
+        finally:
+            builtins.input = orig
+
+    @pytest.mark.parametrize("typed, expect", [
+        ("tencent", "Tencent COS"),
+        ("Tencent COS", "Tencent COS"),
+        ("TENCENT cos", "Tencent COS"),
+        ("cos", "Tencent COS"),
+        ("aliyun", "Aliyun OSS"),
+        ("aws", "AWS S3"),
+        ("azure", "Azure Blob"),
+        ("2", "Tencent COS"),
+        ("1", "Aliyun OSS"),
+    ])
+    def test_a_name_a_prefix_or_a_number_all_select_the_right_cloud(
+            self, typed, expect):
+        assert self._choose(typed) == expect
+
+    def test_the_last_entry_and_the_word_custom_both_mean_a_typed_endpoint(self):
+        from visio_schema.settings_qr.payload import PROVIDERS
+        assert self._choose(str(len(PROVIDERS) + 1)) is None
+        assert self._choose("custom") is None
+
+    def test_an_empty_answer_takes_the_default_row(self):
+        from visio_schema.settings_qr.payload import PROVIDERS
+        assert self._choose("") == next(iter(PROVIDERS))
+
+
+class TestCurrentKeyByFingerprint:
+    """A key set from visio-display exists only as a keyring entry.
+
+    There is no file to point at, and this script runs with no device in front
+    of the operator — so "read the fingerprint off the rig" is not advice they
+    can act on. The identifier they actually have must be accepted.
+    """
+
+    @staticmethod
+    def _run(args, answers):
+        import builtins
+
+        from visio_schema.settings_qr import interactive as it
+        it_answers = iter(answers)
+        orig = builtins.input
+        builtins.input = lambda *a, **k: next(it_answers)
+        try:
+            it.interactive_recording_key(args, lambda: b"\x22" * 32,
+                                         lambda p, k: None)
+        finally:
+            builtins.input = orig
+
+    @staticmethod
+    def _args():
+        import argparse
+        return argparse.Namespace(
+            recording_key_file=None, old_recording_key_file=None,
+            clear_recording_key=False, first_provision=False)
+
+    def test_a_fingerprint_on_the_keyring_becomes_the_proof(
+            self, tmp_path, monkeypatch):
+        from visio_schema.mcap.crypto import remember_key
+        monkeypatch.setenv("HOME", str(tmp_path))
+        key = b"\x5a" * 32
+        fp = remember_key(key)
+
+        args = self._args()
+        self._run(args, ["y", fp, "n", "", "next.key"])
+        assert args.old_recording_key == key, "resolved off the keyring"
+        assert args.old_recording_key_file is None, "and never written to disk"
+
+    def test_an_unknown_fingerprint_is_not_mistaken_for_a_filename(
+            self, tmp_path, monkeypatch):
+        # "0123456789abcdef" is a plausible fingerprint and an implausible
+        # path; treating it as a file would fail later with a confusing
+        # "cannot read" instead of "not on this keyring".
+        monkeypatch.setenv("HOME", str(tmp_path))
+        args = self._args()
+        self._run(args, ["y", "0123456789abcdef", "", "", "next.key"])
+        assert args.old_recording_key_file is None
+        assert args.first_provision is True, "blank on the retry means fresh"
+
+    def test_a_path_is_still_taken_as_a_path(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        args = self._args()
+        self._run(args, ["y", "/tmp/held.key", "n", "", "next.key"])
+        assert args.old_recording_key_file == "/tmp/held.key"
+        assert getattr(args, "old_recording_key", None) is None
+
+
+class TestOneKeyStore:
+    """A key minted by either tool must be visible to the other.
+
+    `visio-settings-qr` mints into a file; `visio-display` mints into the
+    keyring. Without a shared store the admin prints a QR here and then cannot
+    open the recordings it produces there — which is how a rig ends up holding
+    a key its owner's viewer has never heard of.
+    """
+
+    def test_keygen_puts_the_key_on_the_keyring(self, tmp_path, monkeypatch):
+        import argparse
+
+        from visio_schema.mcap.crypto import find_key
+        from visio_schema.settings_qr import cli
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        out = tmp_path / "client.key"
+        cli.cmd_keygen(argparse.Namespace(out=str(out), force=False))
+
+        hexkey = next(ln for ln in out.read_text().splitlines()
+                      if not ln.startswith("#")).strip()
+        key = bytes.fromhex(hexkey)
+        from visio_schema.mcap.crypto import fingerprint
+        assert find_key(fingerprint(key).hex()) == key, (
+            "visio-display resolves by fingerprint; a CLI-minted key must be "
+            "there too")
+
+    def test_a_key_minted_mid_prompt_is_remembered_as_well(
+            self, tmp_path, monkeypatch):
+        from visio_schema.mcap.crypto import find_key, fingerprint
+        from visio_schema.settings_qr import cli
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        key = b"\x7e" * 32
+        cli._write_minted_key(tmp_path / "minted.key", key)
+        assert find_key(fingerprint(key).hex()) == key

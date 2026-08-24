@@ -27,6 +27,7 @@ decrypt of it.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 import io
@@ -44,10 +45,14 @@ __all__ = [
     "RecordingKeyMismatch",
     "RecordingKeyUnavailable",
     "VrecHeader",
+    "find_key",
     "fingerprint",
     "is_vrec",
+    "keyring_path",
     "open_recording",
+    "parse_key",
     "read_vrec_header",
+    "remember_key",
 ]
 
 VREC_MAGIC = b"VREC"
@@ -139,6 +144,126 @@ def _parse_hex_key(text: str, source: str) -> bytes:
     return raw
 
 
+def parse_key(text: str, source: str = "the key given") -> bytes:
+    """A 64-hex recording key as raw bytes, or ValueError naming the source."""
+    return _parse_hex_key(text, source)
+
+
+def keyring_path() -> Path:
+    """Where an admin's keys are remembered, expanded."""
+    return _KEYRING.expanduser()
+
+
+def find_key(key_fp_hex: str) -> bytes | None:
+    """The remembered key with this fingerprint, or None.
+
+    Lets a caller that knows WHICH key it needs — a device reporting the one it
+    currently holds, say — recover it without asking the admin to paste key
+    material back in. Only the keyring is consulted, never the flat env
+    sources: those say nothing about which key they are.
+    """
+    ring = keyring_path()
+    if not ring.is_file():
+        return None
+    entry = json.loads(ring.read_text()).get(key_fp_hex)
+    # `is not None`, not truthiness: a blanked row means the ring is damaged,
+    # and _parse_hex_key says so precisely. Collapsing it into "absent" would
+    # answer "that key was set from another machine", which is a wrong
+    # diagnosis on the one path an admin uses when footage is at stake.
+    return _parse_hex_key(entry, str(ring)) if entry is not None else None
+
+
+def _fsync_dir(path: Path) -> None:
+    """Persist a rename. Best effort: not every filesystem allows it."""
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass                    # some filesystems refuse; the rename still lands
+    finally:
+        os.close(fd)
+
+
+@contextlib.contextmanager
+def _keyring_lock(ring: Path):
+    """Hold an exclusive lock for a keyring read-modify-write.
+
+    The lock lives on a SIDE file, never on the ring itself: the writer
+    replaces the ring by rename, so a lock taken on its inode would stop
+    excluding anyone the moment the first writer finished.
+
+    POSIX only, which is what this package claims to support. Elsewhere the
+    write proceeds unlocked rather than failing — a lost update is bad, a tool
+    that cannot store a key at all is worse.
+    """
+    try:
+        import fcntl
+    except ImportError:
+        yield
+        return
+    fd = os.open(ring.with_name(ring.name + ".lock"),
+                 os.O_WRONLY | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
+def remember_key(key: bytes) -> str:
+    """Add `key` to the admin's keyring and return its fingerprint hex.
+
+    Indexed by fingerprint, which is what makes the console and the viewer fit
+    together: a key set on a rig here is already resolvable when that rig's
+    recordings are opened later, with nothing re-entered and no key pasted into
+    a second tool.
+
+    WRITE THIS BEFORE KEYING A DEVICE, never after. A device keyed with a key
+    that was never persisted records footage nobody can ever open; the reverse
+    failure leaves an unused keyring entry, which costs nothing.
+    """
+    ring = keyring_path()
+    ring.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    key_fp_hex = fingerprint(key).hex()
+
+    # Two programs write this file — the visio-display key console and the
+    # settings-QR generator — so the read-modify-write below must be exclusive.
+    # Without the lock both can read the ring, each add a different key, and
+    # the second replace discards the first: a key silently absent from the
+    # only place it exists, which is permanently unreadable footage. The atomic
+    # replace guards against a TORN file, not against a lost update.
+    with _keyring_lock(ring):
+        try:
+            # A corrupt ring must not silently become an empty one — that would
+            # discard every other client's key on the next successful write.
+            entries = json.loads(ring.read_text())
+        except FileNotFoundError:
+            entries = {}
+        if entries.get(key_fp_hex) == key.hex():
+            return key_fp_hex               # already known; leave the file alone
+        entries[key_fp_hex] = key.hex()
+
+        # Same-directory temp + replace, so a crash mid-write cannot truncate
+        # the ring, and 0600 from creation rather than after a readable window.
+        tmp = ring.with_name(ring.name + ".tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(entries, f, indent=2, sort_keys=True)
+                # fsync BEFORE the rename, or a power loss can leave the ring
+                # zero-length: ext4 orders the rename ahead of the data. This
+                # file is the only copy of a key, so "the write survived" is
+                # the load-bearing property, not just "the write was atomic".
+                f.flush()
+                os.fsync(f.fileno())
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+        os.replace(tmp, ring)
+        _fsync_dir(ring.parent)
+    return key_fp_hex
+
+
 def _keys_from_environment(key_fp_hex: str) -> tuple[list[bytes], list[str]]:
     """Every key the environment offers, plus a human list of what was tried.
 
@@ -160,12 +285,12 @@ def _keys_from_environment(key_fp_hex: str) -> tuple[list[bytes], list[str]]:
         path = Path(env_file).expanduser()
         found.append(_parse_hex_key(path.read_text(), str(path)))
 
-    ring = _KEYRING.expanduser()
+    ring = keyring_path()
     if ring.is_file():
         tried.append(f"{ring} (keyed by fingerprint)")
-        entry = json.loads(ring.read_text()).get(key_fp_hex)
-        if entry:
-            found.append(_parse_hex_key(entry, str(ring)))
+        remembered = find_key(key_fp_hex)
+        if remembered is not None:
+            found.append(remembered)
     else:
         tried.append(f"{ring} (absent)")
     return found, tried

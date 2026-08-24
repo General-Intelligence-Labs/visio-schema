@@ -173,7 +173,14 @@ function applyStatus(s) {
   // The config panel needs a live bus connection to send commands, so hide it once the
   // link errors out (the device's reader thread is gone; commands would just fail) — and
   // for a replay, which is a file, not a commandable device.
-  $("config").hidden = !connected || s.state === "error" || s.transport === "mcap";
+  //
+  // "ended" counts as much as "error": the reader thread is gone either way, and the
+  // line below already treats them as one terminal state. Leaving it visible on "ended"
+  // showed a panel whose every button answered "no device connected" — while the panel
+  // still displayed the last DeviceState, so it looked live.
+  $("config").hidden =
+      !connected || s.state === "error" || s.state === "ended" || s.transport === "mcap";
+  _encSerial = s.serial || "";
   // "error"/"ended" are terminal until the next connect — stop the 1 Hz poll.
   if (s.state === "error" || s.state === "ended") stopPolling();
 }
@@ -340,12 +347,22 @@ function pickMcap(path) {
   loadMcap();
 }
 
-async function loadMcap() {
+async function loadMcap(key) {
   const path = $("mcap-path").value.trim();
   if (!path) return;
   $("mcap-err").textContent = "";
-  const { ok, data } = await postJSON("/api/mcap", { path });
-  if (!ok) { $("mcap-err").textContent = data.error || tr("mcapErr"); return; }
+  const { ok, data } = await postJSON("/api/mcap", key ? { path, key } : { path });
+  if (!ok) {
+    // An encrypted recording with no key on this computer is a question, not a
+    // dead end: ask for the key, naming WHICH one, then keep it so the rest of
+    // that card opens without asking again.
+    if (data.needs_key && !key) {
+      const typed = prompt(tr("mcapNeedsKey") + (data.key_fp ? " (" + data.key_fp + ")" : ""));
+      if (typed && typed.trim()) return loadMcap(typed.trim());
+    }
+    $("mcap-err").textContent = data.error || tr("mcapErr");
+    return;
+  }
   connect(data.id);   // load it — decode fallback threads through /api/connect
 }
 
@@ -402,6 +419,7 @@ function renderStateHeader(st) {
     [tr("cfgStBitrate"), st.video_bitrate_kbps ? (st.video_bitrate_kbps / 1000) + " Mbps" : "—"],
     [tr("cfgStRecording"), st.recording_session_name || "—"],
   ];
+  renderEncryption(st);
   const dl = $("cfg-state-dl");
   dl.textContent = "";
   for (const [k, v] of rows) {
@@ -501,6 +519,103 @@ $("cfg-meta-save").onclick = () =>
     task: $("cfg-meta-task").value, location: $("cfg-meta-location").value,
     capturer: $("cfg-meta-capturer").value, message: $("cfg-meta-message").value,
   }, $("cfg-meta-msg"), "cfgSaved");
+
+// Recording encryption. The key itself never appears here: the device reports a
+// fingerprint, and that is all we render. The capturer's phone app shows only an
+// encrypted/not-encrypted badge, so THIS is the only place a key is ever set.
+let _encFingerprint = "";      // what the rig currently holds, "" if unkeyed
+let _encSerial = "";           // the rig's own serial, from /api/status
+let _encShownFor = "";         // fingerprint whose key is on screen, "" if hidden
+
+function renderEncryption(st) {
+  _encFingerprint = st.recording_key_fingerprint || "";
+  const el = $("cfg-enc-state");
+  const rig = _encSerial ? " · " + tr("cfgEncRig") + " " + _encSerial : "";
+  if (_encFingerprint) {
+    el.textContent = tr("cfgEncOn") + " " + _encFingerprint + rig;
+    el.className = "cfg-note ok";
+  } else {
+    // No seal_key_id means firmware older than encryption — it is writing
+    // plaintext, so say that rather than implying the feature is merely off.
+    el.textContent = (!st.seal_key_id ? tr("cfgEncUnsupported")
+        : st.recording_encryption_required ? tr("cfgEncRequired")
+        : tr("cfgEncOff")) + rig;
+    el.className = "cfg-note err";
+  }
+  // Rotating or clearing needs proof of the current key. The server looks it up
+  // on this computer's keyring first, so the field is only for a rig keyed
+  // somewhere else.
+  const keyed = !!_encFingerprint;
+  $("cfg-enc-rotate").disabled = !keyed;
+  $("cfg-enc-clear").disabled = !keyed;
+  $("cfg-enc-set").disabled = keyed;
+  $("cfg-enc-show").disabled = !keyed;
+  if (_encFingerprint !== _encShownFor) hideKey();
+}
+
+// The key is read from THIS computer's keyring, never from the rig — no command
+// reads a key off a device and there must never be one. Shown on request so it
+// can be backed up: it exists nowhere else, and losing it makes every recording
+// under it permanently unreadable.
+// A recording key is 32 bytes = 64 hex characters. The masked and revealed
+// forms are the SAME length so the box keeps its size either way: toggling must
+// not reflow the panel under the operator's cursor, and a short mask would also
+// misrepresent how long the thing they need to back up actually is.
+//
+// The mask character is ASCII deliberately. A prettier "•" (U+2022) is often
+// absent from the monospace face, so it falls back to a proportional font and
+// 64 of them stop being 64 hex digits wide — which defeats the whole point.
+const KEY_HEX_CHARS = 64;
+const KEY_MASK_CHAR = "*";
+
+function hideKey() {
+  _encShownFor = "";
+  const box = $("cfg-enc-key");
+  // ALWAYS 64 characters, in every state, so the box never changes size — not
+  // between hidden and shown, and not on a rig with no key at all.
+  //
+  // `visibility` rather than emptying the element: the placeholder still lays
+  // out, so it wraps at whatever the panel's current width is and reserves
+  // exactly the space the real key would need — which a fixed CSS height
+  // cannot do, since the wrap count depends on the window. And an unkeyed rig
+  // shows nothing rather than a row of mask characters, which would imply it
+  // holds a key it is merely hiding.
+  box.textContent = KEY_MASK_CHAR.repeat(KEY_HEX_CHARS);
+  box.style.visibility = _encFingerprint ? "visible" : "hidden";
+  $("cfg-enc-show").textContent = tr("cfgEncShow");
+}
+
+$("cfg-enc-show").onclick = async () => {
+  if (_encShownFor) { hideKey(); return; }
+  const { ok, data } = await postJSON("/api/config/recording-key/reveal",
+                                      { fingerprint: _encFingerprint });
+  if (!ok || !data.ok) { setErr($("cfg-enc-msg"), data.error || tr("cfgConnErr")); return; }
+  _encShownFor = _encFingerprint;
+  $("cfg-enc-key").textContent = data.key;
+  $("cfg-enc-key").style.visibility = "visible";
+  $("cfg-enc-show").textContent = tr("cfgEncHide");
+  setMsg($("cfg-enc-msg"), "", "cfgEncKeyWarn");
+}
+
+function encPost(op) {
+  return cfgPost("/api/config/recording-key",
+      { op, old_fingerprint: _encFingerprint,
+        old_key: $("cfg-enc-old").value.trim() },
+      $("cfg-enc-msg"), op === "clear" ? "cfgEncCleared" : "cfgEncKeyed")
+    .then((r) => {
+      if (r.ok) { $("cfg-enc-old").value = ""; hideKey(); loadConfigState(); }
+      return r;
+    });
+}
+
+$("cfg-enc-set").onclick = () => encPost("set");
+$("cfg-enc-rotate").onclick = () => encPost("rotate");
+$("cfg-enc-clear").onclick = () => {
+  // Destructive in the one direction that cannot be undone by re-keying: from
+  // here on the card is readable by whoever holds it.
+  if (!confirm(tr("cfgEncConfirmClear"))) return;
+  encPost("clear");
+};
 
 $("cfg-format-go").onclick = () => {
   if ($("cfg-format-confirm").value.trim().toUpperCase() !== "FORMAT") {

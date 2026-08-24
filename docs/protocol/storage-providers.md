@@ -15,12 +15,12 @@ each implementation MUST conform to the table below:
 | companion app | TypeScript | all five clouds | yes — config screen + QR review sheet |
 | provisioning tools (`python/visio_schema/settings_qr/payload.py`) | Python | all five clouds | yes |
 | setup GUI (`visio-setup/src/setup_gui/`) | Python | **Aliyun OSS + AWS S3 only** | **no** |
-| firmware-side QR generator (`visio-embedded/scripts/provision/gen_settings_qr.py`) | Python | **Aliyun OSS + Tencent COS + AWS S3 only** | **no** |
+| settings-QR generator (`visio-settings-qr`, this package) | Python | **Aliyun OSS + Tencent COS + AWS S3 only** | **no** |
 | fleet-status dashboard (`tools/fleet-status/index.html`) | browser JS | **Aliyun OSS + AWS S3 only** | **no** |
 
 Three of those are behind, and each for the same reason: a **second copy of
 this table** inside the tool. `visio-setup/src/setup_gui/provision.py` carries
-a two-row `ENDPOINT_TEMPLATES`, `gen_settings_qr.py` a three-row `PROVIDERS`,
+a two-row `ENDPOINT_TEMPLATES`, the QR generator a three-row `PROVIDERS`,
 and the dashboard a single `isOssHost` boolean. The fix is to delete those
 copies in favour of `visio_schema.settings_qr.payload.PROVIDERS`, which all
 three can import, and not to re-type the new rows into each — tracked, not

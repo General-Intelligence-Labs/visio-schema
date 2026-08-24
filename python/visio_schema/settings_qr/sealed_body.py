@@ -5,7 +5,10 @@ The sealed body is compact JSON, every field optional:
     { "sk":  "<storage secret, utf-8>",
       "rk":  "<base64 32 B - new recording key; \\"\\" clears>",
       "rko": "<base64 32 B - previous recording key, to rotate or clear>",
-      "dev": ["GILABS-1a2b3c4d"],   # serials allowed to apply this QR
+      "dev": ["1a2b3c4d5e6f7080"], # serials allowed to apply this QR
+                                  # (the uid from DeviceInfo.serial, 16 hex —
+                                  #  NOT the GILABS-<code8> label; see
+                                  #  `devices` on SealedSecrets)
       "exp": 1786000000 }           # unix seconds, checked against device clock
 
 `rk` has three states and they are not interchangeable:
@@ -33,7 +36,6 @@ from __future__ import annotations
 
 import base64
 import binascii
-import hashlib
 import json
 from dataclasses import dataclass, field
 
@@ -53,10 +55,13 @@ from .payload import (
 __all__ = [
     "RECORDING_KEY_BYTES",
     "EnvelopeTooLarge",
+    "RecordingKeyChangeRefused",
     "SealedSecrets",
     "open_sealed",
     "recording_key_fingerprint",
     "seal_into",
+    "seal_secrets",
+    "validate_recording_key_change",
 ]
 
 RECORDING_KEY_BYTES = 32
@@ -98,13 +103,15 @@ def _checked_b64_key(value: object, where: str) -> bytes:
 
 
 def recording_key_fingerprint(key: bytes) -> str:
-    """The 8-byte key fingerprint a device reports, as 16 lowercase hex.
+    """``SHA-256(key)[:8]`` as 16 hex — what a rig reports and `VREC` carries.
 
-    Deliberately the SAME bytes the `VREC` container writes into its
-    `key_fp` header field, so an admin comparing "what my device says" to
-    "what opens this file" is comparing one string to itself.
+    Delegates rather than recomputing: two independent copies of this digest
+    were already being used interchangeably across the feature, and a digest
+    that disagrees with itself is a key that appears not to open its own
+    recordings.
     """
-    return hashlib.sha256(key).digest()[:8].hex()
+    from visio_schema.mcap.crypto import fingerprint
+    return fingerprint(key).hex()
 
 
 @dataclass(frozen=True)
@@ -114,6 +121,11 @@ class SealedSecrets:
     storage_secret: str | None = None
     recording_key: bytes | None = None
     old_recording_key: bytes | None = None
+    # Each entry is a unit's uid: 16 lowercase hex, the value it announces as
+    # DeviceInfo.serial and the one a sealed `dev` entry is checked against.
+    # The human `GILABS-<code8>` label that DeviceInfo.device_name and the
+    # USB/mDNS names carry is a DIFFERENT identifier, and a `dev` list built
+    # from it is refused as `wrong_device` on the very unit it was cut for.
     devices: tuple[str, ...] = field(default_factory=tuple)
     expires_at: int | None = None
 
@@ -233,6 +245,66 @@ class SealedSecrets:
         )
 
 
+
+class RecordingKeyChangeRefused(ValueError):
+    """The requested key change is one the device would reject."""
+
+
+def validate_recording_key_change(secrets: SealedSecrets, *,
+                                  first_provision: bool = False) -> None:
+    """Refuse a key change the device would answer `bad_old_key`.
+
+    THE ONE OWNER OF THIS RULE. Both ways of setting a key — the settings QR
+    and the visio-display console — must agree on what a well-formed change
+    is, or a code printed by one does something the other would have refused,
+    and the difference is discovered on a rig in a factory. Callers translate
+    the refusal into their own error type and add their own hint (a flag name,
+    a button); the rule itself lives here.
+
+    Mirrors what the firmware enforces: replacing or clearing an
+    existing key requires proving knowledge of it (`rko`), which is the only
+    integrity control in the sealed design — the fleet public key is
+    published, so anyone can seal a body carrying a key of their choosing.
+
+    `first_provision` is the caller asserting the rigs have never been keyed,
+    which is the one case that legitimately carries no proof.
+    """
+    if not secrets.touches_recording_key:
+        return
+    if secrets.old_recording_key is not None:
+        return
+    if secrets.clears_recording_key:
+        raise RecordingKeyChangeRefused(
+            "clearing the recording key needs the key the rigs hold now — "
+            "the device requires it to stop encrypting")
+    if not first_provision:
+        raise RecordingKeyChangeRefused(
+            "replacing a recording key needs the key the rigs hold now — "
+            "the device requires it to rotate")
+
+
+def seal_secrets(secrets: SealedSecrets,
+                 pubkey: bytes | None = None) -> bytes:
+    """Seal a body to the fleet public key. The only place a blob is produced.
+
+    Both callers put the result somewhere with the SAME ceiling, because it is
+    the same nanopb buffer on the device: the QR generator wraps it into a v2
+    payload, and the visio-display key console sends it as
+    `SetRecordingKey.sealed`. Keeping the size check here means neither can
+    emit a blob the device would silently discard — nanopb does not truncate an
+    oversized field, it fails `pb_decode` and drops the whole Command.
+    """
+    blob = seal(json.dumps(secrets.to_body(),
+                           separators=(",", ":")).encode("utf-8"), pubkey)
+    if len(blob) > SEALED_MAX_BYTES:
+        raise EnvelopeTooLarge(
+            f"sealed envelope is {len(blob)} B, over the device's "
+            f"{SEALED_MAX_BYTES} B decode buffer — trim the device list or "
+            f"shorten the storage secret"
+        )
+    return blob
+
+
 def seal_into(cfg: dict, secrets: SealedSecrets, *,
               pubkey: bytes | None = None) -> dict:
     """A v1-shaped config + its secrets -> the v2 payload to print.
@@ -263,14 +335,7 @@ def seal_into(cfg: dict, secrets: SealedSecrets, *,
     if secrets.is_empty:
         return out
 
-    blob = seal(json.dumps(secrets.to_body(),
-                           separators=(",", ":")).encode("utf-8"), pubkey)
-    if len(blob) > SEALED_MAX_BYTES:
-        raise EnvelopeTooLarge(
-            f"sealed envelope is {len(blob)} B, over the device's "
-            f"{SEALED_MAX_BYTES} B decode buffer — trim --device entries or "
-            f"shorten the storage secret"
-        )
+    blob = seal_secrets(secrets, pubkey)
     out["sealed"] = {
         "kid": blob_key_id(blob),
         "has": secrets.has,

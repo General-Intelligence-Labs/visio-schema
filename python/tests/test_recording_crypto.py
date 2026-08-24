@@ -9,6 +9,7 @@ same bytes from the other side.
 """
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -216,3 +217,46 @@ def test_a_torn_part_still_reads_up_to_its_cut(tmp_path):
     part.write_bytes(_part(plain, key, nonce)[: HEADER_BYTES + 90])
     with open_recording(part, key) as f:
         assert f.read() == plain[:90]
+
+
+def test_concurrent_writers_do_not_lose_each_others_keys(tmp_path, monkeypatch):
+    """Two processes minting keys must not drop one another's entry.
+
+    visio-display's console and the settings-QR generator both write this
+    file. A lost update is not a cosmetic race: the keyring is the ONLY place
+    a recording key exists, so an entry silently discarded is footage nobody
+    can ever open again.
+    """
+    import multiprocessing as mp
+    import os as _os
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    home = str(tmp_path)
+
+    def writer(seed: int) -> None:
+        _os.environ["HOME"] = home
+        from visio_schema.mcap.crypto import remember_key
+        for i in range(40):
+            remember_key(bytes([seed]) * 31 + bytes([i]))
+
+    procs = [mp.Process(target=writer, args=(s,)) for s in (0x11, 0x22, 0x33)]
+    for p in procs:
+        p.start()
+    for p in procs:
+        p.join(60)
+
+    from visio_schema.mcap.crypto import keyring_path
+    entries = json.loads(keyring_path().read_text())
+    assert len(entries) == 3 * 40, (
+        f"expected every key to survive, got {len(entries)}")
+
+
+def test_remembering_a_known_key_leaves_the_file_untouched(tmp_path, monkeypatch):
+    from visio_schema.mcap.crypto import keyring_path, remember_key
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    key = b"\x5c" * 32
+    remember_key(key)
+    before = keyring_path().stat().st_mtime_ns
+    remember_key(key)
+    assert keyring_path().stat().st_mtime_ns == before

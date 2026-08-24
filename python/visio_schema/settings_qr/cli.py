@@ -17,7 +17,8 @@ password, readable by anyone who photographs it.
         --old-recording-key-file factory7.key --out rotate.png
 
     # what does this code actually say? (no private key needed)
-    visio-settings-qr inspect factory7.payload.json
+    visio-settings-qr qr --config factory7.json --dry-run | \
+        visio-settings-qr inspect -
 """
 
 from __future__ import annotations
@@ -32,7 +33,8 @@ from pathlib import Path
 
 from ..crypto import generate_keypair, key_id
 from ..crypto.envelope import load_public_key_pem, public_key_pem
-from .interactive import interactive
+from .i18n import LANGUAGES, set_language, tr
+from .interactive import ask_language, interactive, interactive_recording_key
 from .payload import (
     MAX_BYTES,
     META_FIELDS,
@@ -46,9 +48,11 @@ from .payload import (
 from .sealed_body import (
     RECORDING_KEY_BYTES,
     EnvelopeTooLarge,
+    RecordingKeyChangeRefused,
     SealedSecrets,
     recording_key_fingerprint,
     seal_into,
+    validate_recording_key_change,
 )
 
 # Fields a v1 payload carries in the clear. `inspect` masks them by default
@@ -64,6 +68,14 @@ class CliError(Exception):
         self.code = code
 
 
+def _read_text_or_fail(path: Path) -> str:
+    """Read a key file, reporting a bad path the way every other verb does."""
+    try:
+        return path.read_text()
+    except OSError as exc:
+        raise CliError(f"cannot read {path}: {exc}", code=2) from exc
+
+
 def _read_hex_key(path: Path, want_bytes: int) -> bytes:
     """A hex key file -> raw bytes. Blank lines and `#` comments ignored.
 
@@ -75,7 +87,7 @@ def _read_hex_key(path: Path, want_bytes: int) -> bytes:
     """
     lines = [stripped for stripped in
              (line.split("#", 1)[0].strip() for line in
-              path.read_text().splitlines()) if stripped]
+              _read_text_or_fail(path).splitlines()) if stripped]
     if len(lines) != 1:
         raise CliError(
             f"{path}: expected exactly one hex line, found {len(lines)}")
@@ -88,6 +100,13 @@ def _read_hex_key(path: Path, want_bytes: int) -> bytes:
             f"{path}: expected {want_bytes} bytes ({want_bytes * 2} hex "
             f"characters), got {len(raw)}")
     return raw
+
+
+_RECORDING_KEY_BANNER = (
+    "# visio recording key — 32 bytes, lowercase hex.\n"
+    "# Every .mcap sealed under it is UNREADABLE without this file.\n"
+    "# Back it up somewhere you would keep a master password.\n"
+)
 
 
 def _write_key_file(path: Path, raw: bytes, banner: str, force: bool) -> None:
@@ -155,7 +174,12 @@ def _collect_secrets(cfg: dict, args: argparse.Namespace) -> SealedSecrets:
                                       RECORDING_KEY_BYTES)
 
     old_key = None
-    if args.old_recording_key_file:
+    # Raw bytes win: the interactive flow resolves a fingerprint straight off
+    # the keyring, so a key that visio-display minted (and which therefore has
+    # no file anywhere) never has to be written to disk just to be quoted back.
+    if args.old_recording_key:
+        old_key = args.old_recording_key
+    elif args.old_recording_key_file:
         old_key = _read_hex_key(Path(args.old_recording_key_file),
                                 RECORDING_KEY_BYTES)
 
@@ -192,7 +216,7 @@ def render_qr(payload: str, out: Path) -> None:
         qr.make_image(fill_color="black", back_color="white").save(out)
     except OSError as exc:
         raise CliError(f"cannot write {out}: {exc}") from exc
-    print(f"QR version {qr.version} -> {out}", file=sys.stderr)
+    print(tr("qrWritten", version=qr.version, path=out), file=sys.stderr)
 
 
 def _warn_partial_meta(cfg: dict) -> None:
@@ -216,10 +240,7 @@ def _warn_unsealed_wifi(cfg: dict) -> None:
     """
     wifi = cfg.get("wifi")
     if isinstance(wifi, dict) and wifi.get("passphrase"):
-        print("warning: wifi.passphrase is NOT sealed — it stays readable in "
-              "this code. Sealing it needs firmware support that does not "
-              "exist yet; omit the wifi section if that matters.",
-              file=sys.stderr)
+        print(tr("wifiUnsealed"), file=sys.stderr)
 
 
 def _require_plaintext_allowed(secrets: SealedSecrets) -> None:
@@ -236,22 +257,52 @@ def _require_plaintext_allowed(secrets: SealedSecrets) -> None:
 
 def _require_rotation_proof(secrets: SealedSecrets,
                             first_provision: bool) -> None:
-    """Rotating or clearing an existing key requires proving you set the
-    last one. Catching it here means the mistake surfaces on a laptop
-    rather than as `bad_old_key` on a rig in a factory."""
-    if not secrets.touches_recording_key:
-        return
-    if secrets.old_recording_key is not None:
-        return
-    if secrets.clears_recording_key:
+    """The shared rule, reported in this tool's own vocabulary.
+
+    The rule itself is `validate_recording_key_change` so that a QR and the
+    visio-display console cannot drift into accepting different things; only
+    the hint naming a flag belongs here.
+    """
+    try:
+        validate_recording_key_change(secrets, first_provision=first_provision)
+    except RecordingKeyChangeRefused as exc:
+        hint = ("Pass --first-provision if this fleet has never been keyed."
+                if not secrets.clears_recording_key else "")
         raise CliError(
-            "clearing the recording key needs --old-recording-key-file: the "
-            "device requires the current key to stop encrypting.", code=2)
-    if not first_provision:
-        raise CliError(
-            "setting a recording key needs --old-recording-key-file (the "
-            "device requires the previous key to rotate). Pass "
-            "--first-provision if this fleet has never been keyed.", code=2)
+            f"{exc} — give --old-recording-key-file, or its 16-hex "
+            f"fingerprint at the prompt. {hint}".strip(), code=2) from exc
+
+
+def _mint_recording_key() -> bytes:
+    return pysecrets.token_bytes(RECORDING_KEY_BYTES)
+
+
+def _remember(key: bytes) -> None:
+    """Add a minted key to this computer's keyring.
+
+    THE TWO TOOLS MUST SHARE ONE KEY STORE. This script mints into a file and
+    visio-display mints into the keyring; without this line a key minted here
+    is invisible to the viewer, so the admin who printed the QR then cannot
+    open the recordings it produced without hunting down the file and passing
+    --key-file. Same store, indexed by the same fingerprint the rig reports.
+    """
+    from visio_schema.mcap.crypto import remember_key
+    remember_key(key)
+
+
+def _write_minted_key(path: Path, key: bytes, *, force: bool = False) -> None:
+    """Persist a key minted mid-prompt, on `keygen`'s exact terms.
+
+    Same banner, same 0600, same refusal to clobber — a key minted here is no
+    less irreplaceable than one from `keygen`, and two ways to write a key file
+    would be two chances to get the mode wrong.
+    """
+    _write_key_file(path, key, _RECORDING_KEY_BANNER, force)
+    _remember(key)
+    print(tr("keyWritten", path=path), file=sys.stderr)
+    print(tr("keyFingerprint", fp=recording_key_fingerprint(key)),
+          file=sys.stderr)
+    print(tr("keyLossWarning"), file=sys.stderr)
 
 
 def cmd_qr(args: argparse.Namespace) -> int:
@@ -261,7 +312,15 @@ def cmd_qr(args: argparse.Namespace) -> int:
         raise CliError("--check-only needs --config", code=2)
     else:
         try:
+            # Ask FIRST, and only when the language was not already stated:
+            # every prompt after this one is in whatever they answer.
+            if args.lang is None:
+                ask_language()
             cfg = interactive()
+            # Only in the guided flow: with --config the caller is scripting
+            # and the flags are the interface, so prompting would hang CI.
+            interactive_recording_key(args, _mint_recording_key,
+                                      _write_minted_key)
         except (KeyboardInterrupt, EOFError):
             raise CliError("aborted") from None
 
@@ -326,17 +385,9 @@ def cmd_qr(args: argparse.Namespace) -> int:
 
 
 def cmd_keygen(args: argparse.Namespace) -> int:
-    key = pysecrets.token_bytes(RECORDING_KEY_BYTES)
+    key = _mint_recording_key()
     out = Path(args.out)
-    _write_key_file(out, key, (
-        "# visio recording key — 32 bytes, lowercase hex.\n"
-        "# Every .mcap sealed under it is UNREADABLE without this file.\n"
-        "# Back it up somewhere you would keep a master password.\n"
-    ), args.force)
-    print(f"wrote {out} (0600)", file=sys.stderr)
-    print(f"fingerprint: {recording_key_fingerprint(key)}", file=sys.stderr)
-    print("LOSE THIS FILE AND EVERY RECORDING MADE UNDER IT IS PERMANENTLY "
-          "UNREADABLE. There is no recovery path.", file=sys.stderr)
+    _write_minted_key(out, key, force=args.force)
     return 0
 
 
@@ -382,9 +433,27 @@ def _read_payload(spec: str) -> str:
     if spec.lstrip().startswith("{"):
         return spec
     try:
-        return Path(spec).read_text()
+        raw = Path(spec).read_bytes()
     except OSError as exc:
         raise CliError(f"cannot read {spec}: {exc}") from exc
+    # UTF-8 explicitly, not the locale encoding: read_text() would decode a PNG
+    # into mojibake on a cp936/cp1252 box (so the guard below never fired and
+    # the user got "Expecting value" instead), while a GBK-saved payload hit
+    # the guard and was told it was an image.
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        # Pointing this at the .png `--out` just wrote is the obvious thing to
+        # try, and it used to answer with a UnicodeDecodeError traceback.
+        # Decoding the image would mean a QR *reader* dependency in a wheel
+        # that otherwise only writes them, so say what to do instead.
+        raise CliError(
+            f"{spec} is not UTF-8 text — inspect reads the payload, not the image. "
+            f"Re-run the same `qr` command with --dry-run instead of --out to "
+            f"print it, or pipe it in: "
+            f"visio-settings-qr qr --config … --dry-run | "
+            f"visio-settings-qr inspect -"
+        ) from exc
 
 
 def cmd_inspect(args: argparse.Namespace) -> int:
@@ -418,10 +487,25 @@ def build_parser() -> argparse.ArgumentParser:
         prog="visio-settings-qr",
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
+    # Accepted before OR after the verb. argparse puts a parent-parser option
+    # strictly before the subcommand, but `main` inserts the default verb at
+    # argv[0], so a bare `visio-settings-qr --lang zh` becomes
+    # `qr --lang zh` — which the parent would then reject. A shared parent
+    # given to every subparser makes both positions work.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--lang", choices=LANGUAGES,
+                        help="prompt language (default: $VISIO_LANG, else the "
+                             "locale)")
+    ap.add_argument("--lang", choices=LANGUAGES, help=argparse.SUPPRESS)
     sub = ap.add_subparsers(dest="cmd")
 
-    qr = sub.add_parser("qr", help="generate a settings QR (the default)")
-    qr.set_defaults(handler=cmd_qr)
+    qr = sub.add_parser("qr", help="generate a settings QR (the default)", parents=[common])
+    # Set by the interactive prompts when the operator gives a fingerprint
+    # rather than a key file — declared here so both the writer and the reader
+    # use plain attribute access. A getattr() hedge on one side and direct
+    # access on the other means a typo silently drops the `rko` and the QR
+    # fails as bad_old_key on a rig, instead of failing here.
+    qr.set_defaults(handler=cmd_qr, old_recording_key=None)
     qr.add_argument("--config", metavar="JSON",
                     help="payload JSON file (omit for interactive prompts)")
     qr.add_argument("--out", metavar="PNG", default="settings_qr.png",
@@ -454,14 +538,14 @@ def build_parser() -> argparse.ArgumentParser:
     qr.add_argument("--expires-in", metavar="DAYS", type=int,
                     help="refuse to apply after DAYS (device clock)")
 
-    kg = sub.add_parser("keygen", help="mint a 32-byte MCAP recording key")
+    kg = sub.add_parser("keygen", help="mint a 32-byte MCAP recording key", parents=[common])
     kg.set_defaults(handler=cmd_keygen)
     kg.add_argument("--out", metavar="FILE", default="recording.key",
                     help="key file to write, 0600 (default: %(default)s)")
     kg.add_argument("--force", action="store_true",
                     help="overwrite an existing key file")
 
-    fk = sub.add_parser("fleet-keygen",
+    fk = sub.add_parser("fleet-keygen", parents=[common],
                         help="mint a fleet X25519 keypair (manufacturer only)")
     fk.set_defaults(handler=cmd_fleet_keygen)
     fk.add_argument("--out-private", metavar="FILE",
@@ -470,7 +554,7 @@ def build_parser() -> argparse.ArgumentParser:
     fk.add_argument("--force", action="store_true",
                     help="overwrite an existing private key file")
 
-    ins = sub.add_parser("inspect",
+    ins = sub.add_parser("inspect", parents=[common],
                          help="show a payload's cleartext half (no key needed)")
     ins.set_defaults(handler=cmd_inspect)
     ins.add_argument("payload",
@@ -483,10 +567,13 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     # `qr` is the default verb, so the historical
-    # `gen_settings_qr.py --config x --out y` invocation keeps working.
+    # `--config x --out y` invocation of the retired firmware-side script
+    # keeps working, so a documented command line does not rot.
     if not argv or (argv[0].startswith("-") and argv[0] not in ("-h", "--help")):
         argv.insert(0, "qr")
     args = build_parser().parse_args(argv)
+    # Before any handler runs, so the first prompt is already translated.
+    set_language(args.lang)
     try:
         return args.handler(args)
     except CliError as exc:
