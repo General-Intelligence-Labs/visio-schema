@@ -39,13 +39,21 @@ from __future__ import annotations
 import bisect
 import heapq
 import logging
+import struct
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import replace
 from functools import cache
 from pathlib import Path
 
 import numpy as np
-from mcap.reader import make_reader
+from mcap.exceptions import (
+    DecoderNotFoundError,
+    McapError,
+    UnsupportedCompressionError,
+)
+from mcap.reader import NonSeekingReader, make_reader
+from mcap.records import Metadata
+from mcap.stream_reader import StreamReader
 
 from visio_schema import message_class
 
@@ -125,6 +133,122 @@ _NATIVE_SCHEMAS = _DECODED | {POSE_SCHEMA, JOINT_STATES_SCHEMA}
 _CADENCE_KEYFRAMES = 5
 _CADENCE_AUS = 3000
 
+# What reading past a mid-write cut raises, depending on where the cut fell:
+# garbage bytes where the footer should be parse as an absurd record
+# (RecordLengthLimitExceeded — the production signature — or a bare McapError
+# from "expected footer"), a misaligned parse lands a garbage "string" field
+# (UnicodeDecodeError), and a partial record starves the stream (EndOfFile, or
+# struct.error when the starved read is a fixed-width field rather than a
+# zero-byte one). A partial zstd chunk fails decompression.
+#
+# `McapError` is deliberately broad, and that is only safe because
+# `_ENVIRONMENT_ERRORS` below is re-raised first and because the tolerant reader
+# is entered ONLY for a file already diagnosed as truncated (`_FileIndex.
+# truncated`) — never for one whose summary merely said "no index".
+_TRUNCATION_ERRORS: tuple[type[Exception], ...] = (
+    McapError, struct.error, UnicodeDecodeError)
+try:
+    from zstandard import ZstdError as _ZstdError
+
+    _TRUNCATION_ERRORS += (_ZstdError,)
+except ImportError:  # pragma: no cover — no zstandard, so no zstd chunk parses
+    pass
+
+# NOT truncation: the file is fine and this process cannot read it. Both subclass
+# `McapError`, so without an earlier re-raise the broad catch above would report a
+# missing `zstandard`/`lz4` install as "recovered 0 messages from a truncated
+# file" — a fully intact recording, silently returned as empty. There is no
+# indexed path left to raise from once the summary read has already failed.
+_ENVIRONMENT_ERRORS: tuple[type[Exception], ...] = (
+    UnsupportedCompressionError, DecoderNotFoundError)
+
+
+def _linear_messages(
+    path: Path,
+    topics: Sequence[str] | None = None,
+    start_ns: Ns | None = None,
+    end_ns: Ns | None = None,
+):
+    """Forward-only read of ONE file, consulting no summary. Errors propagate.
+
+    `make_reader` is unusable on a tail-truncated file: the seeking reader
+    consults the summary — read from the footer that never made it to disk — on
+    every entry point, `iter_messages` included.
+
+    `log_time_order=False` is load-bearing, not an optimisation. `True` sorts by
+    draining the whole generator into `sorted()` first, which (a) would surface a
+    truncation error inside the sort and discard every message read before it,
+    and (b) materialises the entire file in memory — which is what the summary-
+    less path used to do, via `make_reader`'s own fallback to this same reader.
+    File order is what the recorder wrote — near log-time order, whose jitter the
+    reorder buffer and the keyframe path already tolerate (see `keyframe_stream`).
+    """
+    with open(path, "rb") as f:
+        yield from NonSeekingReader(f).iter_messages(
+            topics=topics, start_time=start_ns, end_time=end_ns,
+            log_time_order=False,
+        )
+
+
+def _iter_messages_truncated(
+    path: Path,
+    topics: Sequence[str] | None = None,
+    start_ns: Ns | None = None,
+    end_ns: Ns | None = None,
+):
+    """`_linear_messages`, treating a truncation error as end-of-file.
+
+    What was yielded already is exactly the recoverable prefix. Reserved for a
+    file `_FileIndex` has diagnosed as truncated: on any other file a truncation
+    error is real corruption and must stay loud.
+    """
+    got = 0
+    try:
+        for item in _linear_messages(path, topics, start_ns, end_ns):
+            yield item
+            got += 1
+    except _ENVIRONMENT_ERRORS:
+        raise
+    except _TRUNCATION_ERRORS as e:
+        _log_recovery(path, got, e, "message")
+
+
+def _linear_metadata(path: Path):
+    """A truncated file's metadata records, without decompressing a single chunk.
+
+    MCAP `Metadata` is a top-level data-section record — `breakup_chunk` only ever
+    emits Schema/Channel/Message — so `emit_chunks=True` skips the decompress and
+    per-message parse that `NonSeekingReader.iter_metadata` pays to find records
+    that cannot be in there (measured 5.7x on a 141 MB truncated ego recording).
+    """
+    got = 0
+    try:
+        with open(path, "rb") as f:
+            for record in StreamReader(f, emit_chunks=True).records:
+                if isinstance(record, Metadata):
+                    yield record
+                    got += 1
+    except _ENVIRONMENT_ERRORS:
+        raise
+    except _TRUNCATION_ERRORS as e:
+        _log_recovery(path, got, e, "metadata record")
+
+
+def _log_recovery(path: Path, got: int, exc: Exception, unit: str) -> None:
+    """Say what was salvaged — and say it loudly when the answer is nothing.
+
+    Recovering zero must not read like success: a caller that sees only
+    `truncated_files` cannot tell an empty file from a whole one, and every
+    downstream emptiness guard (an empty `Calibration`, a topic that yields no
+    frames) fires far from here with no hint why.
+    """
+    if got:
+        _log.debug("%s: stopped at the truncation point after %d %s(s) (%s: %s)",
+                   path, got, unit, type(exc).__name__, exc)
+    else:
+        _log.warning("%s: recovered NO %ss before the truncation point (%s: %s)",
+                     path, unit, type(exc).__name__, exc)
+
 
 def strip_device_topic_prefix(topic: str, device: str | None) -> str | None:
     """Remove a ``/<device>`` prefix; None only for a DIFFERENT device's topic.
@@ -179,18 +303,53 @@ class _FileIndex:
         # process does not have, which is the whole point of an MCAP carrying its
         # schema inline.
         self.schema_rec: dict[str, object] = {}
+        self.truncated = False
         with open(path, "rb") as f:
-            summary = make_reader(f).get_summary()
+            # `make_reader` OUTSIDE the try: it checks the head magic, and a file
+            # that fails there is not a truncated recording — it is not an MCAP
+            # at all, and must keep raising InvalidMagic.
+            reader = make_reader(f)
+            try:
+                summary = reader.get_summary()
+            except _ENVIRONMENT_ERRORS:
+                raise
+            except (*_TRUNCATION_ERRORS, OSError) as e:
+                # The footer lives at the END of the file, so a recording cut off
+                # mid-write (device died / upload aborted) fails exactly here —
+                # while everything before the cut is still readable. A summary-less
+                # file returns None instead; both land in the scan below, but only
+                # this one is a partial recording the caller should be told about.
+                #
+                # OSError joins the tuple for the most truncated file there is: the
+                # footer seek is relative to the END, so a file shorter than a
+                # footer seeks before byte 0 and raises EINVAL rather than anything
+                # MCAP-shaped. Without it, one 12-byte tail chunk kills the whole
+                # Session — `_FileIndex`es are built eagerly, so no per-file
+                # quarantine catches it.
+                if not require_index:
+                    _log.warning(
+                        "%s: unreadable MCAP summary (%s: %s) — treating as "
+                        "tail-truncated and indexing by linear scan",
+                        path, type(e).__name__, e,
+                    )
+                self.truncated = True
+                summary = None
         if summary is None:
             if require_index:
                 # The caller wants METADATA ONLY, so the fallback below — a full
                 # pass over the file — is not a smaller cost than the thing it
                 # is standing in for. A preflight that scans a 3 GB recording to
-                # tell you it is damaged has already lost.
-                raise ValueError(
-                    f"{path}: no MCAP summary — the file is truncated or was "
-                    "written without an index"
-                )
+                # tell you it is damaged has already lost. That holds whether the
+                # summary is absent or unreadable: `truncated` narrows the message,
+                # it does not buy the caller a cheaper answer.
+                # Disjoint wordings, not a prefix and its extension: the two
+                # causes are now distinguishable (a truncated file RAISES out of
+                # get_summary, an unindexed one returns None), so an operator —
+                # and a test matching on the message — must be able to tell them
+                # apart.
+                why = ("the file is truncated" if self.truncated
+                       else "the file was written without an index")
+                raise ValueError(f"{path}: no MCAP summary — {why}")
             self._scan()
             return
         schemas = {sid: s.name for sid, s in summary.schemas.items()}
@@ -215,15 +374,31 @@ class _FileIndex:
                 self.end_ns = stats.message_end_time
 
     def _scan(self) -> None:
-        """Fallback for a file with no summary section (rare): one pass."""
-        with open(self.path, "rb") as f:
-            for schema, channel, msg in make_reader(f).iter_messages():
-                if schema is not None:
-                    self.schema_rec.setdefault(schema.name, schema)
-                self.chan[channel.id] = (channel.topic, schema.name if schema else "")
-                self.counts[channel.id] = self.counts.get(channel.id, 0) + 1
-                self.start_ns = msg.log_time if self.start_ns is None else self.start_ns
-                self.end_ns = msg.log_time
+        """Fallback for a file with no readable summary (rare): one linear pass.
+
+        Serves both the legitimately summary-less file and the tail-truncated one,
+        forward-only in both cases — but only the truncated one SWALLOWS a
+        truncation error. On a file whose summary read succeeded and merely said
+        "no index", the same error is real mid-file corruption: swallowing it
+        would report a partial index as complete, leave `truncated` False so
+        `truncated_files` denies it, and desynchronise this index from
+        `_read_messages` — which would still route that file to `make_reader` and
+        raise there. Loud is correct.
+
+        Bounds are min/max rather than first/last because the scan runs in FILE
+        order, which is only near log-time order.
+        """
+        rows = (_iter_messages_truncated(self.path) if self.truncated
+                else _linear_messages(self.path))
+        for schema, channel, msg in rows:
+            if schema is not None:
+                self.schema_rec.setdefault(schema.name, schema)
+            self.chan[channel.id] = (channel.topic, schema.name if schema else "")
+            self.counts[channel.id] = self.counts.get(channel.id, 0) + 1
+            self.start_ns = (msg.log_time if self.start_ns is None
+                             else min(self.start_ns, msg.log_time))
+            self.end_ns = (msg.log_time if self.end_ns is None
+                           else max(self.end_ns, msg.log_time))
 
     def topics(self) -> list[tuple[str, str, int]]:
         return [(t, s, self.counts.get(cid, 0)) for cid, (t, s) in self.chan.items()]
@@ -297,6 +472,11 @@ class Session:
         self._streams = [
             [i for i, o in enumerate(owner) if o == sid] for sid in range(len(groups))
         ]
+        # Files whose summary never made it to disk; every read of one goes
+        # through the linear tolerant path (`_read_messages`).
+        self._truncated = frozenset(
+            p for p, ix in zip(self._files, self._index, strict=True) if ix.truncated
+        )
         self._reorder_ns = reorder_ns + self._seam_slack()
         self._device = device if device is not None else self._auto_device()
         self._calibration: Calibration | None = None
@@ -447,7 +627,54 @@ class Session:
     def device(self) -> str | None:
         return self._device
 
+    @property
+    def truncated_files(self) -> list[Path]:
+        """Files whose footer/summary never made it to disk, in session order.
+
+        Non-empty means reads of those files return the recoverable PREFIX of a
+        recording cut off mid-write — a consumer recording provenance should say
+        so rather than pass its output off as covering the whole recording.
+        """
+        return [p for p in self._files if p in self._truncated]
+
+    def _read_messages(
+        self,
+        path: Path,
+        *,
+        topics: Sequence[str] | None = None,
+        start_ns: Ns | None = None,
+        end_ns: Ns | None = None,
+    ):
+        """One file's ``(schema, channel, message)`` triples, truncation-aware.
+
+        The single seam between the two physical read paths: an intact file keeps
+        the summary-indexed reader (topic and window filtering skip whole
+        chunks), a truncated one takes the linear prefix scan. Every message
+        read in this class goes through here, so no call site can regress into
+        opening a truncated file with `make_reader` — whose every entry point
+        re-reads the absent footer.
+        """
+        if path in self._truncated:
+            yield from _iter_messages_truncated(
+                path, topics=topics, start_ns=start_ns, end_ns=end_ns)
+            return
+        with open(path, "rb") as f:
+            yield from make_reader(f).iter_messages(
+                topics=topics, start_time=start_ns, end_time=end_ns)
+
+    def _iter_file_metadata(self, path: Path):
+        """One file's MCAP metadata records, truncation-aware (as `_read_messages`)."""
+        if path in self._truncated:
+            yield from _linear_metadata(path)
+            return
+        with open(path, "rb") as f:
+            yield from make_reader(f).iter_metadata()
+
     # --- cheap indexed metadata (summary read; NO decode pass) ----------- #
+    # "Cheap" is the INTACT file's guarantee, and it comes from the summary. A
+    # tail-truncated file has none, so everything below costs the linear scan
+    # `_FileIndex` already paid once — `truncated_files` is how a caller knows
+    # which of the two it is holding.
     def topics(self) -> list[TopicInfo]:
         agg: dict[str, tuple[str, int]] = {}
         for idx in self._index:
@@ -506,12 +733,14 @@ class Session:
         uniqueness check and appends one index entry per call, so N sidecars
         contribute N `visio.derived` records and all N read back. Returned as a
         list of pairs, never a dict, for exactly that reason.
+
+        Collects every record, so unlike `_read_metadata` there is no early break
+        — on a truncated file that is a full linear pass to the cut.
         """
         out: list[tuple[str, dict[str, str]]] = []
         for p in self._files:
-            with open(p, "rb") as f:
-                for m in make_reader(f).iter_metadata():
-                    out.append((m.name, dict(m.metadata)))
+            for m in self._iter_file_metadata(p):
+                out.append((m.name, dict(m.metadata)))
         return out
 
     def metadata_record(self, name: str, **must_match: str) -> dict[str, str] | None:
@@ -576,18 +805,17 @@ class Session:
         for path, idx in zip(self._files, self._index, strict=True):
             if not any(s == FRAME_INFO_SCHEMA for (_t, s, _n) in idx.topics()):
                 continue  # a sidecar, or a chunk recorded before the stream was on
-            with open(path, "rb") as f:
-                for schema, ch, msg in make_reader(f).iter_messages(topics=want):
-                    if schema is None or schema.name != FRAME_INFO_SCHEMA:
-                        continue
-                    canon = strip_device_topic_prefix(ch.topic, self._device)
-                    if canon is None:
-                        continue
-                    proto.ParseFromString(msg.data)
-                    ts, exps = by_cam.setdefault(
-                        _strip_suffix(canon, FRAME_INFO_SUFFIX), ([], []))
-                    ts.append(msg.log_time)
-                    exps.append(_parse_frame_info(proto))
+            for schema, ch, msg in self._read_messages(path, topics=want):
+                if schema is None or schema.name != FRAME_INFO_SCHEMA:
+                    continue
+                canon = strip_device_topic_prefix(ch.topic, self._device)
+                if canon is None:
+                    continue
+                proto.ParseFromString(msg.data)
+                ts, exps = by_cam.setdefault(
+                    _strip_suffix(canon, FRAME_INFO_SUFFIX), ([], []))
+                ts.append(msg.log_time)
+                exps.append(_parse_frame_info(proto))
         out: dict[str, _ExposureTrack] = {}
         for cam, (ts, exps) in by_cam.items():
             # Chunks are read in first-message order and entries are monotonic
@@ -654,29 +882,45 @@ class Session:
         )
 
     def _iter_calib(self, want_topics: list[str]) -> Iterator[tuple[str, str, object]]:
-        """Seek only the calib topics (chunk-index seek), first file wins."""
-        for path in self._files:
+        """Seek only the calib topics, first file wins — INTACT files first.
+
+        Every file in a session carries the same calibration, so which one answers
+        is free — except that a truncated file may hold only PART of it, and "first
+        file wins" would then let a half-answer suppress an intact sibling holding
+        the rest. Silently returning a `Calibration` with no `T_cam_imu` is worse
+        than reading one more file, so intact files are asked first and a truncated
+        one only stands in when none of them carries calibration at all.
+
+        On an intact file the read is a chunk-index seek (`_chunks_matching_topics`
+        drops every chunk with no calib channel, so a file without them costs zero
+        chunk reads). A truncated file has no index to seek by and is a full linear
+        pass, which is why the per-file `idx.topics()` pre-filter below matters
+        there and is free here.
+        """
+        want = set(want_topics)
+        pairs = list(zip(self._files, self._index, strict=True))
+        for path, idx in sorted(pairs, key=lambda pi: pi[1].truncated):
+            if not any(t in want for (t, _s, _n) in idx.topics()):
+                continue
             got = False
-            with open(path, "rb") as f:
-                reader = make_reader(f)
-                for schema, channel, msg in reader.iter_messages(topics=want_topics):
-                    if schema is None:
-                        continue
-                    proto = message_class(schema.name)()
-                    proto.ParseFromString(msg.data)
-                    yield schema.name, channel.topic, proto
-                    got = True
+            for schema, channel, msg in self._read_messages(
+                    path, topics=want_topics):
+                if schema is None:
+                    continue
+                proto = message_class(schema.name)()
+                proto.ParseFromString(msg.data)
+                yield schema.name, channel.topic, proto
+                got = True
             if got:
                 return
 
     def _read_metadata(self) -> SessionMeta:
         capture: dict[str, str] = {}
         for path in self._files:
-            with open(path, "rb") as f:
-                for md in make_reader(f).iter_metadata():
-                    if md.name == CAPTURE_METADATA:
-                        capture = dict(md.metadata)
-                        break
+            for md in self._iter_file_metadata(path):
+                if md.name == CAPTURE_METADATA:
+                    capture = dict(md.metadata)
+                    break
             if capture:
                 break
         starts = [i.start_ns for i in self._index if i.start_ns is not None]
@@ -817,13 +1061,12 @@ class Session:
         only copying. `t_ns == arrival` here: nothing expands into the future the
         way an IMU bundle does, so the pair is degenerate on purpose.
         """
-        with open(path, "rb") as f:
-            for schema, ch, msg in make_reader(f).iter_messages(topics=wanted):
-                if schema is None:
-                    continue
-                canon = strip_device_topic_prefix(ch.topic, self._device)
-                t = msg.log_time
-                yield t, t, Record(canon, t, schema.name, None, msg.data)
+        for schema, ch, msg in self._read_messages(path, topics=wanted):
+            if schema is None:
+                continue
+            canon = strip_device_topic_prefix(ch.topic, self._device)
+            t = msg.log_time
+            yield t, t, Record(canon, t, schema.name, None, msg.data)
 
     def _build_adapters(self, idx: _FileIndex, wanted: set[str], make_decoders) -> dict:
         """One adapter per schema this pass will meet, built before the first read.
@@ -882,15 +1125,14 @@ class Session:
             yield from self._iter_file_raw(path, wanted)
             return
         adapters = self._build_adapters(idx, set(wanted), make_decoders)
-        with open(path, "rb") as f:
-            for schema, ch, msg in make_reader(f).iter_messages(topics=wanted):
-                if schema is None:
-                    continue
-                adapter = adapters.get(schema.name)
-                if adapter is None:
-                    continue
-                canon = strip_device_topic_prefix(ch.topic, self._device)
-                yield from adapter.emit(msg.data, canon, msg.log_time)
+        for schema, ch, msg in self._read_messages(path, topics=wanted):
+            if schema is None:
+                continue
+            adapter = adapters.get(schema.name)
+            if adapter is None:
+                continue
+            canon = strip_device_topic_prefix(ch.topic, self._device)
+            yield from adapter.emit(msg.data, canon, msg.log_time)
         for adapter in adapters.values():
             yield from adapter.flush()
 
@@ -972,26 +1214,27 @@ class Session:
         the probe and the decode path run the same loop without either of them
         copying a 33 KB payload per message.
 
-        The window is pushed into ``iter_messages``, whose ``[start, end)`` is the
-        same half-open bound ``_in_window`` applies, so out-of-window chunks are
-        skipped through the message index instead of read and discarded.
+        The window is pushed into ``_read_messages``, whose ``[start, end)`` is
+        the same half-open bound ``_in_window`` applies, so on an intact file
+        out-of-window chunks are skipped through the message index instead of
+        read and discarded (a truncated file filters per message — it has no
+        index to skip by).
         """
-        with open(path, "rb") as f:
-            messages = make_reader(f).iter_messages(
-                topics=[prefixed], start_time=start_ns, end_time=end_ns)
-            for _schema, _ch, msg in messages:
-                video.ParseFromString(msg.data)
-                key = is_keyframe(video.format, video.data)
-                if key is None:
-                    # A property of the codec, so in practice this fires on the
-                    # first AU, before any frame has reached the consumer.
-                    raise ValueError(
-                        f"cannot locate keyframes in {video.format!r} on {canon} — "
-                        f"only {', '.join(KEYFRAME_FORMATS)} are parsed. Use "
-                        f"Session.stream(), which decodes every frame and so needs "
-                        f"no keyframe knowledge."
-                    )
-                yield msg.log_time, key
+        messages = self._read_messages(
+            path, topics=[prefixed], start_ns=start_ns, end_ns=end_ns)
+        for _schema, _ch, msg in messages:
+            video.ParseFromString(msg.data)
+            key = is_keyframe(video.format, video.data)
+            if key is None:
+                # A property of the codec, so in practice this fires on the
+                # first AU, before any frame has reached the consumer.
+                raise ValueError(
+                    f"cannot locate keyframes in {video.format!r} on {canon} — "
+                    f"only {', '.join(KEYFRAME_FORMATS)} are parsed. Use "
+                    f"Session.stream(), which decodes every frame and so needs "
+                    f"no keyframe knowledge."
+                )
+            yield msg.log_time, key
 
     def keyframe_stream(
         self,

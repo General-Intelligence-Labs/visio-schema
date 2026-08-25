@@ -277,10 +277,17 @@ class RecBuilder:
         self._rows.append((self._topic(topic), IMU_CALIB, T0, m.SerializeToString()))
         return self
 
-    def write(self):
-        self._rows.sort(key=lambda r: r[2])  # log_time order
+    def write(self, chunk_size=None, sort=True):
+        """`chunk_size` (bytes) forces multiple chunks — a truncation test needs a
+        cut that falls between chunks of one file, not just before the footer.
+
+        `sort=False` writes rows in the order they were added, so FILE order and
+        log-time order differ. Every other fixture sorts, which makes a scan's
+        first/last bounds indistinguishable from min/max."""
+        if sort:
+            self._rows.sort(key=lambda r: r[2])  # log_time order
         with self.path.open("wb") as fh:
-            w = Writer(fh)
+            w = Writer(fh) if chunk_size is None else Writer(fh, chunk_size=chunk_size)
             w.start(profile="visio", library="visio_schema.reader test")
             if self.capture:
                 w.add_metadata("visio.capture", self.capture)
@@ -372,3 +379,31 @@ class Accumulating:
         self.seen.append(len(self._pending))
         out, self._pending = self._pending, []
         return out
+
+
+def unindexed_mcap(path):
+    """A VALID mcap with no summary section — what a writer that never closed
+    cleanly leaves behind. Truncating a good file does NOT produce this; it
+    produces a corrupt record, which the reader rejects earlier and for a
+    different reason."""
+    from mcap.writer import IndexType, Writer
+
+    with open(path, "wb") as f:
+        w = Writer(
+            f,
+            index_types=IndexType.NONE,
+            repeat_schemas=False,
+            repeat_channels=False,
+            use_statistics=False,
+            use_summary_offsets=False,
+        )
+        w.start()
+        sid = w.register_schema(
+            name="foxglove.PoseInFrame", encoding="protobuf", data=b""
+        )
+        cid = w.register_channel(
+            topic="/pose/x", message_encoding="protobuf", schema_id=sid
+        )
+        w.add_message(channel_id=cid, log_time=1, data=b"", publish_time=1)
+        w.finish()
+    return path
