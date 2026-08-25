@@ -38,7 +38,10 @@ classifiers = [
 # a stage image, a training pipeline — never opens. `pip install visio-schema` is
 # the codec; `pip install visio-schema[display]` adds the viewer.
 dependencies = [
-    "protobuf>=5.26",
+    # Must be >= the gencode protoc stamps into the _pb2.py files this
+    # package SHIPS (currently 7.36.0): an older runtime raises at import,
+    # so a lower floor advertises a wheel that cannot actually load.
+    "protobuf>=7.36",
     "cobs>=1.2",
     "mcap>=1.1",
     # `visio_schema.reader`'s element types are numpy-shaped (decoded frames, IMU
@@ -241,7 +244,7 @@ skip = "*-musllinux*"
 # half is still tested natively; both halves are still built.
 test-skip = "*_universal2:x86_64"
 build-frontend = "build"
-test-requires = ["pytest>=8", "pytest-timeout>=2.3", "protobuf>=5.26", "cobs>=1.2", "mcap>=1.1", "pyarrow>=14"]
+test-requires = ["pytest>=8", "pytest-timeout>=2.3", "protobuf>=7.36", "cobs>=1.2", "mcap>=1.1", "pyarrow>=14"]
 # Run the in-wheel suite native-on, then forced onto the pure-Python fallback, so
 # both readers are exercised against the installed wheel.
 # --timeout is a hard guard well above any real test time: it turns a platform-specific
