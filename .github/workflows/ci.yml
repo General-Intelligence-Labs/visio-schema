@@ -86,8 +86,14 @@ jobs:
       # find it and would fall back to the system protoc this no longer has.
       - name: Install toolchain + generate bindings
         run: |
+          # This list is a hand-maintained shadow of python/pyproject.toml's
+          # `dependencies`, needed BEFORE the editable install below because
+          # `make gen` imports the generated bindings to prove the runtime can
+          # load them. It drifts: `cryptography` became a core dependency with
+          # VREC/sealed-QR support and was not added here, so gen's import check
+          # failed on a package the wheel legitimately requires.
           python3 -m pip install -U pip grpcio-tools protobuf cobs mcap \
-            pyserial pytest
+            pyserial pytest cryptography
           make gen
 
       # Editable install builds the native _creader. Without it HAVE_NATIVE is

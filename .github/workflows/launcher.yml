@@ -38,7 +38,7 @@ jobs:
           # package to enumerate the payload schemas.
           sudo apt-get update && sudo apt-get install -y protobuf-compiler
           npm install -g @bufbuild/buf
-          python -m pip install protobuf cobs mcap pyserial
+          python -m pip install protobuf cobs mcap pyserial cryptography
       - name: make gen + vendor native sources
         run: |
           make gen

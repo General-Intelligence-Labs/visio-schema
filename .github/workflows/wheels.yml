@@ -42,7 +42,7 @@ jobs:
           else
             sudo apt-get update && sudo apt-get install -y protobuf-compiler
           fi
-          python -m pip install protobuf cobs mcap pyserial
+          python -m pip install protobuf cobs mcap pyserial cryptography
           npm install -g @bufbuild/buf
           make gen
 
@@ -84,7 +84,7 @@ jobs:
           else
             sudo apt-get update && sudo apt-get install -y protobuf-compiler
           fi
-          python -m pip install protobuf cobs mcap pyserial
+          python -m pip install protobuf cobs mcap pyserial cryptography
           npm install -g @bufbuild/buf
           make gen
       - name: vendor native sources
@@ -136,7 +136,7 @@ jobs:
           else
             sudo apt-get update && sudo apt-get install -y protobuf-compiler
           fi
-          python -m pip install protobuf cobs mcap pyserial
+          python -m pip install protobuf cobs mcap pyserial cryptography
           npm install -g @bufbuild/buf
           make gen
       - name: build + ctest

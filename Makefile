@@ -140,13 +140,18 @@ gen: lint
 	@$(PYTHON) -c "import sys; sys.path.insert(0, '$(PY_PKG)'); \
 	  import visio_schema.v1.control.command_pb2" >/dev/null 2>&1 || { \
 	  echo ''; \
-	  echo 'gen: the installed protobuf runtime is older than the gencode buf'; \
-	  echo '     just generated, so the bindings cannot be imported:'; \
+	  echo 'gen: the generated bindings cannot be imported:'; \
 	  echo ''; \
 	  $(PYTHON) -c "import sys; sys.path.insert(0, '$(PY_PKG)'); \
 	    import visio_schema.v1.control.command_pb2" 2>&1 | tail -1 | sed 's/^/       /'; \
 	  echo ''; \
-	  echo '     Fix:  python3 -m pip install --user --upgrade protobuf'; \
+	  echo ''; \
+	  echo '     If that names a MISSING MODULE, install it -- every runtime'; \
+	  echo '     dependency in python/pyproject.toml has to be present before'; \
+	  echo '     this check, and CI keeps a hand-written copy of that list.'; \
+	  echo '     If it names a protobuf VERSION, the runtime is older than the'; \
+	  echo '     gencode buf just emitted:'; \
+	  echo '       python3 -m pip install --user --upgrade protobuf'; \
 	  echo ''; \
 	  echo '     Stopped BEFORE regenerating the nanopb tree, so the workspace'; \
 	  echo '     stays buildable.'; \
