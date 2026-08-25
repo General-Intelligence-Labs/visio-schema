@@ -241,6 +241,10 @@ void FramedFdEndpoint::Pump() {
 
 void FramedFdEndpoint::UpdateStallState(long accepted) {
   const std::int64_t now_ns = MonotonicNs();
+  if (accepted > 0) {
+    accepted_total_.fetch_add(static_cast<std::uint64_t>(accepted),
+                              std::memory_order_relaxed);
+  }
   // Congestion latch (Send's keyframes-only gate): any NEW eviction from the
   // video outbox arms/extends the degrade hold. Eviction — not queue depth or
   // age — is the trigger, because transient CPU-starvation stalls routinely
@@ -322,6 +326,10 @@ void FramedFdEndpoint::MarkLinkDead() {
   // one. Resync the eviction cursor so they can't re-latch it either.
   degrade_hold_until_ns_.store(0, std::memory_order_relaxed);
   evictions_seen_ = outbox_.Dropped();
+  // accepted_total_ is deliberately NOT reset here, unlike everything above it.
+  // SerialWatchdog measures a DELTA across reopens to decide whether a host is
+  // really reading; zeroing it would make that delta wrap in unsigned
+  // arithmetic and vouch for a link nobody has touched.
   // Last, with the endpoint's own state already settled: the owner detaches us
   // from inside this call. Once per link — a second MarkLinkDead (fd_ already
   // -1) must not re-report a closure the owner has acted on.
