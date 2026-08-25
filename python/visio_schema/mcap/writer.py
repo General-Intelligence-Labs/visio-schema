@@ -11,6 +11,7 @@ if it is missing from the environment.
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import IO
 
@@ -76,8 +77,21 @@ class McapWriter:
         compression=None,
         max_bytes: int | None = None,
         max_duration_s: float | None = None,
+        profile: str = "",
+        library: str | None = None,
     ) -> None:
         self._Writer, CompressionType = _writer_api()
+        # Written into every part's header. `profile` names the ecosystem a reader
+        # should interpret the file under; `library` identifies the producer, which
+        # is the first thing you want when two tools wrote files that differ.
+        #
+        # Both default to what the mcap writer already produced, so adding them
+        # changes no existing output — a caller that wants `profile="visio"` says
+        # so. Making "visio" the default would silently restamp the header of every
+        # recording this writes, which is a wire-visible change and belongs in its
+        # own decision, not in a refactor.
+        self._profile = profile
+        self._library = library
         self._compression = (
             compression if compression is not None else CompressionType.NONE
         )
@@ -88,6 +102,9 @@ class McapWriter:
         self._rotating = max_bytes is not None or max_duration_s is not None
         self._closed = False
         self._part_index = 0
+        # Replayed into every rolled part (see `_open_part`), so each part stands
+        # alone. Must exist before the first `_open_part()` below.
+        self._metadata: list[tuple[str, dict[str, str]]] = []
 
         if isinstance(output, (str, Path)):
             self._path: Path | None = Path(output)
@@ -190,6 +207,48 @@ class McapWriter:
         )
         self._part_bytes += len(msg.payload)
 
+    def add_metadata(self, name: str, kv: Mapping[str, str]) -> None:
+        """Attach a named metadata record — where provenance belongs.
+
+        An MCAP metadata record is a string→string map written outside any
+        channel, so a consumer reads it without decoding messages. That is the
+        right home for provenance (``visio.capture`` from a recorder,
+        ``visio.derived`` from a post-processing stage) rather than a synthetic
+        channel that every reader then has to know to skip.
+
+        Re-emitted into **every** rolled part, matching `_open_part`'s
+        stands-alone rule: a session's part 3 must still say where it came from.
+        Call it before or between writes; ordering within a part is not
+        significant.
+
+        Args:
+            name: The record name, e.g. ``"visio.derived"``.
+            kv: String→string map. MCAP metadata is strictly textual, so a
+                non-string value is rejected here rather than deep inside the
+                mcap writer.
+
+        Raises:
+            TypeError: A value is not a ``str`` (the offending key is named).
+            RuntimeError: The writer is already closed.
+        """
+        if self._closed:
+            raise RuntimeError(
+                f"McapWriter is closed; metadata {name!r} would be dropped. "
+                "An MCAP with no provenance record is indistinguishable from one "
+                "where the call never happened, so this fails rather than "
+                "silently discarding it."
+            )
+        for key, value in kv.items():
+            if not isinstance(value, str):
+                raise TypeError(
+                    f"metadata {name!r} key {key!r} has "
+                    f"{type(value).__name__} value {value!r}; MCAP metadata is "
+                    "string->string — format it before passing it in"
+                )
+        record = (name, dict(kv))
+        self._metadata.append(record)
+        self._writer.add_metadata(record[0], record[1])
+
     def close(self) -> None:
         """Finalize and close the file(s). Idempotent. Prefer the context-manager form
         (``with McapWriter(...) as w:``), which closes automatically."""
@@ -223,7 +282,14 @@ class McapWriter:
         if self._path is not None:
             self._file = open(self._part_path(), "wb")
         self._writer = self._Writer(self._file, compression=self._compression)
-        self._writer.start()
+        start_kw = {}
+        if self._profile:
+            start_kw["profile"] = self._profile
+        if self._library is not None:
+            start_kw["library"] = self._library
+        self._writer.start(**start_kw)
+        for name, kv in self._metadata:
+            self._writer.add_metadata(name, kv)
 
     def _should_roll(self) -> bool:
         # Don't roll an empty part: the size/age check must follow at least one

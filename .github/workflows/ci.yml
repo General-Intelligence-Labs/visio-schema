@@ -16,6 +16,10 @@ jobs:
   proto:
     name: buf lint + wire-compat
     runs-on: ubuntu-latest
+    # A hang here used to cost GitHub's 360-minute default, and a wedged job
+    # is indistinguishable from a slow one the whole time. These finish in
+    # about three minutes; ten is generous and can only fire on a hang.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,10 +42,17 @@ jobs:
     # the lean leg), so the lean leg proves `pip install visio-schema` stays green.
     name: python + c++ suites ${{ matrix.extra || '(base)' }}
     runs-on: ubuntu-latest
+    # A hang here used to cost GitHub's 360-minute default, and a wedged job
+    # is indistinguishable from a slow one the whole time. These finish in
+    # about three minutes; ten is generous and can only fire on a hang.
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        extra: ["", "[display]"]
+        # "" proves the wire contract installs and passes with no extras at
+        # all; the full leg covers every optional surface. [dev] carries
+        # import-linter for the layering contract.
+        extra: ["", "[dev,display,reader,dataset]"]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -52,10 +63,37 @@ jobs:
           cache: pip
       - uses: bufbuild/buf-setup-action@v1
 
+      # protoc comes from the grpcio-tools WHEEL, not apt's protobuf-compiler.
+      # That is nanopb's own resolution order, not a workaround --
+      # third_party/nanopb/generator/proto/_utils.py: invoke_protoc "will use
+      # grpcio-provided protoc if it exists, using system-installed protoc as a
+      # fallback" — and `make gen` is the only thing here that ever wanted
+      # protoc. Verified by regenerating on a box with no protoc on PATH at
+      # all: 68 nanopb headers and the 76-descriptor blob, then pytest, cpp and
+      # breaking all green.
+      #
+      # The point is which network it depends on. On 2026-08-19 the Ubuntu
+      # archive went dark for some runner VMs — azure.archive.ubuntu.com
+      # refusing, archive.ubuntu.com answering a cached InRelease then stalling
+      # on every body — and `apt-get update` has no effective timeout, so this
+      # step sat for 1h40m reporting itself as in progress. PyPI, GitHub and
+      # packages.microsoft.com served the same VMs normally throughout. With
+      # protoc off apt, this job touches the Ubuntu archive nowhere.
+      #
+      # python3, not python: the Makefile resolves `command -v python3` and
+      # that agreement is load-bearing now that the wheel carries protoc --
+      # installed into a different interpreter, nanopb_generator would not
+      # find it and would fall back to the system protoc this no longer has.
       - name: Install toolchain + generate bindings
         run: |
-          sudo apt-get update && sudo apt-get install -y protobuf-compiler
-          python -m pip install -U pip protobuf cobs mcap pyserial pytest
+          # This list is a hand-maintained shadow of python/pyproject.toml's
+          # `dependencies`, needed BEFORE the editable install below because
+          # `make gen` imports the generated bindings to prove the runtime can
+          # load them. It drifts: `cryptography` became a core dependency with
+          # VREC/sealed-QR support and was not added here, so gen's import check
+          # failed on a package the wheel legitimately requires.
+          python3 -m pip install -U pip grpcio-tools protobuf cobs mcap \
+            pyserial pytest cryptography
           make gen
 
       # Editable install builds the native _creader. Without it HAVE_NATIVE is
@@ -71,5 +109,9 @@ jobs:
 
       - name: pytest (pure-python fallback)
         run: cd python && VISIO_NO_NATIVE=1 python -m pytest tests -q
+
+      # The tools/ scripts are stdlib-only and import nothing from the package,
+      # so this runs on the bare checkout and is not covered by `make pytest`.
+      - run: make tools-test
 
       - run: make cpp

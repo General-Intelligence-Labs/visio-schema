@@ -52,7 +52,8 @@ languages have separate idioms.)
 Proto entry points consumers rely on: `v1.control.command_pb2` (`Command` + its oneof bodies +
 `StartRecording`/`StopRecording`/`Identify`/`SetAutoStart`/`ConnectWifi`/`ForgetWifi`/`SetStorage`/
 `ListRecordings`/`GetState`/`SetCalibration`/`SetAutoUpload`/`SetNoticeLang`/`SetResolution`/
-`SetAudioRecording`/`SetRecordingDestination`/`SetRecordingHeartbeat`/`SetNoticeVolume`),
+`SetAudioRecording`/`SetRecordingDestination`/`SetRecordingHeartbeat`/`SetNoticeVolume`/
+`SetRecordingKey`),
 `v1.control.command_result_pb2.CommandResult`,
 `v1.wire.header_pb2` (`Header`, `ControlStream`), `v1.service.device_info.device_info_pb2`
 (`DeviceInfo`, `Channel`), `v1.sensor.*`, `v1.calibration.*`, `foxglove.*`.
@@ -98,6 +99,7 @@ Common commands:
 make gen                                   # regenerate Python + C++ (nanopb) bindings
 make pytest                                # Python suite
 cd python && python -m pytest tests -q     # same, directly
+make tools-test                            # the standalone tools/ scripts' own tests
 VISIO_NO_NATIVE=1 python -m pytest tests -q  # force the pure-Python reader
 make cpp                                    # C++ codec tests
 python -m ruff check .                      # lint (config in python/pyproject.toml)

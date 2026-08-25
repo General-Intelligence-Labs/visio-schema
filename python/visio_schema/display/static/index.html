@@ -229,6 +229,29 @@
           <div class="cfg-msg" id="cfg-meta-msg"></div>
         </div>
 
+        <div class="cfg-card">
+          <div class="cfg-head"><span data-i18n="cfgEnc">Recording encryption</span>
+            <span class="cfg-note" style="margin:0" data-i18n="cfgEncNext">applies to the next recording</span></div>
+          <div class="cfg-row"><span class="cfg-note" style="margin:0" id="cfg-enc-state">—</span></div>
+          <div class="cfg-row">
+            <button class="secondary" id="cfg-enc-show" data-i18n="cfgEncShow" disabled>Show key</button>
+            <code id="cfg-enc-key" class="cfg-note"
+                  style="margin:0;user-select:all;word-break:break-all;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:0.02em;min-height:1.2em;display:inline-block"></code>
+          </div>
+          <p class="cfg-note" data-i18n="cfgEncWarn">The key is kept on this computer only. Lose it and every recording made under it is permanently unreadable.</p>
+          <div class="cfg-row">
+            <button id="cfg-enc-set" data-i18n="cfgEncSet">Encrypt with a new key</button>
+            <button class="secondary" id="cfg-enc-rotate" data-i18n="cfgEncRotate" disabled>Rotate key</button>
+          </div>
+          <div class="cfg-row">
+            <input class="cfg-full" id="cfg-enc-old" data-i18n-ph="cfgEncCurrent" placeholder="Current key (64 hex) — only if this computer did not set it" autocomplete="off" />
+          </div>
+          <div class="cfg-row">
+            <button class="danger-btn" id="cfg-enc-clear" data-i18n="cfgEncClear" disabled>Stop encrypting</button>
+          </div>
+          <div class="cfg-msg" id="cfg-enc-msg"></div>
+        </div>
+
         <div class="cfg-card danger">
           <div class="cfg-head"><span data-i18n="cfgFormat">Format SD card</span></div>
           <p class="cfg-note" data-i18n="cfgFormatWarn">Erases ALL recordings on the card. Type FORMAT to confirm.</p>
@@ -255,6 +278,7 @@
         mcapPlayBrowser: "Play in browser", mcapPlayDesktop: "Play in Foxglove Desktop",
         mcapEmptyDir: "no folders or .mcap files here", mcapTransport: "Recording",
         mcapErr: "could not open recording", emptyMcap: "browse or paste a .mcap path to replay",
+        mcapNeedsKey: "This recording is encrypted. Paste the 64-hex key that opens it:",
         stateEnded: "Stream ended",
         stDevice: "Device", stTransport: "Transport", stMessages: "Messages",
         stTopics: "Topics", stWebSocket: "WebSocket",
@@ -290,6 +314,19 @@
         cfgBitrate: "Camera bitrate", cfgNextBoot: "applies next boot", cfgApply: "Apply",
         cfgMeta: "Default recording info", cfgTask: "Task", cfgLocation: "Location",
         cfgCapturer: "Operator", cfgNote: "Note", cfgSave: "Save",
+        cfgEnc: "Recording encryption", cfgEncNext: "applies to the next recording",
+        cfgEncSet: "Encrypt with a new key", cfgEncRotate: "Rotate key",
+        cfgEncClear: "Stop encrypting",
+        cfgEncCurrent: "Current key (64 hex) — only if this computer did not set it",
+        cfgEncWarn: "The key is kept on this computer only. Lose it and every recording made under it is permanently unreadable.",
+        cfgEncOn: "Encrypted under key", cfgEncRig: "rig",
+        cfgEncShow: "Show key", cfgEncHide: "Hide key",
+        cfgEncKeyWarn: "Back this up somewhere safe. It is the only thing that opens recordings made under it.", cfgEncOff: "Not encrypted — recordings are readable by anyone holding the card.",
+        cfgEncRequired: "Not encrypted — this rig refuses to record until it is keyed.",
+        cfgEncUnsupported: "This firmware predates encryption — recordings are written in the clear.",
+        cfgEncConfirmClear: "Stop encrypting? New recordings will be readable by anyone holding the card.",
+        cfgEncKeyed: "Keyed. The key is on this computer's keyring.",
+        cfgEncCleared: "Encryption off. Existing recordings still need their old key.",
         cfgFormat: "Format SD card",
         cfgFormatWarn: "Erases ALL recordings on the card. Type FORMAT to confirm.",
         cfgTypeFormat: "FORMAT", cfgFormatGo: "Format",
@@ -309,6 +346,7 @@
         mcapPlayBrowser: "在浏览器中播放", mcapPlayDesktop: "在 Foxglove 桌面版中播放",
         mcapEmptyDir: "此文件夹中没有文件夹或 .mcap 文件", mcapTransport: "录制回放",
         mcapErr: "无法打开录制文件", emptyMcap: "浏览或粘贴 .mcap 路径以回放",
+        mcapNeedsKey: "该录制文件已加密。请粘贴可以打开它的 64 位十六进制密钥：",
         stateEnded: "数据流已结束",
         stDevice: "设备", stTransport: "连接方式", stMessages: "消息数",
         stTopics: "主题数", stWebSocket: "WebSocket",
@@ -342,6 +380,19 @@
         cfgBitrate: "相机码率", cfgNextBoot: "重启后生效", cfgApply: "应用",
         cfgMeta: "默认录制信息", cfgTask: "任务", cfgLocation: "地点",
         cfgCapturer: "操作人", cfgNote: "备注", cfgSave: "保存",
+        cfgEnc: "录制加密", cfgEncNext: "下次录制生效",
+        cfgEncSet: "使用新密钥加密", cfgEncRotate: "轮换密钥",
+        cfgEncClear: "停止加密",
+        cfgEncCurrent: "当前密钥（64 位十六进制）——仅当密钥不是本机设置时填写",
+        cfgEncWarn: "密钥仅保存在本机。一旦丢失，使用该密钥录制的内容将永远无法打开。",
+        cfgEncOn: "已加密，密钥", cfgEncRig: "设备",
+        cfgEncShow: "显示密钥", cfgEncHide: "隐藏密钥",
+        cfgEncKeyWarn: "请妥善备份。它是打开对应录制内容的唯一凭据。", cfgEncOff: "未加密——任何拿到存储卡的人都能读取录制内容。",
+        cfgEncRequired: "未加密——本设备在设置密钥前将拒绝录制。",
+        cfgEncUnsupported: "此固件早于加密功能，录制内容以明文写入。",
+        cfgEncConfirmClear: "确定停止加密？新的录制内容将可被任何拿到存储卡的人读取。",
+        cfgEncKeyed: "已设置密钥，密钥已保存到本机钥匙串。",
+        cfgEncCleared: "已关闭加密。已有录制内容仍需原密钥才能打开。",
         cfgFormat: "格式化 SD 卡",
         cfgFormatWarn: "将清除卡上所有录制内容。输入 FORMAT 以确认。",
         cfgTypeFormat: "FORMAT", cfgFormatGo: "格式化",

@@ -396,14 +396,54 @@ def test_pyproject_declares_console_script_and_display_extra() -> None:
     pyproject = _THIS.parent / "pyproject.toml"
     data = tomllib.loads(pyproject.read_text())
     assert data["project"]["scripts"]["visio-display"] == "visio_schema.display:run"
+    assert (data["project"]["scripts"]["visio-settings-qr"]
+            == "visio_schema.settings_qr:run")
+    # The only way into an encrypted recording for tools that will never take
+    # a key — Foxglove Studio, the kalibr path, the frozen visio-setup bundle.
+    # Losing this entry point strands that footage.
+    assert (data["project"]["scripts"]["visio-decrypt"]
+            == "visio_schema.mcap.decrypt:run")
 
     deps = " ".join(data["project"]["dependencies"])
     for pkg in ("protobuf", "cobs", "mcap", "pyserial", "foxglove-sdk"):
         assert pkg in deps, f"{pkg} should be a default (wire-contract) dependency"
 
     extras = data["project"].get("optional-dependencies", {})
-    assert set(extras) == {"display", "dev"}
+    # Named exhaustively so adding an extra is a deliberate act rather than a
+    # drift back to feature-gating.
+    #   display — the viewer + `--serve` launcher (~600 MB with rerun's pyarrow)
+    #   reader  — scipy for the extrinsics parse, av to decode
+    #   gpu     — cupy + PyNvVideoCodec for NVDEC decode, ~GB, NVIDIA's index
+    #   dataset — pyarrow for the episode tables, av for the mp4 writer
+    #   qr      — a rasteriser, for the final PNG render only
+    assert set(extras) == {"display", "reader", "gpu", "dataset", "qr", "dev"}
     display = " ".join(extras["display"])
     for pkg in ("rerun-sdk", "av", "aiohttp", "zeroconf"):
         assert pkg in display, f"{pkg} should live in the display extra"
         assert pkg not in deps, f"{pkg} must NOT be a default dependency"
+    # av is the one package in more than one extra, and deliberately so: it is a
+    # decoder, so it cannot sit in base, and the reader and the dataset writer
+    # both decode video without ever opening the viewer. Pinning it in only one
+    # of them would make `pip install visio-schema[reader]` install broken.
+    for extra in ("reader", "dataset"):
+        assert "av>=" in " ".join(extras[extra]), (
+            f"the {extra!r} extra decodes video, so it must pin av itself")
+    # Nothing that is already a default dependency may ALSO be gated behind an
+    # extra, or a plain install would look like it were missing something.
+    for extra in ("reader", "gpu", "dataset"):
+        joined = " ".join(extras[extra])
+        for pkg in ("mcap", "pyserial", "foxglove-sdk", "rerun-sdk", "aiohttp"):
+            assert pkg not in joined, (
+                f"{pkg} is a default dependency; it must not also be gated "
+                f"behind the {extra!r} extra"
+            )
+    # `visio-settings-qr` seals, validates, inspects and mints keys with no
+    # rasteriser; only the final PNG render needs one.
+    assert "qrcode" in " ".join(extras["qr"])
+    assert "qrcode" not in deps, "qrcode must NOT be a default dependency"
+    assert "qrcode" in " ".join(extras["dev"]), (
+        "dev must pull qrcode so CI covers render_qr, not just --dry-run")
+    # Core, not an extra: opening a sealed QR and an encrypted recording are
+    # both things a plain `pip install visio-schema` consumer must be able to
+    # do, so this stays in the base dependencies.
+    assert "cryptography" in deps

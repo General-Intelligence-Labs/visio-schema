@@ -13,6 +13,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <thread>
 #include <unordered_map>
@@ -35,15 +36,23 @@ class FramedFdEndpoint : public Endpoint {
   // so tests can shrink it; immutable after construction.
   static constexpr std::int64_t kDefaultStallNs = 3'000'000'000;
 
+  // Eviction-free window before a congestion-degraded leg resumes full-rate
+  // video (Send's keyframes-only gate). Long enough that a link still choking
+  // re-evicts inside the window and stays degraded; short enough that a
+  // healed link is back to full rate within a few GOPs.
+  static constexpr std::int64_t kDefaultDegradeHoldNs = 5'000'000'000;
+
   // Fixed fd — no reconnect. Takes ownership of `fd` (-1 = already down).
   explicit FramedFdEndpoint(int fd,
                             WritePolicy policy = WritePolicy::drop_oldest(),
-                            std::int64_t stall_ns = kDefaultStallNs);
+                            std::int64_t stall_ns = kDefaultStallNs,
+                            std::int64_t degrade_hold_ns = kDefaultDegradeHoldNs);
   // Reopenable — `factory` is called now and on each reconnect (Tick).
   explicit FramedFdEndpoint(FdFactory factory,
                             WritePolicy policy = WritePolicy::drop_oldest(),
                             std::int64_t reopen_backoff_ns = 500'000'000,
-                            std::int64_t stall_ns = kDefaultStallNs);
+                            std::int64_t stall_ns = kDefaultStallNs,
+                            std::int64_t degrade_hold_ns = kDefaultDegradeHoldNs);
   ~FramedFdEndpoint() override;
 
   void Start(InboundFn on_inbound, ClosedFn on_closed) override;
@@ -67,6 +76,10 @@ class FramedFdEndpoint : public Endpoint {
     Wake();
   }
 
+  // Arms the keyframes-only latch for one degrade_hold_ns window
+  // (endpoint.hpp). Thread-safe: one relaxed store, same as an eviction edge.
+  void RequestVideoDegrade() override;
+
   // Diagnostics (thread-safe).
   std::size_t pending_bytes() const {
     return ctrl_outbox_.PendingBytes() + outbox_.PendingBytes();
@@ -76,6 +89,15 @@ class FramedFdEndpoint : public Endpoint {
   // Separate from dropped(): those were queued then shed; these never entered.
   std::uint64_t door_dropped() const {
     return door_dropped_.load(std::memory_order_relaxed);
+  }
+  // Frames refused at Send's congestion gate: non-keyframe video sent while
+  // this leg was degraded to keyframes-only (its video outbox had evicted).
+  std::uint64_t degrade_dropped() const {
+    return degrade_dropped_.load(std::memory_order_relaxed);
+  }
+  // True while Send delivers only keyframe video on this leg.
+  bool video_degraded() const {
+    return degrade_hold_until_ns_.load(std::memory_order_relaxed) != 0;
   }
   bool link_up() const { return fd_ >= 0; }
   // True while no bytes are being accepted with bytes pending (see
@@ -91,6 +113,11 @@ class FramedFdEndpoint : public Endpoint {
   virtual void Tick(std::int64_t now_ns);
 
   bool link_up_unlocked() const { return fd_ >= 0; }
+  // Monotonic across the endpoint's life, NOT reset by MarkLinkDead: a watchdog
+  // comparing it against its own previous reading only needs it to advance.
+  std::uint64_t accepted_total() const {
+    return accepted_total_.load(std::memory_order_relaxed);
+  }
   std::size_t outbox_pending() const {
     return ctrl_outbox_.PendingBytes() + outbox_.PendingBytes();
   }
@@ -126,8 +153,23 @@ class FramedFdEndpoint : public Endpoint {
   std::atomic<bool> bulk_flush_{false};     // shed queued video at a frame boundary
   std::atomic<bool> link_stalled_{false};   // set by I/O thread, read in Send
   std::atomic<std::uint64_t> door_dropped_{0};  // refused at the stalled gate
+  // Bytes the fd has ACCEPTED, ever. The one signal that a peer is really
+  // reading: queue depth is not, because a bounded outbox evicting its own
+  // backlog lowers pending with nobody on the other end (see
+  // SerialWatchdog::tick, which was fooled by exactly that).
+  std::atomic<std::uint64_t> accepted_total_{0};
+  // Congestion tier between healthy and stalled (see Send's keyframes-only
+  // gate). This ONE atomic is the whole latch: 0 = healthy, otherwise the
+  // deadline after which the next keyframe resumes full rate. Armed/extended
+  // by the I/O thread per eviction; lifted in Send by CAS on the exact value
+  // it validated, so a lift can never clobber a concurrent re-arm and a
+  // single relaxed load is always self-consistent (no dependent pair).
+  std::atomic<std::int64_t> degrade_hold_until_ns_{0};
+  std::atomic<std::uint64_t> degrade_dropped_{0};
+  std::uint64_t evictions_seen_ = 0;        // I/O-thread-private
   std::int64_t last_progress_ns_ = 0;       // I/O-thread-private
   const std::int64_t stall_ns_;             // see kDefaultStallNs
+  const std::int64_t degrade_hold_ns_;      // see kDefaultDegradeHoldNs
   // This client's filter; null = deliver everything. Guarded by the bus dispatch
   // serialization, like decim_last_us_ below.
   std::shared_ptr<const ResolvedStreamPolicy> policy_;

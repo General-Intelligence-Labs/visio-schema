@@ -44,6 +44,8 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
+from visio_schema.mcap.crypto import VREC_MAGIC, is_vrec
+
 # Transport tags — the closed set a device DTO's ``transport`` is drawn from.
 USB = "usb"
 STA = "sta"
@@ -274,8 +276,12 @@ class DiscoveryService:
         resolved path is the id, so adding the same file twice dedups to one row."""
         p = Path(path).expanduser().resolve()
         with open(p, "rb") as f:
-            if f.read(len(_MCAP_MAGIC)) != _MCAP_MAGIC:
-                raise OSError(f"not an MCAP recording: {p.name}")
+            head = f.read(max(len(_MCAP_MAGIC), len(VREC_MAGIC)))
+        # Accept an encrypted part too, or `--serve` rejects every encrypted
+        # card at ADD time and the key never gets a chance to be offered. The
+        # key is resolved later, when the replay actually opens the file.
+        if head[: len(_MCAP_MAGIC)] != _MCAP_MAGIC and not is_vrec(head):
+            raise OSError(f"not an MCAP recording: {p.name}")
         dto = _device(dev_id=f"mcap:{p}", label=p.name, transport=MCAP, path=str(p))
         self._upsert(dto)
         return dto

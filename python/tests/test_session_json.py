@@ -50,7 +50,10 @@ LEGACY = (
     '"client_unix_us":0,"client_utc_offset_min":0,"fps":30'
 )
 FLEET_IDS_BLANK = '"operator_id":"","environment_id":""'
-GOLDEN = f"{LEGACY},{FLEET_IDS_BLANK}}}\n"
+# The whole post-frozen tail, in table order. One constant so a field added at
+# the end costs one edit here rather than one per assertion.
+TAIL_BLANK = f'{FLEET_IDS_BLANK},"recording_key_fingerprint":""'
+GOLDEN = f"{LEGACY},{TAIL_BLANK}}}\n"
 
 # What the firmware embeds for that session: it omits the empty/zero fields, which the
 # sidecar nonetheless always carried.
@@ -75,7 +78,7 @@ LEGACY_GPS = (
     '"latitude":37.7698784,"longitude":-122.4029038,'
     '"client_unix_us":1783818378802000,"client_utc_offset_min":-420,"fps":30'
 )
-GOLDEN_GPS = f"{LEGACY_GPS},{FLEET_IDS_BLANK}}}\n"
+GOLDEN_GPS = f"{LEGACY_GPS},{TAIL_BLANK}}}\n"
 
 # The same session as the MCAP record carries it. Note lat/lon: the firmware embeds
 # them with std::to_string, which is "%f" — SIX decimals — while the sidecar was
@@ -176,7 +179,7 @@ def test_renderer_fills_every_key_the_record_omits():
     assert '"start_time_unix":0.000000' in rendered
     assert '"latitude":0.0000000,"longitude":0.0000000' in rendered
     assert '"client_unix_us":0,"client_utc_offset_min":0,"fps":0' in rendered
-    assert rendered.endswith('"operator_id":"","environment_id":""}\n')
+    assert rendered.endswith(TAIL_BLANK + "}\n")
 
 
 def test_fleet_ids_render_after_the_frozen_layout(tmp_path):
@@ -186,7 +189,8 @@ def test_fleet_ids_render_after_the_frozen_layout(tmp_path):
                        {**GOLDEN_META, "operator_id": "op-7", "environment_id": "warehouse-b"})
     assert rebuild_session(session)[0] == REBUILT
     raw = (session / SIDECAR_NAME).read_text(encoding="utf-8")
-    assert raw == LEGACY + ',"operator_id":"op-7","environment_id":"warehouse-b"}\n'
+    assert raw == LEGACY + (',"operator_id":"op-7","environment_id":"warehouse-b"'
+                            ',"recording_key_fingerprint":""}\n')
 
 
 def test_record_serial_becomes_the_sidecars_device_id():
@@ -535,3 +539,23 @@ def test_a_missing_path_is_an_error(tmp_path, capsys):
 def test_an_empty_folder_is_an_error(tmp_path, capsys):
     assert main([str(tmp_path)]) == 1
     assert "contains no .mcap files" in capsys.readouterr().err
+
+
+def test_the_rebuilt_sidecar_names_the_key_that_opens_the_session():
+    """After a rotation a card holds parts under two keys.
+
+    The rebuild tool has to reproduce this the same way the firmware writes it,
+    or a rebuilt sidecar would claim a session is plaintext when it is not —
+    the one direction that matters, since it sends the reader looking for a key
+    they will not think they need.
+    """
+    rendered = session_json_text(
+        {**GOLDEN_META, "recording_key_fingerprint": "0f1e2d3c4b5a6978"})
+    assert rendered.endswith(
+        f'{FLEET_IDS_BLANK},"recording_key_fingerprint":"0f1e2d3c4b5a6978"}}\n')
+
+
+def test_a_plaintext_session_renders_an_empty_fingerprint_not_a_missing_key():
+    # Every field always present is the sidecar's contract; a reader tests
+    # emptiness, and there is no separate bool that could contradict it.
+    assert '"recording_key_fingerprint":""' in session_json_text(GOLDEN_META)

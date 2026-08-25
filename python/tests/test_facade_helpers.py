@@ -73,3 +73,35 @@ def test_read_serial_resolves_announced_topics():
         gen.close()                          # GeneratorExit -> closes the opened fd
         os.close(master)
         os.close(slave)
+
+
+def test_stamped_carries_nanoseconds_verbatim():
+    """``Message.stamped`` is the write-side mirror of ``message_class``: it puts a
+    payload on the recording's clock. The round trip through the protobuf
+    Timestamp must be exact — a lost nanosecond here shifts a derived message off
+    the source frame it was computed from."""
+    t_ns = 1_700_000_000_123_456_789
+    msg = Message.stamped(b"payload", t_ns)
+    assert msg.timestamp.ToNanoseconds() == t_ns
+    assert msg.payload == b"payload"
+    assert (msg.seq, msg.stream_id) == (0, 0)   # caller-supplied, never inferred
+
+
+def test_stamped_serializes_a_protobuf_message():
+    """Accepts a message as well as bytes, so a builder's output goes straight in."""
+    cmd = command_pb2.Command()
+    cmd.identify.SetInParent()
+    msg = Message.stamped(cmd, 7, seq=3, stream_id=42)
+    assert msg.payload == cmd.SerializeToString()
+    assert (msg.seq, msg.stream_id) == (3, 42)
+
+
+def test_stamped_round_trips_through_the_wire_codec():
+    """A stamped Message is a normal Message — it survives encode/decode intact."""
+    from visio_schema.wire.message import decode_message, encode_message
+
+    original = Message.stamped(b"abc", 1_234_567_890, seq=9, stream_id=17)
+    back = decode_message(encode_message(original))
+    assert back.payload == b"abc"
+    assert back.seq == 9
+    assert back.timestamp.ToNanoseconds() == 1_234_567_890

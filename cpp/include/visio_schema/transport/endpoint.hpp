@@ -75,6 +75,15 @@ class Endpoint {
   // this — it must keep every frame. Default: no-op.
   virtual void RequestBulkFlush() {}
 
+  // Pre-arm the keyframes-only congestion tier (see FramedFdEndpoint) as if
+  // an eviction had just fired. For an owner that watched the PREVIOUS link
+  // on this leg wedge (stall/churn moments ago): a fresh connection made
+  // during ongoing congestion starts thinned instead of re-learning the
+  // congestion by losing frames at full rate. Self-healing — a healthy leg
+  // resumes at the first keyframe after the hold. Default: no-op (an
+  // endpoint without the tier has nothing to arm).
+  virtual void RequestVideoDegrade() {}
+
   // The peer has accepted nothing for the endpoint's no-progress window while
   // bytes were pending (see FramedFdEndpoint::stalled). A stalled sink is
   // connected but consuming nothing — producers may stop generating work for

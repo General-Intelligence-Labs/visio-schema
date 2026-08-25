@@ -36,12 +36,16 @@ namespace {
 
 // The acceptor does not expose its bound port, so tests use fixed high ports
 // unlikely to collide and rely on SO_REUSEADDR (the acceptor binds with it).
-constexpr std::uint16_t kPortRoundTrip = 51234;
-constexpr std::uint16_t kPortReconnect = 51235;
-constexpr std::uint16_t kPortDeadPort = 51236;
-constexpr std::uint16_t kPortStalled = 51237;
-constexpr std::uint16_t kPortMulti = 51238;
-constexpr std::uint16_t kPortGate = 51239;
+// Below the kernel's ephemeral range (/proc/sys/net/ipv4/ip_local_port_range,
+// 32768+): a fixed port inside it collides with whatever outbound connection
+// the host happens to hold — measured as a bind/listen flake on a dev box
+// whose HTTPS session had grabbed local port 51234.
+constexpr std::uint16_t kPortRoundTrip = 21234;
+constexpr std::uint16_t kPortReconnect = 21235;
+constexpr std::uint16_t kPortDeadPort = 21236;
+constexpr std::uint16_t kPortStalled = 21237;
+constexpr std::uint16_t kPortMulti = 21238;
+constexpr std::uint16_t kPortGate = 21239;
 
 // Holds the endpoint the acceptor hands us for one accepted connection, plus a
 // collector for what that endpoint receives. on_accept Start()s the endpoint
@@ -334,7 +338,7 @@ TEST(TcpIo, AdmissionGateRefusesCheaplyAndRecovers) {
 // poll re-fires while connections are pending). A regression here strands
 // every client past the cap.
 TEST(TcpIo, AnAcceptFloodAdmitsEveryClientAcrossPasses) {
-  constexpr std::uint16_t kPortFlood = 51240;
+  constexpr std::uint16_t kPortFlood = 21240;
   TcpAcceptor server(kPortFlood);
   MultiAccept accepted;
   server.Start(accepted.on_accept());
@@ -359,7 +363,7 @@ TEST(TcpIo, AnAcceptFloodAdmitsEveryClientAcrossPasses) {
 // hundreds of dial/refuse cycles; paced, a few dozen at most. Deleting
 // defer_accept passes every other test — this one pins the back-off itself.
 TEST(TcpIo, RefusedRedialStormIsPacedToTheTick) {
-  constexpr std::uint16_t kPortPaced = 51241;
+  constexpr std::uint16_t kPortPaced = 21241;
   TcpAcceptor server(kPortPaced);
   std::atomic<int> gate_calls{0};
   MultiAccept accepted;

@@ -26,7 +26,10 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <optional>
 #include <string_view>
+
+#include "visio_schema/mcap/recording_crypto.hpp"
 #include <unordered_map>
 #include <unordered_set>
 
@@ -57,9 +60,25 @@ class McapWriter {
   // per rotation). pair_guard_ns (≈ half a frame period) separates a pair's
   // µs-skewed sibling keyframe from the next GOP's keyframe. Both default off, so
   // a caller that does not opt in keeps the plain byte-exact roll.
+  //
+  // sync_span_bytes (opt-in, 0 = off): hand the part file's bytes to kernel
+  // writeback in spans of at least this many bytes as they are written
+  // (page-aligned; NOT an MCAP Chunk boundary), keeping the dirty page set
+  // bounded instead of letting the kernel accumulate and stall the writer.
+  // Linux-only; elsewhere it degrades to a periodic fflush. Output bytes
+  // are identical either way. Full rationale at SyncSpan() in writer.cc.
+  //
+  // recording_key (opt-in): write each part as a `VREC` container — a 32-byte
+  // plaintext header, then the MCAP stream under ChaCha20 — instead of
+  // plaintext MCAP. Filename and rotation are unchanged; only the bytes
+  // differ, so every reader must sniff the magic. Absent means plaintext, and
+  // that is a RUNTIME choice: whether a recording is encrypted depends on
+  // whether the device holds a key, never on how this was compiled.
   explicit McapWriter(std::string_view path, std::uint64_t max_bytes = 0,
                       double max_duration_s = 0.0, bool rotate_on_keyframe = false,
-                      std::int64_t pair_guard_ns = 0);
+                      std::int64_t pair_guard_ns = 0,
+                      std::uint64_t sync_span_bytes = 0,
+                      std::optional<RecordingKey> recording_key = std::nullopt);
   ~McapWriter();
 
   McapWriter(const McapWriter&) = delete;
@@ -105,6 +124,10 @@ class McapWriter {
   const bool rotating_;
   const bool rotate_on_keyframe_;
   const std::int64_t pair_guard_ns_;
+  const std::uint64_t sync_span_bytes_;
+  // Set once at construction: a recording cannot change key mid-file, because
+  // each part's header names the key that opens it. A rotation picks it up.
+  const std::optional<RecordingKey> recording_key_;
 
   // The IWritable backing writer_'s current part. We own the underlying fd
   // (opened with O_CLOEXEC) rather than letting upstream mcap fopen() it, so a

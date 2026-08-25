@@ -225,6 +225,13 @@ def session_json_text(meta: dict[str, str]) -> str:
         ("fps", _integer(meta, "fps")),
         ("operator_id", _quote(meta.get("operator_id", ""))),
         ("environment_id", _quote(meta.get("environment_id", ""))),
+        # Which key opens this session's parts; empty means they are plaintext.
+        # Deliberately not paired with an `encrypted` bool — two fields could
+        # disagree and nothing would say which wins. The value is
+        # SHA-256(key)[:8]: it names the key, it cannot decrypt anything, and
+        # the same bytes sit in every part's VREC header.
+        ("recording_key_fingerprint",
+         _quote(meta.get("recording_key_fingerprint", ""))),
     )
     return "{" + ",".join(f"{_quote(k)}:{v}" for k, v in fields) + "}\n"
 

@@ -91,12 +91,20 @@ Message VideoMsg(std::uint32_t id, std::string payload, bool keyframe,
   return m;
 }
 
+std::string PartPath(const std::string& stem_no_ext, int part) {
+  char buf[8];
+  std::snprintf(buf, sizeof(buf), "_%04d", part);
+  return TempPath(stem_no_ext + buf + ".mcap");
+}
+
+std::string SlurpFile(const std::string& path) {
+  std::ifstream f(path, std::ios::binary);
+  return std::string((std::istreambuf_iterator<char>(f)),
+                     std::istreambuf_iterator<char>());
+}
+
 void RemoveParts(const std::string& stem_no_ext) {
-  for (int i = 0; i < 8; ++i) {
-    char buf[8];
-    std::snprintf(buf, sizeof(buf), "_%04d", i);
-    std::remove(TempPath(stem_no_ext + buf + ".mcap").c_str());
-  }
+  for (int i = 0; i < 8; ++i) std::remove(PartPath(stem_no_ext, i).c_str());
 }
 
 }  // namespace
@@ -114,6 +122,86 @@ TEST(McapWriter, WritesNonEmptyFile) {
   ASSERT_TRUE(fs::exists(path));
   EXPECT_GT(fs::file_size(path), 0u);
   std::remove(path.c_str());
+}
+
+TEST(McapWriter, SyncSpansNeverAlterTheBytes) {
+  // sync_span_bytes changes WHEN pages reach storage, never WHAT is
+  // written. Messages reach the file as ~768 KiB mcap chunk blobs, so
+  // ~3 MB of payload drives several SyncSpan() passes — including the
+  // wait-and-evict of the PREVIOUS span — and the output must stay
+  // byte-identical to the unsynced writer's.
+  const std::string plain = TempPath("visio_schema_mcap_nosync.mcap");
+  const std::string synced = TempPath("visio_schema_mcap_sync.mcap");
+  std::remove(plain.c_str());
+  std::remove(synced.c_str());
+  const Channel ch = MakeChannel(kFirstDynamic, "/dev/imu/0/raw");
+  const std::string payload(3000, 'p');
+  auto write_all = [&](McapWriter& w) {
+    for (int i = 0; i < 1024; ++i) w.Write(ch, Data(kFirstDynamic, payload));
+    w.Close();
+  };
+  {
+    McapWriter w(plain);
+    write_all(w);
+  }
+  {
+    // Byte-identity alone cannot tell a working sync from one that fails
+    // every call; the one-shot failure log can. Its absence is the
+    // liveness half of this pin (syscall effects themselves are verified
+    // on-device via /proc/meminfo Dirty during a recording).
+    testing::internal::CaptureStderr();
+    McapWriter w(synced, 0, 0.0, false, 0, /*sync_span_bytes=*/4096);
+    write_all(w);
+    const std::string logged = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(logged.find("SyncSpan failed"), std::string::npos) << logged;
+    EXPECT_EQ(logged.find("span writeback failed"), std::string::npos)
+        << logged;
+  }
+  const std::string ba = SlurpFile(plain);
+  const std::string bb = SlurpFile(synced);
+  EXPECT_GT(bb.size(), 2u * 1024u * 1024u);  // several spans actually ran
+  ASSERT_EQ(ba.size(), bb.size());
+  // Safety pin only: byte-identity holds whether or not the syscalls fire
+  // (their liveness is verified on-device via /proc/meminfo Dirty during a
+  // recording). Compare without gtest's multi-MB operand dump on failure.
+  const auto mis = std::mismatch(ba.begin(), ba.end(), bb.begin());
+  EXPECT_TRUE(mis.first == ba.end())
+      << "first mismatch at byte " << (mis.first - ba.begin());
+  std::remove(plain.c_str());
+  std::remove(synced.c_str());
+}
+
+TEST(McapWriter, SyncSpansSurviveRotationByteIdentical) {
+  // Every rotated part gets its own writable, so the span knob must reach
+  // part 1, 2, ... — not just part 0. Byte-identity per part pins that.
+  const std::string stem_a = "visio_schema_mcap_rot_nosync";
+  const std::string stem_b = "visio_schema_mcap_rot_sync";
+  RemoveParts(stem_a);
+  RemoveParts(stem_b);
+  const Channel ch = MakeChannel(kFirstDynamic, "/dev/imu/0/raw");
+  const std::string payload(3000, 'p');
+  auto write_all = [&](McapWriter& w) {
+    for (int i = 0; i < 1024; ++i) w.Write(ch, Data(kFirstDynamic, payload));
+    w.Close();
+  };
+  {
+    McapWriter w(TempPath(stem_a + ".mcap"), /*max_bytes=*/1024 * 1024);
+    write_all(w);
+  }
+  {
+    McapWriter w(TempPath(stem_b + ".mcap"), /*max_bytes=*/1024 * 1024, 0.0,
+                 false, 0, /*sync_span_bytes=*/4096);
+    write_all(w);
+  }
+  for (int part = 0; part < 3; ++part) {
+    const std::string pa = PartPath(stem_a, part);
+    const std::string pb = PartPath(stem_b, part);
+    ASSERT_TRUE(fs::exists(pa)) << pa;
+    ASSERT_TRUE(fs::exists(pb)) << pb;
+    EXPECT_TRUE(SlurpFile(pa) == SlurpFile(pb)) << "part " << part;
+  }
+  RemoveParts(stem_a);
+  RemoveParts(stem_b);
 }
 
 TEST(McapWriter, DestructorFinalizes) {
@@ -514,4 +602,162 @@ TEST(McapWriter, LargeBufferedWritesFlushAcrossCloseAndRotation) {
   }
   EXPECT_GE(parts, 3) << "expected rotation across the stdio buffer";
   RemoveParts(stem);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// VREC: the same writer, same filename, same rotation — different bytes.
+//
+// The load-bearing property is the OFFSET IDENTITY: decrypting from byte 32
+// must reproduce, byte for byte, the plaintext MCAP the very same writes
+// produce without a key. If that holds, every MCAP index offset stays valid
+// and a seeking reader keeps working. These compare the two directly rather
+// than asserting properties of the ciphertext in isolation.
+// ─────────────────────────────────────────────────────────────────────────
+namespace {
+
+using visio_schema::mcap::kVrecHeaderBytes;
+using visio_schema::mcap::ParseVrecHeader;
+using visio_schema::mcap::RecordingCipher;
+using visio_schema::mcap::RecordingKey;
+using visio_schema::mcap::RecordingKeyFingerprint;
+using visio_schema::mcap::VrecHeader;
+
+RecordingKey TestKey(std::uint8_t seed) {
+  RecordingKey k{};
+  for (std::size_t i = 0; i < k.size(); ++i)
+    k[i] = static_cast<std::uint8_t>(seed + i);
+  return k;
+}
+
+// Identical writes on both sides of every comparison below, so any difference
+// in the output is attributable to encryption alone.
+void WriteFixture(McapWriter& w) {
+  const Channel ch = MakeChannel(kFirstDynamic, "/dev/imu/0/raw");
+  for (int i = 0; i < 64; ++i)
+    w.Write(ch, Data(kFirstDynamic, "frame-" + std::to_string(i)));
+  w.Close();
+}
+
+std::string DecryptPart(const std::string& raw, const RecordingKey& key) {
+  VrecHeader h;
+  std::string err;
+  EXPECT_TRUE(ParseVrecHeader(reinterpret_cast<const std::uint8_t*>(raw.data()),
+                              raw.size(), &h, &err))
+      << err;
+  std::string body = raw.substr(kVrecHeaderBytes);
+  RecordingCipher c(key, h.nonce);
+  EXPECT_TRUE(c.valid());
+  EXPECT_TRUE(c.XorAt(0, reinterpret_cast<const std::uint8_t*>(body.data()),
+                      body.size(),
+                      reinterpret_cast<std::uint8_t*>(body.data())));
+  return body;
+}
+
+}  // namespace
+
+TEST(McapWriterVrec, DecryptingFromByte32ReproducesThePlaintextFileExactly) {
+  const std::string plain = TempPath("visio_schema_vrec_plain.mcap");
+  const std::string enc = TempPath("visio_schema_vrec_enc.mcap");
+  std::remove(plain.c_str());
+  std::remove(enc.c_str());
+  const RecordingKey key = TestKey(7);
+
+  {
+    McapWriter w(plain);
+    WriteFixture(w);
+  }
+  {
+    McapWriter w(enc, 0, 0.0, false, 0, 0, key);
+    WriteFixture(w);
+  }
+
+  const std::string want = SlurpFile(plain);
+  const std::string got = SlurpFile(enc);
+  ASSERT_FALSE(want.empty());
+  // Exactly the header's worth of growth — this IS the offset identity.
+  ASSERT_EQ(got.size(), want.size() + kVrecHeaderBytes);
+
+  VrecHeader header;
+  std::string err;
+  ASSERT_TRUE(ParseVrecHeader(reinterpret_cast<const std::uint8_t*>(got.data()),
+                              got.size(), &header, &err))
+      << err;
+  EXPECT_EQ(header.key_fp, RecordingKeyFingerprint(key));
+  EXPECT_EQ(DecryptPart(got, key), want);
+
+  std::remove(plain.c_str());
+  std::remove(enc.c_str());
+}
+
+TEST(McapWriterVrec, TheCiphertextDoesNotLeakThePlaintextMagic) {
+  // The cheapest regression guard on "is it actually encrypted": a plaintext
+  // MCAP opens with \x89MCAP and repeats the magic at its footer, so a writer
+  // that silently skipped the cipher would still contain it.
+  const std::string enc = TempPath("visio_schema_vrec_magic.mcap");
+  std::remove(enc.c_str());
+  {
+    McapWriter w(enc, 0, 0.0, false, 0, 0, TestKey(11));
+    WriteFixture(w);
+  }
+  const std::string got = SlurpFile(enc);
+  EXPECT_EQ(got.compare(0, 4, "VREC"), 0);
+  EXPECT_EQ(got.find("\x89MCAP", kVrecHeaderBytes), std::string::npos);
+  std::remove(enc.c_str());
+}
+
+TEST(McapWriterVrec, EachPartGetsItsOwnNonceSoRotationNeverReusesAKeystream) {
+  // Two parts under ONE key. A shared nonce would make their keystreams
+  // identical, and XORing the two ciphertexts would recover both plaintexts
+  // with no key at all — a confidentiality assertion, not a cosmetic one.
+  const std::string stem = "visio_schema_vrec_rot";
+  RemoveParts(stem);
+  {
+    // Rotation is driven by PAYLOAD bytes, so the small fixture above would
+    // never reach the cut; write past it deliberately.
+    McapWriter w(TempPath(stem + ".mcap"), /*max_bytes=*/4096, 0.0, false, 0, 0,
+                 TestKey(3));
+    const Channel ch = MakeChannel(kFirstDynamic, "/dev/imu/0/raw");
+    const std::string blob(2048, 'x');
+    for (int i = 0; i < 8; ++i) w.Write(ch, Data(kFirstDynamic, blob));
+    w.Close();
+  }
+  const std::string a = SlurpFile(PartPath(stem, 0));
+  const std::string b = SlurpFile(PartPath(stem, 1));
+  ASSERT_GE(a.size(), kVrecHeaderBytes);
+  ASSERT_GE(b.size(), kVrecHeaderBytes);
+
+  VrecHeader ha, hb;
+  std::string err;
+  ASSERT_TRUE(ParseVrecHeader(reinterpret_cast<const std::uint8_t*>(a.data()),
+                              a.size(), &ha, &err));
+  ASSERT_TRUE(ParseVrecHeader(reinterpret_cast<const std::uint8_t*>(b.data()),
+                              b.size(), &hb, &err));
+  EXPECT_NE(ha.nonce, hb.nonce);
+  // ...but the same key, so one fingerprint opens the whole session.
+  EXPECT_EQ(ha.key_fp, hb.key_fp);
+  RemoveParts(stem);
+}
+
+TEST(McapWriterVrec, SyncSpansStillProduceIdenticalBytesWhenEncrypting) {
+  // sync_span_bytes addresses the FILE while the cipher addresses the
+  // PLAINTEXT stream, and the two differ by the 32-byte header. Get that
+  // wrong and writeback spans skew; the bytes must not care either way.
+  const std::string nosync = TempPath("visio_schema_vrec_nosync.mcap");
+  const std::string synced = TempPath("visio_schema_vrec_synced.mcap");
+  std::remove(nosync.c_str());
+  std::remove(synced.c_str());
+  const RecordingKey key = TestKey(23);
+  {
+    McapWriter w(nosync, 0, 0.0, false, 0, 0, key);
+    WriteFixture(w);
+  }
+  {
+    McapWriter w(synced, 0, 0.0, false, 0, /*sync_span_bytes=*/4096, key);
+    WriteFixture(w);
+  }
+  // Nonces differ per part, so compare the decrypted plaintext, not the bytes.
+  EXPECT_EQ(DecryptPart(SlurpFile(nosync), key),
+            DecryptPart(SlurpFile(synced), key));
+  std::remove(nosync.c_str());
+  std::remove(synced.c_str());
 }

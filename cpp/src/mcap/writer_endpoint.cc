@@ -21,10 +21,13 @@ McapWriterEndpoint::McapWriterEndpoint(std::string_view path, StreamResolver res
                                        std::uint64_t max_bytes, double max_duration_s,
                                        transport::WritePolicy policy,
                                        std::map<std::string, std::string> metadata,
-                                       bool rotate_on_keyframe, std::int64_t pair_guard_ns)
+                                       bool rotate_on_keyframe, std::int64_t pair_guard_ns,
+                                       std::uint64_t sync_span_bytes,
+                                       std::optional<RecordingKey> recording_key)
     : resolve_(std::move(resolve)),
       writer_(std::make_unique<visio_schema::mcap::McapWriter>(
-          path, max_bytes, max_duration_s, rotate_on_keyframe, pair_guard_ns)),
+          path, max_bytes, max_duration_s, rotate_on_keyframe, pair_guard_ns,
+          sync_span_bytes, std::move(recording_key))),
       policy_(policy) {
   // Written on this (constructing) thread, before Start() spawns the writer
   // thread — so it lands in the file ahead of any message, no locking needed.

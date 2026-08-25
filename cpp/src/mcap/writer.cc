@@ -1,8 +1,12 @@
 #include "visio_schema/mcap/writer.hpp"
 
+#include "visio_schema/mcap/recording_crypto.hpp"
+
 #include <fcntl.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -56,6 +60,21 @@ constexpr const char* kCompressedVideoSchema = "foxglove.CompressedVideo";
 // mirror FileWriter exactly (buffered fwrite via fdopen, fclose on end()).
 class CloexecFileWriter final : public ::mcap::IWritable {
  public:
+  // sync_span_bytes > 0: see SyncSpan() below for the full mechanism.
+  // Spans below one page would stop advancing past the aligned boundary
+  // and degrade into an fflush per write; clamp rather than trust callers.
+  // `key`, when set, makes each part a VREC container: a 32-byte plaintext
+  // header, then the MCAP stream under ChaCha20. size() keeps reporting the
+  // PLAINTEXT length — that is what MCAP records in its index, and it is what
+  // makes the container's offset identity (file offset = plaintext + 32) hold.
+  explicit CloexecFileWriter(std::uint64_t sync_span_bytes = 0,
+                             const RecordingKey* key = nullptr)
+      : sync_span_bytes_(
+            sync_span_bytes ? std::max<std::uint64_t>(sync_span_bytes, 4096)
+                            : 0),
+        encrypting_(key != nullptr) {
+    if (key) key_ = *key;
+  }
   ~CloexecFileWriter() override { end(); }
 
   ::mcap::Status open(const std::string& filename) {
@@ -74,6 +93,7 @@ class CloexecFileWriter final : public ::mcap::IWritable {
       ::close(fd);
       return ::mcap::Status(::mcap::StatusCode::OpenFailed, msg);
     }
+    fd_ = fd;
     // 256 KiB stdio buffer instead of the default (st_blksize, ~4 KiB): the
     // recorder streams ~1 MB/s to SD through fwrite, and 4 KiB buffering
     // makes every chunk hundreds of small write(2)s on a saturated single
@@ -85,14 +105,63 @@ class CloexecFileWriter final : public ::mcap::IWritable {
     if (::setvbuf(file_, nullptr, _IOFBF, 256 * 1024) != 0) {
       std::fprintf(stderr, "mcap: setvbuf(256KiB) failed — default buffering\n");
     }
+    if (encrypting_) {
+      const ::mcap::Status st = BeginVrec(filename);
+      if (!st.ok()) {
+        end();
+        return st;
+      }
+    }
     return ::mcap::StatusCode::Success;
   }
 
   void handleWrite(const std::byte* data, uint64_t size) override {
-    if (file_) {
-      std::fwrite(data, 1, size, file_);
-      size_ += size;
+    if (!file_) return;
+    if (!cipher_) {
+      WriteBytes(data, size);
+      return;
     }
+    // Encrypt through a fixed scratch buffer rather than in place: `data` is
+    // the caller's, and mcap hands us spans larger than one buffer, so slice.
+    const auto* src = reinterpret_cast<const std::uint8_t*>(data);
+    for (uint64_t done = 0; done < size;) {
+      const size_t n =
+          static_cast<size_t>(std::min<uint64_t>(size - done, scratch_.size()));
+      // Keystream position is the PLAINTEXT offset, which is size_ — so a
+      // short write leaves the next call correctly positioned.
+      if (!cipher_->XorAt(size_, src + done, n, scratch_.data())) {
+        if (!write_err_logged_) {
+          write_err_logged_ = true;
+          std::fprintf(stderr, "mcap: VREC encrypt failed at offset %llu\n",
+                       static_cast<unsigned long long>(size_));
+        }
+        return;
+      }
+      const size_t landed =
+          WriteBytes(reinterpret_cast<const std::byte*>(scratch_.data()), n);
+      done += landed;
+      if (landed != n) return;  // short write already reported
+    }
+  }
+
+  // Raw path: fwrite, short-write accounting, writeback span. Returns what
+  // actually landed. `size_` is the PLAINTEXT total either way.
+  size_t WriteBytes(const std::byte* data, uint64_t size) {
+    const size_t wrote = std::fwrite(data, 1, size, file_);
+    // A short write is an SD/ENOSPC failure stdio may otherwise defer to
+    // fclose; a silently short part would still carry plausible offsets.
+    // Advance by what actually landed so every downstream offset (sync
+    // spans included) matches the file, and say so once.
+    if (wrote != size && !write_err_logged_) {
+      write_err_logged_ = true;
+      std::fprintf(stderr, "mcap: short write (%zu of %llu): %s\n", wrote,
+                   static_cast<unsigned long long>(size),
+                   std::strerror(errno));
+    }
+    size_ += wrote;
+    if (sync_span_bytes_ > 0 && file_size() - synced_off_ >= sync_span_bytes_)
+      SyncSpan();
+    return wrote;
   }
 
   void end() override {
@@ -100,14 +169,181 @@ class CloexecFileWriter final : public ::mcap::IWritable {
       std::fclose(file_);
       file_ = nullptr;
     }
+    fd_ = -1;
+    cipher_.reset();
+    header_bytes_ = 0;
     size_ = 0;
+    synced_off_ = 0;
+    prev_off_ = 0;
+    prev_len_ = 0;
+    sync_disabled_ = false;
+    write_err_logged_ = false;
   }
 
   uint64_t size() const override { return size_; }
 
  private:
+  // File offset = plaintext offset + any VREC header. SyncSpan and fadvise
+  // address the FILE; MCAP's index addresses the plaintext. They differ by
+  // exactly 32 bytes on an encrypted part, and conflating the two would skew
+  // every writeback span by that much.
+  uint64_t file_size() const { return size_ + header_bytes_; }
+
+  // Mint a nonce, write the 32-byte plaintext header, arm the cipher. Called
+  // from open() before any MCAP byte reaches the file.
+  ::mcap::Status BeginVrec(const std::string& filename) {
+    RecordingNonce nonce{};
+    if (!RandomNonce(&nonce)) {
+      // Never fall back to a fixed nonce: two parts sharing key+nonce share a
+      // keystream, and XORing them recovers both plaintexts with no key.
+      return ::mcap::Status(::mcap::StatusCode::OpenFailed,
+                            "VREC: no CSPRNG for a part nonce, refusing to "
+                            "encrypt \"" +
+                                filename + "\"");
+    }
+    VrecHeader header;
+    header.key_fp = RecordingKeyFingerprint(key_);
+    header.nonce = nonce;
+    std::array<std::uint8_t, kVrecHeaderBytes> raw{};
+    WriteVrecHeader(header, raw.data());
+    if (std::fwrite(raw.data(), 1, raw.size(), file_) != raw.size()) {
+      return ::mcap::Status(::mcap::StatusCode::OpenFailed,
+                            "VREC: cannot write header to \"" + filename +
+                                "\": " + std::strerror(errno));
+    }
+    header_bytes_ = raw.size();
+    auto cipher = std::make_unique<RecordingCipher>(key_, nonce);
+    if (!cipher->valid()) {
+      return ::mcap::Status(
+          ::mcap::StatusCode::OpenFailed,
+          "VREC: cipher init failed for \"" + filename + "\"");
+    }
+    cipher_ = std::move(cipher);
+    return ::mcap::StatusCode::Success;
+  }
+
+  const bool encrypting_ = false;
+  RecordingKey key_{};
+  std::unique_ptr<RecordingCipher> cipher_;
+  uint64_t header_bytes_ = 0;
+  // Fixed, so encryption never adds an allocation to the recorder's write
+  // path. 64 KiB covers a typical chunk in one pass; larger spans just loop.
+  std::array<std::uint8_t, 64 * 1024> scratch_{};
+
+  // uClibc-ng marshals sync_file_range() WRONG on 32-bit ARM: the kernel's
+  // only ARM entry point is arm_sync_file_range (= sync_file_range2, flags
+  // in r1 per the EABI's even-register rule for 64-bit args), but the libc
+  // stub passes the generic order — the kernel reads flags = 0 and the call
+  // is a successful no-op. Verified by disassembly of the SDK toolchain's
+  // libc.so.1 (its posix_fadvise64 does the ARM swizzle correctly; this one
+  // doesn't). Issue the syscall ourselves on ARM; syscall(2) passes longs
+  // in r0..r5, which is exactly sync_file_range2's layout.
+  static long sync_range(int fd, uint64_t off, uint64_t len,
+                         unsigned int flags) {
+#if defined(__linux__) && defined(__arm__)
+#ifndef __NR_sync_file_range2
+#error "32-bit ARM without sync_file_range2 would fall back into the broken libc stub"
+#endif
+    static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
+                  "the lo/hi register split below assumes little-endian");
+    return ::syscall(__NR_sync_file_range2, fd, flags,
+                     static_cast<unsigned long>(off & 0xffffffffu),
+                     static_cast<unsigned long>(off >> 32),
+                     static_cast<unsigned long>(len & 0xffffffffu),
+                     static_cast<unsigned long>(len >> 32));
+#elif defined(__linux__)
+    return ::sync_file_range(fd, static_cast<off64_t>(off),
+                             static_cast<off64_t>(len), flags);
+#else
+    (void)fd;
+    (void)off;
+    (void)len;
+    (void)flags;
+    return 0;
+#endif
+  }
+
+  // Hand the span written since the last call to kernel writeback, and wait
+  // out + evict the span before it, so the file's dirty set stays bounded
+  // near one span (plus the partial tail page, deliberately kept — fadvise
+  // ignores partial pages, and the next fwrite re-dirties it anyway). The
+  // alternative is the kernel's dirty-page throttling, which lets hundreds
+  // of MB accumulate and then stalls a write() for hundreds of ms at a
+  // moment of its choosing. Waiting one span BEHIND keeps this call ~free
+  // while storage keeps up (the span in flight had a full fill period of
+  // head start) and bounds the stall to one span's write time when it does
+  // not. WAIT_BEFORE|WRITE|WAIT_AFTER on the previous span is deliberate:
+  // only the triple upgrades to WB_SYNC_ALL, guaranteeing the span is clean
+  // before DONTNEED (which silently skips dirty pages). Failures are
+  // best-effort — the cost is only this optimization — but say so once per
+  // part: a silently absent sync looks exactly like the fix not working
+  // (same argument as setvbuf above).
+  void SyncSpan() {
+    // 4 KiB on every kernel we ship (RV1106/RV1126B); a larger-page target
+    // would only strand a few clean pages per span, not corrupt anything.
+    constexpr uint64_t kPageMask = 4095;
+    if (std::fflush(file_) != 0) {
+      if (!sync_disabled_) {
+        sync_disabled_ = true;
+        std::fprintf(stderr,
+                     "mcap: fflush in SyncSpan failed (%s) — dirty-set "
+                     "bounding disabled for this part\n",
+                     std::strerror(errno));
+      }
+      // Aligned like the happy path, or the next span's fadvise would round
+      // the unaligned start UP and strand the straddling page for good.
+      synced_off_ = file_size() & ~kPageMask;
+      prev_len_ = 0;
+      return;
+    }
+#if defined(__linux__)
+    if (sync_disabled_) {
+      synced_off_ = file_size() & ~kPageMask;
+      return;
+    }
+    // Page-align the span end: fadvise rounds partial pages AWAY, so an
+    // unaligned boundary would strand one straddling page per span in the
+    // cache forever. The partial tail waits for the next span.
+    const uint64_t end = file_size() & ~kPageMask;
+    if (end <= synced_off_) return;
+    const uint64_t off = synced_off_;
+    const uint64_t len = end - synced_off_;
+    long rc = sync_range(fd_, off, len, SYNC_FILE_RANGE_WRITE);
+    int fadvise_err = 0;
+    if (rc == 0 && prev_len_ > 0) {
+      rc = sync_range(fd_, prev_off_, prev_len_,
+                      SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WRITE |
+                          SYNC_FILE_RANGE_WAIT_AFTER);
+      // posix_fadvise returns its error and does NOT set errno.
+      if (rc == 0)
+        fadvise_err = ::posix_fadvise64(fd_, static_cast<off64_t>(prev_off_),
+                                        static_cast<off64_t>(prev_len_),
+                                        POSIX_FADV_DONTNEED);
+    }
+    if ((rc != 0 || fadvise_err != 0) && !sync_disabled_) {
+      sync_disabled_ = true;
+      std::fprintf(stderr,
+                   "mcap: span writeback failed (%s) — dirty-set bounding "
+                   "disabled for this part\n",
+                   std::strerror(fadvise_err != 0 ? fadvise_err : errno));
+    }
+    prev_off_ = off;
+    prev_len_ = len;
+    synced_off_ = end;
+#else
+    synced_off_ = file_size() & ~kPageMask;
+#endif
+  }
+
+  const std::uint64_t sync_span_bytes_;
   std::FILE* file_ = nullptr;
+  int fd_ = -1;
   uint64_t size_ = 0;
+  uint64_t synced_off_ = 0;
+  uint64_t prev_off_ = 0;
+  uint64_t prev_len_ = 0;
+  bool sync_disabled_ = false;
+  bool write_err_logged_ = false;
 };
 
 // Insert "_NNNN" before the file extension: run.mcap -> run_0000.mcap.
@@ -175,13 +411,17 @@ void FsyncPart(const std::string& path) {
 
 McapWriter::McapWriter(std::string_view path, std::uint64_t max_bytes,
                        double max_duration_s, bool rotate_on_keyframe,
-                       std::int64_t pair_guard_ns)
+                       std::int64_t pair_guard_ns,
+                       std::uint64_t sync_span_bytes,
+                       std::optional<RecordingKey> recording_key)
     : base_path_(path),
       max_bytes_(max_bytes),
       max_duration_ns_(static_cast<std::int64_t>(max_duration_s * 1e9)),
       rotating_(max_bytes > 0 || max_duration_s > 0.0),
       rotate_on_keyframe_(rotate_on_keyframe),
-      pair_guard_ns_(pair_guard_ns) {
+      pair_guard_ns_(pair_guard_ns),
+      sync_span_bytes_(sync_span_bytes),
+      recording_key_(std::move(recording_key)) {
   OpenPart();
 }
 
@@ -211,7 +451,8 @@ void McapWriter::OpenPart() {
   // CloexecFileWriter for why (recording fds must not leak into forked Wi-Fi
   // daemons). The writable is stored in file_ (declared before writer_) so it
   // outlives the writer that holds a raw pointer to it.
-  auto fw = std::make_unique<CloexecFileWriter>();
+  auto fw = std::make_unique<CloexecFileWriter>(
+      sync_span_bytes_, recording_key_ ? &*recording_key_ : nullptr);
   const ::mcap::Status status = fw->open(p);
   if (!status.ok()) {
     throw std::runtime_error("McapWriter: cannot open " + p + ": " +

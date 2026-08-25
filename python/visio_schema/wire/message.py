@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from google.protobuf.message import Message as ProtoMessage
 from google.protobuf.timestamp_pb2 import Timestamp
 
 from visio_schema.v1.wire.header_pb2 import Header
@@ -57,6 +58,41 @@ class Message:
         h.seq = self.seq
         h.timestamp.CopyFrom(self.timestamp)
         return h
+
+    @classmethod
+    def stamped(
+        cls,
+        payload: bytes | ProtoMessage,
+        t_ns: int,
+        *,
+        seq: int = 0,
+        stream_id: int = 0,
+    ) -> Message:
+        """Build a Message carrying ``payload`` at ``t_ns`` nanoseconds.
+
+        The write-side mirror of `message_class`: that resolves a schema name to a
+        class so you can *decode* a payload; this stamps a payload so you can
+        *write* one. ``payload`` is either already-serialized bytes or a protobuf
+        message (serialized here).
+
+        ``t_ns`` is the payload's sensor **capture** time, matching the
+        `timestamp` contract above — for derived data that is the source
+        element's ``t_ns``, so the result merges into the source recording's
+        timeline with no fixup.
+
+        ``seq`` is caller-supplied and never inferred. On a relayed message the
+        incoming ``seq`` is real data, and renumbering it would corrupt the
+        per-stream counter a consumer uses to spot drops; a producer of derived
+        data passes its own counter.
+
+        Example:
+            w.write(Message.stamped(pose.SerializeToString(), el.t_ns),
+                    make_channel(topic, "foxglove.PoseInFrame"))
+        """
+        ts = Timestamp()
+        ts.FromNanoseconds(int(t_ns))
+        data = payload if isinstance(payload, bytes) else payload.SerializeToString()
+        return cls(stream_id=stream_id, payload=data, seq=seq, timestamp=ts)
 
     @classmethod
     def from_header(cls, header: Header, payload: bytes) -> Message:

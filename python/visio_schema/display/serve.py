@@ -48,12 +48,26 @@ from google.protobuf.message import DecodeError
 
 from visio_schema import ChannelRegistry, command_message
 from visio_schema.mcap import McapReaderEndpoint
+from visio_schema.mcap.crypto import (
+    HEADER_BYTES,
+    RecordingKeyMismatch,
+    RecordingKeyUnavailable,
+    find_key,
+    is_vrec,
+    open_recording,
+    parse_key,
+    read_vrec_header,
+    remember_key,
+)
 from visio_schema.transport import extract_frames, frame_bytes, serial_endpoint
 from visio_schema.transport.framed_fd import FramedFdEndpoint
 from visio_schema.v1.control import command_pb2, command_result_pb2
+from visio_schema.v1.service.device_info import device_info_pb2
+from visio_schema.wire.control import DEVICE_INFO as _DEVICE_INFO
 
 from . import FoxgloveSink, VideoDecodeSink, dial_tcp, run_bridge
 from .discovery import DEFAULT_BUS_PORT, MCAP, USB, DiscoveryService
+from .recording_key import KeyChangeError, command_for, seal_key_change
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -330,16 +344,45 @@ class _StatusSink:
         self._lock = threading.Lock()
         self._messages = 0
         self._topics: set[str] = set()
+        self._serial = ""
 
     def reset(self) -> None:
         with self._lock:
             self._messages = 0
             self._topics = set()
+            self._serial = ""
 
     def write(self, msg, ch) -> None:
         with self._lock:
             self._messages += 1
             self._topics.add(ch.topic)
+
+    def note_serial(self, payload: bytes) -> None:
+        """Record the serial from a DeviceInfo announce.
+
+        Fed from the raw-frame callback, NOT from write(): the registry absorbs
+        announces before any sink sees them, so a topic-based check here would
+        silently never fire — and a sealed key change would silently go out
+        unscoped.
+        """
+        info = device_info_pb2.DeviceInfo()
+        try:
+            info.ParseFromString(payload)
+        except DecodeError:
+            # NOT a torn frame — framing CRC-checks before we ever see this. It
+            # means the DeviceInfo stream carried something else, i.e. protocol
+            # skew. Staying quiet would leave current_serial() empty and send
+            # every sealed key change out unscoped with no signal anywhere.
+            print("[visio-display] undecodable DeviceInfo announce — sealed "
+                  "key changes will not be scoped to this rig", file=sys.stderr)
+            return
+        if info.serial:
+            with self._lock:
+                self._serial = info.serial
+
+    def serial(self) -> str:
+        with self._lock:
+            return self._serial
 
     def snapshot(self) -> tuple[int, list[str]]:
         with self._lock:
@@ -481,6 +524,11 @@ class BridgeManager:
             # replies are demuxed downstream by _CommandResultSink, not here — they ride a
             # data channel, not the COMMAND stream.)
             msg.payload = bytes(msg.payload)
+            # The unit's own serial, as it announces it — what the firmware
+            # compares a sealed `dev` list against. Read here because this is
+            # the last point an announce is visible: resolved() absorbs it.
+            if msg.stream_id == _DEVICE_INFO:
+                self._status.note_serial(msg.payload)
             with contextlib.suppress(queue.Full):
                 inbox.put_nowait(msg)         # streaming is lossy-ok under backpressure
 
@@ -609,6 +657,15 @@ class BridgeManager:
                 self._viewer_opened = True
         return {**urls, "desktop_opened": opened}
 
+    def current_serial(self) -> str:
+        """The connected unit's announced serial, or "" before its first announce.
+
+        Read from the device rather than posted by the page: this is what a
+        sealed change gets scoped to, so it has to be the same string the
+        firmware checks it against.
+        """
+        return self._status.serial()
+
     # -- status / shutdown -------------------------------------------------- #
     def status(self) -> dict:
         with self._lock:
@@ -630,6 +687,11 @@ class BridgeManager:
         if dto is not None:
             ident = {"connected_id": dto["id"], "label": dto["label"],
                      "transport": dto["transport"]}
+        # The unit's OWN serial, from its DeviceInfo announce. Surfaced because
+        # it is what a sealed recording-key change is scoped to, and because a
+        # manual host:port row has no identity in its label at all — without
+        # this there is no way to see WHICH rig is about to be keyed.
+        ident["serial"] = self.current_serial()
         sink = self._video_sink
         return {
             **ident,
@@ -666,8 +728,45 @@ def _snapshot_event(discovery: DiscoveryService) -> bytes:
     return b"data: " + json.dumps(discovery.ui_snapshot()).encode() + b"\n\n"
 
 
+# The page and its assets change whenever the installed wheel does, and they
+# are served off localhost where a fetch costs nothing. Without an explicit
+# Cache-Control a browser applies HEURISTIC freshness to a Last-Modified-only
+# response and can serve a stale app.js WITHOUT revalidating — which presents
+# as new markup driven by old code, e.g. a button that renders but is never
+# enabled. "no-cache" still allows the 304 revalidation path via ETag, so this
+# costs a conditional request, not a re-download.
+_NO_CACHE = {"Cache-Control": "no-cache"}
+
+
+def _asset_tag(path: Path) -> str:
+    """A short token that changes whenever `path` does (mtime + size)."""
+    st = path.stat()
+    return f"{int(st.st_mtime):x}-{st.st_size:x}"
+
+
 async def _index(request: web.Request) -> web.StreamResponse:
-    return web.FileResponse(_STATIC_DIR / "index.html")
+    """Serve the page with a cache-busted script URL.
+
+    `no-cache` alone only fixes browsers that have not already stored a copy:
+    an entry cached BEFORE that header existed keeps its heuristic freshness and
+    is served without revalidating, which shows up as new markup driven by old
+    code. A URL that changes with the file cannot be answered from that entry at
+    all, so a stale asset stops being a possible state rather than a likely one.
+    """
+    html = (_STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    html = html.replace(
+        '"/static/app.js"',
+        f'"/static/app.js?v={_asset_tag(_STATIC_DIR / "app.js")}"')
+    return web.Response(text=html, content_type="text/html", headers=_NO_CACHE)
+
+
+@web.middleware
+async def _no_cache_static(request: web.Request, handler):
+    """Revalidate the static assets, for the reason on :data:`_NO_CACHE`."""
+    response = await handler(request)
+    if request.path.startswith("/static/"):
+        response.headers.setdefault("Cache-Control", "no-cache")
+    return response
 
 
 async def _devices_sse(request: web.Request) -> web.StreamResponse:
@@ -739,15 +838,74 @@ async def _manual(request: web.Request) -> web.Response:
     return web.json_response(dto)
 
 
+def _recording_key_fp(path: str) -> str | None:
+    """Which key opens this recording, or None if it needs none.
+
+    Deliberately unguarded: None is this function's way of saying "plaintext",
+    so turning an unreadable file into None would answer a question nobody
+    asked. The one caller already handles OSError.
+    """
+    with open(path, "rb") as f:
+        head = f.read(HEADER_BYTES)
+    return read_vrec_header(head).key_fp_hex if is_vrec(head) else None
+
+
+def _adopt_key_for(path: str, key_text: str) -> None:
+    """Check the admin's key really opens this recording, then keep it.
+
+    Verification is `open_recording` itself rather than a second fingerprint
+    comparison, so there is exactly one implementation of "does this key open
+    this file". Remembering it means the NEXT recording under the same key
+    needs no key entry at all.
+    """
+    raw = parse_key(key_text, "the key given")
+    with open(path, "rb") as f:
+        if not is_vrec(f.read(HEADER_BYTES)):
+            raise ValueError(
+                "this recording is not encrypted — it opens with no key")
+    with open_recording(path, key=raw):
+        pass                                  # RecordingKeyMismatch if wrong
+    remember_key(raw)
+
+
+def _probe_readable(path: str) -> None:
+    """Open and close, so an unopenable recording fails HERE.
+
+    Without this the file is added happily (the magic sniff passes) and dies
+    later inside the replay, where the page can only report a dead source
+    instead of asking for the key.
+    """
+    with open_recording(path):
+        pass
+
+
 async def _open_mcap(request: web.Request) -> web.Response:
     """Add a local ``.mcap`` recording as a replay source (the page then /api/connect's
-    it by id, exactly like a discovered device). Mirrors :func:`_manual`."""
+    it by id, exactly like a discovered device). Mirrors :func:`_manual`.
+
+    Accepts an optional ``key`` for an encrypted recording. A key set from the
+    console is already on the keyring, so the common path needs none.
+    """
     body = await request.json()
     path_in = (body.get("path") or "").strip()
     if not path_in:
         return web.json_response({"error": "path required"}, status=400)
+    key_in = (body.get("key") or "").strip()
     discovery = request.app[_DISCOVERY]
     loop = asyncio.get_running_loop()
+    try:
+        if key_in:
+            await loop.run_in_executor(None, _adopt_key_for, path_in, key_in)
+        await loop.run_in_executor(None, _probe_readable, path_in)
+    except RecordingKeyUnavailable as exc:
+        # Not an error the admin can fix by picking a different file: it is a
+        # prompt. `key_fp` says WHICH key, which is what an admin holding
+        # several clients' keys actually needs to know.
+        return web.json_response(
+            {"error": str(exc), "needs_key": True,
+             "key_fp": _recording_key_fp(path_in)}, status=400)
+    except (OSError, ValueError, RecordingKeyMismatch) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
     try:
         # add_mcap() stats + reads the file header — off the loop.
         dto = await loop.run_in_executor(None, discovery.add_mcap, path_in)
@@ -843,6 +1001,103 @@ async def _config_wifi(request: web.Request) -> web.Response:
     return await _send_command(request, cmd)
 
 
+def _proof_of_ownership(body: dict) -> str | bytes | None:
+    """The `rko` proof for a rotate or a clear.
+
+    An admin who keyed this rig from this machine already has the key on their
+    keyring, and the device tells us WHICH one it holds — so look it up by
+    fingerprint rather than making them paste key material back into a browser.
+    Falling back to a typed key covers the other machine, or a rig someone else
+    provisioned.
+    """
+    typed = (body.get("old_key") or "").strip()
+    if typed:
+        return typed
+    fp = (body.get("old_fingerprint") or "").strip()
+    if not fp:
+        return None                      # a first set needs no proof at all
+    found = find_key(fp)
+    if found is None:
+        raise KeyChangeError(
+            f"this rig is keyed with {fp}, which is not on this computer's "
+            "keyring — paste that key to change it")
+    return found
+
+
+async def _reveal_recording_key(request: web.Request) -> web.Response:
+    """Show the admin their OWN key, read from this computer's keyring.
+
+    The one endpoint that returns key material, and it is deliberate: the key
+    exists nowhere else recoverable. It is minted here, and if this machine is
+    lost every recording made under it is unreadable forever — so an admin who
+    cannot read it back has no way to write it down, put it in a password
+    manager, or open the footage on another computer.
+
+    THE DEVICE IS NOT ASKED. There is no command that reads a key off a rig and
+    there must never be one: the operator holding it is the adversary. This
+    reads the keyring, so it can only ever show a key this machine already had.
+    Localhost-only (see the module docstring) and keyed by an explicit
+    fingerprint, so it is a deliberate lookup rather than a dump.
+    """
+    body = await request.json()
+    fp = (body.get("fingerprint") or "").strip()
+    if not fp:
+        return web.json_response({"ok": False, "error": "fingerprint required"},
+                                 status=400)
+    key = find_key(fp)
+    if key is None:
+        return web.json_response(
+            {"ok": False, "error": f"key {fp} is not on this computer — it was "
+                                   "set from another machine"}, status=404)
+    return web.json_response({"ok": True, "fingerprint": fp, "key": key.hex()})
+
+
+async def _config_recording_key(request: web.Request) -> web.Response:
+    """Set, rotate or clear the key a rig encrypts its recordings under.
+
+    This endpoint is the whole reason an admin needs a computer: the capturer's
+    app deliberately cannot do it. The new key is written to the admin's
+    keyring inside seal_key_change() BEFORE the command goes out, so a rig can
+    never hold a key its owner does not.
+
+    The reply never carries key material — only the fingerprint the device
+    should now report, which the page re-reads from /api/config/state.
+    """
+    body = await request.json()
+    serial = request.app[_BRIDGE].current_serial()
+    op = (body.get("op") or "").strip()
+    try:
+        old_key = _proof_of_ownership(body)
+    except KeyChangeError as exc:
+        return web.json_response({"ok": False, "error": str(exc),
+                                  "needs_current_key": True}, status=400)
+    try:
+        change = seal_key_change(
+            op,
+            # Deliberately no `key` from the request: the console mints. A
+            # caller-chosen key on a localhost endpoint is a way to install a
+            # key the CSPRNG did not choose, and nothing needs it.
+            old_key=old_key,
+            # Scope to the rig in front of the admin, so a blob lifted off the
+            # wire is refused (`wrong_device`) on any other unit.
+            devices=(serial,) if serial else ())
+    except (KeyChangeError, ValueError) as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    response = await _send_command(request, command_for(change))
+    if response.status == 200:
+        # Tell the page what to expect so it can verify the device landed on
+        # the intended key rather than trusting a bare "ok".
+        payload = json.loads(response.text)
+        payload["expect_fingerprint"] = change.fingerprint
+        # Whether the replay guard is actually on. Without this an unknown
+        # serial silently downgrades the change to fleet-wide and the reply
+        # looks identical to a scoped one.
+        payload["scoped_to"] = serial
+        return web.json_response(payload)
+    return response
+
+
 async def _config_time(request: web.Request) -> web.Response:
     # The launcher runs on the operator's machine, so the server's own clock IS the host
     # time to push — no input needed. The boards boot to 1970, so this fixes recording
@@ -896,7 +1151,7 @@ async def _shutdown(request: web.Request) -> web.Response:
 def _build_app(bridge: BridgeManager, discovery: DiscoveryService) -> web.Application:
     """Wire the routes onto an app carrying the bridge + discovery. Split out from
     :func:`run_serve` so the handlers can be exercised with a test client."""
-    app = web.Application()
+    app = web.Application(middlewares=[_no_cache_static])
     app[_BRIDGE] = bridge
     app[_DISCOVERY] = discovery
     app[_SUBSCRIBERS] = set()
@@ -919,6 +1174,9 @@ def _build_app(bridge: BridgeManager, discovery: DiscoveryService) -> web.Applic
     app.router.add_post("/api/config/bitrate", _config_bitrate)
     app.router.add_post("/api/config/meta", _config_meta)
     app.router.add_post("/api/config/format", _config_format)
+    app.router.add_post("/api/config/recording-key", _config_recording_key)
+    app.router.add_post("/api/config/recording-key/reveal",
+                        _reveal_recording_key)
     app.router.add_static("/static/", _STATIC_DIR)
     return app
 

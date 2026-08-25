@@ -39,7 +39,7 @@ NANOPB_OPTIONS := proto/nanopb.options
 NANOPB_WKT_INC := third_party/nanopb/generator/proto
 FOXGLOVE_PROTO := third_party/foxglove-sdk/schemas/proto
 
-.PHONY: lint breaking gen test pytest cpp wheel sdist dist clean help
+.PHONY: lint breaking gen test pytest tools-test cpp wheel sdist dist clean help
 
 help:
 	@echo "make lint      - lint protos"
@@ -47,6 +47,7 @@ help:
 	@echo "make gen       - lint, then regenerate python/visio_schema + cpp/generated_nanopb bindings"
 	@echo "make test      - import every generated Python module (codegen sanity)"
 	@echo "make pytest    - run the Python codec tests (python/tests)"
+	@echo "make tools-test - run the standalone tools' tests (tools/)"
 	@echo "make cpp       - build + run the C++ codec tests (cpp/)"
 	@echo "make wheel     - build the combined visio-schema wheel (gen + codec)"
 	@echo "make sdist     - build the source distribution (sdist)"
@@ -128,6 +129,33 @@ gen: lint
 	# build links — no full libprotobuf. nanopb won't create nested output dirs,
 	# so mirror the proto tree first. --error-on-unmatched guards the options
 	# file against drift (a renamed field silently losing its bound).
+	# Verify the runtime can LOAD what buf just generated, before anything is
+	# deleted. protoc stamps a minimum runtime version into every _pb2.py, and
+	# an older google.protobuf raises at import. Without this check that
+	# surfaces at the END of this target, in gen_schema_blobs.py — by which
+	# point the rm -rf below has already removed the nanopb tree, so a host
+	# tooling mismatch leaves the whole native line unbuildable, with a missing
+	# schema_blobs.gen.hpp as the only symptom and a protobuf version error that
+	# names none of it. Fail here instead, and say what to do about it.
+	@$(PYTHON) -c "import sys; sys.path.insert(0, '$(PY_PKG)'); \
+	  import visio_schema.v1.control.command_pb2" >/dev/null 2>&1 || { \
+	  echo ''; \
+	  echo 'gen: the generated bindings cannot be imported:'; \
+	  echo ''; \
+	  $(PYTHON) -c "import sys; sys.path.insert(0, '$(PY_PKG)'); \
+	    import visio_schema.v1.control.command_pb2" 2>&1 | tail -1 | sed 's/^/       /'; \
+	  echo ''; \
+	  echo ''; \
+	  echo '     If that names a MISSING MODULE, install it -- every runtime'; \
+	  echo '     dependency in python/pyproject.toml has to be present before'; \
+	  echo '     this check, and CI keeps a hand-written copy of that list.'; \
+	  echo '     If it names a protobuf VERSION, the runtime is older than the'; \
+	  echo '     gencode buf just emitted:'; \
+	  echo '       python3 -m pip install --user --upgrade protobuf'; \
+	  echo ''; \
+	  echo '     Stopped BEFORE regenerating the nanopb tree, so the workspace'; \
+	  echo '     stays buildable.'; \
+	  exit 1; }
 	rm -rf $(NANOPB_GEN); mkdir -p $(NANOPB_GEN)
 	@cd proto && find . -type d -exec mkdir -p "$(CURDIR)/$(NANOPB_GEN)/{}" \;
 	@cd $(FOXGLOVE_PROTO) && find . -type d -exec mkdir -p "$(CURDIR)/$(NANOPB_GEN)/{}" \;
@@ -152,8 +180,24 @@ test: gen
 
 # Python codec tests. The package tree (python/visio_schema) now holds both the
 # generated bindings and the hand-written codec, so no path shim is needed.
+# OpenBLAS starts one thread per core the moment scipy is imported, and
+# SPINS rather than failing when it cannot get them (RLIMIT_NPROC, a
+# cgroup, a container). tests/reader imports scipy.spatial.transform at
+# module scope, so that hang happens during COLLECTION: `no tests ran`,
+# then a segfault, and an OpenBLAS message about ulimits that mentions
+# neither pytest nor scipy. One thread is ample for a test suite and
+# makes the run deterministic. Override on the command line if needed.
+OPENBLAS_NUM_THREADS ?= 1
+export OPENBLAS_NUM_THREADS
+
 pytest: gen
 	cd python && $(PYTHON) -m pytest tests -q
+
+# The tools/ scripts are deliberately standalone — stdlib only, no visio_schema
+# import, no generated bindings — so their tests need no `gen` and are not part
+# of the wheel's suite. Runnable on a bare checkout.
+tools-test:
+	$(PYTHON) -m pytest tools -q
 
 # C++ codec tests. nanopb-only — no libprotobuf/abseil install needed.
 cpp: gen

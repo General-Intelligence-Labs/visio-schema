@@ -26,9 +26,9 @@ def _channel(cid: int = FIRST_DYNAMIC, topic: str = "/dev/imus/0/raw") -> Channe
 
 
 def _msg(cid: int, i: int, payload: bytes) -> Message:
-    m = Message(stream_id=cid, payload=payload, seq=i)
-    m.timestamp.FromNanoseconds(1_700_000_000_000_000_000 + i)
-    return m
+    return Message.stamped(
+        payload, 1_700_000_000_000_000_000 + i, seq=i, stream_id=cid
+    )
 
 
 def test_round_trip_records_and_reads(tmp_path) -> None:
@@ -98,3 +98,102 @@ def test_part_names_are_4_digit_and_sort_past_999(tmp_path) -> None:
         p1000 = w._part_path().name
     assert (p999, p1000) == ("run_0999.mcap", "run_1000.mcap")
     assert sorted([p1000, p999]) == [p999, p1000]   # 999 lexically precedes 1000
+
+
+def _metadata_of(path) -> dict[str, dict[str, str]]:
+    """Every metadata record in an MCAP, by name."""
+    from mcap.reader import make_reader
+
+    with open(path, "rb") as f:
+        return {m.name: dict(m.metadata) for m in make_reader(f).iter_metadata()}
+
+
+def test_metadata_record_is_written_and_readable(tmp_path) -> None:
+    """Provenance rides as an MCAP metadata record, so a consumer can read it
+    without decoding a single message."""
+    ch = _channel()
+    out = tmp_path / "rec.mcap"
+    with McapWriter(out) as w:
+        w.add_metadata("visio.derived", {"stage": "depth", "version": "0.2.0"})
+        w.write(_msg(ch.id, 0, b"imu"), ch)
+
+    assert _metadata_of(out)["visio.derived"] == {
+        "stage": "depth",
+        "version": "0.2.0",
+    }
+
+
+def test_metadata_replayed_into_every_rotated_part(tmp_path) -> None:
+    """A rolled part must stand alone — including its provenance. Without the
+    replay, part 1 carries the record and every later part silently loses it, so
+    a consumer reading part 3 cannot tell what produced it."""
+    ch = _channel()
+    base = tmp_path / "run.mcap"
+    with McapWriter(base, max_bytes=40) as w:
+        w.add_metadata("visio.derived", {"stage": "depth"})
+        for i in range(10):
+            w.write(_msg(ch.id, i, b"x" * 16), ch)
+
+    parts = sorted(tmp_path.glob("run_*.mcap"))
+    assert len(parts) >= 3
+    for part in parts:
+        assert _metadata_of(part)["visio.derived"] == {"stage": "depth"}
+
+
+def test_metadata_added_mid_run_reaches_later_parts(tmp_path) -> None:
+    """Records registered after some parts already closed still propagate
+    forward; the earlier parts legitimately predate them."""
+    ch = _channel()
+    base = tmp_path / "run.mcap"
+    with McapWriter(base, max_bytes=40) as w:
+        for i in range(5):
+            w.write(_msg(ch.id, i, b"x" * 16), ch)
+        w.add_metadata("late", {"k": "v"})
+        for i in range(5, 10):
+            w.write(_msg(ch.id, i, b"x" * 16), ch)
+
+    parts = sorted(tmp_path.glob("run_*.mcap"))
+    assert _metadata_of(parts[-1])["late"] == {"k": "v"}
+
+
+def test_metadata_rejects_non_string_value(tmp_path) -> None:
+    """MCAP metadata is strictly string->string. Reject at the call site, naming
+    the key, instead of failing obscurely inside the mcap writer."""
+    with McapWriter(tmp_path / "rec.mcap") as w:
+        with pytest.raises(TypeError, match="frames"):
+            w.add_metadata("visio.derived", {"frames": 42})
+
+
+def _header_of(path):
+    from mcap.reader import make_reader
+
+    with open(path, "rb") as f:
+        return make_reader(f).get_header()
+
+
+def test_header_defaults_leave_existing_output_untouched(tmp_path) -> None:
+    """`profile`/`library` were added for the derived-writer path. Their defaults
+    must reproduce what this writer produced before they existed — otherwise
+    adding them restamps the header of every recording ever written by it."""
+    ch = _channel()
+    out = tmp_path / "rec.mcap"
+    with McapWriter(out) as w:
+        w.write(_msg(ch.id, 0, b"imu"), ch)
+    assert _header_of(out).profile == ""
+
+
+def test_header_carries_profile_and_library_into_every_part(tmp_path) -> None:
+    """A rolled part must stand alone, and 'which tool wrote this' is the first
+    question asked when two files differ — so it belongs in every part, not just
+    the first."""
+    ch = _channel()
+    base = tmp_path / "run.mcap"
+    with McapWriter(base, max_bytes=40, profile="visio", library="thing@1") as w:
+        for i in range(10):
+            w.write(_msg(ch.id, i, b"x" * 16), ch)
+
+    parts = sorted(tmp_path.glob("run_*.mcap"))
+    assert len(parts) >= 3
+    for part in parts:
+        header = _header_of(part)
+        assert (header.profile, header.library) == ("visio", "thing@1"), part.name

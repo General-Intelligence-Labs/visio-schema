@@ -1,0 +1,44 @@
+# Cross-language golden vectors for the `visio-seal-v1` envelope
+# (one `key=hexbytes` per line).
+#
+# Generated from the Python reference implementation
+# (python/visio_schema/crypto/envelope.py). Both
+# python/tests/test_seal.py and the device-side C++ port load these bytes and
+# assert that THEIR seal reproduces `seal_blob` exactly from the pinned
+# ephemeral key, and that THEIR unseal recovers `seal_plaintext` from it.
+#
+# This is the most important fixture in the sealed-QR work. The device opens
+# these envelopes with a C++ port against the RV1106's OpenSSL 1.1.1h, and a
+# drift between the two implementations does not fail loudly in CI — it fails
+# in a factory, where the symptom is "the QR doesn't work" on a rig somebody
+# already shipped. Pinning both directions against committed bytes turns that
+# into a build failure.
+#
+# The keys are deliberately recognisable counting patterns. They are TEST keys;
+# the real fleet private key lives in gilabs-root/secrets/ and never enters
+# this repo.
+#
+#   seal_private    X25519 private scalar, bytes 0x00..0x1f
+#   seal_public     its public point
+#   seal_ephemeral  the pinned ephemeral private scalar, bytes 0x20..0x3f
+#                   (production mints a fresh one per envelope; it is fixed
+#                    here ONLY so the seal direction is reproducible)
+#   seal_kid        SHA-256(seal_public)[:4] — the fleet key generation id
+#   seal_plaintext  a realistic sealed body: storage secret + a recording key
+#                   + the previous one + an expiry
+#   seal_blob       "VSL1" || kid || ephemeral_public || ChaCha20-Poly1305 ct
+#   seal_empty_blob the same, sealing an EMPTY plaintext. Exactly the minimum
+#                   legal envelope (56 B), and the case a device-side port is
+#                   most likely to get wrong: with no ciphertext body there is
+#                   no plaintext-decrypt call, so any length counter shared
+#                   with the AAD step is still holding the AAD's length when
+#                   the AEAD is finalised. Anyone can mint this against the
+#                   published fleet key, so it is reachable, not theoretical.
+#
+seal_private=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+seal_public=8f40c5adb68f25624ae5b214ea767a6ec94d829d3d7b5e1ad1ba6f3e2138285f
+seal_ephemeral=202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f
+seal_kid=eedd883d
+seal_plaintext=7b22736b223a227333637233742d6163636573732d6b6579222c22726b223a224553497a5246566d6434695a7172764d3365375f414245694d3052565a6e65496d6171377a4e33755f7741222c22726b6f223a2241414543417751464267634943516f4c4441304f4478415245684d554652595847426b6147787764486838222c22657870223a313738363030303030307d
+seal_blob=56534c31eedd883d358072d6365880d1aeea329adf9121383851ed21a28e3b75e965d0d2cd166254e9914d77f9ce3d7e3ed5065af717f62696de27e8ae4c923bc37a2df3040b1866afc0b9b9d72e864ae7e384a4d8cb8773a4f60cde8c92c1f3c2e1f751a2a5cd10d7a6b57a1c14ef562061a241cb2d1243176440392f241c8137baf31e86fef701ccef7919d362336f4978c47780bab0608b355ef9540d0817ef2a88efd94d58efeb790a7e3046a45ce53bad3d05b4c8b12e15d296d23ec8825237ab8d55b19a8d3217
+seal_empty_blob=56534c31eedd883d358072d6365880d1aeea329adf9121383851ed21a28e3b75e965d0d2cd16625429d35194af630d0f71865c7ddf309051

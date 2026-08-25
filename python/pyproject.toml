@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "visio-schema"
-version = "0.7.3"
+version = "0.9.0"
 description = "Visio wire contract — generated protobuf bindings + the framing codec"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -38,11 +38,25 @@ classifiers = [
 # a stage image, a training pipeline — never opens. `pip install visio-schema` is
 # the codec; `pip install visio-schema[display]` adds the viewer.
 dependencies = [
-    "protobuf>=5.26",
+    # Must be >= the gencode protoc stamps into the _pb2.py files this
+    # package SHIPS (currently 7.36.0): an older runtime raises at import,
+    # so a lower floor advertises a wheel that cannot actually load.
+    "protobuf>=7.36",
     "cobs>=1.2",
     "mcap>=1.1",
+    # `visio_schema.reader`'s element types are numpy-shaped (decoded frames, IMU
+    # vectors, calibration matrices) and `display` already assumes it. Base rather
+    # than an extra: it is small, universal, and half the package would need a
+    # guard around it otherwise.
+    "numpy>=1.24",
     "pyserial>=3.5",
     "foxglove-sdk>=0.10",
+    # Core, not an extra, unlike the viewer deps above: a sealed settings QR
+    # and an encrypted (VREC) recording are both things a plain
+    # `pip install visio-schema` consumer has to be able to open. A wheel
+    # that reads the contract but not the artifacts the contract describes
+    # would push every consumer to add the extra anyway. ~4 MB, not ~600.
+    "cryptography>=42",
 ]
 
 [project.optional-dependencies]
@@ -52,21 +66,78 @@ dependencies = [
 # codec runs without any of them. Required to actually run `visio-display`.
 display = [
     "rerun-sdk>=0.24",
-    "av>=11",
+    # A RANGE, and a measured one. Two constraints meet here:
+    #   >= 14.2  `av.codec.hwaccel` — the display transcoder's GPU probe — first
+    #            exists here. 14.0.0 does not have it.
+    #   <  17    decode output changes at 17.0.0. Measured over 300 real ego
+    #            H.265 access units: 12.3.0, 13.1.0, 14.x, 15.x and 16.x all
+    #            decode to the SAME bytes; 17.0.0 and 18.0.0 differ — and 16.1.0
+    #            and 17.0.0 share libavcodec 62.11.100, so that is a PyAV change,
+    #            not an FFmpeg one.
+    # The upper bound is what `visio_schema.reader`'s determinism rests on ("N
+    # runs -> byte-identical MCAPs" downstream); the lower is what the viewer
+    # rests on. Do not widen either without re-running that decode comparison.
+    "av>=14.2,<17",
     "aiohttp>=3.9",     # `--serve` launcher web app
     "zeroconf>=0.130",  # `--serve` mDNS device discovery
 ]
+# `av` also appears in the extras below. It cannot live in base (it is a decoder,
+# not the wire contract) and it cannot live only in `display` (the reader and the
+# dataset writer both decode video). The range and its rationale are stated once,
+# above; the duplicates below are pins, not decisions.
+
+# One lazy import, reached only by recordings carrying FrameTransform
+# extrinsics (`_parse_frame_transform`). Kept rather than hand-rolled: a numpy
+# quaternion->matrix mirroring scipy's formula is bit-identical on only
+# ~89% of random quaternions (worst 6.7e-16), and this feeds the STEREO
+# EXTRINSIC, so a last-bit shift propagates into rectification and depth.
+reader = [
+    "scipy>=1.10",
+    "av>=14.2,<17",
+]
+# Device-resident NVDEC decode (`Session.stream(gpu=True)`). Heavy (~GB), from
+# NVIDIA's index; lazy-imported so the reader stays CPU-only without it.
+gpu = [
+    "cupy-cuda13x>=14,<15",
+    "PyNvVideoCodec>=2.2",
+]
+# `visio_schema.dataset` stores episode tables as parquet and decodes source
+# video to build them. An extra because pyarrow is large and the wire surface
+# never needs it.
+dataset = [
+    "pyarrow>=14",
+    "av>=14.2,<17",
+]
+# Rendering a settings QR to PNG. Split out because `visio-settings-qr`
+# validates, seals, inspects and mints keys without it — only the final
+# `--out` render needs a rasteriser.
+qr = [
+    "qrcode[pil]>=7.4",
+]
 dev = [
+    "qrcode[pil]>=7.4",   # so CI covers the render path, not just --dry-run
     "pytest>=8.0",
     "mypy>=1.10",
     "ruff>=0.5",
     "build>=1.0",
     "tomli>=2.0; python_version < '3.11'",
+    # Enforces the reader's layering contract (see [tool.importlinter]).
+    "import-linter>=2",
+    # The reader's tests synthesize recordings: JPEG stills (cv2) and the
+    # quaternion helpers (scipy). Test-time only.
+    "opencv-python-headless>=4.8,<5",
 ]
 
 [project.scripts]
 # `run` (not `main`) — see its docstring for why the console entry exits 0.
 visio-display = "visio_schema.display:run"
+# Mint the settings QR a fleet owner hands to operators. In-package (not
+# under tools/) precisely so `pip install visio-schema` is the whole setup
+# a customer needs to seal their own credentials.
+visio-settings-qr = "visio_schema.settings_qr:run"
+# Plaintext copy of an encrypted recording, for the tools that will never take
+# a key: Foxglove Studio, the kalibr path, the frozen visio-setup bundle.
+visio-decrypt = "visio_schema.mcap.decrypt:run"
 
 [project.urls]
 Homepage = "https://github.com/General-Intelligence-Labs/visio-schema"
@@ -96,12 +167,67 @@ markers = [
     "pty: drives a serial device over a pseudo-terminal; auto-skipped on macOS (see tests/conftest.py)",
 ]
 
+# The reader's layering contract (run via `lint-imports`): imports point downward
+# only, no lower layer depends on a higher one. This came across with the reader
+# from visio-post-processing, where it was machine-checked; without it here the
+# ordering would have been silently unenforced after the move. `domain` is the
+# floor and imports nothing else in the package.
+[tool.importlinter]
+root_package = "visio_schema"
+
+[[tool.importlinter.contracts]]
+name = "reader layers depend downward only"
+type = "layers"
+layers = [
+    "visio_schema.reader.ops",
+    # `session` reads a recording THROUGH the shared row pipeline, never the other
+    # way round: `rows` must stay usable with no file, index or device behind it,
+    # because that is the whole of what a live source can offer it.
+    "visio_schema.reader.session",
+    "visio_schema.reader.rows",
+    "visio_schema.reader.adapters",
+    # Blending elements is below the ops that schedule it and beside the adapters
+    # that build them: `interp` must not reach `session`, or "what is the value
+    # between these two" would start depending on where they were read from.
+    "visio_schema.reader.interp",
+    "visio_schema.reader.domain",
+]
+
+[[tool.importlinter.contracts]]
+name = "dataset layers depend downward only"
+type = "layers"
+layers = [
+    # Storage and encode are independent siblings above the spec: `lerobot`
+    # knows the spec and the parquet layout, `video` knows frames and paths
+    # and neither the spec nor the storage. `geometry` is the floor — a pure
+    # arithmetic rule both the encoder and a live pipeline size frames with.
+    "visio_schema.dataset.lerobot : visio_schema.dataset.video",
+    "visio_schema.dataset.spec",
+    "visio_schema.dataset.geometry",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# The reader was ported from visio-post-processing and is verified byte-identical
+# against a real recording (element-stream hashes over 88k elements). These two
+# are pure style — `zip(x, x[1:])` vs `itertools.pairwise`, and `int()` on a value
+# ruff can prove is already an int — and neither repo's suite would catch a
+# mistake made while restyling them. Restyle deliberately, with the fingerprint
+# re-run, rather than as a drive-by lint fix.
+"visio_schema/reader/*.py" = ["RUF007", "RUF046"]
+"tests/reader/*.py" = ["RUF043", "RUF046"]
+
+# RUF001 flags fullwidth punctuation as "ambiguous unicode". In a Chinese
+# translation table it is correct typography — （）：？ are what a Chinese
+# reader expects, and substituting ASCII would be the actual error. The rule
+# is about ambiguity in CODE; this file is data.
+"visio_schema/settings_qr/i18n.py" = ["RUF001"]
 
 # Version-specific wheels (cp310–cp313), NOT abi3: the zero-copy Frame exports the
 # buffer protocol, which the CPython Limited API lacks at the cp310 floor (PEP 688
@@ -118,7 +244,7 @@ skip = "*-musllinux*"
 # half is still tested natively; both halves are still built.
 test-skip = "*_universal2:x86_64"
 build-frontend = "build"
-test-requires = ["pytest>=8", "pytest-timeout>=2.3", "protobuf>=5.26", "cobs>=1.2", "mcap>=1.1"]
+test-requires = ["pytest>=8", "pytest-timeout>=2.3", "protobuf>=7.36", "cobs>=1.2", "mcap>=1.1", "pyarrow>=14"]
 # Run the in-wheel suite native-on, then forced onto the pure-Python fallback, so
 # both readers are exercised against the installed wheel.
 # --timeout is a hard guard well above any real test time: it turns a platform-specific

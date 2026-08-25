@@ -9,6 +9,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -52,6 +53,32 @@ Message Frame(std::size_t n) {
   m.payload = std::string(n, 'x');
   m.bulk = true;
   return m;
+}
+
+// Poll until the endpoint has handed everything to the kernel (pending empty).
+bool WaitUntilDrained(FramedFdEndpoint& tx, int max_ms = 3000) {
+  for (int i = 0; i < max_ms; ++i) {
+    if (tx.pending_bytes() == 0) return true;
+    std::this_thread::sleep_for(1ms);
+  }
+  return tx.pending_bytes() == 0;
+}
+
+// Prime an unread peer with a bulk burst, then keep sending until `latched`
+// reports true (or the attempt budget runs out). Each Send both evicts
+// synchronously (byte cap, at enqueue) and Wake()s the I/O thread, which is
+// what re-runs the stall clock and re-samples the eviction counter — without
+// the re-sends a latch waits for the 200 ms poll tick. Returns latched().
+bool FloodUntilLatched(FramedFdEndpoint& tx,
+                       const std::function<bool()>& latched,
+                       int attempts = 2000) {
+  const Message flood = Frame(2048);
+  for (int i = 0; i < 64; ++i) tx.Send(flood);
+  for (int i = 0; i < attempts && !latched(); ++i) {
+    tx.Send(flood);
+    std::this_thread::sleep_for(1ms);
+  }
+  return latched();
 }
 
 // Background thread draining `fd` into an accumulating buffer — the "reader
@@ -157,12 +184,8 @@ TEST(Backpressure, DrainingPeerShedsNothing) {
   for (int i = 0; i < 1000; ++i) tx.Send(m);
 
   // With the peer keeping up, the outbox drains to empty and nothing is shed.
-  bool drained = false;
-  for (int i = 0; i < 500 && !drained; ++i) {
-    if (tx.pending_bytes() == 0) drained = true;
-    else std::this_thread::sleep_for(1ms);
-  }
-  EXPECT_TRUE(drained) << "outbox should fully drain to a keeping-up peer";
+  EXPECT_TRUE(WaitUntilDrained(tx, 500))
+      << "outbox should fully drain to a keeping-up peer";
   EXPECT_EQ(tx.dropped(), 0u);
 
   tx.Stop();
@@ -219,12 +242,8 @@ TEST(Backpressure, DrainsBurstThroughAStallingLinkWithoutSplicingFrames) {
     }
   }
 
-  bool drained = false;
-  for (int i = 0; i < 3000 && !drained; ++i) {
-    if (tx.pending_bytes() == 0) drained = true;
-    else std::this_thread::sleep_for(1ms);
-  }
-  EXPECT_TRUE(drained) << "the outbox must drain through a link that EAGAINs";
+  EXPECT_TRUE(WaitUntilDrained(tx))
+      << "the outbox must drain through a link that EAGAINs";
   EXPECT_EQ(tx.dropped(), 0u);
 
   // pending_bytes()==0 means the endpoint handed everything to the kernel, not
@@ -281,19 +300,8 @@ TEST(Backpressure, StalledLinkShedsDecimatableKeepsControlAndEvents) {
                       /*stall_ns=*/50'000'000);
   tx.Start({}, {});
 
-  // Fill the kernel buffer with bulk, then keep sending while waiting: each
-  // Send Wake()s the I/O thread, which is what re-runs the stall clock —
-  // without it the latch waits for the 200 ms poll tick and the shrunk
-  // 50 ms window buys nothing.
-  const Message flood = Frame(512);
-  for (int i = 0; i < 200; ++i) tx.Send(flood);
-  bool stalled = false;
-  for (int i = 0; i < 2000 && !stalled; ++i) {
-    tx.Send(flood);
-    stalled = tx.Stalled();
-    if (!stalled) std::this_thread::sleep_for(1ms);
-  }
-  ASSERT_TRUE(stalled) << "an unread peer must latch stalled()";
+  ASSERT_TRUE(FloodUntilLatched(tx, [&tx] { return tx.Stalled(); }))
+      << "an unread peer must latch stalled()";
   // The interface-level view a producer's presence gate reads through the
   // bus roster (Endpoint::Stalled defaults false; framed endpoints forward
   // the latch).
@@ -456,4 +464,323 @@ TEST(Backpressure, AFixedLinkDyingOnAReadEofClosesItsFd) {
     ep.Stop();
     EXPECT_EQ(closed_calls.load(), 1);  // one-shot across both report paths
     CloseFd(b);
+}
+
+namespace {
+
+// Frame() with the sync-point mark: an H.265 keyframe. The congestion gate
+// must always let these through — they are the only frames a degraded leg
+// still owes its viewer.
+Message Keyframe(std::size_t n) {
+  Message m = Frame(n);
+  m.keyframe = true;
+  return m;
+}
+
+// Policy + windows shared by the congestion-tier tests: a byte cap tight
+// enough that a flood evicts at enqueue, and a stall window far beyond any
+// test's runtime so only the tier under test moves.
+WritePolicy TightEvictionPolicy() {
+  return WritePolicy::stale_eviction(16 * 1024, std::chrono::seconds(60));
+}
+constexpr std::int64_t kFarStallNs = 60'000'000'000;
+
+}  // namespace
+
+// An EVICTING leg (congested but not stalled) degrades to keyframes-only at
+// the door: non-keyframe video is refused before any framing work, keyframes
+// still enqueue. This is the tier that protects a shared-radio producer's
+// capture path from a reader that limps along under the stall gate's radar.
+TEST(Backpressure, EvictingLegDegradesVideoToKeyframesOnly) {
+  auto [a, b] = MakeFdPair();
+  ASSERT_GE(a, 0);
+  ASSERT_GE(b, 0);
+  ShrinkBuffers(a, b);
+
+  FramedFdEndpoint tx(a, TightEvictionPolicy(), kFarStallNs,
+                      /*degrade_hold_ns=*/kFarStallNs);
+  tx.Start({}, {});
+  ASSERT_TRUE(FloodUntilLatched(tx, [&tx] { return tx.video_degraded(); }))
+      << "an evicting video outbox must latch the keyframes-only gate";
+  EXPECT_FALSE(tx.Stalled()) << "congestion tier must not require a stall";
+
+  const std::uint64_t degraded_before = tx.degrade_dropped();
+  const std::size_t pending_before = tx.pending_bytes();
+  tx.Send(Frame(512));  // non-keyframe video while degraded
+  EXPECT_EQ(tx.degrade_dropped(), degraded_before + 1);
+  EXPECT_EQ(tx.pending_bytes(), pending_before) << "refused = never enqueued";
+
+  tx.Send(Keyframe(512));  // the sync point must pass
+  EXPECT_EQ(tx.degrade_dropped(), degraded_before + 1);
+  EXPECT_GT(tx.pending_bytes(), pending_before) << "keyframes still enqueue";
+  EXPECT_TRUE(tx.video_degraded()) << "hold not expired: gate stays latched";
+
+  // The video gate touches nothing else: control, one-shot events and
+  // decimatable data all enqueue while degraded (the stall tier pins the
+  // same classes — StalledLinkShedsDecimatableKeepsControlAndEvents).
+  const std::uint64_t door_before = tx.door_dropped();
+  const std::size_t classes_pending_before = tx.pending_bytes();
+  Message ctrl;
+  ctrl.stream_id = visio_schema::kHeartbeat;
+  ctrl.payload = "CTRL-WHILE-DEGRADED";
+  Message event;
+  event.stream_id = visio_schema::kFirstDynamic + 1;
+  event.payload = "EVENT-WHILE-DEGRADED";
+  Message decim;
+  decim.stream_id = visio_schema::kFirstDynamic;
+  decim.payload = "DECIM-WHILE-DEGRADED";
+  decim.decimatable = true;
+  tx.Send(ctrl);
+  tx.Send(event);
+  tx.Send(decim);
+  EXPECT_EQ(tx.door_dropped(), door_before);
+  EXPECT_EQ(tx.degrade_dropped(), degraded_before + 1);
+  EXPECT_GT(tx.pending_bytes(), classes_pending_before);
+
+  tx.Stop();
+  CloseFd(b);
+}
+
+// Full rate resumes at the first KEYFRAME after an eviction-free hold — a
+// sync point the viewer can decode from — never mid-GOP.
+TEST(Backpressure, DegradedLegResumesFullRateAtKeyframeAfterHold) {
+  auto [a, b] = MakeFdPair();
+  ASSERT_GE(a, 0);
+  ASSERT_GE(b, 0);
+  ShrinkBuffers(a, b);
+
+  FramedFdEndpoint tx(a, TightEvictionPolicy(), kFarStallNs,
+                      /*degrade_hold_ns=*/100'000'000);
+  tx.Start({}, {});
+  ASSERT_TRUE(FloodUntilLatched(tx, [&tx] { return tx.video_degraded(); }))
+      << "an evicting video outbox must latch the keyframes-only gate";
+
+  // The reader comes back and drains the backlog; with nothing left to evict
+  // the hold runs out.
+  DrainingReader reader(b);
+  ASSERT_TRUE(WaitUntilDrained(tx, 2000));
+  std::this_thread::sleep_for(200ms);  // > degrade_hold_ns, eviction-free
+
+  // Expired hold alone must not resume: a P-frame is undecodable until the
+  // next sync point, so the gate holds until a keyframe carries it out.
+  const std::uint64_t degraded_before = tx.degrade_dropped();
+  tx.Send(Frame(512));
+  EXPECT_EQ(tx.degrade_dropped(), degraded_before + 1);
+  EXPECT_TRUE(tx.video_degraded());
+
+  tx.Send(Keyframe(512));  // first keyframe past the hold: resume here
+  EXPECT_FALSE(tx.video_degraded());
+  tx.Send(Frame(512));  // full rate again
+  EXPECT_EQ(tx.degrade_dropped(), degraded_before + 1);
+
+  reader.Stop();
+  tx.Stop();
+  CloseFd(b);
+}
+
+// A producer marks bulk frames `no_degrade` while some consumer may RECORD
+// the stream (message.hpp — e.g. the phone recording-destination lease):
+// those frames pass the keyframes-only gate untouched, so a congested leg
+// can never thin a recording, while unmarked frames on the same latched leg
+// still thin. Purely a per-frame field set by the producing process — never
+// serialized, so no remote peer can set it, and nothing goes stale.
+TEST(Backpressure, NoDegradeFramesBypassTheKeyframesOnlyGate) {
+  auto [a, b] = MakeFdPair();
+  ASSERT_GE(a, 0);
+  ASSERT_GE(b, 0);
+  ShrinkBuffers(a, b);
+
+  FramedFdEndpoint tx(a, TightEvictionPolicy(), kFarStallNs,
+                      /*degrade_hold_ns=*/kFarStallNs);
+  tx.Start({}, {});
+  ASSERT_TRUE(FloodUntilLatched(tx, [&tx] { return tx.video_degraded(); }))
+      << "an evicting video outbox must latch the keyframes-only gate";
+
+  const std::uint64_t degraded_before = tx.degrade_dropped();
+  const std::size_t pending_before = tx.pending_bytes();
+  Message rec = Frame(512);  // non-keyframe bulk, marked as recorded
+  rec.no_degrade = true;
+  tx.Send(rec);
+  EXPECT_EQ(tx.degrade_dropped(), degraded_before) << "marked frame must pass";
+  EXPECT_GT(tx.pending_bytes(), pending_before);
+  EXPECT_TRUE(tx.video_degraded()) << "the bypass must not lift the latch";
+
+  tx.Send(Frame(512));  // unmarked non-keyframe on the same leg
+  EXPECT_EQ(tx.degrade_dropped(), degraded_before + 1)
+      << "unmarked frames still thin";
+
+  tx.Stop();
+  CloseFd(b);
+}
+
+// A reopenable endpoint (the serial gadget) starts each FRESH link
+// undegraded: MarkLinkDead lifts the latch and resyncs the eviction cursor,
+// so evictions charged to the dead link can never thin the first frames of
+// the next one — a USB replug must not begin at one frame per GOP.
+TEST(Backpressure, FreshLinkAfterReopenStartsUndegraded) {
+  std::mutex mu;
+  std::vector<int> peers;
+  auto factory = [&mu, &peers]() {
+    int sv[2];
+    if (::socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) return -1;
+    ShrinkBuffers(sv[0], sv[1]);
+    std::lock_guard<std::mutex> lk(mu);
+    peers.push_back(sv[1]);
+    return sv[0];
+  };
+  FramedFdEndpoint tx(factory, TightEvictionPolicy(),
+                      /*reopen_backoff_ns=*/1'000'000, kFarStallNs,
+                      /*degrade_hold_ns=*/kFarStallNs);
+  tx.Start({}, {});
+  ASSERT_TRUE(FloodUntilLatched(tx, [&tx] { return tx.video_degraded(); }));
+
+  // A last burst races extra evictions past the I/O thread's newest sample,
+  // then the peer vanishes: MarkLinkDead must both lift the latch and adopt
+  // the final eviction count as the fresh link's baseline.
+  for (int i = 0; i < 8; ++i) tx.Send(Frame(2048));
+  {
+    std::lock_guard<std::mutex> lk(mu);
+    ASSERT_EQ(peers.size(), 1u);
+    CloseFd(peers[0]);
+  }
+  bool reopened = false;
+  for (int i = 0; i < 3000 && !reopened; ++i) {
+    std::this_thread::sleep_for(1ms);
+    std::lock_guard<std::mutex> lk(mu);
+    reopened = peers.size() >= 2;
+  }
+  ASSERT_TRUE(reopened) << "factory endpoint must self-heal";
+  int fresh_peer = -1;
+  {
+    std::lock_guard<std::mutex> lk(mu);
+    fresh_peer = peers.back();
+  }
+  DrainingReader reader(fresh_peer);
+
+  // With a draining reader and no new evictions, the fresh link must read
+  // undegraded as soon as the I/O thread has had a pass — a stale cursor
+  // would re-latch here for the full (far-future) hold and time this out.
+  bool undegraded = false;
+  for (int i = 0; i < 2000 && !undegraded; ++i) {
+    undegraded = !tx.video_degraded();
+    if (!undegraded) std::this_thread::sleep_for(1ms);
+  }
+  EXPECT_TRUE(undegraded) << "a fresh link must not inherit the dead link's "
+                             "congestion latch";
+  const std::uint64_t before = tx.degrade_dropped();
+  tx.Send(Frame(512));
+  EXPECT_EQ(tx.degrade_dropped(), before);
+
+  reader.Stop();
+  tx.Stop();
+}
+// RequestVideoDegrade pre-arms the latch (endpoint.hpp): a connection made
+// while the owner knows the leg's conditions are wedged starts keyframes-only
+// from its very first frame — no burst window while the gate re-learns the
+// congestion — and earns full rate back through the normal hold+keyframe path.
+TEST(Backpressure, PreArmedEndpointStartsKeyframesOnlyAndRecovers) {
+  auto [a, b] = MakeFdPair();
+  ASSERT_GE(a, 0);
+  ASSERT_GE(b, 0);
+  ShrinkBuffers(a, b);
+
+  FramedFdEndpoint tx(a, TightEvictionPolicy(), kFarStallNs,
+                      /*degrade_hold_ns=*/100'000'000);
+  tx.RequestVideoDegrade();  // owner saw the previous link wedge
+  tx.Start({}, {});
+  DrainingReader reader(b);  // this reader is healthy: no evictions follow
+
+  EXPECT_TRUE(tx.video_degraded());
+  const std::size_t pending_before = tx.pending_bytes();
+  tx.Send(Frame(512));  // the very first frame is already thinned
+  EXPECT_EQ(tx.degrade_dropped(), 1u);
+  EXPECT_EQ(tx.pending_bytes(), pending_before);
+
+  std::this_thread::sleep_for(200ms);  // > hold, eviction-free on a healthy leg
+  tx.Send(Keyframe(512));              // resume at the sync point
+  EXPECT_FALSE(tx.video_degraded());
+  tx.Send(Frame(512));
+  EXPECT_EQ(tx.degrade_dropped(), 1u);
+
+  reader.Stop();
+  tx.Stop();
+}
+
+// The pre-armed latch is the SAME gate as the eviction-armed one: keyframes
+// pass without lifting it, and no_degrade frames (a recording client
+// reconnecting during churn — exactly who on_accept pre-arms) are never
+// thinned. Pins the only thing standing between the carry-over feature and a
+// thinned recording; a refactor giving pre-arm its own mechanism must fail
+// here. degrade_dropped() is the "passed" signal — pending_bytes() drains
+// asynchronously against a live reader and would race.
+TEST(Backpressure, PreArmedGateStillPassesKeyframesAndNoDegradeFrames) {
+  auto [a, b] = MakeFdPair();
+  ASSERT_GE(a, 0);
+  ASSERT_GE(b, 0);
+  ShrinkBuffers(a, b);
+
+  FramedFdEndpoint tx(a, TightEvictionPolicy(), kFarStallNs,
+                      /*degrade_hold_ns=*/kFarStallNs);  // expiry can't race
+  tx.RequestVideoDegrade();
+  tx.Start({}, {});
+  DrainingReader reader(b);
+
+  tx.Send(Keyframe(512));
+  EXPECT_EQ(tx.degrade_dropped(), 0u) << "keyframe passes while pre-armed";
+  EXPECT_TRUE(tx.video_degraded()) << "...without lifting the latch";
+
+  Message rec = Frame(512);
+  rec.no_degrade = true;
+  tx.Send(rec);  // the reconnecting recorder's frame
+  EXPECT_EQ(tx.degrade_dropped(), 0u) << "never thinned, even pre-armed";
+
+  tx.Send(Frame(512));  // unmarked viewer frame
+  EXPECT_EQ(tx.degrade_dropped(), 1u) << "unmarked frames still thin";
+
+  reader.Stop();
+  tx.Stop();
+}
+
+// ── the counter the serial watchdog's whole decision rests on ──────────────
+// SerialWatchdog asks "has a host actually read anything" and gets its answer
+// from accepted_total(). Nothing asserted that counter behaves, so a refactor
+// that stopped it advancing would leave every watchdog test green while the
+// board silently never recovered a stale /dev/ttyGS0 -- the inverse failure of
+// the reopen storm, and invisible. accepted_total() is protected because
+// SerialEndpoint::Tick is its only consumer, so reach it as a subclass does.
+class ProbeEndpoint : public FramedFdEndpoint {
+ public:
+  using FramedFdEndpoint::FramedFdEndpoint;
+  std::uint64_t accepted() const { return accepted_total(); }
+};
+
+TEST(Backpressure, AcceptedTotalCountsBytesTheFdTook) {
+  auto [a, b] = MakeFdPair();
+  ASSERT_GE(a, 0);
+  ASSERT_GE(b, 0);
+
+  std::atomic<bool> stop{false};
+  std::thread reader([b = b, &stop] {
+    std::uint8_t buf[4096];
+    while (!stop.load()) {
+      long n = ReadSome(b, buf, sizeof(buf));
+      if (n < 0) break;
+      if (n == 0) std::this_thread::sleep_for(1ms);
+    }
+  });
+
+  ProbeEndpoint tx(a, WritePolicy::drop_oldest(1024));
+  EXPECT_EQ(tx.accepted(), 0u) << "nothing sent yet";
+  tx.Start({}, {});
+  const Message m = Frame(512);
+  for (int i = 0; i < 200; ++i) tx.Send(m);
+
+  ASSERT_TRUE(WaitUntilDrained(tx, 500));
+  EXPECT_GE(tx.accepted(), 200u * 512u)
+      << "the fd took the flood but the counter did not move";
+
+  tx.Stop();
+  stop.store(true);
+  CloseFd(b);
+  reader.join();
 }

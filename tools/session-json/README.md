@@ -72,9 +72,16 @@ older than the in-MCAP metadata, whose sessions still have their sidecar
 Fields the device didn't record (no GPS fix, no task typed in) come back as the same
 blanks the sidecar always carried: `""`, `0`, `0.0000000`.
 
-Fields that came *later* than the frozen layout — `operator_id`, `environment_id` —
-are written at the end, so a session from before they existed rebuilds to the old
-file plus two blank keys. Everything ahead of them is unchanged.
+Fields that came *later* than the frozen layout — `operator_id`, `environment_id`,
+`recording_key_fingerprint` — are written at the end, so a session from before they
+existed rebuilds to the old file plus those blank keys. Everything ahead of them is
+unchanged.
+
+`recording_key_fingerprint` names the key that opens the session's parts, and is
+empty when they are plaintext. There is deliberately no separate `encrypted` flag:
+two fields could disagree and nothing would say which wins. The value is
+`SHA-256(key)[:8]` — it identifies the key, it cannot decrypt anything, and the same
+bytes already sit in each part's `VREC` header.
 
 **GPS coordinates lose their last digit.** The sidecar wrote latitude and longitude
 with 7 decimals; the firmware embeds them in the MCAP with 6. A session recorded at

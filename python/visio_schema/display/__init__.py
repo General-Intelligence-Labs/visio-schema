@@ -97,6 +97,10 @@ from visio_schema import (
     make_channel,
     read_mcap,
 )
+
+# Reconnect-tolerant registry for the relay-multiplex consumer (TCP :50002 viewer
+# + foxglove bridge). A viewer-side policy, so it lives here in display/.
+from visio_schema.display.relay_registry import RelayRegistry
 from visio_schema.foxglove.CompressedImage_pb2 import CompressedImage
 from visio_schema.foxglove.CompressedVideo_pb2 import CompressedVideo
 from visio_schema.foxglove.FrameTransform_pb2 import FrameTransform
@@ -110,10 +114,6 @@ from visio_schema.v1.sensor.system_health_pb2 import SystemHealth
 # Control stream id for DeviceInfo announces — so this tool can surface them on
 # the well-known /device_info channel (see _resolved_with_device_info).
 from visio_schema.wire.control import DEVICE_INFO as _DEVICE_INFO
-
-# Reconnect-tolerant registry for the relay-multiplex consumer (TCP :50002 viewer
-# + foxglove bridge). A viewer-side policy, so it lives here in display/.
-from visio_schema.display.relay_registry import RelayRegistry
 
 # Payload schema names dispatched on (== the protobuf full names on the wire).
 _QUAT_SCHEMA = "visio_schema.v1.ros.geometry_msgs.Quaternion"
@@ -619,7 +619,7 @@ def _make_decoder(av, codec: str):
             dec = av.CodecContext.create(codec, "r", hwaccel=hw)
         except Exception:      # GPU device couldn't be created — try the next backend / software
             continue
-        if dec.is_hwaccel:                     # same PyAV (12+) that has HWAccel has this
+        if dec.is_hwaccel:                     # `av.codec.hwaccel` implies this (av >= 14.2)
             return dec, True
     dec = av.CodecContext.create(codec, "r")
     dec.thread_count = 0
@@ -1056,8 +1056,7 @@ def run_bridge(
     if derive_scene:
         # Device-specific scene twins live in display (viewer policy), lazily
         # imported so the base bridge carries no hard dep on them.
-        from visio_schema.display.scene_derivers import (
-            HandSkeletonDeriver, TactileSceneDeriver)
+        from visio_schema.display.scene_derivers import HandSkeletonDeriver, TactileSceneDeriver
         scene = [TactileSceneDeriver(), HandSkeletonDeriver()]
     n = 0
 
@@ -1103,6 +1102,17 @@ def main(argv: list[str] | None = None) -> int:
                      help="run the device-picker launcher: discover connected devices "
                           "(serial / local AP / Wi-Fi), pick one in the browser, and open "
                           "it in Foxglove")
+    # Encrypted recordings. Deliberately NOT under the source group: a key is
+    # a modifier on whichever source is replaying, and --serve needs one too.
+    p.add_argument("--key", metavar="HEX",
+                   help="recording key for an encrypted (VREC) file, 64 hex "
+                        "chars. Prefer --key-file: an argument is visible in "
+                        "`ps` to every user on the machine")
+    p.add_argument("--key-file", metavar="PATH",
+                   help="file holding the recording key as 64 hex chars. "
+                        "Without either, the key is looked up in "
+                        "$VISIO_RECORDING_KEY, $VISIO_RECORDING_KEY_FILE, then "
+                        "~/.config/visio/recording-keys.json")
     p.add_argument("--baud", type=int, default=921600, help="serial baud (default 921600)")
     p.add_argument("--out", metavar="OUT.mcap", help="also record messages to an MCAP file")
     p.add_argument("--foxglove", action="store_true", help="serve live to Foxglove Studio")
@@ -1127,6 +1137,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--rerun-memory", metavar="LIMIT", default="2GB",
                    help="Rerun viewer memory cap; old data drops past it (default 2GB)")
     args = p.parse_args(argv)
+
+    # Publish the key into the SAME resolution chain open_recording already
+    # consults, instead of threading it through _replay, every sink and the
+    # --serve launcher. One place, and it reaches paths that open a file we
+    # never see. Explicit flags win over an inherited environment.
+    if args.key and args.key_file:
+        p.error("--key and --key-file are mutually exclusive")
+    if args.key:
+        os.environ["VISIO_RECORDING_KEY"] = args.key
+    elif args.key_file:
+        os.environ["VISIO_RECORDING_KEY_FILE"] = args.key_file
 
     # --serve is a persistent launcher, not a one-shot pipe: it discovers devices
     # and starts/stops per-device bridges itself. Dispatch before the one-shot

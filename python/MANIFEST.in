@@ -10,6 +10,9 @@ include README.md
 global-include *.pyi
 include visio_schema/py.typed
 include visio_schema/display/ego_layout.json
+# The published fleet public key — this is what lets a customer seal a
+# settings QR straight out of `pip install visio-schema`.
+include visio_schema/crypto/fleet_key.pem
 recursive-include visio_schema/display/static *
 
 # Native `_creader` extension sources (sdist; not needed in a built wheel).
