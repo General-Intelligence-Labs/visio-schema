@@ -794,7 +794,7 @@ class Session:
         for members, origin in zip(self._streams, self._stream_origin, strict=True):
             files = tuple(
                 FileSummary(
-                    path=self._files[i].name,
+                    path=str(self._files[i]),
                     size=self._files[i].stat().st_size,
                     status="truncated" if self._index[i].truncated else "ok",
                     messages=sum(self._index[i].counts.values()),

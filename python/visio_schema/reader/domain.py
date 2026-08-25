@@ -370,7 +370,7 @@ class FileSummary:
     reaches here — the reader refuses it outright.
     """
 
-    path: str  # basename
+    path: str  # the file's path, as the reader opened it
     size: int  # bytes on disk
     status: Literal["ok", "truncated"]
     messages: int  # total across channels

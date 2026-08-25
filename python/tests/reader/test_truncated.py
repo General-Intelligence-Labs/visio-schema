@@ -351,3 +351,16 @@ def test_require_index_message_distinguishes_the_two_causes(tmp_path):
     with pytest.raises(ValueError, match="written without an index") as exc:
         Session(unindexed_mcap(tmp_path / "nosum.mcap"), require_index=True)
     assert "the file is truncated" not in str(exc.value)
+
+
+def test_stream_summaries_marks_a_truncated_file(rec):
+    """A tail-truncated file in the inventory: status `truncated`, and
+    `metadata_names` is None — there is no summary to read the names from."""
+    b = rec()
+    b.add_camera("/ego/camera/0", indexed_frames(8))
+    b.write()
+    _chop_tail(b.path)
+    f = Session([b.path]).stream_summaries()[0].files[0]
+    assert f.status == "truncated"
+    assert f.metadata_names is None
+    assert f.messages == 8  # the recovered prefix

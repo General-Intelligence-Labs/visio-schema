@@ -305,3 +305,20 @@ def test_require_index_leaves_a_healthy_recording_alone(tmp_path):
     assert [
         t.topic for t in Session(b.write(), require_index=True).topics()
     ] == ["/cam/0"]
+
+
+def test_stream_summaries_describes_each_input_file(tmp_path):
+    """Per-stream inventory from the parsed summaries: one stream per positional,
+    each file's size/status/count and the metadata-record names it carries."""
+    rec = RecBuilder(tmp_path / "rec.mcap", capture={"session_name": "s1"})
+    rec.add_camera("/ego/camera/0", indexed_frames(5)).write()
+    side = RecBuilder(tmp_path / "side.mcap")
+    side.add_camera("/ego/camera/0", indexed_frames(5)).write()
+
+    ss = Session(rec.path, side.path).stream_summaries()
+    assert [s.origin for s in ss] == [0, 1]
+    f = ss[0].files[0]
+    assert f.path == str(rec.path) and f.size > 0
+    assert f.status == "ok" and f.messages == 5
+    assert "visio.capture" in f.metadata_names  # cheap, from the summary index
+    assert "visio.capture" not in ss[1].files[0].metadata_names
