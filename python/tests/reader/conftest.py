@@ -10,11 +10,19 @@ from __future__ import annotations
 # absent optional dependency.
 import importlib.util as _iu
 
-if any(_iu.find_spec(p) is None for p in ("scipy", "av")):
-    collect_ignore_glob = ["*.py"]
-
 import pytest
-from _helpers import RecBuilder, indexed_frames, stereo_calib_builder
+
+_MISSING = [p for p in ("scipy", "av") if _iu.find_spec(p) is None]
+if _MISSING:
+    collect_ignore_glob = ["*.py"]
+else:
+    # Guarded, because collect_ignore_glob only spares the TEST files — this
+    # conftest still executes. An unconditional `from _helpers import ...` here
+    # imports scipy and raises during conftest collection, before the ignore can
+    # apply, which is exactly the failure the guard above was written to
+    # prevent. The fixtures below name these at CALL time, and they are never
+    # called when the suite is ignored.
+    from _helpers import RecBuilder, indexed_frames, stereo_calib_builder
 
 
 @pytest.fixture
