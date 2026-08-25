@@ -740,3 +740,47 @@ TEST(Backpressure, PreArmedGateStillPassesKeyframesAndNoDegradeFrames) {
   reader.Stop();
   tx.Stop();
 }
+
+// ── the counter the serial watchdog's whole decision rests on ──────────────
+// SerialWatchdog asks "has a host actually read anything" and gets its answer
+// from accepted_total(). Nothing asserted that counter behaves, so a refactor
+// that stopped it advancing would leave every watchdog test green while the
+// board silently never recovered a stale /dev/ttyGS0 -- the inverse failure of
+// the reopen storm, and invisible. accepted_total() is protected because
+// SerialEndpoint::Tick is its only consumer, so reach it as a subclass does.
+class ProbeEndpoint : public FramedFdEndpoint {
+ public:
+  using FramedFdEndpoint::FramedFdEndpoint;
+  std::uint64_t accepted() const { return accepted_total(); }
+};
+
+TEST(Backpressure, AcceptedTotalCountsBytesTheFdTook) {
+  auto [a, b] = MakeFdPair();
+  ASSERT_GE(a, 0);
+  ASSERT_GE(b, 0);
+
+  std::atomic<bool> stop{false};
+  std::thread reader([b = b, &stop] {
+    std::uint8_t buf[4096];
+    while (!stop.load()) {
+      long n = ReadSome(b, buf, sizeof(buf));
+      if (n < 0) break;
+      if (n == 0) std::this_thread::sleep_for(1ms);
+    }
+  });
+
+  ProbeEndpoint tx(a, WritePolicy::drop_oldest(1024));
+  EXPECT_EQ(tx.accepted(), 0u) << "nothing sent yet";
+  tx.Start({}, {});
+  const Message m = Frame(512);
+  for (int i = 0; i < 200; ++i) tx.Send(m);
+
+  ASSERT_TRUE(WaitUntilDrained(tx, 500));
+  EXPECT_GE(tx.accepted(), 200u * 512u)
+      << "the fd took the flood but the counter did not move";
+
+  tx.Stop();
+  stop.store(true);
+  CloseFd(b);
+  reader.join();
+}
