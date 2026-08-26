@@ -357,6 +357,42 @@ class SessionMeta:
         return self.end_ns - self.start_ns
 
 
+@dataclass(frozen=True)
+class FileSummary:
+    """One input file, from its MCAP summary alone (no message scan).
+
+    Purely descriptive — *what was read*, not *what it means*: ``metadata_names``
+    lists the metadata-record names the file carries (e.g. ``visio.capture``,
+    or a producer's own record) without interpreting any of them, so a consumer
+    decides for itself which it cares about. ``status`` is ``ok`` for a file with
+    an intact summary and ``truncated`` for one indexed by the tolerant linear
+    scan (a tail-truncated recording); a file with no readable magic never
+    reaches here — the reader refuses it outright.
+    """
+
+    path: str  # the file's path, as the reader opened it
+    size: int  # bytes on disk
+    status: Literal["ok", "truncated"]
+    messages: int  # total across channels
+    start_ns: Ns | None
+    end_ns: Ns | None
+    metadata_names: tuple[str, ...] | None  # None when scanned (truncated)
+
+
+@dataclass(frozen=True)
+class StreamSummary:
+    """One input stream's files, in read order, plus which positional it was.
+
+    ``origin`` is the stream's index into the ``Session`` constructor's
+    positional streams, surviving the empty-stream filter — so a caller that
+    knows its own ``open(recording, *sidecars)`` convention can label the streams
+    (that labelling is the caller's business, not the reader's).
+    """
+
+    origin: int
+    files: tuple[FileSummary, ...]
+
+
 # How one key's value in a group was obtained. The distinction IS the point: a
 # consumer that cannot tell an interpolated pose from a 400 ms-stale held one has
 # no way to gate on it.

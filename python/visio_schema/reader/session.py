@@ -72,12 +72,14 @@ from .domain import (
     Calibration,
     CameraCalib,
     Element,
+    FileSummary,
     Frame,
     FrameExposure,
     KeyframeCadence,
     Ns,
     Record,
     SessionMeta,
+    StreamSummary,
     TopicInfo,
     make_T,
 )
@@ -304,6 +306,11 @@ class _FileIndex:
         # schema inline.
         self.schema_rec: dict[str, object] = {}
         self.truncated = False
+        # The metadata-record NAMES this file carries, read for free off the
+        # summary's metadata index — descriptive only, no interpretation. None
+        # when the file was indexed by scan (truncated/summary-less): the names
+        # were not determined, and a consumer that needs them reads the file.
+        self.metadata_names: tuple[str, ...] | None = None
         with open(path, "rb") as f:
             # `make_reader` OUTSIDE the try: it checks the head magic, and a file
             # that fails there is not a truncated recording — it is not an MCAP
@@ -352,6 +359,7 @@ class _FileIndex:
                 raise ValueError(f"{path}: no MCAP summary — {why}")
             self._scan()
             return
+        self.metadata_names = tuple(mi.name for mi in summary.metadata_indexes)
         schemas = {sid: s.name for sid, s in summary.schemas.items()}
         self.schema_rec = {s.name: s for s in summary.schemas.values()}
         for cid, c in summary.channels.items():
@@ -448,11 +456,16 @@ class Session:
         `topics()` mean exactly one thing: a channel referencing a schema the
         summary does not define.
         """
-        groups = [
+        groups_raw = [
             _expand_sources([s] if isinstance(s, str | Path) else s)
             for s in streams
         ]
-        groups = [g for g in groups if g]
+        # Which original positional each surviving stream came from — the
+        # empty-stream filter below compacts indices, so `stream_summaries` (and
+        # any caller that labels streams by position) cannot otherwise recover
+        # that an empty leading arg slid the next stream into slot 0.
+        stream_origin = [i for i, g in enumerate(groups_raw) if g]
+        groups = [g for g in groups_raw if g]
         if not groups:
             raise ValueError("Session: no .mcap files found in sources")
         flat: list[Path] = []
@@ -472,6 +485,7 @@ class Session:
         self._streams = [
             [i for i, o in enumerate(owner) if o == sid] for sid in range(len(groups))
         ]
+        self._stream_origin = stream_origin
         # Files whose summary never made it to disk; every read of one goes
         # through the linear tolerant path (`_read_messages`).
         self._truncated = frozenset(
@@ -763,6 +777,35 @@ class Session:
                   "read. Pass one sidecar at a time."
             )
         return hits[0] if hits else None
+
+    def stream_summaries(self) -> list[StreamSummary]:
+        """Per-stream inventory of the files this session read — descriptive
+        only, from the summaries already parsed at construction (no extra I/O,
+        no message scan, no interpretation).
+
+        One `StreamSummary` per input stream, in constructor order; within each,
+        the files in read order (by first-message time). Each `FileSummary`
+        carries the file's size/status/message-count/time-bounds and the
+        metadata-record NAMES it holds — enough for a caller to fingerprint the
+        inputs or decide which files' metadata it wants to read, without this
+        layer knowing what any of it means.
+        """
+        out: list[StreamSummary] = []
+        for members, origin in zip(self._streams, self._stream_origin, strict=True):
+            files = tuple(
+                FileSummary(
+                    path=str(self._files[i]),
+                    size=self._files[i].stat().st_size,
+                    status="truncated" if self._index[i].truncated else "ok",
+                    messages=sum(self._index[i].counts.values()),
+                    start_ns=self._index[i].start_ns,
+                    end_ns=self._index[i].end_ns,
+                    metadata_names=self._index[i].metadata_names,
+                )
+                for i in members
+            )
+            out.append(StreamSummary(origin=origin, files=files))
+        return out
 
     # --- per-frame exposure (frame_info), attached to every Frame ------- #
     def _exposure_tracks(self) -> dict[str, _ExposureTrack]:
