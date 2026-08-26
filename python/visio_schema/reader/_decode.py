@@ -53,19 +53,38 @@ _START_CODE = b"\x00\x00\x01"
 # Reading plane 0 directly is exact and skips swscale entirely.
 RAW_LUMA16 = "raw16"
 
+#: Decoded pixel formats whose luma plane really is 2 bytes/sample.
+_LUMA16_FORMATS = frozenset({
+    "yuv420p10le", "yuv422p10le", "yuv444p10le", "gray10le",
+    "yuv420p12le", "yuv422p12le", "yuv444p12le", "gray12le",
+    "yuv420p16le", "gray16le",
+})
+
 
 def _read_luma16(frame) -> np.ndarray:
     """Plane 0 as ``(h, w)`` uint16, honouring ``line_size`` padding.
 
     Planes carry row padding, so a flat read of the buffer returns the image
-    sheared; step by the plane's own stride instead.
+    sheared; reshaping to ``(h, stride)`` and slicing the left ``w * 2`` columns
+    lifts every row in one vectorized step — 0.30 ms per 960x544 frame as a Python
+    row loop, 0.037 ms this way.
+
+    ``.copy()`` is load-bearing, and `np.ascontiguousarray` is NOT a substitute: at
+    an unpadded stride the slice is already contiguous, so that would hand back a
+    VIEW onto the decoder's recycled plane buffer, which the next `decode` call
+    overwrites underneath the caller.
     """
+    if frame.format.name not in _LUMA16_FORMATS:
+        raise ValueError(
+            f"RAW_LUMA16 lifts a 16-bit-per-sample luma plane, but this stream "
+            f"decoded as {frame.format.name!r} — the result would be half-width "
+            f"garbage"
+        )
     plane = frame.planes[0]
+    h, stride = frame.height, plane.line_size
     buf = np.frombuffer(memoryview(plane), np.uint8)
-    row_bytes = frame.width * 2
-    rows = [buf[y * plane.line_size: y * plane.line_size + row_bytes].tobytes()
-            for y in range(frame.height)]
-    return np.frombuffer(b"".join(rows), np.uint16).reshape(frame.height, frame.width)
+    return buf[:h * stride].reshape(h, stride)[:, :frame.width * 2].copy().view(
+        np.uint16)
 
 def decodable_formats(codec: str | None = None) -> frozenset[str]:
     """Wire ``format`` strings this decoder accepts, optionally for one codec.

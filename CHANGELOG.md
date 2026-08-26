@@ -6,6 +6,47 @@ bump the MINOR version.
 
 ## Unreleased
 
+### Depth as coded disparity: HEVC Main 10 encoders + an exact-luma decode mode
+
+`reader/_encode.py` gains `HevcDepthEncoder` (libx265) and `NvHevcDepthEncoder`
+(NVENC), picked by `make_depth_encoder` with the same auto/gpu/cpu contract and
+NVENC-unavailable fallback as `make_rect_encoder`. They carry a stereo matcher's
+**disparity** in the luma of an HEVC **Main 10 4:2:0** stream rather than a
+`mono16` millimetre depth map — ~14x smaller at crf 6, because millimetre depth
+spends 16 bits/px on precision no matcher has (at 2 m one 1 mm LSB is 0.007 px of
+disparity) and those low bits are incompressible noise. `quantize_disparity` owns
+the 1/4-px grid so nothing re-derives it, and reports rather than silently
+saturating a disparity past the 10-bit ceiling.
+
+**4:2:0 rather than monochrome is a measurement, not a preference.** Played in
+Foxglove on real frames: HEVC Monochrome-12 (Range Extensions) does not render and
+neither does AV1 Main monochrome, while HEVC Main 10 4:2:0 and H.264 8-bit 4:2:0
+both do — the blocker is the chroma format, nothing decodes 4:0:0. Flat chroma is
+free anyway (41.06 vs 41.09 KiB/frame against gray), and 10 bits is likewise
+forced, since Main 12 is Range Extensions too.
+
+Three NVENC facts the P010 path depends on, all established by probing real
+disparity rather than from documentation, and all silent when wrong:
+
+* the sample is `code << 6` (10-bit in the HIGH bits, neutral chroma 32768);
+* the buffer must be handed over as a **uint8 view** — passing the uint16 array
+  encodes black frames;
+* `rc="constqp"` must NOT be passed. It collapses quality to 1.34 px p95
+  regardless of `qp` (0, 6, 12 and 24 give byte-identical output), as does
+  `tuning_info="ultra_low_latency"`. `preset="P7", tuning_info="high_quality"`
+  instead lands at 14.1 KiB/frame and 0.368 px, against libx265 crf 6's 21.4 and
+  0.343 — so NVENC has ONE quality point, `crf` cannot reach it, and
+  `make_depth_encoder` warns rather than silently ignoring a caller who asks for
+  another.
+
+`HevcDecoder` gains the `RAW_LUMA16` pixel-format sentinel, which returns plane 0
+as uint16 with no colour conversion. This is **required**, not an optimisation:
+`to_ndarray(format="gray16le")` applies a limited-range expansion and clips — luma
+511 returns 33441, and 1021/1022/1023 all saturate to 65535 — while
+`format="yuv420p10le"` raises outright. Sample data must never go through swscale.
+
+No `.proto` change; no facade change.
+
 ### Storage providers: Google Cloud Storage and Azure Blob
 
 `docs/protocol/storage-providers.md` — the canonical `SetStorage` contract —

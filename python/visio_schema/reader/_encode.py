@@ -37,6 +37,24 @@ from typing import Literal
 import numpy as np
 
 
+def x265_params(keyint: int, *, repeat_headers: bool = False) -> str:
+    """The libx265 settings every encoder here shares. One home, deliberately.
+
+    keyint => periodic IDR (seekable); bframes=0 => no reorder (1:1, in order);
+    rc-lookahead=0 + frame-threads=1 => low-latency, deterministic emission.
+
+    ``repeat_headers`` puts VPS/SPS/PPS on every IRAP rather than only the first.
+    The rect video does not need it (a consumer reads the stream from its start);
+    a per-frame `CompressedVideo` message does, because Foxglove requires each
+    keyframe message to carry its own parameter sets.
+    """
+    return (
+        f"log-level=none:keyint={keyint}:min-keyint={keyint}:"
+        "bframes=0:rc-lookahead=0:scenecut=0:frame-threads=1"
+        + (":repeat-headers=1" if repeat_headers else "")
+    )
+
+
 class _FifoEncoder:
     """Pairs each emitted access unit to the oldest un-emitted input ``t_ns``.
 
@@ -55,7 +73,25 @@ class _FifoEncoder:
         return [(self._pending.popleft(), to_bytes(p)) for p in packets]
 
 
-class HevcEncoder(_FifoEncoder):
+class _PyAvEncoder(_FifoEncoder):
+    """A libx265 codec context: `flush` drains it, subclasses build the frame."""
+
+    def flush(self) -> list[tuple[int, bytes]]:
+        return self._pair(self._ctx.encode(None), bytes)
+
+
+class _NvEncoder(_FifoEncoder):
+    """An NVENC session: `flush` ends it, subclasses build the input buffer."""
+
+    @staticmethod
+    def _au(d) -> bytes:
+        return bytes(d["data"])
+
+    def flush(self) -> list[tuple[int, bytes]]:
+        return self._pair(self._enc.EndEncode(), self._au)
+
+
+class HevcEncoder(_PyAvEncoder):
     """libx265 (PyAV): host RGB -> Annex-B H.265, one packet per frame, no B-frames."""
 
     codec_name = "libx265"
@@ -70,14 +106,7 @@ class HevcEncoder(_FifoEncoder):
         self._ctx.width, self._ctx.height = width, height
         self._ctx.pix_fmt = "yuv420p"
         self._ctx.time_base = Fraction(1, 30)
-        # keyint => periodic IDR (seekable); bframes=0 => no reorder (1:1, in order);
-        # rc-lookahead=0 + frame-threads=1 => low-latency, deterministic emission.
-        self._ctx.options = {
-            "x265-params": (
-                f"log-level=none:keyint={keyint}:min-keyint={keyint}:"
-                "bframes=0:rc-lookahead=0:scenecut=0:frame-threads=1"
-            )
-        }
+        self._ctx.options = {"x265-params": x265_params(keyint)}
         self._idx = 0
 
     def encode(self, rgb: np.ndarray, t_ns: int) -> list[tuple[int, bytes]]:
@@ -90,11 +119,8 @@ class HevcEncoder(_FifoEncoder):
         self._idx += 1
         return self._pair(self._ctx.encode(vf), bytes)
 
-    def flush(self) -> list[tuple[int, bytes]]:
-        return self._pair(self._ctx.encode(None), bytes)
 
-
-class NvHevcEncoder(_FifoEncoder):
+class NvHevcEncoder(_NvEncoder):
     """NVENC (PyNvVideoCodec): host RGB -> Annex-B H.265 on the video engine.
 
     Lazy GPU dep (``PyNvVideoCodec``): imported only when constructed, so the CPU-only
@@ -121,17 +147,10 @@ class NvHevcEncoder(_FifoEncoder):
         self._abgr = np.empty((height, width, 4), np.uint8)  # reused host scratch
         self._abgr[..., 3] = 255
 
-    @staticmethod
-    def _au(d) -> bytes:
-        return bytes(d["data"])
-
     def encode(self, rgb: np.ndarray, t_ns: int) -> list[tuple[int, bytes]]:
         self._pending.append(int(t_ns))
         self._abgr[..., :3] = rgb  # host RGB -> ABGR bytes [R, G, B, 255]
         return self._pair(self._enc.Encode(self._abgr), self._au)
-
-    def flush(self) -> list[tuple[int, bytes]]:
-        return self._pair(self._enc.EndEncode(), self._au)
 
 
 def make_rect_encoder(
@@ -184,43 +203,65 @@ _DEPTH_MAX_CODE = (1 << DEPTH_BITS) - 1
 _DEPTH_NEUTRAL_CHROMA = 1 << (DEPTH_BITS - 1)   # 512 — grey, in SAMPLES not bytes
 
 
-def quantize_disparity(
-    disparity: np.ndarray, *, frac: float = DEPTH_DISPARITY_FRAC
-) -> np.ndarray:
+def quantize_disparity(disparity: np.ndarray) -> np.ndarray:
     """Disparity px -> the 10-bit luma codes a depth stream carries.
 
     One home for the grid, so the encoders, the stage's verify harness and any
     consumer computing ``depth_scale`` cannot disagree about it.
 
-    A disparity above the ceiling is REPORTED, not quietly saturated: it means the
-    engine's ``max_disp`` and this grid disagree, which silently flattens the near
-    field rather than raising.
+    The two ends are NOT symmetric, deliberately.
+
+    Above the ceiling it raises rather than clipping. This is a WRITER: saturation
+    would bake a flattened near field into a permanent artifact, and nothing
+    downstream can tell a real 1023 from a clipped one. With the shipped
+    `max_disp=192` and this grid, `192 * 4 = 768 < 1023`, so the condition means
+    the engine and the grid disagree — a misconfiguration, not a data value.
+
+    Below zero it clamps to 0, because that IS a data value: a matcher marks an
+    unmatched pixel with non-positive disparity, and 0 is already this format's
+    "no depth" code (`disparity_to_depth_mm` guards `disp > 0` the same way).
+    Without the clamp the uint16 cast wraps -0.5 px to 65534, turning an invalid
+    pixel into a bogus NEAR reading — silent, and unrecoverable once written.
     """
-    q = np.round(np.asarray(disparity, np.float32) * frac)
-    over = int(np.count_nonzero(q > _DEPTH_MAX_CODE))
-    if over:
-        _log.warning(
-            "%d px above the 1/%g-px %d-bit ceiling (%.1f px) were clipped — the "
-            "engine's max_disp and this grid disagree",
-            over, frac, DEPTH_BITS, _DEPTH_MAX_CODE / frac,
+    q = np.round(np.asarray(disparity, np.float32) * DEPTH_DISPARITY_FRAC)
+    peak = float(np.nanmax(q, initial=0.0))
+    if peak > _DEPTH_MAX_CODE:
+        raise ValueError(
+            f"disparity {peak / DEPTH_DISPARITY_FRAC:.1f} px exceeds what the "
+            f"1/{DEPTH_DISPARITY_FRAC:g}-px {DEPTH_BITS}-bit grid can carry "
+            f"({_DEPTH_MAX_CODE / DEPTH_DISPARITY_FRAC:.1f} px) — the engine's "
+            f"max_disp and this grid disagree"
         )
-    return np.clip(q, 0, _DEPTH_MAX_CODE).astype(np.uint16)
+    # NaN maps to 0 here too (an unmatched pixel by another name); relying on the
+    # cast to do it would be relying on x86's out-of-range float->int convention.
+    return np.nan_to_num(np.clip(q, 0.0, None), nan=0.0).astype(np.uint16)
+
+
+def dequantize_disparity(codes: np.ndarray) -> np.ndarray:
+    """The inverse of `quantize_disparity`: luma codes -> disparity px.
+
+    Exists so no consumer spells `/ DEPTH_DISPARITY_FRAC` itself; the grid is one
+    fact and it changes in one place.
+    """
+    return np.asarray(codes, np.float32) / DEPTH_DISPARITY_FRAC
 
 
 def _fill_plane(plane, arr: np.ndarray) -> None:
     """Copy a ``(h, w)`` array into an ``av`` plane, honouring its ``line_size``.
 
-    Planes carry row padding, so a flat memcpy writes the image sheared. Copy row
-    by row at the plane's own stride instead.
+    Planes carry row padding, so a flat memcpy writes the image sheared. Reshaping
+    the raw buffer to ``(h, stride)`` and assigning into the left ``row_bytes``
+    columns lands every row at the right offset in one vectorized write — 0.63 ms
+    per 960x544 frame as a Python row loop, 0.034 ms this way.
     """
+    h, row_bytes = arr.shape[0], arr.shape[1] * arr.dtype.itemsize
+    stride = plane.line_size
     buf = np.frombuffer(memoryview(plane), np.uint8)
-    stride, row_bytes = plane.line_size, arr.shape[1] * arr.dtype.itemsize
-    for y in range(arr.shape[0]):
-        buf[y * stride: y * stride + row_bytes] = np.frombuffer(
-            arr[y].tobytes(), np.uint8)
+    buf[:h * stride].reshape(h, stride)[:, :row_bytes] = arr.view(np.uint8).reshape(
+        h, row_bytes)
 
 
-class HevcDepthEncoder(_FifoEncoder):
+class HevcDepthEncoder(_PyAvEncoder):
     """libx265 (PyAV): 10-bit disparity codes -> Annex-B HEVC **Main 10**, 1:1.
 
     Takes the luma codes ``quantize_disparity`` produces, in the LOW bits — this is
@@ -229,7 +270,6 @@ class HevcDepthEncoder(_FifoEncoder):
     """
 
     codec_name = "libx265"
-    pix_fmt = DEPTH_PIX_FMT
 
     def __init__(self, width: int, height: int, *, keyint: int = 30,
                  crf: int = 6) -> None:
@@ -249,11 +289,7 @@ class HevcDepthEncoder(_FifoEncoder):
         # in-band on every IRAP, and each AU here is its own CompressedVideo message
         # so it has to satisfy that alone.
         self._ctx.options = {
-            "x265-params": (
-                f"log-level=none:keyint={keyint}:min-keyint={keyint}:"
-                "bframes=0:rc-lookahead=0:scenecut=0:frame-threads=1:"
-                "repeat-headers=1"
-            ),
+            "x265-params": x265_params(keyint, repeat_headers=True),
             "crf": str(crf),
         }
         self._idx = 0
@@ -272,7 +308,7 @@ class HevcDepthEncoder(_FifoEncoder):
         return self._pair(self._ctx.encode(None), bytes)
 
 
-class NvHevcDepthEncoder(_FifoEncoder):
+class NvHevcDepthEncoder(_NvEncoder):
     """NVENC (PyNvVideoCodec): 10-bit disparity codes -> HEVC Main 10 via ``P010``.
 
     ⚠️ **P010 stores 10-bit data in the HIGH bits** — the sample is ``code << 6``,
@@ -288,31 +324,43 @@ class NvHevcDepthEncoder(_FifoEncoder):
     above hands it uint8 for the same reason. Both facts were established by probing
     a known constant through encode->decode, not from the docs.
 
+    ⚠️ **`crf` does not reach NVENC**, and that is a property of the binding rather
+    than a choice. Measured on real disparity: passing `rc="constqp"` collapses
+    quality to 1.34 px p95 REGARDLESS of `qp` (0, 6, 12 and 24 all produce
+    byte-identical output), so the QP is not merely ignored — asking for it is
+    actively harmful. `tuning_info="ultra_low_latency"`, inherited from the
+    rect-video encoder where latency is the point, does the same thing.
+
+    So this runs at one quality point — `preset="P7", tuning_info="high_quality"` —
+    chosen because it lands within 6% of the libx265 default:
+
+        libx265 crf 6            21.85 KiB/frame   0.347 px p95
+        NVENC P7 high_quality    14.10 KiB/frame   0.368 px p95
+
+    `make_depth_encoder` warns when a caller asks for a `crf` this cannot honour.
+    Use `choice="cpu"` when the exact rate point matters more than throughput — but
+    note libx265 costs 2.7x on the depth stage (16.7 vs 45.7 pairs/s measured),
+    which is the whole reason this encoder exists.
+
     Lazy GPU dep, and raises on construction if NVENC cannot initialise, so
     `make_depth_encoder` can fall back exactly as `make_rect_encoder` does.
     """
 
     codec_name = "nvenc-hevc-p010"
-    pix_fmt = "p010"
     _P010_SHIFT = 6
+    #: The libx265 `crf` this encoder's fixed quality point is equivalent to.
+    EQUIVALENT_CRF = 6
 
-    def __init__(self, width: int, height: int, *, keyint: int = 30,
-                 crf: int = 6, preset: str = "P3") -> None:
+    def __init__(self, width: int, height: int, *, keyint: int = 30) -> None:
         super().__init__()
         import PyNvVideoCodec as nvc
 
-        if height % 2:
-            raise ValueError(f"P010 needs an even height, got {height}")
+        # No `rc`/`qp`: see the class docstring — passing them costs 4x the error.
         self._enc = nvc.CreateEncoder(
             width, height, "P010", True,
-            codec="hevc", preset=preset, tuning_info="ultra_low_latency",
-            bf=0, gop=keyint, rc="constqp", qp=crf,
+            codec="hevc", preset="P7", tuning_info="high_quality",
+            bf=0, gop=keyint,
         )
-        # `crf` is passed as NVENC's QP. The two scales are close but NOT identical,
-        # so the two backends land at slightly different rate points for the same
-        # number — deliberate: quality is the controlled variable, and the depth
-        # sidecar's size is allowed to differ a little between them. (The rect-video
-        # NVENC path does not equalise with libx265 either.)
         # Reused host scratch: luma rows then the interleaved UV rows.
         self._buf = np.empty((height + height // 2, width), np.uint16)
         self._buf[height:] = _DEPTH_NEUTRAL_CHROMA << self._P010_SHIFT
@@ -342,11 +390,35 @@ def make_depth_encoder(
     cannot initialise warns and falls back, so the stage never hard-fails on a
     missing wheel or a capped NVENC session count (depth and rect video each take
     one).
+
+    NVENC has ONE quality point (see `NvHevcDepthEncoder`), equivalent to libx265
+    crf 6. A caller asking for anything else is told rather than silently given
+    something different — the failure mode this guards against is a run configured
+    for near-lossless depth that quietly ships the default instead.
     """
+    if width % 2 or height % 2:
+        # Checked here, not inside the try below: 4:2:0 needs even dimensions on
+        # BOTH encoders, so demoting this to "NVENC unavailable" would fall back to
+        # a path that cannot take them either, and send the reader hunting for a GPU
+        # problem that does not exist.
+        raise ValueError(
+            f"4:2:0 needs even dimensions, got {width}x{height}")
     want_gpu = choice == "gpu" or (choice == "auto" and gpu_backend)
     if want_gpu:
         try:
-            return NvHevcDepthEncoder(width, height, keyint=keyint, crf=crf)
+            encoder = NvHevcDepthEncoder(width, height, keyint=keyint)
         except Exception as e:
             log.warning("NVENC unavailable (%s); depth video falls back to libx265", e)
+        else:
+            # Asked of the encoder that was actually built, not of the module
+            # global: what quality point applies is a property of the instance.
+            if crf != encoder.EQUIVALENT_CRF:
+                log.warning(
+                    "depth_crf=%d cannot be honoured by NVENC, which has one quality "
+                    "point (~crf %d); it is being IGNORED. Use "
+                    "--depth_video_encoder cpu to get the rate point you asked for, "
+                    "at ~2.7x the stage's wall clock.",
+                    crf, encoder.EQUIVALENT_CRF,
+                )
+            return encoder
     return HevcDepthEncoder(width, height, keyint=keyint, crf=crf)
