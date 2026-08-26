@@ -31,7 +31,8 @@ SHAPES = {"head": (3, 480, 640)}
 
 def spec() -> DatasetSpec:
     return DatasetSpec(
-        ee_names=("left", "right"), image_slots=("head",), grid_slot="head"
+        ee_names=("left", "right"), image_slots=("head",),
+        grid_slot="head", fps=FPS,
     )
 
 
@@ -67,7 +68,7 @@ def build(tmp_path, n_episodes: int = 2) -> LeRobotDataset:
         )
         start += lengths[i]
     ds.write_meta(
-        spec(), fps=FPS, video_shapes=SHAPES,
+        spec(), video_shapes=SHAPES,
         episode_lengths=lengths, tasks=["pick it up"],
     )
     return ds
@@ -144,7 +145,7 @@ def test_provenance_is_written_but_is_not_a_channel(tmp_path):
     ds = LeRobotDataset(tmp_path / "p")
     lengths = {0: ds.write_episode(0, channels(), fps=FPS, global_start=0)}
     ds.write_meta(
-        spec(), fps=FPS, video_shapes=SHAPES, episode_lengths=lengths,
+        spec(), video_shapes=SHAPES, episode_lengths=lengths,
         tasks=["t"], provenance={"source": "umi_rig_v1", "z_down": 0.048},
     )
     info = json.loads((ds.meta_dir / "info.json").read_text())
@@ -211,6 +212,7 @@ V21_SPEC = DatasetSpec(
     ee_names=("left", "right"),
     image_slots=("head", "left_wrist"),
     grid_slot="head",
+    fps=30.0,
 )
 
 
@@ -348,3 +350,29 @@ def test_an_episode_whose_column_disagrees_with_its_name_is_refused(tmp_path):
     pq.write_table(table, path)
     with pytest.raises(DatasetError, match="file name and the column disagree"):
         ds.episode(1)
+
+
+def test_a_missing_episode_names_itself(tmp_path):
+    """A deterministic path means a missing episode is knowable by name —
+    better than the reader's own FileNotFoundError, which names a parquet
+    path the caller never chose."""
+    ds = build(tmp_path)
+    with pytest.raises(DatasetError, match="episode 7 not found"):
+        ds.episode(7)
+
+
+def test_a_spec_that_disagrees_with_the_written_rate_is_refused(tmp_path):
+    """`write_episode` derives the timestamp column from its own `fps` while
+    `write_meta` stamps the spec's. Left unchecked, a dataset could say 30
+    while carrying timestamps spaced for 60 — reading back as 30 fps data that
+    is twice as fast as it claims, which is exactly what stamping the rate was
+    supposed to make impossible."""
+    ds = LeRobotDataset(tmp_path / "skewed")
+    lengths = {0: ds.write_episode(0, channels(), fps=60.0, global_start=0)}
+    with pytest.raises(DatasetError, match="written at fps=60"):
+        ds.write_meta(
+            spec(),  # stamps FPS (30)
+            video_shapes=SHAPES,
+            episode_lengths=lengths,
+            tasks=["t"],
+        )

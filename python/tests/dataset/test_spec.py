@@ -32,6 +32,7 @@ def spec(**kw) -> DatasetSpec:
             "ee_names": ("left", "right"),
             "image_slots": ("head", "left_wrist"),
             "grid_slot": "head",
+            "fps": 30.0,
             **kw,
         }
     )
@@ -155,3 +156,39 @@ def test_ee_names_are_first_seen_not_sorted():
 def test_slot_of_inverts_image():
     assert slot_of(image("left_gripper")) == "left_gripper"
     assert slot_of(ee_pose("left")) is None
+
+
+# ---- the grid: which camera, and how often -------------------------- #
+
+
+def test_fps_is_part_of_the_identity():
+    """`grid_slot` says WHICH stream defines a row instant; `fps` says how
+    often. A consumer replaying rows as a trajectory needs both, and nothing
+    else in a dataset records the rate — the timestamps are derived from it."""
+    assert spec(fps=60.0).stamp()["fps"] == 60.0
+    assert DatasetSpec.from_stamp(spec(fps=60.0).stamp(), ("head",)).fps == 60.0
+
+
+def test_a_dataset_with_no_fps_is_refused_by_name():
+    stamp = spec().stamp()
+    del stamp["fps"]
+    with pytest.raises(DatasetError, match="fps"):
+        DatasetSpec.from_stamp(stamp, ("head",))
+
+
+@pytest.mark.parametrize("bad", [0.0, -1.0])
+def test_a_nonsense_rate_is_refused(bad):
+    with pytest.raises(DatasetError, match="fps must be"):
+        spec(fps=bad)
+
+
+def test_the_parquet_vocabulary_needs_no_camera_facts():
+    """`table_channels_for` takes the arms alone. A writer checking an episode
+    for completeness must not have to invent a grid slot or a rate to do it —
+    an invented fact in a validation path is a validation that lies."""
+    from visio_schema.dataset import table_channels_for
+
+    assert table_channels_for(("left", "right")) == spec().table_channels
+    assert COLLAR in table_channels_for(("right",))
+    assert not any(c.startswith("observation.images.")
+                   for c in table_channels_for(("left",)))

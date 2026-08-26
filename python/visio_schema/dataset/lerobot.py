@@ -35,6 +35,7 @@ from visio_schema.dataset.spec import (
     ee_names_of,
     image,
     slot_of,
+    table_channels_for,
 )
 
 DATA_PATH = "data/chunk-{chunk:03d}/file-{index:06d}.parquet"
@@ -61,6 +62,9 @@ class LeRobotDataset:
 
     def __init__(self, root: str | Path) -> None:
         self.root = Path(root)
+        # The rate the episodes written through THIS instance were sampled at,
+        # checked against the spec at `write_meta`. See the guard there.
+        self._written_fps: float | None = None
 
     # ---- layout ------------------------------------------------------- #
 
@@ -135,6 +139,11 @@ class LeRobotDataset:
         are addressed by index alone.
         """
         path = self.data_path(index)
+        if not path.exists():
+            raise DatasetError(
+                f"episode {index} not found under {self.root} — expected "
+                f"{path}"
+            )
         table = pq.read_table(path)
         found = np.unique(
             _column(table, _EPISODE_INDEX).astype(np.int64).reshape(-1)
@@ -190,8 +199,9 @@ class LeRobotDataset:
         writer that restarted it at 0 would produce a dataset whose rows cannot
         be addressed uniquely.
         """
-        spec = _spec_of(channels)
-        missing = [c for c in spec.table_channels if c not in channels]
+        self._written_fps = float(fps)
+        required = _table_channels_of(channels)
+        missing = [c for c in required if c not in channels]
         if missing:
             raise DatasetError(
                 f"episode {index}: missing channel(s) {missing}"
@@ -225,13 +235,19 @@ class LeRobotDataset:
         self,
         spec: DatasetSpec,
         *,
-        fps: float,
         video_shapes: dict[str, tuple[int, int, int]],
         episode_lengths: dict[int, int],
         tasks: list[str],
         provenance: dict[str, Any] | None = None,
     ) -> None:
         """Write ``meta/`` once, after every episode's parquet exists.
+
+        Raises if ``spec.fps`` disagrees with the rate the episodes were
+        actually written at. The two are separate arguments — `write_episode`
+        derives its ``timestamp`` column from its own ``fps`` — so without this
+        a dataset could stamp 30 while carrying timestamps spaced for 60, which
+        is precisely the silent-mismatch the fps stamp exists to prevent. It
+        would then read back as 30 fps data that is twice as fast as it says.
 
         ``provenance`` is the producer's record of HOW the data was made —
         source id, registration, reconstruction parameters. It is written so a
@@ -240,10 +256,21 @@ class LeRobotDataset:
         would be branching on where the data came from — exactly what a fixed
         spec exists to prevent.
         """
+        if (
+            self._written_fps is not None
+            and self._written_fps != float(spec.fps)
+        ):
+            raise DatasetError(
+                f"the spec stamps fps={spec.fps} but the episodes were "
+                f"written at fps={self._written_fps} — the timestamp column "
+                "and the stamp would disagree, and the dataset would read "
+                "back at a rate it is not"
+            )
         self.meta_dir.mkdir(parents=True, exist_ok=True)
         info: dict[str, Any] = {
+            # `stamp()` carries fps — it is part of the spec's identity, not a
+            # sidecar of it, so there is exactly one place it is written.
             **spec.stamp(),
-            "fps": fps,
             "total_episodes": len(episode_lengths),
             "total_frames": sum(episode_lengths.values()),
             "data_path": DATA_PATH,
@@ -397,7 +424,7 @@ def _channels(table: pa.Table, spec: DatasetSpec) -> dict[str, np.ndarray]:
     return out
 
 
-def _spec_of(channels: dict[str, np.ndarray]) -> DatasetSpec:
+def _table_channels_of(channels: dict[str, np.ndarray]) -> tuple[str, ...]:
     """Infer the arity a channel dict implies, so `write_episode` can check it
     is complete rather than writing a dataset missing an arm.
 
@@ -412,11 +439,7 @@ def _spec_of(channels: dict[str, np.ndarray]) -> DatasetSpec:
             "no observation.<ee>.pose channels — cannot tell what this episode "
             f"carries; got {sorted(channels)}"
         )
-    # image_slots/grid_slot are irrelevant to the parquet; a placeholder keeps
-    # the completeness check honest without inventing camera facts.
-    return DatasetSpec(
-        ee_names=ees, image_slots=("_",), grid_slot="_"
-    )
+    return table_channels_for(ees)
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
