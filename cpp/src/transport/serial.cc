@@ -26,7 +26,8 @@ void SerialEndpoint::Tick(std::int64_t now_ns) {
     last_usb_state_ = usb_state_fn_ ? usb_state_fn_() : std::string();
   }
   const auto action = watchdog_.tick(last_usb_state_, outbox_pending(),
-                                     link_up_unlocked(), now_ns / 1'000'000);
+                                     accepted_total(), link_up_unlocked(),
+                                     now_ns / 1'000'000);
   if (action == SerialWatchdog::Action::None) return;
   // CONFIGURED edge / drain-stall / retry: drop the (possibly stale) link + outbox
   // and open a fresh one. The blocking close/open is on THIS leg's thread only.

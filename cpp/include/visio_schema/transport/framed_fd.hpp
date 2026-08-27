@@ -113,6 +113,11 @@ class FramedFdEndpoint : public Endpoint {
   virtual void Tick(std::int64_t now_ns);
 
   bool link_up_unlocked() const { return fd_ >= 0; }
+  // Monotonic across the endpoint's life, NOT reset by MarkLinkDead: a watchdog
+  // comparing it against its own previous reading only needs it to advance.
+  std::uint64_t accepted_total() const {
+    return accepted_total_.load(std::memory_order_relaxed);
+  }
   std::size_t outbox_pending() const {
     return ctrl_outbox_.PendingBytes() + outbox_.PendingBytes();
   }
@@ -148,6 +153,11 @@ class FramedFdEndpoint : public Endpoint {
   std::atomic<bool> bulk_flush_{false};     // shed queued video at a frame boundary
   std::atomic<bool> link_stalled_{false};   // set by I/O thread, read in Send
   std::atomic<std::uint64_t> door_dropped_{0};  // refused at the stalled gate
+  // Bytes the fd has ACCEPTED, ever. The one signal that a peer is really
+  // reading: queue depth is not, because a bounded outbox evicting its own
+  // backlog lowers pending with nobody on the other end (see
+  // SerialWatchdog::tick, which was fooled by exactly that).
+  std::atomic<std::uint64_t> accepted_total_{0};
   // Congestion tier between healthy and stalled (see Send's keyframes-only
   // gate). This ONE atomic is the whole latch: 0 = healthy, otherwise the
   // deadline after which the next keyframe resumes full rate. Armed/extended
