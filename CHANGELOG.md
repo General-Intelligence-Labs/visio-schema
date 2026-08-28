@@ -6,6 +6,27 @@ bump the MINOR version.
 
 ## Unreleased
 
+### `SetCalibration` gains a UNIT sensor kind and a `unit_side` artifact
+
+`SensorKind.UNIT = 4` describes the BOARD rather than an instrument on it
+(`sensor_index` unused), and `unit_side = 16` in the artifact oneof carries
+`"left"` or `"right"`.
+
+It belongs among per-sensor calibration because it IS calibration. A gripper
+limb's two carriers are physically mirrored while ONE firmware image serves both,
+so which limb a unit is cannot come from its image and cannot be read off the
+board. The extrinsics this same message already carries encode the side — a left
+unit's translation and rotation are not a right unit's — so delivering the label
+through the same channel as the geometry it labels is what stops the two
+disagreeing.
+
+Additive: firmware predating `UNIT` falls through its `sensor_kind` switch and
+REFUSES the command, which is the right answer rather than silently applying a
+unit-level artifact to sensor 0. The device validates the value and rejects
+anything but the two spellings; absent leaves a unit UNASSIGNED, which it reports
+by rooting its topics at its own `GILABS-<code8>` label instead of guessing a
+limb — loud, rather than silently the wrong hand.
+
 ### Depth as coded disparity: HEVC Main 10 encoders + an exact-luma decode mode
 
 `reader/_encode.py` gains `HevcDepthEncoder` (libx265) and `NvHevcDepthEncoder`

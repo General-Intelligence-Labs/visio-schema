@@ -276,3 +276,6 @@ foxglove.ImageAnnotations.metadata            type:FT_IGNORE
 foxglove.PointsAnnotation.points              max_count:4
 foxglove.PointsAnnotation.outline_colors      type:FT_IGNORE
 foxglove.PointsAnnotation.metadata            type:FT_IGNORE
+
+# "left" or "right" — the device rejects anything else.
+visio_schema.v1.control.SetCalibration.unit_side   max_size:8

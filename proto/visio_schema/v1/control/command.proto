@@ -571,12 +571,26 @@ message SetNoticeVolume {
 // consumes it, so it is stored and applied but never broadcast. That also means
 // the CommandResult is the ONLY acknowledgement: unlike the other artifacts,
 // there is no 1 Hz re-broadcast to confirm against.
+// `unit_side` is here, among per-sensor artifacts, because it IS calibration:
+// which limb a mirrored gripper is cannot be read off the board, one firmware
+// image serves both, and the extrinsics carried by this same message already
+// encode the side — a left unit's translation and rotation are not a right
+// unit's. Delivering the label through the same channel as the geometry it
+// labels is what stops the two disagreeing. The device validates it and refuses
+// anything but "left" or "right"; absent leaves the unit unassigned, which it
+// reports by rooting its topics at its own GILABS label rather than guessing.
 message SetCalibration {
   enum SensorKind {
     SENSOR_KIND_UNSPECIFIED = 0;
     CAMERA = 1;
     IMU = 2;
     ENCODER = 3;
+    // The BOARD itself, not a sensor on it: `sensor_index` is unused. Carries
+    // artifacts that describe the unit rather than one of its instruments —
+    // today just `unit_side`. Additive: firmware that predates this kind falls
+    // through its sensor_kind switch and REFUSES the command, which is the
+    // right answer, rather than silently applying it to a sensor.
+    UNIT = 4;
   }
   SensorKind sensor_kind = 1;   // which sensor family the artifact targets
   uint32     sensor_index = 2;  // 0-based instance within that family
@@ -587,6 +601,7 @@ message SetCalibration {
     visio_schema.v1.calibration.ImuCalibration imu_info = 13;  // IMU
     visio_schema.v1.calibration.EncoderCalibration encoder_info = 14;  // ENCODER
     visio_schema.v1.calibration.CameraTuning camera_tuning = 15;  // CAMERA, set-only
+    string unit_side = 16;  // UNIT: "left" or "right"
     // 10 reserved for a deferred magnetometer artifact.
   }
 }
