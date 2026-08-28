@@ -83,9 +83,27 @@ void McapWriterEndpoint::Send(const Message& msg) {
     ch = it->second;
   } else {
     const Channel* resolved = resolve_ ? resolve_(msg.stream_id) : nullptr;
-    if (resolved == nullptr) return;  // drop-until-mapped
+    if (resolved == nullptr) {
+      // Drop-until-mapped. Counted and reported, because the failure it hides is
+      // total: an id that never maps loses its ENTIRE topic for the whole
+      // recording, and unlike a queue drop no amount of faster storage helps.
+      // Silently returning here is how an Ego Pro recording came back holding
+      // four of its seven cameras with every health field reading clean.
+      const std::uint64_t prev = unmapped_.fetch_add(1, std::memory_order_relaxed);
+      if (prev == 0 || (prev + 1) % 1000 == 0)
+        std::cerr << "McapWriterEndpoint: stream id " << msg.stream_id
+                  << " resolves to no channel — dropping it (" << (prev + 1)
+                  << " so far; that topic is absent from the recording)\n";
+      return;
+    }
     ch = std::make_shared<const Channel>(*resolved);
     channel_cache_.emplace(msg.stream_id, ch);
+    // One line per topic per recording (~10 on a single board, ~20 on a rig).
+    // A merged recording's failure mode is a whole board going missing, and the
+    // only place that is observable before the file is pulled and parsed is
+    // here — the writer is the last component that sees a topic by name.
+    std::cerr << "McapWriterEndpoint: recording " << ch->topic
+              << " (id " << msg.stream_id << ")\n";
   }
 
   const std::size_t len = msg.payload.size();
@@ -201,6 +219,7 @@ McapWriterStats McapWriterEndpoint::stats() const {
   s.max_block_ns = stat_max_block_ns_.load(std::memory_order_relaxed);
   s.slow_writes = stat_slow_writes_.load(std::memory_order_relaxed);
   s.dropped = dropped_.load(std::memory_order_relaxed);
+  s.unmapped = unmapped_.load(std::memory_order_relaxed);
   s.max_pending_bytes = stat_max_pending_bytes_.load(std::memory_order_relaxed);
   return s;
 }

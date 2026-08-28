@@ -544,8 +544,25 @@ void McapWriter::Write(const Channel& channel, const Message& msg) {
   // so a part still awaiting its first keyframe cannot spuriously roll.
   if (is_video &&
       primed_video_channels_.find(channel.id) == primed_video_channels_.end()) {
-    if (!msg.keyframe) return;  // pre-keyframe P-frame — drop, don't count
+    if (!msg.keyframe) {
+      // Normally a handful of frames until the next IDR (GOP is one second).
+      // A channel that NEVER primes is a different animal: its whole topic is
+      // absent from the recording and nothing else reports it. That is what a
+      // relayed leaf looked like before Header.keyframe was serialized, and it
+      // is what a rig running mixed firmware still looks like — a leaf too old
+      // to set the wire flag can never prime. Warn once per channel, well past
+      // any legitimate wait.
+      auto& n = unprimed_video_frames_[channel.id];
+      if (++n == kUnprimedVideoWarnFrames) {
+        std::cerr << "McapWriter: " << channel.topic << " has sent " << n
+                  << " video frames with no keyframe — the whole topic is being"
+                  << " dropped from this recording. If it is relayed, its device"
+                  << " may predate the wire keyframe flag.\n";
+      }
+      return;  // pre-keyframe P-frame — drop, don't count
+    }
     primed_video_channels_.insert(channel.id);
+    unprimed_video_frames_.erase(channel.id);
   }
 
   auto sit = schema_ids_.find(channel.schema_name);

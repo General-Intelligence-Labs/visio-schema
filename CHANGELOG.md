@@ -46,6 +46,49 @@ as uint16 with no colour conversion. This is **required**, not an optimisation:
 `format="yuv420p10le"` raises outright. Sample data must never go through swscale.
 
 No `.proto` change; no facade change.
+### `Header.keyframe` — the video sync-point flag now crosses the wire
+
+`Header` gains `bool keyframe = 4`. Additive and wire-compatible (`make breaking`
+is clean): a producer that never sets it reads as `false`, which is exactly the
+previous behaviour, and an old reader ignores the field.
+
+It had to move onto the wire because **the consumer of a video frame is not
+always its producer**. The flag marks an H.265 sync point (VPS/SPS/PPS + IDR) and
+two rules depend on it — a bounded outbox must never evict one, and a recorder
+opens a video channel only on a decodable IDR. Both of those rules run at a HUB,
+on frames produced a hop away, and the flag was documented "in-memory only (NOT
+serialized) … set by the producer". Across a relay there is no producer to set
+it, so every relayed video frame arrived as a P-frame.
+
+Measured consequence, on an Ego Pro rig (one RV1126B head merging two RV1106 limb
+leaves): the recording held **four of its seven cameras**. Every leaf camera
+stream reached the recorder — the channels were resolved and opened — and then
+every frame was refused by the keyframe gate, for the entire session, with no
+error, no counter and no log. The bytes told the story before the code did: the
+file ran at 4.6 MB/s, which is four cameras at 1.10 MB/s and nothing else.
+
+This fixes the recorder's gate only. The outbox's never-evict-a-keyframe rule
+reads the same bit but sees only frames classed `bulk`, and `bulk` is still
+in-memory only — set on local publish, never on relay — so relayed video sits in
+the CONTROL queue where the evict and shed rules never run. That is the same
+one-line fix and is deliberately NOT taken here: it moves relayed video between
+queues on the hot path, which wants a measurement on real hardware first.
+
+Two observability fixes ship alongside, because the silence is what made this
+expensive — but they detect different things, and only one of them would have
+caught THIS bug:
+
+* `McapWriter` warns once per channel when a video topic has been refused ~5 s of
+  frames with no keyframe. **This is the detector for the outage above**, and for
+  the mixed-firmware rig that still looks the same, since a leaf too old to set
+  the wire flag can never prime.
+* `McapWriterEndpoint::Send` now counts frames whose stream id resolves to no
+  channel (`McapWriterStats::unmapped`) instead of a bare `return`. It would have
+  read **zero** here — the Ego Pro channels resolved and opened fine, and died at
+  the gate — so it is not the fix, it closes the neighbouring hole: an id the
+  relay mapped but whose channel `Learn()` refused (a `DuplicateTopicError`, which
+  `bus.cc` catches and only logs) drops its topic just as totally and just as
+  quietly.
 
 ### Storage providers: Google Cloud Storage and Azure Blob
 

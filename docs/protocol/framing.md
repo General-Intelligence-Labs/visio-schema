@@ -43,6 +43,7 @@ message Header {
   uint32                    stream_id = 1;  // per-link stream label
   uint32                    seq       = 2;  // per-stream_id sequence
   google.protobuf.Timestamp timestamp = 3;  // see timesync.md
+  bool                      keyframe  = 4;  // H.265 sync point (VPS/SPS/PPS)
 }
 ```
 
@@ -58,10 +59,16 @@ announced `Channel` carries its `schema_name` (protobuf full name) and `schema`
 `stream_id`, and `timestamp` is rewritten on receive by the timesync offset (see
 [`timesync.md`](timesync.md)).
 
-Typical serialized Header size: **~10-14 bytes** (one 1-byte stream_id varint,
-one seq varint, and the ~8-byte Timestamp submessage).
+Typical serialized Header size: **~10-16 bytes** (one 1-byte stream_id varint,
+one seq varint, the ~8-byte Timestamp submessage, and 2 bytes for `keyframe`
+when it is true — proto3 omits it when false, so only a video sync point pays).
 
-`HEADER_LEN` is a single byte: the ~21-25 byte Header never approaches
+`keyframe` is on the wire rather than in memory because the consumer of a video
+frame is not always its producer: a hub relays its leaves' video, and a recorder
+opens a video channel only on a decodable IDR. See the field's own comment in
+`wire/header.proto`.
+
+`HEADER_LEN` is a single byte: the ~23-27 byte Header never approaches
 255 bytes, and it grows *compatibly* via optional protobuf fields, so a
 wider length field buys nothing. There is also **no separate header
 version byte** — structural breaks are handled by the proto package

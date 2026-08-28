@@ -35,6 +35,32 @@ TEST(FrameTest, RoundtripSimple) {
   EXPECT_EQ(decoded.payload, m.payload);
 }
 
+// The keyframe bit has to survive the wire, because the consumer of a video
+// frame is not always its producer. A hub relays its leaves' video, and both the
+// outbox's never-evict-a-keyframe rule and the recorder's open-on-a-decodable-IDR
+// gate act at the hub, on frames produced a hop away. While this lived only in
+// the in-memory Message an Ego Pro rig recorded four of its seven cameras: every
+// relayed leaf frame arrived with keyframe=false, so the gate never opened and
+// the whole topic was dropped without a single error.
+TEST(FrameTest, KeyframeFlagSurvivesTheWire) {
+  Message m = MakeMsg();
+  m.payload = "\x01\x02";
+  m.keyframe = true;
+  Message decoded;
+  ASSERT_EQ(DecodeFrame(EncodeFrame(m), &decoded), FrameStatus::kOk);
+  EXPECT_TRUE(decoded.keyframe);
+}
+
+// And the default must stay false, or every P-frame would claim to be a sync
+// point and the gate it guards would be meaningless.
+TEST(FrameTest, NonKeyframeStaysFalseAcrossTheWire) {
+  Message m = MakeMsg();
+  m.payload = "\x01\x02";
+  Message decoded;
+  ASSERT_EQ(DecodeFrame(EncodeFrame(m), &decoded), FrameStatus::kOk);
+  EXPECT_FALSE(decoded.keyframe);
+}
+
 TEST(FrameTest, RoundtripEmptyPayload) {
   Message decoded;
   ASSERT_EQ(DecodeFrame(EncodeFrame(MakeMsg()), &decoded), FrameStatus::kOk);

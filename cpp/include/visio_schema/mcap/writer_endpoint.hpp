@@ -47,6 +47,13 @@ struct McapWriterStats {
   // byte bound the storage device's stalls have ever consumed. The distance
   // to max_bytes is the recording's proven margin against loss.
   std::uint64_t max_pending_bytes = 0;
+  // Frames discarded because their stream id resolved to no channel. A
+  // DIFFERENT failure from `dropped`, and it must not be folded into it: that
+  // one means storage is too slow, this one means the recording is missing a
+  // whole TOPIC and no amount of faster storage would help. It went uncounted
+  // until an Ego Pro recording was found to be silently missing every relayed
+  // limb camera while every health field read clean.
+  std::uint64_t unmapped = 0;
 };
 
 class McapWriterEndpoint : public transport::Endpoint {
@@ -74,6 +81,9 @@ class McapWriterEndpoint : public transport::Endpoint {
   std::size_t pending_frames() const;
   std::size_t pending_bytes() const;
   std::uint64_t dropped_frames() const { return dropped_.load(std::memory_order_relaxed); }
+  std::uint64_t unmapped_frames() const {
+    return unmapped_.load(std::memory_order_relaxed);
+  }
   // Lifetime total of payload bytes written to disk (passthrough to the inner
   // McapWriter; monotonic across part rotation). 0 until the first message drains
   // to the writer thread.
@@ -116,6 +126,7 @@ class McapWriterEndpoint : public transport::Endpoint {
 
   std::atomic<bool> failed_{false};   // unrecoverable storage error, latched
   std::atomic<std::uint64_t> dropped_{0};
+  std::atomic<std::uint64_t> unmapped_{0};
   // Written only under mu_ (Send), read lock-free by stats().
   std::atomic<std::uint64_t> stat_max_pending_bytes_{0};
   std::atomic<std::uint64_t> stat_writes_{0};

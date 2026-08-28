@@ -117,11 +117,11 @@ struct Message {
   // bandwidth-limited link. Set by the producer (publish_video).
   bool bulk = false;
 
-  // In-memory only (NOT serialized): this bulk frame is a SYNC POINT — an H.265
-  // keyframe carrying VPS/SPS/PPS. A bounded outbox must never evict one: losing
-  // a P-frame costs a frame, losing a keyframe costs the decoder its reference
-  // chain and blanks the viewer until the next one (a whole GOP). Set by the
-  // producer alongside `bulk`.
+  // SERIALIZED (Header.keyframe): this bulk frame is a SYNC POINT — an H.265
+  // keyframe carrying VPS/SPS/PPS. A bounded outbox must never evict one, and a
+  // recorder opens a video channel only on one. It crosses the wire because the
+  // consumer is not always the producer — a hub relays video from its leaves.
+  // Rationale and the scope of what that actually fixes: header.proto.
   bool keyframe = false;
 
   // In-memory only (NOT serialized): this message is SAFE TO SHED — a

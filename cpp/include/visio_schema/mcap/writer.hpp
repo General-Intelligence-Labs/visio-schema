@@ -157,6 +157,12 @@ class McapWriter {
   // cuts only on a keyframe strictly newer than it (+guard), which is what keeps a
   // co-phased pair whole across a rotation boundary.
   std::unordered_set<std::uint32_t> primed_video_channels_;
+  // Per-channel count of video frames refused by the keyframe gate while that
+  // channel is still unprimed. Cleared once it primes, so this only grows for a
+  // channel that never will. ~5 s of 60 fps video: long past any real GOP wait,
+  // short enough to fire well inside a session.
+  static constexpr std::uint64_t kUnprimedVideoWarnFrames = 300;
+  std::unordered_map<std::uint32_t, std::uint64_t> unprimed_video_frames_;
   std::int64_t part_max_video_ts_ = INT64_MIN;
 };
 
