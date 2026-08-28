@@ -47,6 +47,9 @@ namespace {
 // Channel::schema_name). Only these channels are keyframe-gated; audio
 // ("foxglove.RawAudio"), IMU, encoder and control are written unconditionally.
 constexpr const char* kCompressedVideoSchema = "foxglove.CompressedVideo";
+// ~5 s at 60 fps, 10 s at 30 — well past any real GOP wait, and early enough
+// to fire inside a short session.
+constexpr std::uint64_t kUnprimedVideoWarnFrames = 300;
 
 // A drop-in for upstream mcap's FileWriter that opens the part file with
 // O_CLOEXEC. Upstream FileWriter uses fopen(path, "wb"), whose fd is NOT
@@ -552,17 +555,20 @@ void McapWriter::Write(const Channel& channel, const Message& msg) {
       // is what a rig running mixed firmware still looks like — a leaf too old
       // to set the wire flag can never prime. Warn once per channel, well past
       // any legitimate wait.
-      auto& n = unprimed_video_frames_[channel.id];
+      auto& n = unprimed_video_frames_[channel.topic];
       if (++n == kUnprimedVideoWarnFrames) {
-        std::cerr << "McapWriter: " << channel.topic << " has sent " << n
-                  << " video frames with no keyframe — the whole topic is being"
-                  << " dropped from this recording. If it is relayed, its device"
-                  << " may predate the wire keyframe flag.\n";
+        std::fprintf(stderr,
+                     "McapWriter: %s has sent %llu video frames with no "
+                     "keyframe — the whole topic is being dropped from this "
+                     "recording. If it is relayed, its device may predate the "
+                     "wire keyframe flag.\n",
+                     channel.topic.c_str(),
+                     static_cast<unsigned long long>(n));
       }
       return;  // pre-keyframe P-frame — drop, don't count
     }
     primed_video_channels_.insert(channel.id);
-    unprimed_video_frames_.erase(channel.id);
+    unprimed_video_frames_.erase(channel.topic);
   }
 
   auto sit = schema_ids_.find(channel.schema_name);

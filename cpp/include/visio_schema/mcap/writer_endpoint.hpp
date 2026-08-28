@@ -107,6 +107,10 @@ class McapWriterEndpoint : public transport::Endpoint {
   void WriterLoop();
   void DrainBatch(std::deque<Entry>& batch);  // timed writer_->Write
   void NoteDrop(std::size_t n);
+  void NoteUnmapped(std::uint32_t stream_id);
+  // First occurrence, then every thousandth. Bucket-crossing rather than a
+  // modulo so it stays correct when n > 1 (NoteDrop sheds whole batches).
+  static bool CrossedLogThreshold(std::uint64_t prev, std::size_t n);
   void NoteFailure(const char* what) noexcept;  // latch + log once
 
   static constexpr std::uint64_t kSlowWriteNs = 50'000'000;  // 50 ms

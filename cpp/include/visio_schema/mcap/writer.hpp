@@ -157,12 +157,19 @@ class McapWriter {
   // cuts only on a keyframe strictly newer than it (+guard), which is what keeps a
   // co-phased pair whole across a rotation boundary.
   std::unordered_set<std::uint32_t> primed_video_channels_;
-  // Per-channel count of video frames refused by the keyframe gate while that
-  // channel is still unprimed. Cleared once it primes, so this only grows for a
-  // channel that never will. ~5 s of 60 fps video: long past any real GOP wait,
-  // short enough to fire well inside a session.
-  static constexpr std::uint64_t kUnprimedVideoWarnFrames = 300;
-  std::unordered_map<std::uint32_t, std::uint64_t> unprimed_video_frames_;
+  // Frames refused by the keyframe gate on a channel that has not primed yet,
+  // keyed by TOPIC. Deliberately outside the per-part block above and NOT reset
+  // by OpenPart: the question it answers ("is this topic absent from the whole
+  // recording?") spans parts, and re-arming it per part would warn once every
+  // rotation about one unchanging fault.
+  //
+  // Topic, not Channel::id, because ids do not survive a reconnect — the bus
+  // allocates a fresh one per link and never reuses (registry Alloc), so a
+  // flapping leaf would restart its count from zero every time and could run a
+  // whole session without ever reaching the threshold. A flapping limb is
+  // exactly the case this warning exists for.
+  std::unordered_map<std::string, std::uint64_t> unprimed_video_frames_;
+
   std::int64_t part_max_video_ts_ = INT64_MIN;
 };
 

@@ -165,7 +165,14 @@ TEST(McapWriterEndpoint, DropsUntilMapped) {
     McapWriterEndpoint ep(path, resolve);
     ep.Start(nullptr, nullptr);
     ep.Send(Data(kFirstDynamic + 5, "x"));  // unmapped -> dropped, no crash
+    ep.Send(Data(kFirstDynamic + 6, "y"));  // a SECOND missing topic
     ep.Stop();
+    // The counter exists to separate this from a queue drop. Storage was never
+    // the problem here — whole topics are simply absent — and folding the two
+    // together would hide exactly the failure it was added to surface.
+    EXPECT_EQ(ep.unmapped_frames(), 2u);
+    EXPECT_EQ(ep.stats().unmapped, 2u);
+    EXPECT_EQ(ep.stats().dropped, 0u);
   }
   EXPECT_TRUE(fs::exists(path));  // a valid (empty) MCAP is still written
   std::remove(path.c_str());

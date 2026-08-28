@@ -67,11 +67,33 @@ void McapWriterEndpoint::Stop() {
   }
 }
 
+bool McapWriterEndpoint::CrossedLogThreshold(std::uint64_t prev,
+                                             std::size_t n) {
+  return prev == 0 || (prev + n) / 1000 != prev / 1000;
+}
+
 void McapWriterEndpoint::NoteDrop(std::size_t n) {
   const std::uint64_t prev = dropped_.fetch_add(n, std::memory_order_relaxed);
-  if (prev == 0 || (prev + n) / 1000 != prev / 1000) {
+  if (CrossedLogThreshold(prev, n)) {
     std::cerr << "McapWriterEndpoint: dropped " << (prev + n)
               << " frames (storage can't keep up with the recording)\n";
+  }
+}
+
+// Counted and reported, because the failure it hides is total: an id that never
+// maps loses its ENTIRE topic for the whole recording, and unlike a queue drop
+// no amount of faster storage helps. Deliberately NOT folded into `dropped` —
+// that one means storage is too slow, this one means a topic is missing.
+//
+// The id is not named: this counter is global to the endpoint, so with two
+// unmapped ids interleaving the message would name whichever arrived first and
+// never mention the second. A count is honest; a misleading id is not.
+void McapWriterEndpoint::NoteUnmapped(std::uint32_t) {
+  const std::uint64_t prev = unmapped_.fetch_add(1, std::memory_order_relaxed);
+  if (CrossedLogThreshold(prev, 1)) {
+    std::cerr << "McapWriterEndpoint: " << (prev + 1)
+              << " frames resolve to no channel — at least one topic is absent"
+                 " from this recording\n";
   }
 }
 
@@ -84,26 +106,11 @@ void McapWriterEndpoint::Send(const Message& msg) {
   } else {
     const Channel* resolved = resolve_ ? resolve_(msg.stream_id) : nullptr;
     if (resolved == nullptr) {
-      // Drop-until-mapped. Counted and reported, because the failure it hides is
-      // total: an id that never maps loses its ENTIRE topic for the whole
-      // recording, and unlike a queue drop no amount of faster storage helps.
-      // Silently returning here is how an Ego Pro recording came back holding
-      // four of its seven cameras with every health field reading clean.
-      const std::uint64_t prev = unmapped_.fetch_add(1, std::memory_order_relaxed);
-      if (prev == 0 || (prev + 1) % 1000 == 0)
-        std::cerr << "McapWriterEndpoint: stream id " << msg.stream_id
-                  << " resolves to no channel — dropping it (" << (prev + 1)
-                  << " so far; that topic is absent from the recording)\n";
+      NoteUnmapped(msg.stream_id);  // drop-until-mapped
       return;
     }
     ch = std::make_shared<const Channel>(*resolved);
     channel_cache_.emplace(msg.stream_id, ch);
-    // One line per topic per recording (~10 on a single board, ~20 on a rig).
-    // A merged recording's failure mode is a whole board going missing, and the
-    // only place that is observable before the file is pulled and parsed is
-    // here — the writer is the last component that sees a topic by name.
-    std::cerr << "McapWriterEndpoint: recording " << ch->topic
-              << " (id " << msg.stream_id << ")\n";
   }
 
   const std::size_t len = msg.payload.size();
