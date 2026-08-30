@@ -24,6 +24,12 @@ FIRST_DYNAMIC = ControlStream.CONTROL_STREAM_FIRST_DYNAMIC
 DEVICE_INFO = ControlStream.CONTROL_STREAM_DEVICE_INFO
 HEARTBEAT = ControlStream.CONTROL_STREAM_HEARTBEAT
 COMMAND = ControlStream.CONTROL_STREAM_COMMAND
+# End-to-end like COMMAND, and target-addressed for the same reason: a firmware
+# image is a directed transfer, not a broadcast. It is a separate stream because a
+# 30-60 MB payload must not queue behind — or ahead of — control traffic, and its
+# replies land on the device's own `/ota_status` channel rather than as a
+# CommandResult. See visio_schema/wire/ota.py for the driver.
+OTA = ControlStream.CONTROL_STREAM_OTA
 
 # Control streams that never cross a hop (the bus drops them rather than relaying).
 # A new control stream belongs here iff it is link-scoped and carries no device
@@ -61,5 +67,6 @@ __all__ = [
     "FIRST_DYNAMIC",
     "HEARTBEAT",
     "LINK_LOCAL_CONTROL",
+    "OTA",
     "command_message",
 ]
