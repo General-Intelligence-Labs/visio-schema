@@ -224,6 +224,7 @@ visio_schema.v1.service.ota.OtaBegin.partitions        max_count:8
 visio_schema.v1.service.ota.OtaPartition.name          max_size:24
 visio_schema.v1.service.ota.OtaPartition.sha256        max_size:32
 visio_schema.v1.service.ota.OtaChunk.data              type:FT_POINTER
+visio_schema.v1.service.ota.OtaApply.fw_version        max_size:32
 visio_schema.v1.service.ota.OtaAbort.reason            max_size:64
 visio_schema.v1.service.ota.OtaStatus.device           max_size:32
 visio_schema.v1.service.ota.OtaStatus.error_code       max_size:32

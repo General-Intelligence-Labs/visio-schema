@@ -57,6 +57,7 @@ message OtaMessage {
     OtaCommit commit = 12;  // all bytes sent → verify + apply
     OtaAbort  abort  = 13;  // cancel; device discards staging
     OtaQuery  query  = 14;  // poll: emit current OtaStatus (for resume)
+    OtaApply  apply  = 15;  // flash a HELD stage now (see OtaBegin.hold_apply)
   }
 }
 
@@ -83,6 +84,17 @@ message OtaBegin {
   bytes  signature   = 6;  // UNUSED — see above; the shared key is the gate
   uint32 min_version = 7;  // UNUSED — no anti-rollback floor is enforced here
   repeated OtaPartition partitions = 8;  // UNUSED — the payload names its own
+
+  // Two-phase (rig) mode: OtaCommit verifies and STAGES but does not arm
+  // recovery or reboot — the device holds the stage until an OtaApply names
+  // this fw_version, or a new Begin replaces it. The transfer of a whole
+  // rig is thereby side-effect-free: no board moves a slot until the
+  // coordinator has everything (this also defers the instant slot flip
+  // when fw_version sits in the device's other slot — the slot is the
+  // stage, and OtaApply performs the flip). Old firmware ignores this
+  // field and applies at Commit as always — a sender must not assume the
+  // hold unless the device's announce shows a firmware that has it.
+  bool hold_apply = 9;
 }
 
 // UNUSED — see OtaBegin.partitions. The flash layout is read out of the image
@@ -121,6 +133,19 @@ message OtaAbort {
 // sending data — used after a reconnect to read the resume cursor
 // (bytes_received) or learn the staging file vanished (NEEDS_RESUME).
 message OtaQuery {}
+
+// Flash a stage that OtaCommit verified but held (OtaBegin.hold_apply): arm
+// recovery and reboot NOW. This is the second half of the rig's two-phase
+// update — the transfer phase stages every board with hold_apply and moves no
+// slot anywhere; the head fires OtaApply per board only once the WHOLE rig is
+// staged at one version, so a dead client or half-delivered image can never
+// leave the rig mixed. fw_version must equal the held stage's version: an
+// apply that races a newer stage must not flash whichever happened to land.
+// Addressed like every OtaMessage (target_device); a device holding no such
+// stage answers FAILED rather than guessing.
+message OtaApply {
+  string fw_version = 1;
+}
 
 // Device→host, published on "/<device>/ota_status". Serves three jobs at once:
 // progress UI, flow-control ACK (the app paces sends against bytes_received),
