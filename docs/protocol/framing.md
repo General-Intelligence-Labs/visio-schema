@@ -47,7 +47,7 @@ message Header {
 }
 ```
 
-A stream is named globally by its **topic** (e.g. `/glove_left/imus/3/raw`); the
+A stream is named globally by its **topic** (e.g. `/glove_left/imu/3/raw`); the
 wire carries only a compact per-link `stream_id`. A `ControlStream` enum splits
 the id space: ids `[1, FIRST_DYNAMIC=16)` are hop-local control streams
 (DEVICE_INFO=1, TIMESYNC=2, HEARTBEAT=3, COMMAND=4), ids `≥16` are negotiated

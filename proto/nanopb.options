@@ -110,7 +110,7 @@ visio_schema.v1.control.SetNoticeLang.lang            max_size:16
 # 12 rules x 64 B is ~0.9 KB in the Command union, and a preview needs 4.
 # The count is a HARD limit: nanopb fails the whole decode past it, so the
 # bound is part of the contract (documented in command.proto).
-# Topic headroom: "/GILABS-AABBCCDD/glove_left/imus/15/raw" is 40 chars, and a
+# Topic headroom: "/GILABS-AABBCCDD/glove_left/imu/15/raw" is 38 chars, and a
 # hub prefixes relayed leaf topics with the leaf's device_name.
 visio_schema.v1.control.SetStreamPolicy.rules         max_count:12
 visio_schema.v1.control.SetStreamPolicy.Rule.topic    max_size:64
