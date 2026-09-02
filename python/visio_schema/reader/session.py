@@ -1040,12 +1040,31 @@ class Session:
         self, want: set[str] | None, *, start_ns: Ns | None, end_ns: Ns | None,
         make_decoders, raw: bool,
     ) -> Iterator[Element]:
+        # Early-stop bound pushed into the reader. `end_ns` alone would be correct
+        # (mcap's `end_time` is exclusive, exactly `_in_window`'s `t < end_ns`), but
+        # widen it by the reorder window so the heap sees every message that could
+        # still reorder AHEAD of an in-window element before the feed is cut — the
+        # same slack `_reorder`'s watermark waits out. Without this the pass decoded
+        # every remaining frame to EOF (and opened later chunks) only to have
+        # `_in_window` drop them, which is pathological for video: an end-bounded 2 s
+        # window paid to decode the rest of the recording. `start_ns` is deliberately
+        # NOT pushed down — a decoder entering a chunk mid-GOP has no keyframe, so the
+        # read must begin at each chunk's head and `_in_window` trims the front.
+        end_read = None if end_ns is None else end_ns + self._reorder_ns
+
         def _one_stream(members: list[int]) -> Iterator[tuple[Ns, Ns, Element]]:
             # Sequential: a stream's chunks do not overlap, and decoders reset per
             # chunk (each carries its own keyframes).
             for i in members:
+                idx = self._index[i]
+                # A whole file past the bound holds nothing in-window and no later
+                # file depends on its decoder state (decoders reset per chunk), so
+                # skip it unopened rather than open it for an empty read.
+                if end_read is not None and not _spans_window(idx, None, end_read):
+                    continue
                 yield from self._iter_file(
-                    self._files[i], self._index[i], want, make_decoders, raw)
+                    self._files[i], idx, want, make_decoders, raw,
+                    end_ns=end_read)
 
         def _raw() -> Iterator[tuple[Ns, Ns, Element]]:
             # Merged ACROSS streams by arrival, concatenated within one. Only one
@@ -1093,7 +1112,7 @@ class Session:
         return out
 
     def _iter_file_raw(
-        self, path: Path, wanted: list[str]
+        self, path: Path, wanted: list[str], *, end_ns: Ns | None = None,
     ) -> Iterator[tuple[Ns, Ns, Element]]:
         """Passthrough: no decoder, no descriptor resolution, no parse.
 
@@ -1104,7 +1123,8 @@ class Session:
         only copying. `t_ns == arrival` here: nothing expands into the future the
         way an IMU bundle does, so the pair is degenerate on purpose.
         """
-        for schema, ch, msg in self._read_messages(path, topics=wanted):
+        for schema, ch, msg in self._read_messages(
+            path, topics=wanted, end_ns=end_ns):
             if schema is None:
                 continue
             canon = strip_device_topic_prefix(ch.topic, self._device)
@@ -1151,7 +1171,7 @@ class Session:
 
     def _iter_file(
         self, path: Path, idx: _FileIndex, want: set[str] | None,
-        make_decoders, raw: bool = False,
+        make_decoders, raw: bool = False, *, end_ns: Ns | None = None,
     ) -> Iterator[tuple[Ns, Ns, Element]]:
         # Topic-filtered read: skip the discarded majority (IMU-quat, audio, …)
         # instead of building a Python object per message like read_mcap. The
@@ -1165,10 +1185,11 @@ class Session:
         if not wanted:
             return
         if raw:
-            yield from self._iter_file_raw(path, wanted)
+            yield from self._iter_file_raw(path, wanted, end_ns=end_ns)
             return
         adapters = self._build_adapters(idx, set(wanted), make_decoders)
-        for schema, ch, msg in self._read_messages(path, topics=wanted):
+        for schema, ch, msg in self._read_messages(
+            path, topics=wanted, end_ns=end_ns):
             if schema is None:
                 continue
             adapter = adapters.get(schema.name)
