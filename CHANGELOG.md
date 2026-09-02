@@ -6,6 +6,28 @@ bump the MINOR version.
 
 ## Unreleased
 
+### A switch for geo-tagging: `SetGpsTagging` (wire-compatible)
+
+- **New Command body `SetGpsTagging` (tag 41), `{bool enabled}`.** Persisted;
+  takes effect on the next recording and never retags the session in progress
+  or one already on the card. Switched OFF the device stops stamping
+  coordinates into new sessions and stops storing incoming ones.
+- **New `DeviceState.gps_tagging` (tag 39)**, tri-state for one reason: every
+  board supports the switch, so `UNSUPPORTED` means precisely "this firmware
+  predates it". An old device reporting the proto3 default would otherwise be
+  indistinguishable from one with tagging off, while it is in fact still
+  stamping every session.
+
+The switch exists because withholding a fix cannot express it. `SetTime`,
+`SetRecordingMeta` and `StartRecording` all treat a 0 coordinate as KEEP (0.6.2,
+below) — deliberately, so a host without a fix cannot wipe the last known
+position — which leaves a host that simply stops sending coordinates with no way
+to stop a board stamping the last position it was ever told. Additive: firmware
+predating the switch ignores the command body and reports `UNSUPPORTED`, which
+is the honest answer, and the recorded fields (`session.json`
+`latitude`/`longitude`, `RecordingEntry`) are unchanged — a suppressed fix reads
+as the same zero a board that never had one writes.
+
 ### `SetCalibration` gains a UNIT sensor kind and a `unit_side` artifact
 
 `SensorKind.UNIT = 4` describes the BOARD rather than an instrument on it

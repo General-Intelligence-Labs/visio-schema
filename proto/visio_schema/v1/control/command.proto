@@ -59,6 +59,7 @@ message Command {
     SetNoticeVolume set_notice_volume = 38;
     SetRecordingKey set_recording_key = 39;
     SetHandDetection set_hand_detection = 40;
+    SetGpsTagging  set_gps_tagging = 41;
   }
 }
 
@@ -297,6 +298,28 @@ message SetAudioRecording {
 // ALWAYS address this to a specific device: an empty Command.target_device is
 // a broadcast, which on a suit would flip every detector-capable board at once.
 message SetHandDetection {
+  bool enabled = 1;
+}
+
+// Enable/disable geo-tagging of recordings on this device.
+//
+// The boards have no GNSS receiver, so a host is the only source of a fix
+// (SetTime, SetRecordingMeta, StartRecording). This switch is what a host
+// cannot express by simply withholding one: a 0 fix KEEPS the stored
+// coordinates, so a silent host leaves the device stamping the last position
+// it was ever told. Switched OFF the device stops stamping coordinates into
+// new sessions AND stops storing incoming ones, so neither a second host nor
+// an auto-started boot recording can re-tag it.
+//
+// Persisted to a device-side sidecar. Takes effect on the next recording; it
+// does NOT retag the in-progress session, and it never rewrites a session
+// already on the card. Default is ENABLED — every unit shipped so far tags,
+// and firmware that predates this switch must not appear to have it off.
+//
+// A device switched off keeps its stored fix; switching back on resumes
+// stamping it until a host pushes a fresher one. The current value is
+// reported in DeviceState.gps_tagging.
+message SetGpsTagging {
   bool enabled = 1;
 }
 

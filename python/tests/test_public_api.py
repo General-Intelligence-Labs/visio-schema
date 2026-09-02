@@ -60,6 +60,7 @@ REQUIRED_COMMAND_BODIES = frozenset(
         "set_notice_volume",
         "set_recording_key",
         "set_hand_detection",
+        "set_gps_tagging",
     }
 )
 
@@ -176,6 +177,10 @@ def test_proto_command_schema_present():
     assert body_to_type["set_hand_detection"] == hands.DESCRIPTOR.name
     assert command_pb2.Command.DESCRIPTOR.fields_by_name["set_hand_detection"].number == 40
 
+    gps = command_pb2.SetGpsTagging
+    assert body_to_type["set_gps_tagging"] == gps.DESCRIPTOR.name
+    assert command_pb2.Command.DESCRIPTOR.fields_by_name["set_gps_tagging"].number == 41
+
     volume = command_pb2.SetNoticeVolume
     assert body_to_type["set_notice_volume"] == volume.DESCRIPTOR.name
     assert command_pb2.Command.DESCRIPTOR.fields_by_name["set_notice_volume"].number == 38
@@ -204,6 +209,13 @@ def test_proto_command_schema_present():
     assert state.HAND_DETECTION_ENABLED == 1
     assert state.HAND_DETECTION_DISABLED == 2
     assert state.DESCRIPTOR.fields_by_name["hand_detection"].number == 38
+
+    # 39 is DeviceState.gps_tagging AND Command.set_recording_key — the same
+    # transposition hazard as 38 above, one number over.
+    assert state.GPS_TAGGING_UNSUPPORTED == 0
+    assert state.GPS_TAGGING_ENABLED == 1
+    assert state.GPS_TAGGING_DISABLED == 2
+    assert state.DESCRIPTOR.fields_by_name["gps_tagging"].number == 39
 
     # notice_volume carries explicit presence: absence means "no speaker or
     # pre-volume firmware" and hides the app control, which a plain uint32
