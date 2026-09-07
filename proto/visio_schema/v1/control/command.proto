@@ -584,6 +584,8 @@ message SetNoticeVolume {
 //   intrinsics  -> /<dev>/camera/<i>/intrinsics  (foxglove.CameraCalibration)
 //   extrinsics  -> /<dev>/camera/<i>/extrinsics or /<dev>/imu/<i>/extrinsics
 //                  (foxglove.FrameTransform, child posed in the cam0 frame)
+//   tcp_extrinsics -> /<dev>/camera/<i>/tcp_extrinsics
+//                  (foxglove.FrameTransform, index 0 only)
 //   imu_info    -> /<dev>/imu/<i>/info           (ImuCalibration)
 //   encoder_info-> /<dev>/encoder/<i>/info       (EncoderCalibration)
 //   camera_tuning -> persisted only; NO topic    (CameraTuning)
@@ -625,6 +627,17 @@ message SetCalibration {
     visio_schema.v1.calibration.EncoderCalibration encoder_info = 14;  // ENCODER
     visio_schema.v1.calibration.CameraTuning camera_tuning = 15;  // CAMERA, set-only
     string unit_side = 16;  // UNIT: "left" or "right"
+    // CAMERA, and `sensor_index` MUST be 0 — the anchor. That is the inverse
+    // of the `extrinsics` rule, which forbids index 0 (cam0 is the frame the
+    // others are posed in, so it has no extrinsic of its own). The pose of the
+    // gripper's tool-centre-point frame expressed in cam0
+    // (`parent_frame_id="cam0"`, `child_frame_id="tcp"`,
+    // `p_cam0 = R * p_tcp + t`): the same direction as `camera/<i>/extrinsics`.
+    // Its own artifact rather than an `extrinsics` on a spare index because it
+    // is not a sensor's pose but the tool's; a limb has exactly one, so it hangs
+    // off the anchor camera and is re-published on
+    // `/<dev>/camera/0/tcp_extrinsics`.
+    foxglove.FrameTransform tcp_extrinsics = 17;
     // 10 reserved for a deferred magnetometer artifact.
   }
 }

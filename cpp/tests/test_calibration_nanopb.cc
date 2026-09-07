@@ -99,6 +99,40 @@ TEST(CalibrationNanopb, SetCalibrationExtrinsicsRoundTrip) {
   EXPECT_DOUBLE_EQ(oft.rotation.w, 1.0);
 }
 
+// The cam-TCP pose is its own oneof member on the ANCHOR camera (index 0, the
+// one `extrinsics` forbids), and shares FrameTransform's static bounds — so it
+// too encodes and decodes with no callbacks and no malloc.
+TEST(CalibrationNanopb, SetCalibrationTcpExtrinsicsRoundTrip) {
+  visio_schema_v1_control_Command cmd = visio_schema_v1_control_Command_init_zero;
+  cmd.which_body = visio_schema_v1_control_Command_set_calibration_tag;
+  auto& sc = cmd.body.set_calibration;
+  sc.sensor_kind = visio_schema_v1_control_SetCalibration_SensorKind_CAMERA;
+  sc.sensor_index = 0;
+  sc.which_artifact = visio_schema_v1_control_SetCalibration_tcp_extrinsics_tag;
+  auto& ft = sc.artifact.tcp_extrinsics;
+  std::snprintf(ft.parent_frame_id, sizeof(ft.parent_frame_id), "cam0");
+  std::snprintf(ft.child_frame_id, sizeof(ft.child_frame_id), "tcp");
+  ft.has_translation = true;
+  ft.translation.x = 0.012; ft.translation.z = 0.085;
+  ft.has_rotation = true;
+  ft.rotation.w = 1.0;
+
+  std::string buf = Encode(visio_schema_v1_control_Command_fields, cmd);
+  visio_schema_v1_control_Command out = visio_schema_v1_control_Command_init_zero;
+  ASSERT_TRUE(Decode(visio_schema_v1_control_Command_fields, buf, &out));
+
+  const auto& osc = out.body.set_calibration;
+  EXPECT_EQ(osc.sensor_kind, visio_schema_v1_control_SetCalibration_SensorKind_CAMERA);
+  EXPECT_EQ(osc.sensor_index, 0u);
+  ASSERT_EQ(osc.which_artifact, visio_schema_v1_control_SetCalibration_tcp_extrinsics_tag);
+  const auto& oft = osc.artifact.tcp_extrinsics;
+  EXPECT_STREQ(oft.parent_frame_id, "cam0");
+  EXPECT_STREQ(oft.child_frame_id, "tcp");
+  EXPECT_DOUBLE_EQ(oft.translation.x, 0.012);
+  EXPECT_DOUBLE_EQ(oft.translation.z, 0.085);
+  EXPECT_DOUBLE_EQ(oft.rotation.w, 1.0);
+}
+
 TEST(CalibrationNanopb, ImuCalibrationNoiseRoundTrip) {
   visio_schema_v1_calibration_ImuCalibration ic =
       visio_schema_v1_calibration_ImuCalibration_init_zero;

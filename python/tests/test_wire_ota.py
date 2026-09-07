@@ -113,6 +113,79 @@ def test_begin_carries_the_image_board_and_version_not_the_devices():
     assert (b.total_bytes, b.chunk_bytes) == (TOTAL, CHUNK)
 
 
+def test_hold_apply_rides_the_begin_and_defaults_off():
+    """Two-phase (rig) mode is declared ONCE, on the begin — nowhere else.
+
+    Off by default, and absent rather than false: the single-unit begin every
+    fielded device has ever been sent stays byte-identical, and old firmware
+    that predates the field applies at commit as always.
+    """
+    dev = Device()
+    run(dev)
+    assert dev.kinds[0] == "begin" and not dev.sent[0].begin.hold_apply
+    plain = dev.sent[0].begin.SerializeToString()
+
+    dev = Device()
+    out = run(dev, hold_apply=True)
+    assert out.ok, out.detail
+    assert dev.kinds[0] == "begin" and dev.sent[0].begin.hold_apply
+    assert dev.sent[0].begin.SerializeToString() != plain
+    assert "chunk" in dev.kinds and dev.kinds[-1] == "commit"
+
+    # begin_message stands alone too, with the same default
+    m = ota_pb2.OtaMessage()
+    m.ParseFromString(ota.begin_message(TOTAL, CHUNK, "1.2.3", "compact_umi"))
+    assert not m.begin.hold_apply
+    m.ParseFromString(ota.begin_message(TOTAL, CHUNK, "1.2.3", "compact_umi",
+                                        hold_apply=True))
+    assert m.begin.hold_apply
+
+
+def test_bundle_terminal_session_is_reserved_and_never_folded():
+    """The head publishes an atomic bundle's verdict on a RESERVED session id:
+    `kBundleTerminalSession` in visio-embedded/src/ota/bundle_state.hpp. A relay
+    must both know it (to read the verdict) and never fold it (it is not a
+    transfer's status)."""
+    assert ota.BUNDLE_TERMINAL_SESSION == 0xB1D
+    assert ota.BUNDLE_TERMINAL_SESSION != ota.DEFAULT_SESSION_ID
+
+    # The consequential direction: a bundle SUCCESS on the reserved session
+    # mid-transfer must not read as OUR success and end the transfer early.
+    def verdict_crosstalk(dev, m):
+        dev.ack_contiguous(m)
+        s = OS(state=OS.SUCCESS, session_id=ota.BUNDLE_TERMINAL_SESSION)
+        dev.outbox.append(s.SerializeToString())
+
+    dev = Device(policy=verdict_crosstalk)
+    out = run(dev)
+    assert out.ok and out.detail == "STAGED", out.detail
+    assert len(dev.chunks) == TOTAL // CHUNK and out.acked == TOTAL
+
+
+def test_a_held_commit_needs_the_staged_ack():
+    """With hold_apply the device does NOT reboot, so a link drop after the
+    commit is not the reboot race — an unconfirmed held commit is not staged,
+    and the caller must not release a bundle on the strength of it."""
+    def policy(dev, m):
+        if m.HasField("chunk"):
+            dev.acked = m.chunk.offset + len(m.chunk.data)
+            dev.say(OS.RECEIVING)
+        elif m.HasField("commit"):
+            dev.dead_on_recv = True
+    out = run(Device(policy=policy), hold_apply=True)
+    assert not out.ok and "held commit" in out.detail
+
+    def silent(dev, m):
+        if m.HasField("chunk"):
+            dev.acked = m.chunk.offset + len(m.chunk.data)
+            dev.say(OS.RECEIVING)
+    out = run(Device(policy=silent), hold_apply=True, commit_wait=0.2)
+    assert not out.ok and "held commit" in out.detail
+    # ...whereas the plain (rebooting) commit keeps its racing verdict.
+    out = run(Device(policy=silent), commit_wait=0.2)
+    assert out.ok and "raced the reboot" in out.detail
+
+
 def test_target_device_is_stamped_on_every_frame():
     """push_serial_repush owns a socket so the link is the addressing; on a
     shared bus leg an unstamped frame is a broadcast."""

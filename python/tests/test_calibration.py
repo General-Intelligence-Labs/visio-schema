@@ -75,6 +75,30 @@ def test_set_calibration_extrinsics_roundtrip():
     assert sc.extrinsics.translation.x == 0.01
 
 
+def test_set_calibration_tcp_extrinsics_roundtrip():
+    """A gripper's cam-TCP pose is its own artifact on the ANCHOR camera: CAMERA
+    kind, index 0 (the index `extrinsics` forbids), cam0 <- tcp like the others."""
+    tf = FrameTransform_pb2.FrameTransform(parent_frame_id="cam0", child_frame_id="tcp")
+    tf.translation.x, tf.translation.z = 0.012, 0.085
+    tf.rotation.w = 1.0
+    cmd = command_pb2.Command(
+        set_calibration=command_pb2.SetCalibration(
+            sensor_kind=command_pb2.SetCalibration.CAMERA, sensor_index=0,
+            tcp_extrinsics=tf,
+        ),
+    )
+    sc = command_pb2.Command.FromString(cmd.SerializeToString()).set_calibration
+    assert sc.WhichOneof("artifact") == "tcp_extrinsics"
+    assert sc.sensor_kind == command_pb2.SetCalibration.CAMERA
+    assert sc.sensor_index == 0
+    assert sc.tcp_extrinsics.parent_frame_id == "cam0"
+    assert sc.tcp_extrinsics.child_frame_id == "tcp"
+    assert sc.tcp_extrinsics.translation.z == 0.085
+    # additive: a NEW tag in the oneof, nothing renumbered
+    f = command_pb2.SetCalibration.DESCRIPTOR.fields_by_name
+    assert f["tcp_extrinsics"].number == 17 and f["extrinsics"].number == 12
+
+
 def test_set_calibration_imu_info_roundtrip():
     """SetCalibration carries ImuCalibration as the imu_info artifact."""
     cmd = command_pb2.Command(

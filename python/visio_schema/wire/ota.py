@@ -23,13 +23,14 @@ from dataclasses import dataclass
 from visio_schema.v1.service.ota import ota_pb2
 
 __all__ = [
+    "BUNDLE_TERMINAL_SESSION",
     "COMMIT_WAIT_S",
-    "DEFAULT_SESSION_ID",
-    "RKFW_MAGIC",
     "DEADLINE_S",
+    "DEFAULT_SESSION_ID",
+    "MAX_CHUNK_BYTES",
+    "RKFW_MAGIC",
     "SOFT_RETRY_S",
     "STALL_TIMEOUT_S",
-    "MAX_CHUNK_BYTES",
     "TCP_CHUNK_BYTES",
     "TCP_WINDOW_BYTES",
     "USB_CHUNK_BYTES",
@@ -49,6 +50,14 @@ VENC_MAGIC, RKFW_MAGIC = b"VENC", b"RKFW"
 
 #: One relay owns one session; the device keys its staging on it.
 DEFAULT_SESSION_ID = 0xCA11
+
+#: The reserved session id a head publishes an atomic rig bundle's verdict on.
+#: Mirrors `visio-embedded/src/ota/bundle_state.hpp` ``kBundleTerminalSession``:
+#: after every unit was staged with ``hold_apply`` and the head sequenced the
+#: applies, the SUCCESS/FAILED ``OtaStatus`` for the bundle as a whole carries
+#: this ``session_id`` rather than any one transfer's. A relay folds only its
+#: own session (see `relay`), so a bundle verdict never lands in a transfer.
+BUNDLE_TERMINAL_SESSION = 0xB1D
 
 # TCP has no gadget-FIFO limit — the kernel socket buffer absorbs the device's
 # NAND-write stalls. 32 KiB is the size every fielded device has always
@@ -140,10 +149,13 @@ def _message(session_id: int, target_device: str, **body) -> bytes:
 
 
 def begin_message(total_bytes, chunk_bytes, fw_version, board, *,
-                  session_id=DEFAULT_SESSION_ID, target_device="") -> bytes:
-    return _message(session_id, target_device,
-                    begin=dict(total_bytes=total_bytes, chunk_bytes=chunk_bytes,
-                               fw_version=fw_version, board=board))
+                  session_id=DEFAULT_SESSION_ID, target_device="",
+                  hold_apply=False) -> bytes:
+    # proto3 omits a false bool, so the single-unit begin stays byte-identical
+    # to what every fielded device has always been sent.
+    begin = dict(total_bytes=total_bytes, chunk_bytes=chunk_bytes,
+                 fw_version=fw_version, board=board, hold_apply=hold_apply)
+    return _message(session_id, target_device, begin=begin)
 
 
 def chunk_message(offset, data, *, session_id=DEFAULT_SESSION_ID,
@@ -164,6 +176,7 @@ def relay(send: Callable[[bytes], None],
           recv: Callable[[float], bytes | None],
           image: bytes, *, fw_version: str, board: str = "",
           target_device: str = "", session_id: int = DEFAULT_SESSION_ID,
+          hold_apply: bool = False,
           window: int = TCP_WINDOW_BYTES, chunk: int = TCP_CHUNK_BYTES,
           stall_timeout: float = STALL_TIMEOUT_S,
           soft_retry: float = SOFT_RETRY_S,
@@ -189,6 +202,11 @@ def relay(send: Callable[[bytes], None],
         deadline_s: absolute cap on the whole transfer. The stall timer only
             catches a device that stops acking; a device trickling one ack just
             under ``stall_timeout`` would otherwise run forever.
+        hold_apply: two-phase (rig) mode — the device verifies and STAGES at
+            commit but does not arm recovery or reboot; it holds until an
+            ``OtaApply`` names this ``fw_version``. Rides on the begin only.
+            A STAGED ack then means "held", not "rebooting", and the bundle's
+            verdict arrives on `BUNDLE_TERMINAL_SESSION`, not this session.
     """
     OS = ota_pb2.OtaStatus
     total = len(image)
@@ -254,7 +272,8 @@ def relay(send: Callable[[bytes], None],
         max_resumes = 2 * (total // max(chunk, 1) + 2) + 16
     try:
         send(begin_message(total, chunk, fw_version, board,
-                           session_id=session_id, target_device=target_device))
+                           session_id=session_id, target_device=target_device,
+                           hold_apply=hold_apply))
         t_start = last_progress = last_soft = clock()
         emit(0, "begin", 0)
         # Read once before streaming: a device whose other slot already holds
@@ -328,14 +347,23 @@ def relay(send: Callable[[bytes], None],
             return done(False, st["failed"], resumes)
         if st["succeeded"]:
             return done(True, "SUCCESS", resumes)
-        return done(True, "STAGED" if st["staged"]
-                    else "committed (staging; STAGED ack raced the reboot)",
+        if st["staged"]:
+            return done(True, "STAGED", resumes)
+        if hold_apply:
+            # A HELD commit does not reboot: there is no race to excuse a
+            # missing STAGED, and the caller is about to release the whole
+            # bundle on the strength of it. Unconfirmed is not staged.
+            return done(False, "no STAGED ack for a held commit", resumes)
+        return done(True, "committed (staging; STAGED ack raced the reboot)",
                     resumes)
     except OSError as e:         # ConnectionError is a subclass. A serial or
         # raw-socket transport raises the wider type, and this module
         # advertises both — catching only ConnectionError would let an
         # OSError escape and replace a clean Outcome with a traceback.
-        if committed or st["staged"]:
+        if st["staged"] or (committed and not hold_apply):
             return done(True, "link dropped after commit (rebooting to apply)",
                         resumes)
+        if committed:
+            return done(False, "link dropped after a held commit, before its "
+                               "STAGED ack — not confirmed staged", resumes)
         return done(False, f"link dropped mid-transfer: {e}", resumes)
