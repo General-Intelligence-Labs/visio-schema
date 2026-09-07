@@ -79,7 +79,11 @@ message OtaBegin {
   string fw_version  = 1;  // version being delivered (free-form semver)
   string board       = 2;  // MUST equal the device's own board identifier
   uint64 total_bytes = 3;  // size of the opaque payload, in bytes
-  uint32 chunk_bytes = 4;  // sender's chunk size hint (32–64 KiB typical)
+  // The size the sender will actually use. NOT merely a hint: the device paces
+  // its RECEIVING acks off this, and those acks are the sender's window credit,
+  // so declaring one size and sending another either starves the window or
+  // overruns it. Bounded by OtaChunk.data's ceiling below.
+  uint32 chunk_bytes = 4;
   bytes  sha256      = 5;  // UNUSED — the payload envelope carries the digest
   bytes  signature   = 6;  // UNUSED — see above; the shared key is the gate
   uint32 min_version = 7;  // UNUSED — no anti-rollback floor is enforced here
@@ -114,7 +118,15 @@ message OtaPartition {
 // wire CRC and simply becomes a gap.
 message OtaChunk {
   uint64 offset = 1;  // absolute offset into the opaque payload
-  bytes  data   = 2;  // chunk_bytes payload (last chunk may be short)
+  // chunk_bytes payload (last chunk may be short).
+  //
+  // HARD CEILING 65535. nanopb is built here without PB_FIELD_32BIT, so
+  // pb_size_t is uint_least16_t and PB_SIZE_MAX is 65535 — a larger chunk
+  // cannot be pb_decode'd at all. The device answers every such frame with
+  // "OtaMessage decode failed" and the transfer never advances, which reads
+  // like a dead link rather than a size problem. Measured on a quattro head
+  // 2026-09-03: a 276 MB push at 256 KiB moved nothing.
+  bytes  data   = 2;
 }
 
 // All bytes delivered. The device finishes decrypting, checks the payload
@@ -189,4 +201,26 @@ message OtaStatus {
   string other_slot_version = 9;
   bool   revert_available   = 10;
   bool   last_ota_reverted  = 11;
+
+  // ── Receive capability ────────────────────────────────────────────────────
+  // The largest OtaChunk.data this device wants, in bytes. A sender uses
+  // min(its own protocol CEILING, this) — not its own default, which would make
+  // this field a no-op — and puts the same number in OtaBegin.chunk_bytes,
+  // which is also what paces the device's RECEIVING acks — chunk size and ack
+  // cadence are one mechanism, since the acks are the sender's window credit.
+  //
+  // It is a property of the BOARD, not of the link: an RV1106 on SPI NAND wants
+  // small chunks because its rx path is sized for the CDC-ACM gadget's tiny RX
+  // FIFO, while an RV1126B on eMMC behind a 5 Gbps gadget has no such limit and
+  // paying that cadence costs it tens of thousands of status publishes per
+  // image. Senders learn it from the OtaStatus answering an OtaQuery, before
+  // OtaBegin.
+  //
+  // 0 = not reported: firmware predating this field. Senders MUST then fall
+  // back to their own default (32 KiB), which is what every device accepted
+  // before this existed — so a mixed fleet needs no coordination.
+  //
+  // A sender MUST clamp this to OtaChunk.data's 65535 ceiling rather than trust
+  // it: a device that advertises more is wrong, and believing it breaks the push.
+  uint32 max_chunk_bytes = 12;
 }

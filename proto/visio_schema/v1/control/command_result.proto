@@ -243,6 +243,21 @@ message DeviceState {
   }
   HandDetection hand_detection = 38;
 
+  // ── GPS tagging ──
+  // Whether new recordings carry coordinates (SetGpsTagging).
+  //
+  // Tri-state like the toggles above, though for one reason only: every board
+  // supports the switch, so UNSUPPORTED means exactly "this firmware predates
+  // it". That distinction is the point — an old device reporting the proto3
+  // default would otherwise look like a device with tagging switched OFF,
+  // while it is in fact still stamping every session.
+  enum GpsTagging {
+    GPS_TAGGING_UNSUPPORTED = 0;
+    GPS_TAGGING_ENABLED     = 1;
+    GPS_TAGGING_DISABLED    = 2;
+  }
+  GpsTagging gps_tagging = 39;
+
   // ── notice volume ──
   // Voice-notice loudness, 0-100 (SetNoticeVolume; 0 = muted).
   //

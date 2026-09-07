@@ -29,6 +29,7 @@ __all__ = [
     "DEADLINE_S",
     "SOFT_RETRY_S",
     "STALL_TIMEOUT_S",
+    "MAX_CHUNK_BYTES",
     "TCP_CHUNK_BYTES",
     "TCP_WINDOW_BYTES",
     "USB_CHUNK_BYTES",
@@ -50,10 +51,23 @@ VENC_MAGIC, RKFW_MAGIC = b"VENC", b"RKFW"
 DEFAULT_SESSION_ID = 0xCA11
 
 # TCP has no gadget-FIFO limit — the kernel socket buffer absorbs the device's
-# NAND-write stalls. 32 KiB is NOT a tuning choice: larger frames overrun the
-# device's frame reassembly and are dropped, yielding zero acks.
+# NAND-write stalls. 32 KiB is the size every fielded device has always
+# accepted; a device that can take more says so in OtaStatus.max_chunk_bytes.
+#
+# The hard ceiling is MAX_CHUNK_BYTES, and it is NOT frame reassembly as this
+# comment claimed until 2026-09-03 — it is nanopb's size type. See ota.proto's
+# OtaChunk.data.
 TCP_WINDOW_BYTES = 2 * 1024 * 1024
 TCP_CHUNK_BYTES = 32 * 1024
+
+# OtaChunk.data is a nanopb bytes array and nanopb is built without
+# PB_FIELD_32BIT, so pb_size_t is 16-bit and PB_SIZE_MAX is 65535. A larger
+# chunk cannot be pb_decode'd at all: the device answers every frame with
+# "OtaMessage decode failed" and the transfer never advances, which reads like a
+# dead link rather than a size problem. A sender MUST clamp to this rather than
+# trust a device's advertisement. Headroom left for the fields wrapping the
+# payload. Measured on a quattro head: a 276 MB push at 256 KiB moved nothing.
+MAX_CHUNK_BYTES = 60 * 1024
 
 # USB CDC-ACM: total in-flight must stay <= the device's gadget RX FIFO (a few
 # KB). The device decrypts and writes each chunk to NAND inline on its single I/O
