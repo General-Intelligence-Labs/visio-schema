@@ -4,7 +4,7 @@
 #include <iostream>
 #include <utility>
 
-#include "visio_schema/transport/link.hpp"  // SetCurrentThreadName
+#include "visio_schema/transport/link.hpp"  // EnterServiceThread
 
 namespace visio_schema::mcap {
 
@@ -141,7 +141,7 @@ void McapWriterEndpoint::Send(const Message& msg) {
 void McapWriterEndpoint::WriterLoop() {
   // Without a name this thread inherits its creator's comm (on-device that is
   // the command worker's), which mis-attributes all recording CPU in top -H.
-  transport::SetCurrentThreadName("mcap_wr");
+  transport::EnterServiceThread("mcap_wr", 0);
   for (;;) {
     std::deque<Entry> batch;
     {

@@ -45,6 +45,20 @@ reserved session id the head publishes that bundle's SUCCESS/FAILED on
 (mirrors `visio-embedded/src/ota/bundle_state.hpp` `kBundleTerminalSession`);
 `relay` already folds only its own session, so a bundle verdict cannot abort
 or advance a transfer.
+### Library threads never inherit a real-time policy; `TcpAcceptor` gains a reactor mode (C++)
+
+Library only — **no proto or wire change**.
+
+- `transport::EnterServiceThread(name, nice)` replaces `SetCurrentThreadName`:
+  it names the thread AND puts it on `SCHED_OTHER` at the given nice. A thread
+  inherits its creator's policy, and on the Ego Pro head the hub discovery
+  thread had been swept onto `SCHED_FIFO`, so every limb link's `vs_ep_io`
+  ran real-time. `vs_ep_io`, `vs_tcp_accept` and `mcap_wr` all enter through
+  it now.
+- `TcpAcceptor::Bind()` + `listen_fd()` + `AcceptPass()`: the accept pass
+  without a thread, for an owner that already runs a poll loop. `Start()`
+  (threaded mode) is unchanged and is a wrapper over the same pass; the
+  per-refusal pacing is now the public `kRefusalDeferMs` the owner must honour.
 
 ### A switch for geo-tagging: `SetGpsTagging` (wire-compatible)
 
