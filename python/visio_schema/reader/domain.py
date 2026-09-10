@@ -288,6 +288,13 @@ class Calibration:
     # (visio-setup calib/push.py:154), so it needs NO inversion. VIO consumes it
     # directly; `cam_imu_dt_ns` below is its temporal counterpart.
     T_cam_imu: np.ndarray | None = None  # (4, 4)
+    # cam0 <- tcp: the 4x4 rigid transform taking a point in a gripper limb's
+    # tool-centre-point frame to the cam0 frame (`p_cam0 = T_cam_tcp @ p_tcp`),
+    # exactly as carried on `/<dev>/camera/0/tcp_extrinsics` (the anchor camera,
+    # index 0 only; `parent="cam0", child="tcp"`). Same direction as the stereo
+    # and IMU extrinsics above, so it needs NO inversion. None on a head, which
+    # has no tool.
+    T_cam_tcp: np.ndarray | None = None  # (4, 4) cam0 <- tcp
     cam_imu_dt_ns: int | None = None
     imu_rate_hz: float | None = None
     accel_noise_density: float | None = None

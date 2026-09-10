@@ -90,7 +90,11 @@ CAPTURE_METADATA = "visio.capture"
 _CALIB_SCHEMAS = frozenset({CAM_CALIB_SCHEMA, FRAME_TF_SCHEMA, IMU_CALIB_SCHEMA})
 # Calibration rides on these suffixes; `/tf` shares FrameTransform's schema but is
 # a runtime pose stream, so schema alone would drag it in — see `_calib_topics`.
-_CALIB_SUFFIXES = ("/intrinsics", "/extrinsics", "/info")
+_EXTRINSICS_SUFFIX = "/extrinsics"
+# Not a match for endswith(_EXTRINSICS_SUFFIX) — the underscore is load-bearing,
+# and _pick_stereo relies on it.
+_TCP_EXTRINSICS_SUFFIX = "/tcp_extrinsics"
+_CALIB_SUFFIXES = ("/intrinsics", _EXTRINSICS_SUFFIX, _TCP_EXTRINSICS_SUFFIX, "/info")
 _log = logging.getLogger("visio_schema.reader.session")
 
 # Above this share of the shorter file's span, an "overlap" is not a chunk seam —
@@ -918,6 +922,7 @@ class Session:
             stereo_T=stereo_T,
             baseline_m=baseline,
             T_cam_imu=_pick_cam_imu(seen_tf),
+            T_cam_tcp=_pick_cam_tcp(seen_tf),
             cam_imu_dt_ns=cam_imu_dt,
             imu_rate_hz=imu_rate,
             accel_noise_density=accel_nd,
@@ -1540,17 +1545,26 @@ def _parse_frame_transform(m) -> tuple[str, np.ndarray, np.ndarray]:
     return m.child_frame_id, R, T
 
 
-def _pick_stereo(tfs: dict[str, tuple]) -> tuple[np.ndarray, np.ndarray] | None:
-    """The stereo extrinsic: the pose of cam1 in cam0, off cam1's extrinsics topic.
+def _pick_tf(tfs: dict[str, tuple], seg: str, suffix: str, *,
+             child: str = "") -> tuple[np.ndarray, np.ndarray] | None:
+    """The one calibration transform whose topic sits under ``seg`` and ends with
+    ``suffix``, as raw ``(R, T)``.
 
-    Camera topics only, and no fall back to an arbitrary transform: on a recording
-    lacking `camera/*/extrinsics` the first `/tf` is a runtime `world -> imu0` pose,
-    and rectifying with that fails silently rather than loudly.
+    No fallback to an arbitrary transform: on a recording lacking the wanted
+    topic the first `/tf` is a runtime `world -> imu0` pose, and using that
+    fails silently rather than loudly. ``child`` pins the frame the artifact must
+    name; a default-constructed FrameTransform (empty child) or a mis-topiced
+    pose is refused rather than read as the wanted one.
     """
-    for topic, (_child, R, T) in tfs.items():
-        if "/camera/" in topic and topic.endswith("/extrinsics"):
+    for topic, (tf_child, R, T) in tfs.items():
+        if seg in topic and topic.endswith(suffix) and (not child or tf_child == child):
             return R, T
     return None
+
+
+def _pick_stereo(tfs: dict[str, tuple]) -> tuple[np.ndarray, np.ndarray] | None:
+    """The stereo extrinsic: the pose of cam1 in cam0, off cam1's extrinsics topic."""
+    return _pick_tf(tfs, "/camera/", _EXTRINSICS_SUFFIX)
 
 
 def _pick_cam_imu(tfs: dict[str, tuple]) -> np.ndarray | None:
@@ -1559,12 +1573,27 @@ def _pick_cam_imu(tfs: dict[str, tuple]) -> np.ndarray | None:
     The device publishes kalibr's ``T_cam_imu`` **verbatim** as a FrameTransform
     with ``parent="cam0", child="imu0"`` (visio-setup `calib/push.py:154`), and
     foxglove's convention (child-frame point -> parent frame) agrees, so this is
-    used directly with **no inversion**. Same rule as `_pick_stereo`: no fallback.
+    used directly with **no inversion**.
     """
-    for topic, (_child, R, T) in tfs.items():
-        if "/imu/" in topic and topic.endswith("/extrinsics"):
-            return make_T(R, T)
-    return None
+    hit = _pick_tf(tfs, "/imu/", _EXTRINSICS_SUFFIX)
+    return make_T(*hit) if hit else None
+
+
+def _pick_cam_tcp(tfs: dict[str, tuple]) -> np.ndarray | None:
+    """``T_cam_tcp``: the cam0 <- tcp 4x4, off the ANCHOR camera's TCP topic.
+
+    A gripper limb publishes the pose of its tool-centre-point frame IN cam0 on
+    ``/<dev>/camera/0/tcp_extrinsics`` (``parent="cam0", child="tcp"``), the same
+    direction as ``camera/<i>/extrinsics``, so this too is used with **no
+    inversion**. The contract pins index 0 and the child frame, so the topic is
+    matched down to ``/camera/0/`` and the child down to ``tcp``. Its suffix
+    is deliberately NOT a match for `_pick_stereo`'s ``endswith("/extrinsics")``:
+    a TCP pose is not a camera's, and a limb with one camera has no stereo pair
+    to be mistaken for.
+    """
+    hit = _pick_tf(tfs, "/camera/", "/camera/0" + _TCP_EXTRINSICS_SUFFIX,
+                   child="tcp")
+    return make_T(*hit) if hit else None
 
 
 def _parse_imu_calib(m) -> tuple[int | None, float | None, float | None, float | None]:

@@ -6,6 +6,46 @@ bump the MINOR version.
 
 ## Unreleased
 
+### `SetCalibration` gains a cam-TCP artifact on the anchor camera: `tcp_extrinsics`
+
+`tcp_extrinsics = 17` in the artifact oneof carries a `foxglove.FrameTransform`
+(`parent_frame_id="cam0"`, `child_frame_id="tcp"`): the pose of a gripper
+limb's tool-centre-point frame expressed in cam0, `p_cam0 = R * p_tcp + t`, the
+same direction as `camera/<i>/extrinsics`. CAMERA kind, and `sensor_index`
+MUST be 0 — the anchor — which is the inverse of the `extrinsics` rule that
+forbids index 0. The device persists it as `cameras[0].tcp_extrinsics` and
+re-publishes it on `/<dev>/camera/0/tcp_extrinsics`.
+
+It lives under CAMERA rather than as a new sensor kind because that is what it
+is measured against: the fixture solve poses the tool in the camera that saw
+the tag, and a limb has exactly one tool, so it hangs off the one camera every
+other extrinsic is already expressed in. Its own oneof member rather than an
+`extrinsics` on a spare index because it is not a sensor's pose but the tool's;
+sharing the member would leave a reader unable to tell a third camera from a
+gripper without knowing the board.
+
+The reader follows: `Calibration.T_cam_tcp` (`(4,4)`, cam0 <- tcp, no
+inversion) is picked off the `tcp_extrinsics` topic and NEVER off an
+`/extrinsics` one — the suffix is deliberately not a match for the stereo pick,
+so a one-camera limb cannot grow a phantom stereo pair with the tool pose as
+its baseline.
+
+Additive: firmware predating the field refuses the command (an unknown oneof
+member decodes as none set), and nothing already on the wire moves.
+
+### Two-phase OTA on the wire helper: `hold_apply` + `BUNDLE_TERMINAL_SESSION` The station never sends an `OtaApply`: on a `bundle_atomic` head the BundleSequencer releases every held unit itself once the set is staged, and reports the outcome on this session.
+
+`wire.ota.begin_message(..., hold_apply=False)` and `relay(..., hold_apply=False)`
+set `OtaBegin.hold_apply` (tag 9, already in the contract) — only when asked,
+so the single-unit begin every fielded device has ever been sent stays
+byte-identical. With it the device verifies and STAGES at commit but holds the
+slot until an `OtaApply` names the version, which is what lets a rig transfer
+every board first and apply as one. `BUNDLE_TERMINAL_SESSION = 0xB1D` is the
+reserved session id the head publishes that bundle's SUCCESS/FAILED on
+(mirrors `visio-embedded/src/ota/bundle_state.hpp` `kBundleTerminalSession`);
+`relay` already folds only its own session, so a bundle verdict cannot abort
+or advance a transfer.
+
 ### A switch for geo-tagging: `SetGpsTagging` (wire-compatible)
 
 - **New Command body `SetGpsTagging` (tag 41), `{bool enabled}`.** Persisted;
