@@ -3,7 +3,6 @@
 #include "visio_schema/mcap/recording_crypto.hpp"
 
 #include <fcntl.h>
-#include <sys/syscall.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -14,6 +13,10 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <utility>
+
+#include "file_sync.hpp"
+#include "span_readback.hpp"
 
 // Vendored header-only mcap, lz4/zstd compiled out (we only ever use
 // Compression::None) so this links with no extra deps and cross-compiles for
@@ -70,12 +73,17 @@ class CloexecFileWriter final : public ::mcap::IWritable {
   // header, then the MCAP stream under ChaCha20. size() keeps reporting the
   // PLAINTEXT length — that is what MCAP records in its index, and it is what
   // makes the container's offset identity (file offset = plaintext + 32) hold.
+  // `readback`, when set, receives every byte as it lands and every span
+  // as it is evicted (write-time read-back; see span_readback.hpp).
   explicit CloexecFileWriter(std::uint64_t sync_span_bytes = 0,
-                             const RecordingKey* key = nullptr)
-      : sync_span_bytes_(
-            sync_span_bytes ? std::max<std::uint64_t>(sync_span_bytes, 4096)
-                            : 0),
-        encrypting_(key != nullptr) {
+                             const RecordingKey* key = nullptr,
+                             SpanReadback* readback = nullptr)
+      : encrypting_(key != nullptr),
+        readback_(readback),
+        sync_span_bytes_(
+            sync_span_bytes ? std::max<std::uint64_t>(sync_span_bytes,
+                                                      file_sync::kPageBytes)
+                            : 0) {
     if (key) key_ = *key;
   }
   ~CloexecFileWriter() override { end(); }
@@ -161,6 +169,10 @@ class CloexecFileWriter final : public ::mcap::IWritable {
                    static_cast<unsigned long long>(size),
                    std::strerror(errno));
     }
+    // The read-back's copy of what just landed, keyed by FILE offset —
+    // below the cipher, so it is the bytes as they are on disk. This
+    // memcpy is the read-back's entire cost on the write path.
+    if (readback_) readback_->OnBytesWritten(file_size(), data, wrote);
     size_ += wrote;
     if (sync_span_bytes_ > 0 && file_size() - synced_off_ >= sync_span_bytes_)
       SyncSpan();
@@ -169,8 +181,14 @@ class CloexecFileWriter final : public ::mcap::IWritable {
 
   void end() override {
     if (file_) {
+      const uint64_t final_size = file_size();
       std::fclose(file_);
       file_ = nullptr;
+      // Everything past the last evicted span — the span synced but not
+      // yet waited on, plus the partial tail — is on disk now but not
+      // verified; the owner posts it once the part is fsynced.
+      if (readback_)
+        readback_->NotePartEnd(evicted_end_, final_size, sync_disabled_);
     }
     fd_ = -1;
     cipher_.reset();
@@ -179,6 +197,7 @@ class CloexecFileWriter final : public ::mcap::IWritable {
     synced_off_ = 0;
     prev_off_ = 0;
     prev_len_ = 0;
+    evicted_end_ = 0;
     sync_disabled_ = false;
     write_err_logged_ = false;
   }
@@ -214,6 +233,9 @@ class CloexecFileWriter final : public ::mcap::IWritable {
                             "VREC: cannot write header to \"" + filename +
                                 "\": " + std::strerror(errno));
     }
+    // The header is on-disk bytes like any other: the read-back compares
+    // the file from offset 0.
+    if (readback_) readback_->OnBytesWritten(0, raw.data(), raw.size());
     header_bytes_ = raw.size();
     auto cipher = std::make_unique<RecordingCipher>(key_, nonce);
     if (!cipher->valid()) {
@@ -226,45 +248,15 @@ class CloexecFileWriter final : public ::mcap::IWritable {
   }
 
   const bool encrypting_ = false;
+  // Write-time read-back sink; null when off. Owned by McapWriter, which
+  // outlives this writable.
+  SpanReadback* const readback_;
   RecordingKey key_{};
   std::unique_ptr<RecordingCipher> cipher_;
   uint64_t header_bytes_ = 0;
   // Fixed, so encryption never adds an allocation to the recorder's write
   // path. 64 KiB covers a typical chunk in one pass; larger spans just loop.
   std::array<std::uint8_t, 64 * 1024> scratch_{};
-
-  // uClibc-ng marshals sync_file_range() WRONG on 32-bit ARM: the kernel's
-  // only ARM entry point is arm_sync_file_range (= sync_file_range2, flags
-  // in r1 per the EABI's even-register rule for 64-bit args), but the libc
-  // stub passes the generic order — the kernel reads flags = 0 and the call
-  // is a successful no-op. Verified by disassembly of the SDK toolchain's
-  // libc.so.1 (its posix_fadvise64 does the ARM swizzle correctly; this one
-  // doesn't). Issue the syscall ourselves on ARM; syscall(2) passes longs
-  // in r0..r5, which is exactly sync_file_range2's layout.
-  static long sync_range(int fd, uint64_t off, uint64_t len,
-                         unsigned int flags) {
-#if defined(__linux__) && defined(__arm__)
-#ifndef __NR_sync_file_range2
-#error "32-bit ARM without sync_file_range2 would fall back into the broken libc stub"
-#endif
-    static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
-                  "the lo/hi register split below assumes little-endian");
-    return ::syscall(__NR_sync_file_range2, fd, flags,
-                     static_cast<unsigned long>(off & 0xffffffffu),
-                     static_cast<unsigned long>(off >> 32),
-                     static_cast<unsigned long>(len & 0xffffffffu),
-                     static_cast<unsigned long>(len >> 32));
-#elif defined(__linux__)
-    return ::sync_file_range(fd, static_cast<off64_t>(off),
-                             static_cast<off64_t>(len), flags);
-#else
-    (void)fd;
-    (void)off;
-    (void)len;
-    (void)flags;
-    return 0;
-#endif
-  }
 
   // Hand the span written since the last call to kernel writeback, and wait
   // out + evict the span before it, so the file's dirty set stays bounded
@@ -275,16 +267,14 @@ class CloexecFileWriter final : public ::mcap::IWritable {
   // moment of its choosing. Waiting one span BEHIND keeps this call ~free
   // while storage keeps up (the span in flight had a full fill period of
   // head start) and bounds the stall to one span's write time when it does
-  // not. WAIT_BEFORE|WRITE|WAIT_AFTER on the previous span is deliberate:
-  // only the triple upgrades to WB_SYNC_ALL, guaranteeing the span is clean
-  // before DONTNEED (which silently skips dirty pages). Failures are
+  // not. The previous span is waited on and evicted in one go
+  // (file_sync::WritebackAndEvict explains the flag triple). Failures are
   // best-effort — the cost is only this optimization — but say so once per
   // part: a silently absent sync looks exactly like the fix not working
   // (same argument as setvbuf above).
   void SyncSpan() {
     // 4 KiB on every kernel we ship (RV1106/RV1126B); a larger-page target
     // would only strand a few clean pages per span, not corrupt anything.
-    constexpr uint64_t kPageMask = 4095;
     if (std::fflush(file_) != 0) {
       if (!sync_disabled_) {
         sync_disabled_ = true;
@@ -292,49 +282,43 @@ class CloexecFileWriter final : public ::mcap::IWritable {
                      "mcap: fflush in SyncSpan failed (%s) — dirty-set "
                      "bounding disabled for this part\n",
                      std::strerror(errno));
+        if (readback_) readback_->OnSyncDisabled();
       }
       // Aligned like the happy path, or the next span's fadvise would round
       // the unaligned start UP and strand the straddling page for good.
-      synced_off_ = file_size() & ~kPageMask;
+      synced_off_ = file_sync::RoundDownToPage(file_size());
       prev_len_ = 0;
       return;
     }
 #if defined(__linux__)
     if (sync_disabled_) {
-      synced_off_ = file_size() & ~kPageMask;
+      synced_off_ = file_sync::RoundDownToPage(file_size());
       return;
     }
     // Page-align the span end: fadvise rounds partial pages AWAY, so an
     // unaligned boundary would strand one straddling page per span in the
     // cache forever. The partial tail waits for the next span.
-    const uint64_t end = file_size() & ~kPageMask;
+    const uint64_t end = file_sync::RoundDownToPage(file_size());
     if (end <= synced_off_) return;
     const uint64_t off = synced_off_;
     const uint64_t len = end - synced_off_;
-    long rc = sync_range(fd_, off, len, SYNC_FILE_RANGE_WRITE);
-    int fadvise_err = 0;
-    if (rc == 0 && prev_len_ > 0) {
-      rc = sync_range(fd_, prev_off_, prev_len_,
-                      SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WRITE |
-                          SYNC_FILE_RANGE_WAIT_AFTER);
-      // posix_fadvise returns its error and does NOT set errno.
-      if (rc == 0)
-        fadvise_err = ::posix_fadvise64(fd_, static_cast<off64_t>(prev_off_),
-                                        static_cast<off64_t>(prev_len_),
-                                        POSIX_FADV_DONTNEED);
-    }
-    if ((rc != 0 || fadvise_err != 0) && !sync_disabled_) {
+    int err = 0;
+    if (file_sync::SyncRange(fd_, off, len, SYNC_FILE_RANGE_WRITE) != 0)
+      err = errno;
+    if (err == 0 && prev_len_ > 0) err = EvictPreviousSpan();
+    if (err != 0 && !sync_disabled_) {
       sync_disabled_ = true;
       std::fprintf(stderr,
                    "mcap: span writeback failed (%s) — dirty-set bounding "
                    "disabled for this part\n",
-                   std::strerror(fadvise_err != 0 ? fadvise_err : errno));
+                   std::strerror(err));
+      if (readback_) readback_->OnSyncDisabled();
     }
     prev_off_ = off;
     prev_len_ = len;
     synced_off_ = end;
 #else
-    synced_off_ = file_size() & ~kPageMask;
+    synced_off_ = file_sync::RoundDownToPage(file_size());
 #endif
   }
 
@@ -342,9 +326,24 @@ class CloexecFileWriter final : public ::mcap::IWritable {
   std::FILE* file_ = nullptr;
   int fd_ = -1;
   uint64_t size_ = 0;
+  // Wait out and evict the span before the one just handed to writeback.
+  // The one point where a span is known written back AND out of the page
+  // cache: the medium now holds the only copy outside the read-back ring,
+  // so this is where it is queued for reading. Returns 0 or errno.
+  int EvictPreviousSpan() {
+    const int err = file_sync::WritebackAndEvict(fd_, prev_off_, prev_len_);
+    if (err != 0) return err;
+    evicted_end_ = prev_off_ + prev_len_;
+    if (readback_) readback_->OnSpanEvicted(prev_off_, prev_len_);
+    return 0;
+  }
+
   uint64_t synced_off_ = 0;
   uint64_t prev_off_ = 0;
   uint64_t prev_len_ = 0;
+  // End of the last span written back + evicted: equals prev_off_ while
+  // spans stay contiguous, kept explicit for the part-end accounting.
+  uint64_t evicted_end_ = 0;
   bool sync_disabled_ = false;
   bool write_err_logged_ = false;
 };
@@ -364,59 +363,14 @@ std::string NumberedPart(const std::string& path, std::size_t index) {
   return path.substr(0, dot) + tag + path.substr(dot);
 }
 
-// fsync a path (a file, or a directory with O_DIRECTORY) to push it to physical
-// media. Reopening read-only is enough — fsync flushes dirty pages regardless of
-// the open mode. Best-effort: a failure means the just-finished recording may
-// not survive an immediate power-down, so it is logged with that implication
-// (the device log is where storage degradation already surfaces, cf.
-// McapWriterEndpoint::NoteDrop) but never thrown — the file is already finalized
-// on disk, and turning that into an exception on the stop path would be strictly
-// worse.
-void FsyncPathBestEffort(const std::string& path, int extra_open_flags) {
-  const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | extra_open_flags);
-  if (fd < 0) {
-    std::fprintf(stderr,
-                 "McapWriter: cannot open %s to fsync (data may not be "
-                 "durable): %s\n",
-                 path.c_str(), std::strerror(errno));
-    return;
-  }
-  if (::fsync(fd) != 0) {
-    std::fprintf(stderr,
-                 "McapWriter: fsync %s failed (data may not be durable): %s\n",
-                 path.c_str(), std::strerror(errno));
-  }
-  ::close(fd);
-}
-
-// Push a finished MCAP part's data — and the directory entry recording it —
-// onto physical media. The upstream writer's close() ends in fclose(), which
-// only flushes stdio buffers into the kernel page cache; on the async-mounted
-// SD card a power-down within the writeback window (~30 s) would otherwise
-// truncate or corrupt the just-finalized file. fsync the file (its data + size)
-// and then the containing directory so the entry is durable too.
-void FsyncPart(const std::string& path) {
-  FsyncPathBestEffort(path, 0);
-
-  const std::size_t slash = path.find_last_of('/');
-  std::string dir;
-  if (slash == std::string::npos) {
-    dir = ".";
-  } else if (slash == 0) {
-    dir = "/";
-  } else {
-    dir = path.substr(0, slash);
-  }
-  FsyncPathBestEffort(dir, O_DIRECTORY);
-}
-
 }  // namespace
 
 McapWriter::McapWriter(std::string_view path, std::uint64_t max_bytes,
                        double max_duration_s, bool rotate_on_keyframe,
                        std::int64_t pair_guard_ns,
                        std::uint64_t sync_span_bytes,
-                       std::optional<RecordingKey> recording_key)
+                       std::optional<RecordingKey> recording_key,
+                       McapReadbackOptions readback)
     : base_path_(path),
       max_bytes_(max_bytes),
       max_duration_ns_(static_cast<std::int64_t>(max_duration_s * 1e9)),
@@ -424,7 +378,10 @@ McapWriter::McapWriter(std::string_view path, std::uint64_t max_bytes,
       rotate_on_keyframe_(rotate_on_keyframe),
       pair_guard_ns_(pair_guard_ns),
       sync_span_bytes_(sync_span_bytes),
-      recording_key_(std::move(recording_key)) {
+      recording_key_(std::move(recording_key)),
+      readback_(readback.ring_bytes > 0
+                    ? std::make_unique<SpanReadback>(std::move(readback))
+                    : nullptr) {
   OpenPart();
 }
 
@@ -454,8 +411,12 @@ void McapWriter::OpenPart() {
   // CloexecFileWriter for why (recording fds must not leak into forked Wi-Fi
   // daemons). The writable is stored in file_ (declared before writer_) so it
   // outlives the writer that holds a raw pointer to it.
+  // The read-back learns the part before its first byte (the VREC header
+  // is written inside open()).
+  if (readback_) readback_->BeginPart(p);
   auto fw = std::make_unique<CloexecFileWriter>(
-      sync_span_bytes_, recording_key_ ? &*recording_key_ : nullptr);
+      sync_span_bytes_, recording_key_ ? &*recording_key_ : nullptr,
+      readback_.get());
   const ::mcap::Status status = fw->open(p);
   if (!status.ok()) {
     throw std::runtime_error("McapWriter: cannot open " + p + ": " +
@@ -503,7 +464,9 @@ bool McapWriter::ShouldRoll() const {
 void McapWriter::CloseCurrentPart() {
   const std::string p = PartPath();  // capture before close, while state is live
   writer_->close();
-  FsyncPart(p);
+  file_sync::FsyncPart(p);
+  // Only now is the tail on the media: post it for read-back.
+  if (readback_) readback_->CommitTail();
 }
 
 void McapWriter::Roll() {
@@ -616,6 +579,25 @@ void McapWriter::Close() {
   if (closed_) return;
   closed_ = true;
   if (writer_) CloseCurrentPart();
+  // Bounded by close_flush_ms (0 = none); whatever is left is counted
+  // skipped and the ring is released.
+  if (readback_) readback_->Finish();
+}
+
+bool McapWriter::ReadbackStep(std::chrono::milliseconds budget) {
+  return readback_ && readback_->Step(budget);
+}
+
+std::size_t McapWriter::readback_pending() const {
+  return readback_ ? readback_->pending() : 0;
+}
+
+McapReadbackStats McapWriter::readback_stats() const {
+  return readback_ ? readback_->stats() : McapReadbackStats{};
+}
+
+bool McapWriter::storage_fault() const {
+  return readback_ && readback_->storage_fault();
 }
 
 }  // namespace visio_schema::mcap

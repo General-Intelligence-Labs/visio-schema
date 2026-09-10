@@ -23,10 +23,12 @@
 #include <unistd.h>
 #endif
 
+#include "mcap_writer_test_util.hpp"
 #include "visio_schema/routing/channel.hpp"
 #include "visio_schema/wire/control.hpp"
 #include "visio_schema/wire/time.hpp"   // SetTimestampNs
 
+using namespace mcap_test;
 using visio_schema::Channel;
 using visio_schema::kFirstDynamic;
 using visio_schema::mcap::McapWriter;
@@ -35,26 +37,6 @@ using visio_schema::wire::Message;
 namespace fs = std::filesystem;
 
 namespace {
-
-std::string TempPath(const std::string& name) {
-  return (fs::temp_directory_path() / name).string();
-}
-
-Channel MakeChannel(std::uint32_t id, const std::string& topic) {
-  Channel c;
-  c.id = id;
-  c.topic = topic;
-  c.schema_name = "visio_schema.v1.sensor.ImuRaw";
-  c.schema = std::string(8, '\x01');  // dummy FileDescriptorSet bytes
-  return c;
-}
-
-Message Data(std::uint32_t id, std::string payload) {
-  Message m;
-  m.stream_id = id;
-  m.payload = std::move(payload);
-  return m;
-}
 
 // A compressed-video channel — the only schema the keyframe gate acts on.
 Channel VideoChannel(std::uint32_t id, const std::string& topic) {
@@ -89,22 +71,6 @@ Message VideoMsg(std::uint32_t id, std::string payload, bool keyframe,
   m.keyframe = keyframe;
   SetTimestampNs(&m.timestamp, ts_ns);
   return m;
-}
-
-std::string PartPath(const std::string& stem_no_ext, int part) {
-  char buf[8];
-  std::snprintf(buf, sizeof(buf), "_%04d", part);
-  return TempPath(stem_no_ext + buf + ".mcap");
-}
-
-std::string SlurpFile(const std::string& path) {
-  std::ifstream f(path, std::ios::binary);
-  return std::string((std::istreambuf_iterator<char>(f)),
-                     std::istreambuf_iterator<char>());
-}
-
-void RemoveParts(const std::string& stem_no_ext) {
-  for (int i = 0; i < 8; ++i) std::remove(PartPath(stem_no_ext, i).c_str());
 }
 
 }  // namespace
@@ -193,12 +159,12 @@ TEST(McapWriter, SyncSpansSurviveRotationByteIdentical) {
                  false, 0, /*sync_span_bytes=*/4096);
     write_all(w);
   }
-  for (int part = 0; part < 3; ++part) {
-    const std::string pa = PartPath(stem_a, part);
-    const std::string pb = PartPath(stem_b, part);
-    ASSERT_TRUE(fs::exists(pa)) << pa;
-    ASSERT_TRUE(fs::exists(pb)) << pb;
-    EXPECT_TRUE(SlurpFile(pa) == SlurpFile(pb)) << "part " << part;
+  ASSERT_GE(PartCount(stem_a), 3);
+  ASSERT_EQ(PartCount(stem_b), PartCount(stem_a));
+  for (int part = 0; part < PartCount(stem_a); ++part) {
+    EXPECT_TRUE(SlurpFile(PartPath(stem_a, part)) ==
+                SlurpFile(PartPath(stem_b, part)))
+        << "part " << part;
   }
   RemoveParts(stem_a);
   RemoveParts(stem_b);
@@ -584,21 +550,11 @@ TEST(McapWriter, LargeBufferedWritesFlushAcrossCloseAndRotation) {
     }
     w.Close();
   }
-  static const char kMagic[] = "\x89MCAP0\r\n";
-  int parts = 0;
-  for (int i = 0; i < 8; ++i) {
-    char buf[8];
-    std::snprintf(buf, sizeof(buf), "_%04d", i);
-    const std::string p = TempPath(stem + buf + ".mcap");
-    if (!fs::exists(p)) break;
-    ++parts;
-    std::ifstream f(p, std::ios::binary);
-    ASSERT_TRUE(f.good()) << p;
-    f.seekg(-8, std::ios::end);
-    char tail[8] = {0};
-    f.read(tail, 8);
-    EXPECT_EQ(std::memcmp(tail, kMagic, 8), 0)
-        << p << " lacks the trailing magic — buffered tail lost";
+  const int parts = PartCount(stem);
+  for (int i = 0; i < parts; ++i) {
+    EXPECT_TRUE(EndsWithMcapMagic(SlurpFile(PartPath(stem, i))))
+        << PartPath(stem, i)
+        << " lacks the trailing magic — buffered tail lost";
   }
   EXPECT_GE(parts, 3) << "expected rotation across the stdio buffer";
   RemoveParts(stem);
@@ -617,17 +573,9 @@ namespace {
 
 using visio_schema::mcap::kVrecHeaderBytes;
 using visio_schema::mcap::ParseVrecHeader;
-using visio_schema::mcap::RecordingCipher;
 using visio_schema::mcap::RecordingKey;
 using visio_schema::mcap::RecordingKeyFingerprint;
 using visio_schema::mcap::VrecHeader;
-
-RecordingKey TestKey(std::uint8_t seed) {
-  RecordingKey k{};
-  for (std::size_t i = 0; i < k.size(); ++i)
-    k[i] = static_cast<std::uint8_t>(seed + i);
-  return k;
-}
 
 // Identical writes on both sides of every comparison below, so any difference
 // in the output is attributable to encryption alone.
@@ -636,21 +584,6 @@ void WriteFixture(McapWriter& w) {
   for (int i = 0; i < 64; ++i)
     w.Write(ch, Data(kFirstDynamic, "frame-" + std::to_string(i)));
   w.Close();
-}
-
-std::string DecryptPart(const std::string& raw, const RecordingKey& key) {
-  VrecHeader h;
-  std::string err;
-  EXPECT_TRUE(ParseVrecHeader(reinterpret_cast<const std::uint8_t*>(raw.data()),
-                              raw.size(), &h, &err))
-      << err;
-  std::string body = raw.substr(kVrecHeaderBytes);
-  RecordingCipher c(key, h.nonce);
-  EXPECT_TRUE(c.valid());
-  EXPECT_TRUE(c.XorAt(0, reinterpret_cast<const std::uint8_t*>(body.data()),
-                      body.size(),
-                      reinterpret_cast<std::uint8_t*>(body.data())));
-  return body;
 }
 
 }  // namespace

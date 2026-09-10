@@ -29,6 +29,7 @@
 #include <optional>
 #include <string_view>
 
+#include "visio_schema/mcap/readback.hpp"
 #include "visio_schema/mcap/recording_crypto.hpp"
 #include <unordered_map>
 #include <unordered_set>
@@ -45,6 +46,8 @@ class IWritable;
 namespace visio_schema::mcap {
 
 using visio_schema::wire::Message;
+
+class SpanReadback;
 
 class McapWriter {
  public:
@@ -74,11 +77,15 @@ class McapWriter {
   // differ, so every reader must sniff the magic. Absent means plaintext, and
   // that is a RUNTIME choice: whether a recording is encrypted depends on
   // whether the device holds a key, never on how this was compiled.
+  //
+  // readback (opt-in): verify each writeback span against the medium while
+  // its bytes are still in RAM; see readback.hpp.
   explicit McapWriter(std::string_view path, std::uint64_t max_bytes = 0,
                       double max_duration_s = 0.0, bool rotate_on_keyframe = false,
                       std::int64_t pair_guard_ns = 0,
                       std::uint64_t sync_span_bytes = 0,
-                      std::optional<RecordingKey> recording_key = std::nullopt);
+                      std::optional<RecordingKey> recording_key = std::nullopt,
+                      McapReadbackOptions readback = {});
   ~McapWriter();
 
   McapWriter(const McapWriter&) = delete;
@@ -105,6 +112,23 @@ class McapWriter {
     return bytes_written_.load(std::memory_order_relaxed);
   }
 
+  // Read-back pull API (see readback.hpp). ReadbackStep verifies at most
+  // one span — resuming one a previous budget left unfinished — and
+  // returns true if it did any work, false when nothing is ready or queued.
+  // A step may overrun its budget by one piece. ONE stepping thread at a
+  // time; it may run concurrently with Write and is serialized against
+  // Close by an internal lock, so Close waits for a step in progress (the
+  // budget plus one piece) before its own bounded flush. Never blocks the
+  // writer. A no-op (false) when read-back is off.
+  bool ReadbackStep(std::chrono::milliseconds budget);
+  // Spans queued or in progress. Nonzero with a false step means the front
+  // span is waiting for trail_bytes of further writes.
+  std::size_t readback_pending() const;
+  McapReadbackStats readback_stats() const;
+  // Latched once a span stayed wrong after its rewrite (or the rewrite
+  // itself failed). Recording continues; the owner decides what to do.
+  bool storage_fault() const;
+
  private:
   std::string PartPath() const;
   void OpenPart();          // throws on open failure
@@ -128,6 +152,11 @@ class McapWriter {
   // Set once at construction: a recording cannot change key mid-file, because
   // each part's header names the key that opens it. A rotation picks it up.
   const std::optional<RecordingKey> recording_key_;
+
+  // Write-time read-back; null when off. Declared before file_: the
+  // writable holds a raw pointer into it and reports its tail from end(),
+  // so this must be destroyed after it.
+  std::unique_ptr<SpanReadback> readback_;
 
   // The IWritable backing writer_'s current part. We own the underlying fd
   // (opened with O_CLOEXEC) rather than letting upstream mcap fopen() it, so a

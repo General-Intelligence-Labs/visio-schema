@@ -59,9 +59,12 @@ add_library(visio_schema STATIC
   src/codec/cobs.cc
   src/codec/frame.cc
   # routing (id<->Channel table) + the MCAP container codec + its writer sink
+  # + the sink's write-time read-back (verify the media against RAM)
   src/routing/registry.cc
   src/mcap/writer.cc
   src/mcap/writer_endpoint.cc
+  src/mcap/span_readback.cc
+  src/mcap/part_readback_file.cc
   # transport: links + endpoints + framing
   src/transport/link.cc
   src/transport/framing.cc
@@ -121,6 +124,8 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT CMAKE_CROSSCOMPILI
     tests/test_channel_registry.cc
     tests/test_mcap_writer.cc
     tests/test_mcap_writer_endpoint.cc
+    tests/test_mcap_readback.cc
+    tests/test_mcap_readback_faults.cc
     tests/test_io.cc
     tests/test_wake_fd.cc
     tests/test_message_inbox.cc
