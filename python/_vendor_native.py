@@ -39,6 +39,10 @@ def vendor() -> bool:
               "`git submodule update --init third_party/nanopb`; skipping the "
               "native _creader extension", file=sys.stderr)
         return False
+    if not os.path.isdir(os.path.join(CPP, "generated_nanopb")):
+        print("warning: generated nanopb sources missing — run `make gen`; "
+              "skipping the native _creader extension", file=sys.stderr)
+        return False
     # Whole-subtree copies keep this robust to dependency changes; setup.py lists
     # only the files it compiles.
     shutil.copytree(os.path.join(CPP, "include"),

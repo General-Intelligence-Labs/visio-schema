@@ -28,13 +28,17 @@ The three things most users do — see ``docs/usage.md`` and ``examples/`` for r
 imported lazily); importing this package never imports ``mcap``, and a clear error is
 raised only if you read or write a recording in an environment missing it.
 """
-from visio_schema.mcap import McapWriter, read_mcap
-from visio_schema.routing import Channel, ChannelRegistry, make_channel
-from visio_schema.stream import read_serial
-from visio_schema.transport import Endpoint, serial_endpoint
-from visio_schema.wire.control import COMMAND, command_message
-from visio_schema.wire.message import Message
-from visio_schema.wire.schema import message_class
+from importlib import import_module as _import_module
+from typing import TYPE_CHECKING as _TYPE_CHECKING
+
+if _TYPE_CHECKING:
+    from visio_schema.mcap import McapWriter, read_mcap
+    from visio_schema.routing import Channel, ChannelRegistry, make_channel
+    from visio_schema.stream import read_serial
+    from visio_schema.transport import Endpoint, serial_endpoint
+    from visio_schema.wire.control import COMMAND, command_message
+    from visio_schema.wire.message import Message
+    from visio_schema.wire.schema import message_class
 
 __all__ = [
     "COMMAND",
@@ -50,3 +54,25 @@ __all__ = [
     "read_serial",
     "serial_endpoint",
 ]
+
+# Crypto/QR consumers do not need generated protobuf bindings. Keep the same
+# facade objects, but load their modules only when a facade name is requested.
+_MODULES = {
+    "McapWriter": "mcap", "read_mcap": "mcap",
+    "Channel": "routing", "ChannelRegistry": "routing", "make_channel": "routing",
+    "read_serial": "stream", "Endpoint": "transport", "serial_endpoint": "transport",
+    "COMMAND": "wire.control", "command_message": "wire.control",
+    "Message": "wire.message", "message_class": "wire.schema",
+}
+
+
+def __getattr__(name: str):
+    if name not in _MODULES:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(_import_module(f".{_MODULES[name]}", __name__), name)
+    globals()[name] = value
+    return value
+
+
+def __dir__():
+    return sorted(set(globals()) | set(__all__))

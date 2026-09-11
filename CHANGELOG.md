@@ -6,6 +6,14 @@ bump the MINOR version.
 
 ## Unreleased
 
+### QR-only source installs
+
+Load the unchanged package facade lazily so crypto/settings-QR consumers can
+import from source without generated protobuf bindings. Skip the optional native
+build when generated nanopb sources are absent. Full wire/reader use still
+requires the generated bindings documented in the source installation guide.
+
+
 ### Storage providers: Google Cloud Storage and Azure Blob
 
 `docs/protocol/storage-providers.md` — the canonical `SetStorage` contract —
