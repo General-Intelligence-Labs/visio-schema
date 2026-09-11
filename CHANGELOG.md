@@ -4,7 +4,19 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
-## Unreleased
+## 0.9.1 — 2026-09-11
+
+### Published settings QR and fleet-key APIs
+
+This release publishes the changes on main since the v0.9.0 tag (35dd2f8),
+including `visio_schema.settings_qr.SealedSecrets`, `seal_into`, and the bundled
+fleet public key. Applications can seal setup payloads with `seal_into` without
+loading the fleet key themselves. These helpers were not included in the
+published 0.9.0 artifacts.
+
+Wheel validation installs the reader/test extras and excludes the unreliable
+wall-clock prefetch benchmark on macOS; functional tests remain enabled.
+
 
 ### Storage providers: Google Cloud Storage and Azure Blob
 
