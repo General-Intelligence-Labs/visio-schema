@@ -4,7 +4,7 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
-## Unreleased
+## 0.9.1 — 2026-09-11
 
 ### QR-only source installs
 
