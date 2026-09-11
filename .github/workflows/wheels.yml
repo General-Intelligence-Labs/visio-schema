@@ -5,14 +5,70 @@ name: wheels
 # test suite both native-on and on the pure-Python fallback, run the C++↔Python
 # interop both ways, and build the sdist. On a `v*` tag, publish all
 # artifacts to PyPI via Trusted Publishing (OIDC — no stored token) and attach
-# them to the GitHub release. `workflow_dispatch` builds + tests without publishing.
+# them to the GitHub release. Dispatch can rebuild an existing tag without moving it.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Existing vX.Y.Z tag to rebuild (empty for a branch dry run)'
+        type: string
+        default: ''
+      publish:
+        description: 'Publish the rebuilt release tag after all checks pass'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
 
 jobs:
+  source:
+    name: resolve release source
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+      tag: ${{ steps.source.outputs.tag }}
+      publish: ${{ steps.source.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - id: source
+        env:
+          REQUESTED_TAG: ${{ inputs.release_tag }}
+          REQUESTED_PUBLISH: ${{ inputs.publish }}
+        run: |
+          python - <<'PYTHON'
+          import os
+          import re
+          import subprocess
+          import tomllib
+
+          tagged = os.environ['GITHUB_REF'].startswith('refs/tags/')
+          tag = os.environ['GITHUB_REF_NAME'] if tagged else os.environ['REQUESTED_TAG']
+          publish = tagged or os.environ['REQUESTED_PUBLISH'] == 'true'
+          if publish and not tag:
+              raise SystemExit('Publishing requires an existing release tag')
+          if tag and not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', tag):
+              raise SystemExit('Expected a vX.Y.Z release tag')
+          ref = f'refs/tags/{tag}' if tag else os.environ['GITHUB_SHA']
+          sha = subprocess.check_output(['git', 'rev-parse', '--verify', ref + '^{commit}'], text=True).strip()
+          config = subprocess.check_output(['git', 'show', f'{sha}:python/pyproject.toml'], text=True)
+          version = tomllib.loads(config)['project']['version']
+          if tag and tag != f'v{version}':
+              raise SystemExit(f'Tag {tag} does not match package version {version}')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write(f'sha={sha}\ntag={tag}\npublish={str(publish).lower()}\n')
+          print(f'Building {sha}; tag={tag}; publish={publish}')
+          PYTHON
+
   build_wheels:
+    needs: source
     name: wheels (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -22,6 +78,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ needs.source.outputs.sha }}
           submodules: recursive    # nanopb + foxglove-sdk + mcap are submodules
 
       - uses: actions/setup-python@v5
@@ -53,6 +110,10 @@ jobs:
 
       - name: build + test wheels
         uses: pypa/cibuildwheel@v2.21
+        env:
+          # The full suite imports scipy and cv2 during collection. Install the
+          # package's test/reader extras, including when rebuilding older tags.
+          CIBW_TEST_EXTRAS: 'dev,reader,dataset,display'
         with:
           package-dir: python
 
@@ -62,11 +123,13 @@ jobs:
           path: wheelhouse/*.whl
 
   build_sdist:
+    needs: source
     name: sdist
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ needs.source.outputs.sha }}
           submodules: recursive
       - uses: actions/setup-python@v5
         with:
@@ -112,6 +175,7 @@ jobs:
   # ties the native reader to the committed cross-language bytes, so the live
   # imu_producer interop stays in the bus/transport layer's CI.
   cpp_tests:
+    needs: source
     name: c++ transport (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -121,6 +185,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ needs.source.outputs.sha }}
           submodules: recursive
       - uses: actions/setup-python@v5
         with:
@@ -151,9 +216,9 @@ jobs:
   # The `pypi` environment also lets you require a manual approval before release.
   publish_pypi:
     name: publish to PyPI
-    needs: [build_wheels, build_sdist, cpp_tests]   # release waits on the C++ suite too (Backpressure is deterministic via the bulk-routed outbox)
+    needs: [source, build_wheels, build_sdist, cpp_tests]   # release waits on the C++ suite too (Backpressure is deterministic via the bulk-routed outbox)
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    if: needs.source.outputs.publish == 'true'
     environment:
       name: pypi
       url: https://pypi.org/p/visio-schema
@@ -174,9 +239,9 @@ jobs:
 
   release_assets:
     name: attach artifacts to the GitHub release
-    needs: [build_wheels, build_sdist, cpp_tests]   # release waits on the C++ suite too (Backpressure is deterministic via the bulk-routed outbox)
+    needs: [source, build_wheels, build_sdist, cpp_tests]   # release waits on the C++ suite too (Backpressure is deterministic via the bulk-routed outbox)
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    if: needs.source.outputs.publish == 'true'
     permissions:
       contents: write          # create/update the release + upload assets
     steps:
@@ -192,6 +257,7 @@ jobs:
       - name: attach wheels + sdist to the release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.source.outputs.tag }}
           files: |
             dist/*.whl
             dist/*.tar.gz
