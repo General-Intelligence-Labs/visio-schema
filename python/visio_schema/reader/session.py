@@ -930,7 +930,7 @@ class Session:
         )
 
     def _iter_calib(self, want_topics: list[str]) -> Iterator[tuple[str, str, object]]:
-        """Seek only the calib topics, first file wins — INTACT files first.
+        """Seek only the calib topics, first file wins PER TOPIC — INTACT files first.
 
         Every file in a session carries the same calibration, so which one answers
         is free — except that a truncated file may hold only PART of it, and "first
@@ -939,27 +939,47 @@ class Session:
         than reading one more file, so intact files are asked first and a truncated
         one only stands in when none of them carries calibration at all.
 
+        The accounting is PER TOPIC, not per file. A session is not always one
+        camera's worth of calibration: a sidecar publishes the model its OWN images
+        are in (`<topic>/sampled/intrinsics` beside the recording's
+        `/ego/camera/1/intrinsics`), and those are different cameras under different
+        keys. Stopping at the first file that yields anything would let whichever
+        file sorted first answer for the whole session — and since intact files sort
+        ahead of truncated ones, an intact one-topic sidecar beside a truncated
+        recording would suppress that recording's stereo and IMU extrinsics outright.
+        So keep going until every wanted topic has been seen.
+
         On an intact file the read is a chunk-index seek (`_chunks_matching_topics`
         drops every chunk with no calib channel, so a file without them costs zero
         chunk reads). A truncated file has no index to seek by and is a full linear
         pass, which is why the per-file `idx.topics()` pre-filter below matters
-        there and is free here.
+        there and is free here. The usual multi-chunk session costs exactly what it
+        did before: every chunk carries the same topics, so the first file completes
+        `seen` and the rest are skipped unread by that same pre-filter.
         """
         want = set(want_topics)
+        seen: set[str] = set()
         pairs = list(zip(self._files, self._index, strict=True))
         for path, idx in sorted(pairs, key=lambda pi: pi[1].truncated):
-            if not any(t in want for (t, _s, _n) in idx.topics()):
+            here = {t for (t, _s, _n) in idx.topics()} & want
+            if here <= seen:   # nothing this file adds (empty set included)
                 continue
-            got = False
             for schema, channel, msg in self._read_messages(
-                    path, topics=want_topics):
-                if schema is None:
+                    path, topics=sorted(here - seen)):
+                if schema is None or channel.topic in seen:
                     continue
                 proto = message_class(schema.name)()
                 proto.ParseFromString(msg.data)
                 yield schema.name, channel.topic, proto
-                got = True
-            if got:
+                seen.add(channel.topic)
+                if here <= seen:
+                    # Everything this file can contribute, contributed. A recording
+                    # republishes its calibration once per chunk — 131 times per
+                    # topic on a real session — and without this the loop runs the
+                    # file to exhaustion, decompressing every chunk that carries one
+                    # so `_read_calibration` can discard 650 of 655 messages.
+                    break
+            if seen >= want:
                 return
 
     def _read_metadata(self) -> SessionMeta:
