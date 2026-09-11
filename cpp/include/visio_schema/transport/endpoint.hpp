@@ -20,6 +20,7 @@
 // Lives in visio-schema so a schema-only user can run one stream with no bus.
 #pragma once
 
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <stdexcept>
@@ -53,6 +54,18 @@ class Endpoint {
 
   // Thread-safe, non-blocking enqueue for sending (drains on the endpoint's thread).
   virtual void Send(const Message& msg) = 0;
+
+  // Enqueue N messages as ONE unit of work, for a producer that already knows it
+  // has a group (one collector drain, one bundle period). The default is the
+  // obvious loop, so no endpoint has to implement it and none changes behaviour
+  // — a recording sink keeps every message by taking it unchanged.
+  //
+  // An implementation should do per-GROUP whatever it would otherwise repeat per
+  // message. For a framed endpoint that is the I/O-thread wake, and it is the
+  // whole reason this exists; FramedFdEndpoint::SendBatch says why.
+  virtual void SendBatch(const Message* msgs, std::size_t n) {
+    for (std::size_t i = 0; i < n; ++i) Send(msgs[i]);
+  }
 
   // Stop + join the I/O thread and close the link. Idempotent.
   virtual void Stop() = 0;

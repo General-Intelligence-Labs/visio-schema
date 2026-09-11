@@ -57,17 +57,16 @@ class FramedFdEndpoint : public Endpoint {
 
   void Start(InboundFn on_inbound, ClosedFn on_closed) override;
   void Send(const Message& msg) override;
+  void SendBatch(const Message* msgs, std::size_t n) override;
   void Stop() override;
 
   // This client's delivery filter (endpoint.hpp). Replaced whole rather than
   // mutated, so a reader works from a consistent table. Serialized with Send()
-  // by the bus dispatch mutex — the same contract decim_last_us_ relies on, and
+  // by the bus dispatch mutex — the same contract decim_grid_us_ relies on, and
   // the reason this needs no atomic (libstdc++'s atomic shared_ptr ops take a
   // process-global pthread mutex, which would be ~100x this gate's cost).
   void SetStreamPolicy(
-      std::shared_ptr<const ResolvedStreamPolicy> policy) override {
-    policy_ = std::move(policy);
-  }
+      std::shared_ptr<const ResolvedStreamPolicy> policy) override;
 
   // Honoured by Pump() at a frame boundary (never mid-write, or the reader
   // desyncs on a half-written COBS frame).
@@ -171,19 +170,42 @@ class FramedFdEndpoint : public Endpoint {
   const std::int64_t stall_ns_;             // see kDefaultStallNs
   const std::int64_t degrade_hold_ns_;      // see kDefaultDegradeHoldNs
   // This client's filter; null = deliver everything. Guarded by the bus dispatch
-  // serialization, like decim_last_us_ below.
+  // serialization, like decim_grid_us_ below.
   std::shared_ptr<const ResolvedStreamPolicy> policy_;
-  // The rule for `stream_id`, or null when nothing restricts it.
-  const StreamRule* RuleFor(std::uint32_t stream_id) const {
-    if (!policy_) return nullptr;
-    const auto it = policy_->find(stream_id);
-    return it == policy_->end() ? nullptr : &it->second;
+  // The rule for `stream_id` in an arbitrary table, or null when nothing
+  // restricts it. Takes the table because SetStreamPolicy has to consult the
+  // incoming one alongside the installed one.
+  static const StreamRule* RuleIn(const ResolvedStreamPolicy* policy,
+                                  std::uint32_t stream_id) {
+    if (policy == nullptr) return nullptr;
+    const auto it = policy->find(stream_id);
+    return it == policy->end() ? nullptr : &it->second;
   }
-  // Last-forwarded time per rate-capped stream. Touched only from Send, which
-  // the bus serializes under its dispatch mutex (every send path — Publish,
-  // Relay, ReplyTo — takes it), so this needs no lock of its own. Bounded by the
-  // number of channels a rule matched.
-  std::unordered_map<std::uint32_t, std::int64_t> decim_last_us_;
+  const StreamRule* RuleFor(std::uint32_t stream_id) const {
+    return RuleIn(policy_.get(), stream_id);
+  }
+  // Per rate-capped stream: the earliest CAPTURE time (us) that may pass next —
+  // a grid, not a last-seen stamp — plus which clock this stream established on
+  // its first message. See PassesRateGate for why each of those is load-bearing.
+  // Touched only from Send/SendBatch and SetStreamPolicy, which the bus
+  // serializes under its dispatch mutex (every send path — Publish, Relay,
+  // ReplyTo — takes it), so this needs no lock of its own. Bounded by the number
+  // of channels a rule matched.
+  struct RateGate {
+    std::int64_t grid_us = 0;
+    bool capture_timed = false;  // set from the stream's first message
+    bool mixed_warned = false;   // one complaint per stream, not per message
+  };
+  std::unordered_map<std::uint32_t, RateGate> decim_grid_us_;
+  // Shared body of Send/SendBatch: every gate plus the framing and enqueue, but
+  // NOT the wake — the caller owns that, which is the whole difference between
+  // them. Returns whether the message actually entered an outbox. `stalled` is a
+  // per-GROUP snapshot: a link that recovers mid-batch still sheds the rest of
+  // that batch's shed-safe frames, which is one tick of staleness at worst.
+  bool EnqueueOne(const Message& msg, bool stalled);
+  // The rate gate. Advances decim_grid_us_[stream_id]; call only under the same
+  // serialization as Send.
+  bool PassesRateGate(const Message& msg, std::int64_t min_gap_us);
   std::int64_t reopen_backoff_ns_ = 0;
   std::int64_t next_reopen_ns_ = 0;
   std::vector<std::uint8_t> rx_buf_;

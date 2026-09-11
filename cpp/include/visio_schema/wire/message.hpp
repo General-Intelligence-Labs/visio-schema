@@ -154,8 +154,9 @@ struct Message {
   // Outbound framed bytes are byte-identical across sinks (the header is
   // stamped before fanout; per-link stream-id remap happens on hub INBOUND,
   // never per-sink), so one COBS+CRC pass serves the whole fanout. Safe
-  // without locking: Bus::Relay hands the same Message to sinks sequentially
-  // under its dispatch lock. `mutable` so Send(const Message&) can fill it.
+  // without locking: Bus::Relay and Bus::FanoutBatch both hand the same Message
+  // to sinks sequentially under one hold of the dispatch lock — batching inverts
+  // the loop but not that. `mutable` so Send(const Message&) can fill it.
   mutable std::shared_ptr<const std::vector<std::uint8_t>> framed;
 };
 
