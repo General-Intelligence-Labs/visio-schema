@@ -6,6 +6,13 @@ bump the MINOR version.
 
 ## Unreleased
 
+### `visio-settings-qr` reads a whole number written without quotes as text
+
+A text field given as a bare whole number (`"location": 101`, an all-digit
+Wi-Fi passphrase) used to fail with `must be a string`. It is now read as its
+text, and the printed code always carries text. Other wrong types are still
+rejected.
+
 ### `SetCalibration` gains a cam-TCP artifact on the anchor camera: `tcp_extrinsics`
 
 `tcp_extrinsics = 17` in the artifact oneof carries a `foxglove.FrameTransform`

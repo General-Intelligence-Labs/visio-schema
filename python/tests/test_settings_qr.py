@@ -33,6 +33,7 @@ from visio_schema.settings_qr.interactive import interactive
 from visio_schema.settings_qr.payload import (
     PROVIDERS,
     RegionSource,
+    normalize_bare_numbers,
     normalize_storage_prefix,
     provider_from_endpoint,
     region_from_endpoint,
@@ -234,6 +235,31 @@ class TestCli:
         out = capsys.readouterr()
         assert json.loads(out.out)["v"] == PLAINTEXT_VERSION
         assert "SECURITY" in out.err
+
+    def test_a_bare_number_in_a_text_field_prints_as_text(self, tmp_path, config, capsys) -> None:
+        config["meta"]["location"] = 101
+        config["storage"]["prefix"] = 7  # made text first, then slash-terminated
+        rc = main(["--config", self._write(tmp_path, config), "--plaintext", "--dry-run"])
+        assert rc == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["meta"]["location"] == "101"
+        assert payload["storage"]["prefix"] == "7/"
+
+    def test_a_bare_number_storage_secret_is_sealed_as_text(
+            self, tmp_path, config, capsys, test_pubkey_pem) -> None:
+        config["storage"]["secret_access_key"] = 12345678
+        rc = main(["--config", self._write(tmp_path, config),
+                   "--pubkey", test_pubkey_pem, "--dry-run"])
+        assert rc == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert "secret_access_key" not in payload["storage"]
+        assert open_sealed(payload, TEST_PRIVATE).storage_secret == "12345678"
+
+    def test_inspect_reads_a_bare_number_as_the_app_does(self, tmp_path, capsys) -> None:
+        p = tmp_path / "payload.json"
+        p.write_text('{"t":"visio-settings","v":1,"meta":{"location":101}}')
+        assert main(["inspect", str(p)]) == 0
+        assert "meta.location" not in capsys.readouterr().err
 
     def test_a_recording_key_cannot_ride_in_a_plaintext_qr(
             self, tmp_path, config, capsys) -> None:
@@ -490,14 +516,39 @@ class TestStoragePrefix:
         assert cfg["storage"]["prefix"] == want
 
     def test_a_wrong_typed_prefix_passes_through_for_validate_to_reject(self) -> None:
-        cfg = {"storage": {"prefix": 7}}
+        cfg = {"storage": {"prefix": 7.5}}
         normalize_storage_prefix(cfg)
-        assert cfg["storage"]["prefix"] == 7
+        assert cfg["storage"]["prefix"] == 7.5
 
     def test_it_ignores_a_payload_with_no_storage_section(self) -> None:
         cfg = {"bitrate_kbps": 8000}
         normalize_storage_prefix(cfg)
         assert "storage" not in cfg
+
+
+class TestBareNumbers:
+    def test_it_becomes_text_in_every_text_section(self, config) -> None:
+        config["meta"]["location"] = 101
+        config["storage"]["bucket"] = 2024
+        config["wifi"] = {"ssid": 0, "passphrase": 12345678}
+        normalize_bare_numbers(config)
+        assert config["meta"]["location"] == "101"
+        assert config["storage"]["bucket"] == "2024"
+        assert config["wifi"] == {"ssid": "0", "passphrase": "12345678"}
+        assert validate(config) == []
+
+    def test_other_types_and_number_sections_are_left_for_validate(self, config) -> None:
+        config["meta"]["task"] = 1.5
+        config["meta"]["capturer"] = True
+        config["resolution"] = {"width": 1920, "height": 1080}
+        normalize_bare_numbers(config)
+        assert config["meta"]["task"] == 1.5
+        assert config["meta"]["capturer"] is True
+        assert config["resolution"] == {"width": 1920, "height": 1080}
+        problems = validate(config)
+        assert any(p.startswith("meta.task:") for p in problems)
+        assert any(p.startswith("meta.capturer:") for p in problems)
+        assert not any(p.startswith("resolution") for p in problems)
 
 
 class TestFieldRules:
