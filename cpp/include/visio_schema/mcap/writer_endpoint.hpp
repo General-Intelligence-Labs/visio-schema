@@ -8,6 +8,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -68,7 +69,9 @@ class McapWriterEndpoint : public transport::Endpoint {
                      std::uint64_t sync_span_bytes = 0,
                      // Present -> each part is a VREC container instead of
                      // plaintext MCAP. Passthrough; see McapWriter.
-                     std::optional<RecordingKey> recording_key = std::nullopt);
+                     std::optional<RecordingKey> recording_key = std::nullopt,
+                     // Write-time read-back. Passthrough; see McapWriter.
+                     McapReadbackOptions readback = {});
   ~McapWriterEndpoint() override;
 
   McapWriterEndpoint(const McapWriterEndpoint&) = delete;
@@ -98,6 +101,16 @@ class McapWriterEndpoint : public transport::Endpoint {
   // Deliberately NOT reported through on_closed: that contract means "fixed
   // link hit EOF, detach me", and a write-only sink ignores both callbacks.
   bool write_failed() const { return failed_.load(std::memory_order_relaxed); }
+
+  // Write-time read-back passthrough (see McapReadbackOptions). Step from
+  // any ONE thread of the caller's choosing while recording; the writer
+  // thread is never blocked by it, and Stop() runs the bounded close flush.
+  bool ReadbackStep(std::chrono::milliseconds budget);
+  std::size_t readback_pending() const;
+  McapReadbackStats readback_stats() const;
+  // Latched: the card did not hold what was written and a rewrite did not
+  // fix it. Unlike write_failed(), recording continues — the owner decides.
+  bool storage_fault() const;
 
  private:
   struct Entry {

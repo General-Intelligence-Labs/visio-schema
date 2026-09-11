@@ -4,7 +4,7 @@
 #include <iostream>
 #include <utility>
 
-#include "visio_schema/transport/link.hpp"  // SetCurrentThreadName
+#include "visio_schema/transport/link.hpp"  // EnterServiceThread
 
 namespace visio_schema::mcap {
 
@@ -23,11 +23,12 @@ McapWriterEndpoint::McapWriterEndpoint(std::string_view path, StreamResolver res
                                        std::map<std::string, std::string> metadata,
                                        bool rotate_on_keyframe, std::int64_t pair_guard_ns,
                                        std::uint64_t sync_span_bytes,
-                                       std::optional<RecordingKey> recording_key)
+                                       std::optional<RecordingKey> recording_key,
+                                       McapReadbackOptions readback)
     : resolve_(std::move(resolve)),
       writer_(std::make_unique<visio_schema::mcap::McapWriter>(
           path, max_bytes, max_duration_s, rotate_on_keyframe, pair_guard_ns,
-          sync_span_bytes, std::move(recording_key))),
+          sync_span_bytes, std::move(recording_key), std::move(readback))),
       policy_(policy) {
   // Written on this (constructing) thread, before Start() spawns the writer
   // thread — so it lands in the file ahead of any message, no locking needed.
@@ -141,7 +142,7 @@ void McapWriterEndpoint::Send(const Message& msg) {
 void McapWriterEndpoint::WriterLoop() {
   // Without a name this thread inherits its creator's comm (on-device that is
   // the command worker's), which mis-attributes all recording CPU in top -H.
-  transport::SetCurrentThreadName("mcap_wr");
+  transport::EnterServiceThread("mcap_wr", 0);
   for (;;) {
     std::deque<Entry> batch;
     {
@@ -217,6 +218,24 @@ std::uint64_t McapWriterEndpoint::bytes_written() const {
   // so it stays valid for the endpoint's lifetime; bytes_written() reads an
   // atomic, so polling it from another thread needs no lock.
   return writer_ ? writer_->bytes_written() : 0;
+}
+
+// writer_ outlives the endpoint (see bytes_written); the read-back's own
+// lock serializes a step against Close, so no endpoint lock is needed.
+bool McapWriterEndpoint::ReadbackStep(std::chrono::milliseconds budget) {
+  return writer_ && writer_->ReadbackStep(budget);
+}
+
+std::size_t McapWriterEndpoint::readback_pending() const {
+  return writer_ ? writer_->readback_pending() : 0;
+}
+
+McapReadbackStats McapWriterEndpoint::readback_stats() const {
+  return writer_ ? writer_->readback_stats() : McapReadbackStats{};
+}
+
+bool McapWriterEndpoint::storage_fault() const {
+  return writer_ && writer_->storage_fault();
 }
 
 McapWriterStats McapWriterEndpoint::stats() const {

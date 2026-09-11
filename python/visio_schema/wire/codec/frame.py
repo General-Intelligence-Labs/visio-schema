@@ -13,7 +13,7 @@ protobuf fields + the `visio_schema.wire.vN` package version — there is no
 separate header version byte. CRC16 covers `HEADER_LEN || header_pb ||
 payload`; the CRC bytes themselves are not covered.
 
-Per-transport wrappers (TCP TOTAL_LEN prefix, COBS for serial, datagram
+Per-transport wrappers (COBS delimiters on TCP and serial, datagram
 boundaries for UDP) are applied OUTSIDE this codec by the transport
 implementation — see framing.md §3.
 """

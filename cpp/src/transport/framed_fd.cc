@@ -8,7 +8,7 @@
 #include <iterator>
 
 #include "visio_schema/transport/framing.hpp"
-#include "visio_schema/transport/link.hpp"  // SetCurrentThreadName
+#include "visio_schema/transport/link.hpp"  // EnterServiceThread
 #include "visio_schema/wire/time.hpp"       // MonotonicNs
 
 namespace visio_schema::transport {
@@ -472,13 +472,14 @@ void FramedFdEndpoint::Tick(std::int64_t now_ns) {
 }
 
 void FramedFdEndpoint::Loop() {
-  SetCurrentThreadName("vs_ep_io");
   // Below-normal: egress to viewers must yield to the producing device's
   // capture/encode pipeline. When the CPU saturates, THIS thread starving is
   // the designed degradation — the outbox stall gate sheds preview frames —
   // whereas a starved encoder sheds recording frames, which is never
-  // acceptable. Harmless off-device (readers are not CPU-bound).
-  setpriority(PRIO_PROCESS, 0, 5);
+  // acceptable. Harmless off-device (readers are not CPU-bound). Timeshared
+  // explicitly: whoever attached this link may be real-time, and inheriting
+  // that would put preview egress above the encoder it must yield to.
+  EnterServiceThread("vs_ep_io", 5);
   while (!stop_.load()) {
     const int fd = fd_;
     pollfd pfds[2];

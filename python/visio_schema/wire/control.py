@@ -42,8 +42,10 @@ def command_message(command: _ProtoMessage) -> Message:
     """Wrap a Command into a `Message` on the `COMMAND` control stream.
 
     The result is ready to hand to `Endpoint.send`. Set the command's
-    ``target_device`` so the bus routes it to the right device end-to-end; the device
-    replies with a ``CommandResult`` on the same `COMMAND` stream.
+    ``target_device`` so the bus routes it to the right device end-to-end. The
+    device does NOT reply on `COMMAND`: its ``CommandResult`` arrives on the
+    device's own ``/<device>/command_result`` data channel, a dynamic stream id
+    learned from the ``DeviceInfo`` announce. Match it by ``command_id``.
 
     Args:
         command: A ``visio_schema.v1.control.command_pb2.Command`` to serialize into

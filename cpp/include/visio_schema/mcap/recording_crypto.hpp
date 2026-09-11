@@ -63,6 +63,8 @@ constexpr std::size_t kChaChaBlockBytes = 64;
 // SHA-256(key)[:8] — the fingerprint the header carries and the device reports.
 RecordingKeyFp RecordingKeyFingerprint(const RecordingKey& key);
 std::string FingerprintHex(const RecordingKeyFp& fp);
+// Lower-case hex of `n` bytes.
+std::string HexOf(const std::uint8_t* p, std::size_t n);
 
 struct VrecHeader {
     std::uint8_t format = kVrecFormat;

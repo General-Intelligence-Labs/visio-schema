@@ -68,9 +68,16 @@ int OpenTcpListenSocket(std::uint16_t port);
 // for Linux's accept4(SOCK_CLOEXEC).
 int AcceptCloexec(int listen_fd);
 
-// Name the calling thread (prctl PR_SET_NAME on Linux, 15 chars kept; no-op
-// elsewhere). Purely diagnostic — the endpoint/acceptor/timer loops name
-// themselves so top -H and per-thread CPU accounting on a device are readable.
-void SetCurrentThreadName(const char* name);
+// Make the calling thread a plain background service thread: comm = `name`
+// (prctl PR_SET_NAME on Linux, 15 chars kept; no-op elsewhere), scheduling
+// policy SCHED_OTHER, nice = `nice_value` (per-thread on Linux; skipped
+// elsewhere, where PRIO_PROCESS would renice the whole process).
+//
+// The policy reset is the load-bearing half, the name is diagnostics: a new
+// thread inherits its creator's policy, and the creator is whoever happened
+// to call Start()/AttachSink. One did ship real-time and took the recorder
+// and the ISP with it. Every loop in this library enters through here so
+// that cannot recur; lowering to SCHED_OTHER needs no capability.
+void EnterServiceThread(const char* name, int nice_value);
 
 }  // namespace visio_schema::transport

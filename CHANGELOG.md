@@ -45,6 +45,65 @@ reserved session id the head publishes that bundle's SUCCESS/FAILED on
 (mirrors `visio-embedded/src/ota/bundle_state.hpp` `kBundleTerminalSession`);
 `relay` already folds only its own session, so a bundle verdict cannot abort
 or advance a transfer.
+### Library threads never inherit a real-time policy; `TcpAcceptor` gains a reactor mode (C++)
+
+Library only — **no proto or wire change**.
+
+- `transport::EnterServiceThread(name, nice)` replaces `SetCurrentThreadName`:
+  it names the thread AND puts it on `SCHED_OTHER` at the given nice. A thread
+  inherits its creator's policy, and on the Ego Pro head the hub discovery
+  thread had been swept onto `SCHED_FIFO`, so every limb link's `vs_ep_io`
+  ran real-time. `vs_ep_io`, `vs_tcp_accept` and `mcap_wr` all enter through
+  it now.
+- `TcpAcceptor::Bind()` + `listen_fd()` + `AcceptPass()`: the accept pass
+  without a thread, for an owner that already runs a poll loop. `Start()`
+  (threaded mode) is unchanged and is a wrapper over the same pass; the
+  per-refusal pacing is now the public `kRefusalDeferMs` the owner must honour.
+
+### `McapWriter` can read every span back from the card as it records (C++)
+
+Library only — **no proto or wire change** (`make breaking` clean). Default
+OFF; a caller that does not opt in gets byte-identical output and no new
+work on the write path. Linux only; elsewhere the options are ignored.
+
+A customer's part came back with foreign 189-byte blocks (a 31-byte
+high-entropy value + 158 zeros, sector terminated, at byte 7491 of a
+128 KiB cluster): the writer wrote correct bytes and the SD card returned
+stale sectors afterwards. Nothing above the file system can see that
+except by reading the medium back, and the only moment the correct bytes
+are still known is while they sit in RAM.
+
+- **`McapReadbackOptions`** (`readback.hpp`; trailing ctor argument on
+  `McapWriter` and `McapWriterEndpoint`, existing callers unchanged). With
+  `ring_bytes > 0` every byte the part file receives — below the VREC
+  cipher, so the bytes as they are on disk — is also copied into a ring;
+  once a writeback span (`sync_span_bytes`) is on the medium and evicted
+  from the page cache it is queued for verification, and a part's tail
+  after its fsync. The option comment gives the ring sizing rule and the
+  span size per container (a plaintext span is one MCAP chunk, a VREC span
+  the cipher's 64 KiB slice).
+- **No thread.** `ReadbackStep(budget)` verifies at most one span (resuming
+  across calls) from any ONE thread of the caller's choosing;
+  `readback_pending()` says whether to keep calling; `Close()` runs the
+  remaining steps inline for at most `close_flush_ms` (default 0: never
+  waits). A caller that never steps only accumulates `spans_skipped`; the
+  writer is never blocked or slowed — the queue drops when full, an
+  overrun span is skipped before it is read.
+- **Mismatch policy:** one log line (path, span, first differing offset,
+  offset within the 128 KiB cluster, expected/got bytes), the WHOLE span
+  rewritten once from RAM via O_DIRECT, re-read and compared. Still wrong,
+  a rewrite error, a read the medium cannot serve after the rewrite, or
+  `EIO` on any read-back → `spans_unrepaired`, `storage_fault()` latches,
+  one "storage fault" line per recording, and recording continues. A span
+  whose verdict was interrupted (the ring moved on, the recording closed)
+  keeps it: a mismatch never becomes a silent skip.
+- **`McapReadbackStats`** (`readback_stats()`): verified / mismatched /
+  rewritten_ok / unrepaired / skipped / read_failed / max_lag, and one
+  totals line per recording at `Close()`. Device-log only by design.
+- Reads are O_DIRECT and read-only (a card that remounts read-only mid
+  recording still verifies); a rewrite opens its own writable fd. Where
+  the file system refuses O_DIRECT (tmpfs) a buffered read with explicit
+  eviction stands in, logged once per part.
 
 ### A switch for geo-tagging: `SetGpsTagging` (wire-compatible)
 
