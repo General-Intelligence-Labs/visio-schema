@@ -94,10 +94,12 @@ jobs:
           # Shared macOS runners cannot reliably meet the prefetch speed test's
           # 192 ms deadline. Keep it on Linux; macOS still runs all functional
           # prefetch tests against both native and pure-Python wheels.
+          # The concurrent keyring test uses a local process target and requires
+          # fork (Linux's test context), rather than macOS's default spawn.
           CIBW_TEST_COMMAND_MACOS: >-
-            pytest {package}/tests -q --timeout=120 --timeout-method=thread
+            python -c "import multiprocessing as mp; mp.set_start_method('fork'); import pytest; raise SystemExit(pytest.main())" {package}/tests -q --timeout=120 --timeout-method=thread
             -k "not test_prefetch_overlaps_producer_and_consumer"
-            && VISIO_NO_NATIVE=1 pytest {package}/tests -q --timeout=120 --timeout-method=thread
+            && VISIO_NO_NATIVE=1 python -c "import multiprocessing as mp; mp.set_start_method('fork'); import pytest; raise SystemExit(pytest.main())" {package}/tests -q --timeout=120 --timeout-method=thread
             -k "not test_prefetch_overlaps_producer_and_consumer"
         with:
           package-dir: python
