@@ -91,6 +91,14 @@ jobs:
           # The full suite imports scipy and cv2 during collection. Install the
           # package's test/reader extras, including when rebuilding older tags.
           CIBW_TEST_EXTRAS: 'dev,reader,dataset,display'
+          # Shared macOS runners cannot reliably meet the prefetch speed test's
+          # 192 ms deadline. Keep it on Linux; macOS still runs all functional
+          # prefetch tests against both native and pure-Python wheels.
+          CIBW_TEST_COMMAND_MACOS: >-
+            pytest {package}/tests -q --timeout=120 --timeout-method=thread
+            -k "not test_prefetch_overlaps_producer_and_consumer"
+            && VISIO_NO_NATIVE=1 pytest {package}/tests -q --timeout=120 --timeout-method=thread
+            -k "not test_prefetch_overlaps_producer_and_consumer"
         with:
           package-dir: python
 
