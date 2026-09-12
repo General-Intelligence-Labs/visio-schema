@@ -1,18 +1,16 @@
 """Drive a firmware OTA over the Visio bus. Owns no connection.
 
-The host is a **blind relay**: only the device decrypts the bundle (AES-256-CTR
-with its baked ``/etc/ota_bundle.key``) and verifies it, so this module never
-looks inside the payload — it streams an opaque envelope and reads back
-``OtaStatus``.
+The host is a **blind relay**: only the device decrypts the bundle with its
+baked-in bundle key and verifies it, so this module never looks inside the
+payload — it streams an opaque envelope and reads back ``OtaStatus``.
 
 Transport-agnostic on purpose. `relay` takes a ``send``/``recv`` pair, so the
 same state machine drives a raw socket, a serial port, or a live ``visio`` bus
 leg. That keeps this repo a contract repo: it says how to speak OTA, not how to
 reach a device.
 
-Lifted from `visio-setup/calib/push_serial_repush.py::ota_relay`, which proved
-the flow control on real hardware. The comments explaining *why* each rule exists
-came with it — they are the reason it works, not decoration.
+The flow control here was proven against real hardware. The comments explaining
+*why* each rule exists are the reason it works, not decoration.
 """
 from __future__ import annotations
 
@@ -52,9 +50,9 @@ VENC_MAGIC, RKFW_MAGIC = b"VENC", b"RKFW"
 DEFAULT_SESSION_ID = 0xCA11
 
 #: The reserved session id a head publishes an atomic rig bundle's verdict on.
-#: Mirrors `visio-embedded/src/ota/bundle_state.hpp` ``kBundleTerminalSession``:
-#: after every unit was staged with ``hold_apply`` and the head sequenced the
-#: applies, the SUCCESS/FAILED ``OtaStatus`` for the bundle as a whole carries
+#: The device firmware reserves the same id: after every unit was staged with
+#: ``hold_apply`` and the head sequenced the applies, the SUCCESS/FAILED
+#: ``OtaStatus`` for the bundle as a whole carries
 #: this ``session_id`` rather than any one transfer's. A relay folds only its
 #: own session (see `relay`), so a bundle verdict never lands in a transfer.
 BUNDLE_TERMINAL_SESSION = 0xB1D
@@ -64,7 +62,7 @@ BUNDLE_TERMINAL_SESSION = 0xB1D
 # accepted; a device that can take more says so in OtaStatus.max_chunk_bytes.
 #
 # The hard ceiling is MAX_CHUNK_BYTES, and it is NOT frame reassembly as this
-# comment claimed until 2026-09-03 — it is nanopb's size type. See ota.proto's
+# comment once claimed — it is nanopb's size type. See ota.proto's
 # OtaChunk.data.
 TCP_WINDOW_BYTES = 2 * 1024 * 1024
 TCP_CHUNK_BYTES = 32 * 1024
@@ -75,7 +73,7 @@ TCP_CHUNK_BYTES = 32 * 1024
 # "OtaMessage decode failed" and the transfer never advances, which reads like a
 # dead link rather than a size problem. A sender MUST clamp to this rather than
 # trust a device's advertisement. Headroom left for the fields wrapping the
-# payload. Measured on a quattro head: a 276 MB push at 256 KiB moved nothing.
+# payload. Confirmed on hardware: a large image at 256 KiB chunks moves nothing.
 MAX_CHUNK_BYTES = 60 * 1024
 
 # USB CDC-ACM: total in-flight must stay <= the device's gadget RX FIFO (a few
@@ -130,8 +128,8 @@ def bundle_error(raw: bytes) -> str | None:
 def _message(session_id: int, target_device: str, **body) -> bytes:
     m = ota_pb2.OtaMessage(session_id=session_id)
     if target_device:
-        # push_serial_repush never sets this — it owns a dedicated socket, so the
-        # link IS the addressing. On a shared bus leg it is required, or the
+        # A relay that owns a dedicated socket never sets this — the link IS
+        # the addressing. On a shared bus leg it is required, or the
         # device cannot tell the message was meant for it.
         m.target_device = target_device
     if "begin" in body:

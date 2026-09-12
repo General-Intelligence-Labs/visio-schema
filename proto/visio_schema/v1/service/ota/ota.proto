@@ -124,8 +124,8 @@ message OtaChunk {
   // pb_size_t is uint_least16_t and PB_SIZE_MAX is 65535 — a larger chunk
   // cannot be pb_decode'd at all. The device answers every such frame with
   // "OtaMessage decode failed" and the transfer never advances, which reads
-  // like a dead link rather than a size problem. Measured on a quattro head
-  // 2026-09-03: a 276 MB push at 256 KiB moved nothing.
+  // like a dead link rather than a size problem. Confirmed on hardware: a
+  // large image pushed at 256 KiB chunks moves nothing at all.
   bytes  data   = 2;
 }
 

@@ -1,9 +1,8 @@
 """The OTA relay state machine, with no socket and no real clock.
 
-Every rule here was proven on hardware in
-`visio-setup/calib/push_serial_repush.py`, but several were never covered by a
-test on either side — notably the post-stage `no_session` exemption and the
-in-flight bound. Those are the ones most likely to be "simplified" away.
+Every rule here was proven on hardware, but several were never covered by a
+test — notably the post-stage `no_session` exemption and the in-flight
+bound. Those are the ones most likely to be "simplified" away.
 """
 from __future__ import annotations
 
@@ -15,6 +14,7 @@ from visio_schema.wire import ota
 OS = ota_pb2.OtaStatus
 TOTAL = 10_000
 CHUNK = 1_000
+BOARD = "test_board"
 
 
 class Clock:
@@ -134,18 +134,18 @@ def test_hold_apply_rides_the_begin_and_defaults_off():
 
     # begin_message stands alone too, with the same default
     m = ota_pb2.OtaMessage()
-    m.ParseFromString(ota.begin_message(TOTAL, CHUNK, "1.2.3", "compact_umi"))
+    m.ParseFromString(ota.begin_message(TOTAL, CHUNK, "1.2.3", BOARD))
     assert not m.begin.hold_apply
-    m.ParseFromString(ota.begin_message(TOTAL, CHUNK, "1.2.3", "compact_umi",
+    m.ParseFromString(ota.begin_message(TOTAL, CHUNK, "1.2.3", BOARD,
                                         hold_apply=True))
     assert m.begin.hold_apply
 
 
 def test_bundle_terminal_session_is_reserved_and_never_folded():
-    """The head publishes an atomic bundle's verdict on a RESERVED session id:
-    `kBundleTerminalSession` in visio-embedded/src/ota/bundle_state.hpp. A relay
-    must both know it (to read the verdict) and never fold it (it is not a
-    transfer's status)."""
+    """The head publishes an atomic bundle's verdict on a session id the
+    device firmware sets aside for exactly this. A relay must both know it
+    (to read the verdict) and never fold it (it is not a transfer's
+    status)."""
     assert ota.BUNDLE_TERMINAL_SESSION == 0xB1D
     assert ota.BUNDLE_TERMINAL_SESSION != ota.DEFAULT_SESSION_ID
 
@@ -187,7 +187,7 @@ def test_a_held_commit_needs_the_staged_ack():
 
 
 def test_target_device_is_stamped_on_every_frame():
-    """push_serial_repush owns a socket so the link is the addressing; on a
+    """A relay owning a socket has the link as its addressing; on a
     shared bus leg an unstamped frame is a broadcast."""
     dev = Device()
     run(dev, target_device="GILABS-AABBCCDD")

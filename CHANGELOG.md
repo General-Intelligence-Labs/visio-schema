@@ -40,7 +40,11 @@ its baseline.
 Additive: firmware predating the field refuses the command (an unknown oneof
 member decodes as none set), and nothing already on the wire moves.
 
-### Two-phase OTA on the wire helper: `hold_apply` + `BUNDLE_TERMINAL_SESSION` The station never sends an `OtaApply`: on a `bundle_atomic` head the BundleSequencer releases every held unit itself once the set is staged, and reports the outcome on this session.
+### Two-phase OTA on the wire helper: `hold_apply` + `BUNDLE_TERMINAL_SESSION`
+
+A client never sends an `OtaApply` itself: a head running an atomic bundle
+releases every held unit once the whole set is staged, and reports the
+outcome on this session.
 
 `wire.ota.begin_message(..., hold_apply=False)` and `relay(..., hold_apply=False)`
 set `OtaBegin.hold_apply` (tag 9, already in the contract) — only when asked,
@@ -48,10 +52,10 @@ so the single-unit begin every fielded device has ever been sent stays
 byte-identical. With it the device verifies and STAGES at commit but holds the
 slot until an `OtaApply` names the version, which is what lets a rig transfer
 every board first and apply as one. `BUNDLE_TERMINAL_SESSION = 0xB1D` is the
-reserved session id the head publishes that bundle's SUCCESS/FAILED on
-(mirrors `visio-embedded/src/ota/bundle_state.hpp` `kBundleTerminalSession`);
-`relay` already folds only its own session, so a bundle verdict cannot abort
-or advance a transfer.
+reserved session id the head publishes that bundle's SUCCESS/FAILED on (the
+device firmware reserves the same id); `relay` already folds only its own
+session, so a bundle verdict cannot abort or advance a transfer.
+
 ### Library threads never inherit a real-time policy; `TcpAcceptor` gains a reactor mode (C++)
 
 Library only — **no proto or wire change**.
@@ -73,12 +77,11 @@ Library only — **no proto or wire change** (`make breaking` clean). Default
 OFF; a caller that does not opt in gets byte-identical output and no new
 work on the write path. Linux only; elsewhere the options are ignored.
 
-A customer's part came back with foreign 189-byte blocks (a 31-byte
-high-entropy value + 158 zeros, sector terminated, at byte 7491 of a
-128 KiB cluster): the writer wrote correct bytes and the SD card returned
-stale sectors afterwards. Nothing above the file system can see that
-except by reading the medium back, and the only moment the correct bytes
-are still known is while they sit in RAM.
+A recorded part came back with stale sector data mixed into it: the writer
+wrote correct bytes and the SD card silently returned old sectors
+afterwards. Nothing above the file system can see that except by reading
+the medium back, and the only moment the correct bytes are still known is
+while they sit in RAM.
 
 - **`McapReadbackOptions`** (`readback.hpp`; trailing ctor argument on
   `McapWriter` and `McapWriterEndpoint`, existing callers unchanged). With
@@ -195,6 +198,7 @@ as uint16 with no colour conversion. This is **required**, not an optimisation:
 `format="yuv420p10le"` raises outright. Sample data must never go through swscale.
 
 No `.proto` change; no facade change.
+
 ### `Header.keyframe` — the video sync-point flag now crosses the wire
 
 `Header` gains `bool keyframe = 4`. Additive and wire-compatible (`make breaking`
@@ -235,9 +239,9 @@ caught THIS bug:
   channel (`McapWriterStats::unmapped`) instead of a bare `return`. It would have
   read **zero** here — the Ego Pro channels resolved and opened fine, and died at
   the gate — so it is not the fix, it closes the neighbouring hole: an id the
-  relay mapped but whose channel `Learn()` refused (a `DuplicateTopicError`, which
-  `bus.cc` catches and only logs) drops its topic just as totally and just as
-  quietly.
+  relay mapped but whose channel `Learn()` refused (a
+  `DuplicateTopicError`, which the bus catches and only logs) drops its
+  topic just as totally and just as quietly.
 
 ### Storage providers: Google Cloud Storage and Azure Blob
 

@@ -200,14 +200,14 @@ bool FramedFdEndpoint::EnqueueOne(const Message& msg, bool stalled) {
   return true;
 }
 
-// Keep the accumulated phase of every stream whose PERIOD is unchanged, and drop
-// it for the rest. Neither half is optional. A grid still holding the old gap's
-// deadline would mute a stream that just got faster until that deadline passed;
-// but clearing wholesale is worse, because StreamPolicyService re-resolves every
-// link's rules on any channel change (services/stream_policy.cc), so an IDENTICAL
-// table lands here repeatedly and each clear restarts the phase and lets one
-// extra message through. Measured on a 17-IMU glove, that alone put a 60 Hz cap
-// over its own limit.
+// Keep the accumulated phase of every stream whose PERIOD is unchanged, and
+// drop it for the rest. Neither half is optional. A grid still holding the
+// old gap's deadline would mute a stream that just got faster until that
+// deadline passed; but clearing wholesale is worse, because
+// StreamPolicyService re-resolves every link's rules on any channel change,
+// so an IDENTICAL table lands here repeatedly and each clear restarts the
+// phase and lets one extra message through. Measured on a many-sensor
+// device, that alone put a 60 Hz cap over its own limit.
 //
 // Safe without a lock for the same reason the map itself is: this call is
 // serialized with Send by the bus dispatch mutex.

@@ -1,9 +1,8 @@
 // SpanReadback — write-time verification of what the storage medium holds;
 // the mechanism behind readback.hpp.
 //
-// A customer's part came back with foreign 189-byte blocks (a 31-byte
-// high-entropy value + zeros, always at byte 7491 of a 128 KiB cluster):
-// the writer wrote correct bytes and the SD card returned stale sectors
+// A recorded part came back with stale sector data mixed into it: the
+// writer wrote correct bytes and the SD card silently returned old sectors
 // afterwards. So every byte the sink writes is also copied into a ring;
 // when SyncSpan has written a span back and evicted it from the page cache,
 // the span is queued; a caller-driven Step reads it from the medium
