@@ -10,7 +10,7 @@
   (and falls back to the pure-Python reader if there is no compiler).
 
 Everything is driven by [`.github/workflows/wheels.yml`](../.github/workflows/wheels.yml):
-pushing a `visio-schema-v*` tag builds + tests all artifacts, publishes them to
+pushing a `v*` tag builds + tests all artifacts, publishes them to
 PyPI via **Trusted Publishing**, and attaches them to the GitHub release.
 
 ## One-time setup: PyPI Trusted Publishing
@@ -51,7 +51,7 @@ API token is stored in the repo. Configure it once:
 3. **Commit, tag, and push** — the tag is what triggers the publish:
    ```bash
    git commit -am "release: visio-schema vX.Y.Z"
-   git tag visio-schema-vX.Y.Z
+   git tag vX.Y.Z
    git push origin main --tags     # push to the General-Intelligence-Labs remote
    ```
 4. CI builds + tests the wheels and sdist, then the `publish_pypi` job uploads
@@ -64,4 +64,17 @@ API token is stored in the repo. Configure it once:
 pip install "visio-schema==X.Y.Z"
 python -c "import visio_schema; print(visio_schema.__name__, 'ok')"
 visio-display --help
+```
+
+## Retry an existing release with a corrected workflow
+
+Do not move the release tag. Run the current `wheels.yml` workflow with
+`release_tag=vX.Y.Z` and `publish=true`. It resolves the tag to one commit, checks
+that the tag matches the package version, and uses that commit for all builds.
+The current workflow supplies the test dependencies while the package sources
+remain those of the original tag. Publication still requires every build and
+test job to succeed. Leave `publish=false` to validate without publishing.
+
+```bash
+gh workflow run wheels.yml --ref main -f release_tag=v0.9.0 -f publish=true
 ```

@@ -136,7 +136,11 @@ TEST(Backpressure, StalledPeerShedsAndNeverBlocks) {
   tx.Start({}, {});  // write-only sink: no inbound / on_closed needed
 
   // Flood. Send() must never block the caller even though nothing drains.
-  const Message m = Frame(512);
+  Message m = Frame(512);
+  // Exercise the bounded outbox, not the congestion gate. Otherwise the I/O
+  // thread can latch keyframes-only mid-flood and count subsequent frames in
+  // degrade_dropped(), leaving dropped() dependent on thread scheduling.
+  m.no_degrade = true;
   for (int i = 0; i < 5000; ++i) tx.Send(m);
 
   // Shedding is applied at enqueue once the queue hits max_depth; give the I/O
