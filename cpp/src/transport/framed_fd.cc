@@ -5,15 +5,19 @@
 #include <unistd.h>
 
 #include <iostream>
+#include <iterator>
 
 #include "visio_schema/transport/framing.hpp"
-#include "visio_schema/transport/link.hpp"  // SetCurrentThreadName
+#include "visio_schema/transport/link.hpp"  // EnterServiceThread
 #include "visio_schema/wire/time.hpp"       // MonotonicNs
 
 namespace visio_schema::transport {
 
 namespace {
 constexpr int kTickMs = 200;  // reopen / watchdog cadence
+// How far behind its grid a rate-capped message may be before the gate treats it
+// as a new epoch rather than as something to shed. See PassesRateGate.
+constexpr std::int64_t kDecimEpochResetUs = 1'000'000;
 }  // namespace
 
 void FramedFdEndpoint::AdoptFd(int fd) {
@@ -94,6 +98,38 @@ void FramedFdEndpoint::Stop() {
 }
 
 void FramedFdEndpoint::Send(const Message& msg) {
+  // Qualified: an override that looped Send would otherwise recurse.
+  FramedFdEndpoint::SendBatch(&msg, 1);
+}
+
+// ONE wake for the whole group, which is the only thing this adds. Waking per
+// message means the I/O thread drains a single frame per wake, so the outbox
+// never holds a second frame for BatchAll to coalesce (framed_outbox.cc) and
+// every small message becomes its own write() and, on TCP, its own packet — on a
+// 17-stream IMU leg, ~3900 packets/s of 247 B against a 1500 B MTU, which costs
+// more CPU per packet than the payload is worth.
+//
+// Best-effort, not a guarantee: the I/O thread's own kTickMs tick may land
+// mid-group and drain a partial batch. That is exactly the per-message behaviour
+// for the remainder, so a batch is never worse than sending one at a time.
+//
+// A stalled link drains nothing, so the wake is skipped entirely: it would only
+// burn a futex+poll cycle per enqueue (tens/s on a readerless serial leg,
+// forever). The kTickMs idle tick already retries the in-flight probe write and
+// the first accepted write clears link_stalled_, so recovery needs no wake
+// either — it costs at most one tick on the first frames after a reader returns.
+void FramedFdEndpoint::SendBatch(const Message* msgs, std::size_t n) {
+  const bool stalled = link_stalled_.load(std::memory_order_relaxed);
+  bool any = false;
+  for (std::size_t i = 0; i < n; ++i) {
+    if (EnqueueOne(msgs[i], stalled)) any = true;
+  }
+  if (any && !stalled) Wake();
+}
+
+// Every gate, then framing and enqueue. Deliberately does NOT wake: that is the
+// caller's, and the only thing Send and SendBatch disagree about.
+bool FramedFdEndpoint::EnqueueOne(const Message& msg, bool stalled) {
   // Door checks BEFORE any framing work, so a frame nobody will get costs
   // nothing — the reason a thinned preview saves device CPU, not just bandwidth.
 
@@ -107,10 +143,9 @@ void FramedFdEndpoint::Send(const Message& msg) {
   // what is shed-safe by marking it (message.hpp); the on-device MCAP sink is
   // not a framed leg, but a downstream recorder over TCP IS subject to this
   // gate after a >3 s reader wedge — door_dropped() makes that gap visible.
-  const bool stalled = link_stalled_.load(std::memory_order_relaxed);
   if (stalled && (msg.bulk || msg.decimatable)) {
     door_dropped_.fetch_add(1, std::memory_order_relaxed);
-    return;
+    return false;
   }
   // Congested but not stalled: the video outbox has been EVICTING, so this
   // leg is already lossy — and every evicted P-frame breaks the viewer's
@@ -128,7 +163,7 @@ void FramedFdEndpoint::Send(const Message& msg) {
     if (hold_ns != 0) {
       if (!msg.keyframe) {
         degrade_dropped_.fetch_add(1, std::memory_order_relaxed);
-        return;
+        return false;
       } else if (MonotonicNs() >= hold_ns) {
         // First keyframe past an eviction-free hold: resume full rate at this
         // sync point. A lost CAS means the I/O thread just re-armed on a
@@ -146,13 +181,11 @@ void FramedFdEndpoint::Send(const Message& msg) {
   // Absent rule = keep at full rate, so a stream announced after the policy was
   // resolved is delivered rather than silently dropped.
   const StreamRule* rule = RuleFor(msg.stream_id);
-  if (rule != nullptr && rule->drop) return;
+  if (rule != nullptr && rule->drop) return false;
   // A cap never applies to inter-coded video (stream_policy.hpp).
-  if (rule != nullptr && rule->min_gap_us != 0 && !msg.bulk) {
-    const std::int64_t now_us = FramedOutbox::SteadyNowUs();
-    std::int64_t& last_us = decim_last_us_[msg.stream_id];
-    if (now_us - last_us < rule->min_gap_us) return;
-    last_us = now_us;
+  if (rule != nullptr && rule->min_gap_us != 0 && !msg.bulk &&
+      !PassesRateGate(msg, rule->min_gap_us)) {
+    return false;
   }
   // Frame ONCE per message: the framed bytes are identical for every sink
   // (see wire::Message::framed), so whoever gets here first pays the
@@ -164,13 +197,99 @@ void FramedFdEndpoint::Send(const Message& msg) {
   // Bulk (camera video) -> lossy video queue; everything else -> the control
   // queue, which Pump() drains ahead of video. thread-safe; no I/O.
   (msg.bulk ? outbox_ : ctrl_outbox_).Enqueue(msg.framed, msg.keyframe);
-  // A stalled link drains nothing, so waking vs_ep_io per message only burns
-  // a futex+poll cycle per enqueue (tens/s on a readerless serial leg,
-  // forever). The kTickMs idle tick already retries the in-flight probe
-  // write, and the first accepted write clears link_stalled_ — so recovery
-  // needs no per-message wake either; it costs at most one tick of latency
-  // on the first frames after a reader returns.
-  if (!stalled) Wake();
+  return true;
+}
+
+// Keep the accumulated phase of every stream whose PERIOD is unchanged, and
+// drop it for the rest. Neither half is optional. A grid still holding the
+// old gap's deadline would mute a stream that just got faster until that
+// deadline passed; but clearing wholesale is worse, because
+// StreamPolicyService re-resolves every link's rules on any channel change,
+// so an IDENTICAL table lands here repeatedly and each clear restarts the
+// phase and lets one extra message through. Measured on a many-sensor
+// device, that alone put a 60 Hz cap over its own limit.
+//
+// Safe without a lock for the same reason the map itself is: this call is
+// serialized with Send by the bus dispatch mutex.
+void FramedFdEndpoint::SetStreamPolicy(
+    std::shared_ptr<const ResolvedStreamPolicy> policy) {
+  for (auto it = decim_grid_us_.begin(); it != decim_grid_us_.end();) {
+    const StreamRule* was = RuleIn(policy_.get(), it->first);
+    const StreamRule* now = RuleIn(policy.get(), it->first);
+    const std::int64_t old_gap = was != nullptr ? was->min_gap_us : 0;
+    const std::int64_t new_gap = now != nullptr ? now->min_gap_us : 0;
+    it = (new_gap != 0 && new_gap == old_gap) ? std::next(it)
+                                              : decim_grid_us_.erase(it);
+  }
+  policy_ = std::move(policy);
+}
+
+// The rate cap. Two things it deliberately does not do:
+//
+//  * It does not time the SEND. A producer hands over a group — a ring drain, a
+//    bundle flush — so a whole group reaches Send within microseconds of itself.
+//    Timed there it looks simultaneous and exactly ONE message survives it,
+//    however generous the gap, and the delivered rate saturates at the group
+//    rate. The capture times inside that group are spread across the drain and
+//    are the honest answer.
+//
+//  * It does not re-baseline to whatever just passed. That absorbs lateness
+//    permanently — each accepted message pushes the next deadline out from ITS
+//    own arrival — so the cadence drifts below the cap and never recovers.
+//    Stepping a grid by whole periods holds the phase instead.
+//
+// Returns whether this message passes. Caller must hold the bus dispatch
+// serialization (see decim_grid_us_).
+bool FramedFdEndpoint::PassesRateGate(const Message& msg,
+                                      std::int64_t min_gap_us) {
+  // Guarded here rather than only at the call site: this divides by it, so a
+  // second caller would get SIGFPE rather than an exception, and a NEGATIVE gap
+  // (a caller dividing by an unvalidated rate) would drive the grid arbitrarily
+  // far forward and then re-seed on every message.
+  if (min_gap_us <= 0) return true;
+  // A capture time of zero means the producer set none (a hand-built Message
+  // outside the bus). Falling back to the send instant keeps those callers on
+  // the behaviour they have today. Bus::StampHeader never writes a zero, so a
+  // stream cannot mix the two clocks.
+  const std::int64_t capture_ns = TimestampNs(msg.timestamp);
+  const std::int64_t t_us =
+      capture_ns != 0 ? capture_ns / 1000 : FramedOutbox::SteadyNowUs();
+
+  // Absent reads as a zero grid, so a stream's first message always passes and
+  // the advance below seeds the grid one period past it.
+  RateGate& st = decim_grid_us_[msg.stream_id];
+  if (st.grid_us == 0) {
+    st.capture_timed = capture_ns != 0;
+  } else if ((capture_ns != 0) != st.capture_timed && !st.mixed_warned) {
+    // The two clocks have unrelated origins, so a stream that mixes them steps
+    // the grid far forward on one message and trips the epoch re-seed on the
+    // next — every message then passes and the cap is not weakened but GONE.
+    // That is a producer bug (a zero-initialised capture time), and the failure
+    // it buys is the packet-rate saturation this gate exists to prevent, so it
+    // must not be silent. Once per stream: it cannot be fixed from here.
+    st.mixed_warned = true;
+    std::cerr << "visio-schema: stream " << msg.stream_id
+              << " mixes capture-stamped and unstamped messages under a rate "
+                 "cap — the cap cannot hold; give every message a capture time\n";
+  }
+  std::int64_t& grid = st.grid_us;
+  if (t_us < grid) {
+    // Measured against the slot the last accepted message fell in
+    // (`grid - min_gap_us`), NOT against the grid itself — the grid is already a
+    // period in the future, so comparing to it would shrink the tolerance as the
+    // cap tightens, and at 1 Hz any out-of-order stamp at all would read as a
+    // new epoch.
+    if (grid - min_gap_us - t_us <= kDecimEpochResetUs) return false;
+    // Far enough behind that this cannot be jitter: the stream changed epoch (a
+    // clock stepped, a replay rewound). Re-seed, rather than obey a deadline
+    // from the old epoch and mute the stream until real time catches up to it —
+    // possibly never. Same rule, same reason, as the assembler's 1 s hatch.
+    grid = 0;
+  }
+  // Step to the first slot strictly after this message, so a gap in the stream
+  // costs one slot rather than queueing up the ones it missed.
+  grid += min_gap_us * (1 + (t_us - grid) / min_gap_us);
+  return true;
 }
 
 void FramedFdEndpoint::RequestVideoDegrade() {
@@ -353,13 +472,14 @@ void FramedFdEndpoint::Tick(std::int64_t now_ns) {
 }
 
 void FramedFdEndpoint::Loop() {
-  SetCurrentThreadName("vs_ep_io");
   // Below-normal: egress to viewers must yield to the producing device's
   // capture/encode pipeline. When the CPU saturates, THIS thread starving is
   // the designed degradation — the outbox stall gate sheds preview frames —
   // whereas a starved encoder sheds recording frames, which is never
-  // acceptable. Harmless off-device (readers are not CPU-bound).
-  setpriority(PRIO_PROCESS, 0, 5);
+  // acceptable. Harmless off-device (readers are not CPU-bound). Timeshared
+  // explicitly: whoever attached this link may be real-time, and inheriting
+  // that would put preview egress above the encoder it must yield to.
+  EnterServiceThread("vs_ep_io", 5);
   while (!stop_.load()) {
     const int fd = fd_;
     pollfd pfds[2];

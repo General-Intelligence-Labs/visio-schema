@@ -18,6 +18,243 @@ Wheel validation installs the reader/test extras and excludes the unreliable
 wall-clock prefetch benchmark on macOS; functional tests remain enabled.
 
 
+### `visio-settings-qr` reads a whole number written without quotes as text
+
+A text field given as a bare whole number (`"location": 101`, an all-digit
+Wi-Fi passphrase) used to fail with `must be a string`. It is now read as its
+text, and the printed code always carries text. Other wrong types are still
+rejected.
+
+### `SetCalibration` gains a cam-TCP artifact on the anchor camera: `tcp_extrinsics`
+
+`tcp_extrinsics = 17` in the artifact oneof carries a `foxglove.FrameTransform`
+(`parent_frame_id="cam0"`, `child_frame_id="tcp"`): the pose of a gripper
+limb's tool-centre-point frame expressed in cam0, `p_cam0 = R * p_tcp + t`, the
+same direction as `camera/<i>/extrinsics`. CAMERA kind, and `sensor_index`
+MUST be 0 — the anchor — which is the inverse of the `extrinsics` rule that
+forbids index 0. The device persists it as `cameras[0].tcp_extrinsics` and
+re-publishes it on `/<dev>/camera/0/tcp_extrinsics`.
+
+It lives under CAMERA rather than as a new sensor kind because that is what it
+is measured against: the fixture solve poses the tool in the camera that saw
+the tag, and a limb has exactly one tool, so it hangs off the one camera every
+other extrinsic is already expressed in. Its own oneof member rather than an
+`extrinsics` on a spare index because it is not a sensor's pose but the tool's;
+sharing the member would leave a reader unable to tell a third camera from a
+gripper without knowing the board.
+
+The reader follows: `Calibration.T_cam_tcp` (`(4,4)`, cam0 <- tcp, no
+inversion) is picked off the `tcp_extrinsics` topic and NEVER off an
+`/extrinsics` one — the suffix is deliberately not a match for the stereo pick,
+so a one-camera limb cannot grow a phantom stereo pair with the tool pose as
+its baseline.
+
+Additive: firmware predating the field refuses the command (an unknown oneof
+member decodes as none set), and nothing already on the wire moves.
+
+### Two-phase OTA on the wire helper: `hold_apply` + `BUNDLE_TERMINAL_SESSION`
+
+A client never sends an `OtaApply` itself: a head running an atomic bundle
+releases every held unit once the whole set is staged, and reports the
+outcome on this session.
+
+`wire.ota.begin_message(..., hold_apply=False)` and `relay(..., hold_apply=False)`
+set `OtaBegin.hold_apply` (tag 9, already in the contract) — only when asked,
+so the single-unit begin every fielded device has ever been sent stays
+byte-identical. With it the device verifies and STAGES at commit but holds the
+slot until an `OtaApply` names the version, which is what lets a rig transfer
+every board first and apply as one. `BUNDLE_TERMINAL_SESSION = 0xB1D` is the
+reserved session id the head publishes that bundle's SUCCESS/FAILED on (the
+device firmware reserves the same id); `relay` already folds only its own
+session, so a bundle verdict cannot abort or advance a transfer.
+
+### Library threads never inherit a real-time policy; `TcpAcceptor` gains a reactor mode (C++)
+
+Library only — **no proto or wire change**.
+
+- `transport::EnterServiceThread(name, nice)` replaces `SetCurrentThreadName`:
+  it names the thread AND puts it on `SCHED_OTHER` at the given nice. A thread
+  inherits its creator's policy, and on the Ego Pro head the hub discovery
+  thread had been swept onto `SCHED_FIFO`, so every limb link's `vs_ep_io`
+  ran real-time. `vs_ep_io`, `vs_tcp_accept` and `mcap_wr` all enter through
+  it now.
+- `TcpAcceptor::Bind()` + `listen_fd()` + `AcceptPass()`: the accept pass
+  without a thread, for an owner that already runs a poll loop. `Start()`
+  (threaded mode) is unchanged and is a wrapper over the same pass; the
+  per-refusal pacing is now the public `kRefusalDeferMs` the owner must honour.
+
+### `McapWriter` can read every span back from the card as it records (C++)
+
+Library only — **no proto or wire change** (`make breaking` clean). Default
+OFF; a caller that does not opt in gets byte-identical output and no new
+work on the write path. Linux only; elsewhere the options are ignored.
+
+A recorded part came back with stale sector data mixed into it: the writer
+wrote correct bytes and the SD card silently returned old sectors
+afterwards. Nothing above the file system can see that except by reading
+the medium back, and the only moment the correct bytes are still known is
+while they sit in RAM.
+
+- **`McapReadbackOptions`** (`readback.hpp`; trailing ctor argument on
+  `McapWriter` and `McapWriterEndpoint`, existing callers unchanged). With
+  `ring_bytes > 0` every byte the part file receives — below the VREC
+  cipher, so the bytes as they are on disk — is also copied into a ring;
+  once a writeback span (`sync_span_bytes`) is on the medium and evicted
+  from the page cache it is queued for verification, and a part's tail
+  after its fsync. The option comment gives the ring sizing rule and the
+  span size per container (a plaintext span is one MCAP chunk, a VREC span
+  the cipher's 64 KiB slice).
+- **No thread.** `ReadbackStep(budget)` verifies at most one span (resuming
+  across calls) from any ONE thread of the caller's choosing;
+  `readback_pending()` says whether to keep calling; `Close()` runs the
+  remaining steps inline for at most `close_flush_ms` (default 0: never
+  waits). A caller that never steps only accumulates `spans_skipped`; the
+  writer is never blocked or slowed — the queue drops when full, an
+  overrun span is skipped before it is read.
+- **Mismatch policy:** one log line (path, span, first differing offset,
+  offset within the 128 KiB cluster, expected/got bytes), the WHOLE span
+  rewritten once from RAM via O_DIRECT, re-read and compared. Still wrong,
+  a rewrite error, a read the medium cannot serve after the rewrite, or
+  `EIO` on any read-back → `spans_unrepaired`, `storage_fault()` latches,
+  one "storage fault" line per recording, and recording continues. A span
+  whose verdict was interrupted (the ring moved on, the recording closed)
+  keeps it: a mismatch never becomes a silent skip.
+- **`McapReadbackStats`** (`readback_stats()`): verified / mismatched /
+  rewritten_ok / unrepaired / skipped / read_failed / max_lag, and one
+  totals line per recording at `Close()`. Device-log only by design.
+- Reads are O_DIRECT and read-only (a card that remounts read-only mid
+  recording still verifies); a rewrite opens its own writable fd. Where
+  the file system refuses O_DIRECT (tmpfs) a buffered read with explicit
+  eviction stands in, logged once per part.
+
+### A switch for geo-tagging: `SetGpsTagging` (wire-compatible)
+
+- **New Command body `SetGpsTagging` (tag 41), `{bool enabled}`.** Persisted;
+  takes effect on the next recording and never retags the session in progress
+  or one already on the card. Switched OFF the device stops stamping
+  coordinates into new sessions and stops storing incoming ones.
+- **New `DeviceState.gps_tagging` (tag 39)**, tri-state for one reason: every
+  board supports the switch, so `UNSUPPORTED` means precisely "this firmware
+  predates it". An old device reporting the proto3 default would otherwise be
+  indistinguishable from one with tagging off, while it is in fact still
+  stamping every session.
+
+The switch exists because withholding a fix cannot express it. `SetTime`,
+`SetRecordingMeta` and `StartRecording` all treat a 0 coordinate as KEEP (0.6.2,
+below) — deliberately, so a host without a fix cannot wipe the last known
+position — which leaves a host that simply stops sending coordinates with no way
+to stop a board stamping the last position it was ever told. Additive: firmware
+predating the switch ignores the command body and reports `UNSUPPORTED`, which
+is the honest answer, and the recorded fields (`session.json`
+`latitude`/`longitude`, `RecordingEntry`) are unchanged — a suppressed fix reads
+as the same zero a board that never had one writes.
+
+### `SetCalibration` gains a UNIT sensor kind and a `unit_side` artifact
+
+`SensorKind.UNIT = 4` describes the BOARD rather than an instrument on it
+(`sensor_index` unused), and `unit_side = 16` in the artifact oneof carries
+`"left"` or `"right"`.
+
+It belongs among per-sensor calibration because it IS calibration. A gripper
+limb's two carriers are physically mirrored while ONE firmware image serves both,
+so which limb a unit is cannot come from its image and cannot be read off the
+board. The extrinsics this same message already carries encode the side — a left
+unit's translation and rotation are not a right unit's — so delivering the label
+through the same channel as the geometry it labels is what stops the two
+disagreeing.
+
+Additive: firmware predating `UNIT` falls through its `sensor_kind` switch and
+REFUSES the command, which is the right answer rather than silently applying a
+unit-level artifact to sensor 0. The device validates the value and rejects
+anything but the two spellings; absent leaves a unit UNASSIGNED, which it reports
+by rooting its topics at its own `GILABS-<code8>` label instead of guessing a
+limb — loud, rather than silently the wrong hand.
+
+### Depth as coded disparity: HEVC Main 10 encoders + an exact-luma decode mode
+
+`reader/_encode.py` gains `HevcDepthEncoder` (libx265) and `NvHevcDepthEncoder`
+(NVENC), picked by `make_depth_encoder` with the same auto/gpu/cpu contract and
+NVENC-unavailable fallback as `make_rect_encoder`. They carry a stereo matcher's
+**disparity** in the luma of an HEVC **Main 10 4:2:0** stream rather than a
+`mono16` millimetre depth map — ~14x smaller at crf 6, because millimetre depth
+spends 16 bits/px on precision no matcher has (at 2 m one 1 mm LSB is 0.007 px of
+disparity) and those low bits are incompressible noise. `quantize_disparity` owns
+the 1/4-px grid so nothing re-derives it, and reports rather than silently
+saturating a disparity past the 10-bit ceiling.
+
+**4:2:0 rather than monochrome is a measurement, not a preference.** Played in
+Foxglove on real frames: HEVC Monochrome-12 (Range Extensions) does not render and
+neither does AV1 Main monochrome, while HEVC Main 10 4:2:0 and H.264 8-bit 4:2:0
+both do — the blocker is the chroma format, nothing decodes 4:0:0. Flat chroma is
+free anyway (41.06 vs 41.09 KiB/frame against gray), and 10 bits is likewise
+forced, since Main 12 is Range Extensions too.
+
+Three NVENC facts the P010 path depends on, all established by probing real
+disparity rather than from documentation, and all silent when wrong:
+
+* the sample is `code << 6` (10-bit in the HIGH bits, neutral chroma 32768);
+* the buffer must be handed over as a **uint8 view** — passing the uint16 array
+  encodes black frames;
+* `rc="constqp"` must NOT be passed. It collapses quality to 1.34 px p95
+  regardless of `qp` (0, 6, 12 and 24 give byte-identical output), as does
+  `tuning_info="ultra_low_latency"`. `preset="P7", tuning_info="high_quality"`
+  instead lands at 14.1 KiB/frame and 0.368 px, against libx265 crf 6's 21.4 and
+  0.343 — so NVENC has ONE quality point, `crf` cannot reach it, and
+  `make_depth_encoder` warns rather than silently ignoring a caller who asks for
+  another.
+
+`HevcDecoder` gains the `RAW_LUMA16` pixel-format sentinel, which returns plane 0
+as uint16 with no colour conversion. This is **required**, not an optimisation:
+`to_ndarray(format="gray16le")` applies a limited-range expansion and clips — luma
+511 returns 33441, and 1021/1022/1023 all saturate to 65535 — while
+`format="yuv420p10le"` raises outright. Sample data must never go through swscale.
+
+No `.proto` change; no facade change.
+
+### `Header.keyframe` — the video sync-point flag now crosses the wire
+
+`Header` gains `bool keyframe = 4`. Additive and wire-compatible (`make breaking`
+is clean): a producer that never sets it reads as `false`, which is exactly the
+previous behaviour, and an old reader ignores the field.
+
+It had to move onto the wire because **the consumer of a video frame is not
+always its producer**. The flag marks an H.265 sync point (VPS/SPS/PPS + IDR) and
+two rules depend on it — a bounded outbox must never evict one, and a recorder
+opens a video channel only on a decodable IDR. Both of those rules run at a HUB,
+on frames produced a hop away, and the flag was documented "in-memory only (NOT
+serialized) … set by the producer". Across a relay there is no producer to set
+it, so every relayed video frame arrived as a P-frame.
+
+Measured consequence, on an Ego Pro rig (one RV1126B head merging two RV1106 limb
+leaves): the recording held **four of its seven cameras**. Every leaf camera
+stream reached the recorder — the channels were resolved and opened — and then
+every frame was refused by the keyframe gate, for the entire session, with no
+error, no counter and no log. The bytes told the story before the code did: the
+file ran at 4.6 MB/s, which is four cameras at 1.10 MB/s and nothing else.
+
+This fixes the recorder's gate only. The outbox's never-evict-a-keyframe rule
+reads the same bit but sees only frames classed `bulk`, and `bulk` is still
+in-memory only — set on local publish, never on relay — so relayed video sits in
+the CONTROL queue where the evict and shed rules never run. That is the same
+one-line fix and is deliberately NOT taken here: it moves relayed video between
+queues on the hot path, which wants a measurement on real hardware first.
+
+Two observability fixes ship alongside, because the silence is what made this
+expensive — but they detect different things, and only one of them would have
+caught THIS bug:
+
+* `McapWriter` warns once per channel when a video topic has been refused ~5 s of
+  frames with no keyframe. **This is the detector for the outage above**, and for
+  the mixed-firmware rig that still looks the same, since a leaf too old to set
+  the wire flag can never prime.
+* `McapWriterEndpoint::Send` now counts frames whose stream id resolves to no
+  channel (`McapWriterStats::unmapped`) instead of a bare `return`. It would have
+  read **zero** here — the Ego Pro channels resolved and opened fine, and died at
+  the gate — so it is not the fix, it closes the neighbouring hole: an id the
+  relay mapped but whose channel `Learn()` refused (a
+  `DuplicateTopicError`, which the bus catches and only logs) drops its
+  topic just as totally and just as quietly.
+
 ### Storage providers: Google Cloud Storage and Azure Blob
 
 `docs/protocol/storage-providers.md` — the canonical `SetStorage` contract —

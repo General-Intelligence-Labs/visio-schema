@@ -72,12 +72,14 @@ from .domain import (
     Calibration,
     CameraCalib,
     Element,
+    FileSummary,
     Frame,
     FrameExposure,
     KeyframeCadence,
     Ns,
     Record,
     SessionMeta,
+    StreamSummary,
     TopicInfo,
     make_T,
 )
@@ -88,7 +90,11 @@ CAPTURE_METADATA = "visio.capture"
 _CALIB_SCHEMAS = frozenset({CAM_CALIB_SCHEMA, FRAME_TF_SCHEMA, IMU_CALIB_SCHEMA})
 # Calibration rides on these suffixes; `/tf` shares FrameTransform's schema but is
 # a runtime pose stream, so schema alone would drag it in — see `_calib_topics`.
-_CALIB_SUFFIXES = ("/intrinsics", "/extrinsics", "/info")
+_EXTRINSICS_SUFFIX = "/extrinsics"
+# Not a match for endswith(_EXTRINSICS_SUFFIX) — the underscore is load-bearing,
+# and _pick_stereo relies on it.
+_TCP_EXTRINSICS_SUFFIX = "/tcp_extrinsics"
+_CALIB_SUFFIXES = ("/intrinsics", _EXTRINSICS_SUFFIX, _TCP_EXTRINSICS_SUFFIX, "/info")
 _log = logging.getLogger("visio_schema.reader.session")
 
 # Above this share of the shorter file's span, an "overlap" is not a chunk seam —
@@ -304,6 +310,11 @@ class _FileIndex:
         # schema inline.
         self.schema_rec: dict[str, object] = {}
         self.truncated = False
+        # The metadata-record NAMES this file carries, read for free off the
+        # summary's metadata index — descriptive only, no interpretation. None
+        # when the file was indexed by scan (truncated/summary-less): the names
+        # were not determined, and a consumer that needs them reads the file.
+        self.metadata_names: tuple[str, ...] | None = None
         with open(path, "rb") as f:
             # `make_reader` OUTSIDE the try: it checks the head magic, and a file
             # that fails there is not a truncated recording — it is not an MCAP
@@ -352,6 +363,7 @@ class _FileIndex:
                 raise ValueError(f"{path}: no MCAP summary — {why}")
             self._scan()
             return
+        self.metadata_names = tuple(mi.name for mi in summary.metadata_indexes)
         schemas = {sid: s.name for sid, s in summary.schemas.items()}
         self.schema_rec = {s.name: s for s in summary.schemas.values()}
         for cid, c in summary.channels.items():
@@ -448,11 +460,16 @@ class Session:
         `topics()` mean exactly one thing: a channel referencing a schema the
         summary does not define.
         """
-        groups = [
+        groups_raw = [
             _expand_sources([s] if isinstance(s, str | Path) else s)
             for s in streams
         ]
-        groups = [g for g in groups if g]
+        # Which original positional each surviving stream came from — the
+        # empty-stream filter below compacts indices, so `stream_summaries` (and
+        # any caller that labels streams by position) cannot otherwise recover
+        # that an empty leading arg slid the next stream into slot 0.
+        stream_origin = [i for i, g in enumerate(groups_raw) if g]
+        groups = [g for g in groups_raw if g]
         if not groups:
             raise ValueError("Session: no .mcap files found in sources")
         flat: list[Path] = []
@@ -472,6 +489,7 @@ class Session:
         self._streams = [
             [i for i, o in enumerate(owner) if o == sid] for sid in range(len(groups))
         ]
+        self._stream_origin = stream_origin
         # Files whose summary never made it to disk; every read of one goes
         # through the linear tolerant path (`_read_messages`).
         self._truncated = frozenset(
@@ -764,6 +782,35 @@ class Session:
             )
         return hits[0] if hits else None
 
+    def stream_summaries(self) -> list[StreamSummary]:
+        """Per-stream inventory of the files this session read — descriptive
+        only, from the summaries already parsed at construction (no extra I/O,
+        no message scan, no interpretation).
+
+        One `StreamSummary` per input stream, in constructor order; within each,
+        the files in read order (by first-message time). Each `FileSummary`
+        carries the file's size/status/message-count/time-bounds and the
+        metadata-record NAMES it holds — enough for a caller to fingerprint the
+        inputs or decide which files' metadata it wants to read, without this
+        layer knowing what any of it means.
+        """
+        out: list[StreamSummary] = []
+        for members, origin in zip(self._streams, self._stream_origin, strict=True):
+            files = tuple(
+                FileSummary(
+                    path=str(self._files[i]),
+                    size=self._files[i].stat().st_size,
+                    status="truncated" if self._index[i].truncated else "ok",
+                    messages=sum(self._index[i].counts.values()),
+                    start_ns=self._index[i].start_ns,
+                    end_ns=self._index[i].end_ns,
+                    metadata_names=self._index[i].metadata_names,
+                )
+                for i in members
+            )
+            out.append(StreamSummary(origin=origin, files=files))
+        return out
+
     # --- per-frame exposure (frame_info), attached to every Frame ------- #
     def _exposure_tracks(self) -> dict[str, _ExposureTrack]:
         """Camera topic -> its exposure timeline; empty when the stream is off.
@@ -875,6 +922,7 @@ class Session:
             stereo_T=stereo_T,
             baseline_m=baseline,
             T_cam_imu=_pick_cam_imu(seen_tf),
+            T_cam_tcp=_pick_cam_tcp(seen_tf),
             cam_imu_dt_ns=cam_imu_dt,
             imu_rate_hz=imu_rate,
             accel_noise_density=accel_nd,
@@ -1497,17 +1545,26 @@ def _parse_frame_transform(m) -> tuple[str, np.ndarray, np.ndarray]:
     return m.child_frame_id, R, T
 
 
-def _pick_stereo(tfs: dict[str, tuple]) -> tuple[np.ndarray, np.ndarray] | None:
-    """The stereo extrinsic: the pose of cam1 in cam0, off cam1's extrinsics topic.
+def _pick_tf(tfs: dict[str, tuple], seg: str, suffix: str, *,
+             child: str = "") -> tuple[np.ndarray, np.ndarray] | None:
+    """The one calibration transform whose topic sits under ``seg`` and ends with
+    ``suffix``, as raw ``(R, T)``.
 
-    Camera topics only, and no fall back to an arbitrary transform: on a recording
-    lacking `camera/*/extrinsics` the first `/tf` is a runtime `world -> imu0` pose,
-    and rectifying with that fails silently rather than loudly.
+    No fallback to an arbitrary transform: on a recording lacking the wanted
+    topic the first `/tf` is a runtime `world -> imu0` pose, and using that
+    fails silently rather than loudly. ``child`` pins the frame the artifact must
+    name; a default-constructed FrameTransform (empty child) or a mis-topiced
+    pose is refused rather than read as the wanted one.
     """
-    for topic, (_child, R, T) in tfs.items():
-        if "/camera/" in topic and topic.endswith("/extrinsics"):
+    for topic, (tf_child, R, T) in tfs.items():
+        if seg in topic and topic.endswith(suffix) and (not child or tf_child == child):
             return R, T
     return None
+
+
+def _pick_stereo(tfs: dict[str, tuple]) -> tuple[np.ndarray, np.ndarray] | None:
+    """The stereo extrinsic: the pose of cam1 in cam0, off cam1's extrinsics topic."""
+    return _pick_tf(tfs, "/camera/", _EXTRINSICS_SUFFIX)
 
 
 def _pick_cam_imu(tfs: dict[str, tuple]) -> np.ndarray | None:
@@ -1516,12 +1573,27 @@ def _pick_cam_imu(tfs: dict[str, tuple]) -> np.ndarray | None:
     The device publishes kalibr's ``T_cam_imu`` **verbatim** as a FrameTransform
     with ``parent="cam0", child="imu0"`` (visio-setup `calib/push.py:154`), and
     foxglove's convention (child-frame point -> parent frame) agrees, so this is
-    used directly with **no inversion**. Same rule as `_pick_stereo`: no fallback.
+    used directly with **no inversion**.
     """
-    for topic, (_child, R, T) in tfs.items():
-        if "/imu/" in topic and topic.endswith("/extrinsics"):
-            return make_T(R, T)
-    return None
+    hit = _pick_tf(tfs, "/imu/", _EXTRINSICS_SUFFIX)
+    return make_T(*hit) if hit else None
+
+
+def _pick_cam_tcp(tfs: dict[str, tuple]) -> np.ndarray | None:
+    """``T_cam_tcp``: the cam0 <- tcp 4x4, off the ANCHOR camera's TCP topic.
+
+    A gripper limb publishes the pose of its tool-centre-point frame IN cam0 on
+    ``/<dev>/camera/0/tcp_extrinsics`` (``parent="cam0", child="tcp"``), the same
+    direction as ``camera/<i>/extrinsics``, so this too is used with **no
+    inversion**. The contract pins index 0 and the child frame, so the topic is
+    matched down to ``/camera/0/`` and the child down to ``tcp``. Its suffix
+    is deliberately NOT a match for `_pick_stereo`'s ``endswith("/extrinsics")``:
+    a TCP pose is not a camera's, and a limb with one camera has no stereo pair
+    to be mistaken for.
+    """
+    hit = _pick_tf(tfs, "/camera/", "/camera/0" + _TCP_EXTRINSICS_SUFFIX,
+                   child="tcp")
+    return make_T(*hit) if hit else None
 
 
 def _parse_imu_calib(m) -> tuple[int | None, float | None, float | None, float | None]:

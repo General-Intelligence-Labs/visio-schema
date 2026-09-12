@@ -5,6 +5,7 @@
 // than polling. The acceptor produces one fresh FramedFdEndpoint per accepted
 // connection; the server side must Start() that endpoint and Send() to it.
 #include <gtest/gtest.h>
+#include <poll.h>
 #include <sys/socket.h>
 
 #include <chrono>
@@ -359,7 +360,8 @@ TEST(TcpIo, AnAcceptFloodAdmitsEveryClientAcrossPasses) {
 
 // After a refusal the acceptor leaves the listen socket unpolled for one tick,
 // so a flat-out redialing client is paced to one small backlog-sized batch per
-// kTickMs (200 ms) instead of a per-attempt chase. Unpaced, this window fits
+// kRefusalDeferMs (200 ms) instead of a per-attempt chase. Unpaced, this
+// window fits
 // hundreds of dial/refuse cycles; paced, a few dozen at most. Deleting
 // defer_accept passes every other test — this one pins the back-off itself.
 TEST(TcpIo, RefusedRedialStormIsPacedToTheTick) {
@@ -391,5 +393,101 @@ TEST(TcpIo, RefusedRedialStormIsPacedToTheTick) {
   EXPECT_GE(gate_calls.load(), 1);
   EXPECT_LE(gate_calls.load(), 40)
       << "refusals were not paced — the accept loop is chasing the redialer";
+  server.Stop();
+}
+
+// ── Reactor mode ─────────────────────────────────────────────────────────────
+// Bind() + AcceptPass(): the owner's own poll loop drives the acceptor and no
+// thread exists. The firmware hosts it on its single service reactor beside
+// the button pins and captive DNS. Same gate-before-build and per-pass bound
+// as the threaded loop — it IS the threaded loop's body.
+
+namespace {
+
+// Wait (bounded) for the listen socket to become readable, then drain it.
+TcpAcceptor::PassOutcome DrivePass(TcpAcceptor& server,
+                                   std::chrono::milliseconds wait) {
+  pollfd p{server.listen_fd(), POLLIN, 0};
+  ::poll(&p, 1, static_cast<int>(wait.count()));
+  return server.AcceptPass();
+}
+
+}  // namespace
+
+TEST(TcpIo, AcceptPassAdmitsAndReportsRefusalWithoutAThread) {
+  constexpr std::uint16_t kPortPass = 21242;
+  TcpAcceptor server(kPortPass);
+  std::atomic<bool> admit{true};
+  MultiAccept accepted;
+  server.Bind(accepted.on_accept(),
+              [&](const visio_schema::transport::AcceptedLeg&) {
+                return admit.load();
+              });
+  ASSERT_GE(server.listen_fd(), 0);
+
+  // Nothing pending: a pass returns at once with nothing to report.
+  const auto idle = server.AcceptPass();
+  EXPECT_EQ(idle.admitted, 0);
+  EXPECT_FALSE(idle.refused);
+
+  TcpEndpoint c1("127.0.0.1", kPortPass);
+  InboundCollector rx1;
+  c1.Start(rx1.fn(), rx1.on_closed());
+  const auto first = DrivePass(server, std::chrono::seconds(2));
+  EXPECT_EQ(first.admitted, 1);
+  EXPECT_FALSE(first.refused);
+  ASSERT_TRUE(accepted.wait_count(1));
+
+  admit.store(false);
+  TcpEndpoint c2("127.0.0.1", kPortPass);
+  InboundCollector rx2;
+  c2.Start(rx2.fn(), rx2.on_closed());
+  const auto second = DrivePass(server, std::chrono::seconds(2));
+  EXPECT_EQ(second.admitted, 0);
+  EXPECT_TRUE(second.refused) << "the owner needs this to pace the redial";
+  EXPECT_TRUE(rx2.wait_closed()) << "a refused client never saw the close";
+
+  c1.Stop();
+  c2.Stop();
+  accepted.stop_all();
+  server.Stop();
+}
+
+// A flood larger than the kernel backlog is drained across passes, each
+// bounded by kMaxAcceptsPerPass, with nothing stranded — the reactor-mode
+// twin of AnAcceptFloodAdmitsEveryClientAcrossPasses.
+TEST(TcpIo, AcceptPassDrainsAFloodAcrossPasses) {
+  constexpr std::uint16_t kPortPassFlood = 21243;
+  // Above kMaxAcceptsPerPass, so the per-pass bound is actually
+  // exercised — matching the threaded twin above.
+  constexpr int kClients = 24;
+  TcpAcceptor server(kPortPassFlood);
+  MultiAccept accepted;
+  server.Bind(accepted.on_accept());
+
+  // Dial from a helper: past the backlog a connect blocks until a pass
+  // drains, so the dialer and the passes must overlap.
+  std::vector<int> fds(kClients, -1);
+  std::thread dialer([&] {
+    for (int i = 0; i < kClients; ++i)
+      fds[static_cast<std::size_t>(i)] =
+          visio_schema::transport::DialTcpFd("127.0.0.1", kPortPassFlood);
+  });
+
+  int admitted = 0;
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (admitted < kClients && std::chrono::steady_clock::now() < deadline) {
+    const auto out = DrivePass(server, std::chrono::milliseconds(200));
+    EXPECT_LE(out.admitted, TcpAcceptor::kMaxAcceptsPerPass);
+    EXPECT_FALSE(out.refused);
+    admitted += out.admitted;
+  }
+  dialer.join();
+  EXPECT_EQ(admitted, kClients) << "clients were stranded across passes";
+  EXPECT_TRUE(accepted.wait_count(static_cast<std::size_t>(kClients)));
+
+  for (const int fd : fds) visio_schema::transport::CloseFd(fd);
+  accepted.stop_all();
   server.Stop();
 }

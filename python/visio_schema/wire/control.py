@@ -24,6 +24,12 @@ FIRST_DYNAMIC = ControlStream.CONTROL_STREAM_FIRST_DYNAMIC
 DEVICE_INFO = ControlStream.CONTROL_STREAM_DEVICE_INFO
 HEARTBEAT = ControlStream.CONTROL_STREAM_HEARTBEAT
 COMMAND = ControlStream.CONTROL_STREAM_COMMAND
+# End-to-end like COMMAND, and target-addressed for the same reason: a firmware
+# image is a directed transfer, not a broadcast. It is a separate stream because a
+# 30-60 MB payload must not queue behind — or ahead of — control traffic, and its
+# replies land on the device's own `/ota_status` channel rather than as a
+# CommandResult. See visio_schema/wire/ota.py for the driver.
+OTA = ControlStream.CONTROL_STREAM_OTA
 
 # Control streams that never cross a hop (the bus drops them rather than relaying).
 # A new control stream belongs here iff it is link-scoped and carries no device
@@ -36,8 +42,10 @@ def command_message(command: _ProtoMessage) -> Message:
     """Wrap a Command into a `Message` on the `COMMAND` control stream.
 
     The result is ready to hand to `Endpoint.send`. Set the command's
-    ``target_device`` so the bus routes it to the right device end-to-end; the device
-    replies with a ``CommandResult`` on the same `COMMAND` stream.
+    ``target_device`` so the bus routes it to the right device end-to-end. The
+    device does NOT reply on `COMMAND`: its ``CommandResult`` arrives on the
+    device's own ``/<device>/command_result`` data channel, a dynamic stream id
+    learned from the ``DeviceInfo`` announce. Match it by ``command_id``.
 
     Args:
         command: A ``visio_schema.v1.control.command_pb2.Command`` to serialize into
@@ -61,5 +69,6 @@ __all__ = [
     "FIRST_DYNAMIC",
     "HEARTBEAT",
     "LINK_LOCAL_CONTROL",
+    "OTA",
     "command_message",
 ]

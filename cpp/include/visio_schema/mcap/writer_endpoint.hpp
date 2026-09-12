@@ -8,6 +8,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -47,6 +48,13 @@ struct McapWriterStats {
   // byte bound the storage device's stalls have ever consumed. The distance
   // to max_bytes is the recording's proven margin against loss.
   std::uint64_t max_pending_bytes = 0;
+  // Frames discarded because their stream id resolved to no channel. A
+  // DIFFERENT failure from `dropped`, and it must not be folded into it: that
+  // one means storage is too slow, this one means the recording is missing a
+  // whole TOPIC and no amount of faster storage would help. It went uncounted
+  // until an Ego Pro recording was found to be silently missing every relayed
+  // limb camera while every health field read clean.
+  std::uint64_t unmapped = 0;
 };
 
 class McapWriterEndpoint : public transport::Endpoint {
@@ -61,7 +69,9 @@ class McapWriterEndpoint : public transport::Endpoint {
                      std::uint64_t sync_span_bytes = 0,
                      // Present -> each part is a VREC container instead of
                      // plaintext MCAP. Passthrough; see McapWriter.
-                     std::optional<RecordingKey> recording_key = std::nullopt);
+                     std::optional<RecordingKey> recording_key = std::nullopt,
+                     // Write-time read-back. Passthrough; see McapWriter.
+                     McapReadbackOptions readback = {});
   ~McapWriterEndpoint() override;
 
   McapWriterEndpoint(const McapWriterEndpoint&) = delete;
@@ -74,6 +84,9 @@ class McapWriterEndpoint : public transport::Endpoint {
   std::size_t pending_frames() const;
   std::size_t pending_bytes() const;
   std::uint64_t dropped_frames() const { return dropped_.load(std::memory_order_relaxed); }
+  std::uint64_t unmapped_frames() const {
+    return unmapped_.load(std::memory_order_relaxed);
+  }
   // Lifetime total of payload bytes written to disk (passthrough to the inner
   // McapWriter; monotonic across part rotation). 0 until the first message drains
   // to the writer thread.
@@ -89,6 +102,16 @@ class McapWriterEndpoint : public transport::Endpoint {
   // link hit EOF, detach me", and a write-only sink ignores both callbacks.
   bool write_failed() const { return failed_.load(std::memory_order_relaxed); }
 
+  // Write-time read-back passthrough (see McapReadbackOptions). Step from
+  // any ONE thread of the caller's choosing while recording; the writer
+  // thread is never blocked by it, and Stop() runs the bounded close flush.
+  bool ReadbackStep(std::chrono::milliseconds budget);
+  std::size_t readback_pending() const;
+  McapReadbackStats readback_stats() const;
+  // Latched: the card did not hold what was written and a rewrite did not
+  // fix it. Unlike write_failed(), recording continues — the owner decides.
+  bool storage_fault() const;
+
  private:
   struct Entry {
     std::shared_ptr<const Channel> channel;  // snapshot — writer-thread safe
@@ -97,6 +120,10 @@ class McapWriterEndpoint : public transport::Endpoint {
   void WriterLoop();
   void DrainBatch(std::deque<Entry>& batch);  // timed writer_->Write
   void NoteDrop(std::size_t n);
+  void NoteUnmapped(std::uint32_t stream_id);
+  // First occurrence, then every thousandth. Bucket-crossing rather than a
+  // modulo so it stays correct when n > 1 (NoteDrop sheds whole batches).
+  static bool CrossedLogThreshold(std::uint64_t prev, std::size_t n);
   void NoteFailure(const char* what) noexcept;  // latch + log once
 
   static constexpr std::uint64_t kSlowWriteNs = 50'000'000;  // 50 ms
@@ -116,6 +143,7 @@ class McapWriterEndpoint : public transport::Endpoint {
 
   std::atomic<bool> failed_{false};   // unrecoverable storage error, latched
   std::atomic<std::uint64_t> dropped_{0};
+  std::atomic<std::uint64_t> unmapped_{0};
   // Written only under mu_ (Send), read lock-free by stats().
   std::atomic<std::uint64_t> stat_max_pending_bytes_{0};
   std::atomic<std::uint64_t> stat_writes_{0};

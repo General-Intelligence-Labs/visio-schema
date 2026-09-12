@@ -5,9 +5,12 @@
 //                  FramedFdEndpoint over a freshly dialed link.
 //
 //   TcpAcceptor  — listen-mode DISCOVERY, NOT an Endpoint. Owns a listen socket
-//                  + its own accept thread. On each accepted connection it builds
-//                  a fresh FramedFdEndpoint over the client fd and hands it to
-//                  on_accept(); the owner (hub) attaches it to the bus as a peer.
+//                  and either its own accept thread (Start) or nothing at all
+//                  (Bind + AcceptPass, driven by the owner's poll loop — the
+//                  firmware's single service reactor). On each accepted
+//                  connection it builds a fresh FramedFdEndpoint over the
+//                  client fd and hands it to on_accept(); the owner (hub)
+//                  attaches it to the bus as a peer.
 //                  When that client disconnects the endpoint fires on_closed and
 //                  the bus forgets it; the acceptor keeps listening. Multiple
 //                  clients => multiple endpoints, each with its own identity and
@@ -87,10 +90,33 @@ class TcpAcceptor {
   TcpAcceptor(const TcpAcceptor&) = delete;
   TcpAcceptor& operator=(const TcpAcceptor&) = delete;
 
-  // Spawn the accept thread. The gate is fixed for the acceptor's lifetime —
-  // passing it here (rather than a setter) makes that structural.
+  // Threaded mode: Bind() + spawn the accept thread (vs_tcp_accept). The
+  // gate is fixed for the acceptor's lifetime — passing it here (rather than
+  // a setter) makes that structural.
   void Start(OnAccept on_accept, AdmissionGate gate = {});
-  void Stop();                     // stop + join
+  // Join the accept thread if there is one, then close the listen socket.
+  // Either mode; idempotent.
+  void Stop();
+
+  // Reactor mode: no thread of its own. Bind() installs the callbacks; the
+  // owner polls listen_fd() for POLLIN and calls AcceptPass() when it is
+  // readable. The listen socket is non-blocking, so a pass never waits.
+  void Bind(OnAccept on_accept, AdmissionGate gate = {});
+  int listen_fd() const { return listen_fd_; }
+
+  struct PassOutcome {
+    int admitted = 0;      // endpoints handed to on_accept this pass
+    bool refused = false;  // at least one connection failed the gate
+  };
+  // Drain pending connections, at most kMaxAcceptsPerPass per call, so a
+  // flood cannot monopolize the caller (the listen fd stays readable while
+  // more are pending). After a pass that `refused`, the owner must leave
+  // listen_fd() unpolled for kRefusalDeferMs: a storming client redials the
+  // instant it sees our close, and that pause is what turns the chase into
+  // one cheap batch per tick. Threaded mode applies the pause itself.
+  PassOutcome AcceptPass();
+  static constexpr int kMaxAcceptsPerPass = 16;
+  static constexpr int kRefusalDeferMs = 200;
 
  private:
   void Loop();

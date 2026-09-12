@@ -19,8 +19,8 @@ Every Visio wire message consists of:
    `HEADER_LEN || header_pb || payload`.
 
 Per-Endpoint frame wrappers add transport-specific framing around
-this core (`TCP TOTAL_LEN`, `COBS` for serial, datagram boundaries for
-UDP). See section 3.
+this core (`COBS` delimiters on the TCP and serial byte streams,
+datagram boundaries for UDP). See section 3.
 
 ```
 core frame (always the same):
@@ -43,13 +43,14 @@ message Header {
   uint32                    stream_id = 1;  // per-link stream label
   uint32                    seq       = 2;  // per-stream_id sequence
   google.protobuf.Timestamp timestamp = 3;  // see timesync.md
+  bool                      keyframe  = 4;  // H.265 sync point (VPS/SPS/PPS)
 }
 ```
 
-A stream is named globally by its **topic** (e.g. `/glove_left/imus/3/raw`); the
+A stream is named globally by its **topic** (e.g. `/glove_left/imu/3/raw`); the
 wire carries only a compact per-link `stream_id`. A `ControlStream` enum splits
 the id space: ids `[1, FIRST_DYNAMIC=16)` are hop-local control streams
-(DEVICE_INFO=1, TIMESYNC=2, HEARTBEAT=3, COMMAND=4), ids `≥16` are negotiated
+(DEVICE_INFO=1, HEARTBEAT=3, COMMAND=4, OTA=5), ids `≥16` are negotiated
 data streams that hubs remap. The `stream_id → (topic, payload type, schema)`
 binding is learned at runtime from the periodic `DeviceInfo` announce — each
 announced `Channel` carries its `schema_name` (protobuf full name) and `schema`
@@ -58,10 +59,16 @@ announced `Channel` carries its `schema_name` (protobuf full name) and `schema`
 `stream_id`, and `timestamp` is rewritten on receive by the timesync offset (see
 [`timesync.md`](timesync.md)).
 
-Typical serialized Header size: **~10-14 bytes** (one 1-byte stream_id varint,
-one seq varint, and the ~8-byte Timestamp submessage).
+Typical serialized Header size: **~10-16 bytes** (one 1-byte stream_id varint,
+one seq varint, the ~8-byte Timestamp submessage, and 2 bytes for `keyframe`
+when it is true — proto3 omits it when false, so only a video sync point pays).
 
-`HEADER_LEN` is a single byte: the ~21-25 byte Header never approaches
+`keyframe` is on the wire rather than in memory because the consumer of a video
+frame is not always its producer: a hub relays its leaves' video, and a recorder
+opens a video channel only on a decodable IDR. See the field's own comment in
+`wire/header.proto`.
+
+`HEADER_LEN` is a single byte: the ~23-27 byte Header never approaches
 255 bytes, and it grows *compatibly* via optional protobuf fields, so a
 wider length field buys nothing. There is also **no separate header
 version byte** — structural breaks are handled by the proto package
@@ -70,23 +77,30 @@ draft; the narrowing is a deliberate pre-1.0 wire change.)
 
 ## 3. Per-Endpoint frame wrappers
 
-### 3.1 TCP
+### 3.1 TCP — COBS-framed, exactly like serial
 
-TCP is a byte stream with no native message boundaries; we add an
-explicit total length prefix.
+TCP is a byte stream with no native message boundaries, and it carries the
+**same COBS-delimited frames as serial** (§3.2):
 
 ```
-┌──────────────┬──────────────┬────────────┬──────────┬─────────┐
-│ TOTAL_LEN    │ HEADER_LEN   │ header_pb  │ payload  │ CRC16   │
-│ u32_le       │ u8           │ N bytes    │ M bytes  │ u16_le  │
-└──────────────┴──────────────┴────────────┴──────────┴─────────┘
+┌─────────────────────────────────────────────────────────────────┐ ┌──────┐
+│ COBS-encode( HEADER_LEN || header_pb || payload || CRC16 )      │ │ 0x00 │
+└─────────────────────────────────────────────────────────────────┘ └──────┘
 ```
 
-- `TOTAL_LEN` = `2 + N + M + 2` (everything after `TOTAL_LEN`).
-- Reader: read 4 bytes → `TOTAL_LEN`, then read exactly `TOTAL_LEN`
-  more bytes; parse the resulting buffer.
-- `TOTAL_LEN` is NOT covered by CRC (it's a framing artifact; corruption
-  there causes a length-mismatch error rather than a silent CRC pass).
+Every Visio TCP leg frames this way — the device's serving leg, the Visio
+bus (`FramedFdEndpoint`, the same framer the serial leg uses), and the
+Python and app clients. One framer for both byte streams is what lets a
+device serve CDC-ACM and TCP from the same code.
+
+A client SHOULD write a single `0x00` immediately after connecting. It is an
+empty frame, which every reader skips, and it resynchronises the peer's COBS
+reader so the client's first real frame is not folded into bytes left over
+from a previous connection.
+
+> **History.** An earlier draft of this document specified a `TOTAL_LEN`
+> (u32 little-endian) length prefix for TCP. No implementation ever used it,
+> and a client built from that draft cannot talk to any Visio device.
 
 ### 3.2 Serial (USB CDC, UART) — COBS-framed
 
@@ -105,13 +119,13 @@ on the wire:
 - The trailing `0x00` is the frame delimiter; the COBS encoding
   guarantees no other `0x00` bytes appear in the encoded run.
 - Reader: read until `0x00`, COBS-decode, then parse the decoded
-  bytes the same way as TCP (minus the outer `TOTAL_LEN`).
+  bytes as the core frame of §1.
 - COBS encoding overhead is at most `ceil(N / 254) + 1` bytes — in
   practice ~0.4 % for the frame sizes we use.
 
 ### 3.3 UDP
 
-Each Visio message is exactly one UDP datagram. No `TOTAL_LEN` is
+Each Visio message is exactly one UDP datagram. No COBS delimiter is
 needed (datagram boundaries are intrinsic).
 
 ```

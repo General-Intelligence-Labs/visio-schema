@@ -57,6 +57,28 @@ def test_message_roundtrip() -> None:
     assert decoded == msg
 
 
+def test_keyframe_flag_survives_the_wire() -> None:
+    """A video sync point stays one across a hop.
+
+    The consumer of a video frame is not always its producer: a hub relays its
+    leaves' video, and the recorder's open-on-a-decodable-IDR gate runs at the
+    hub. While this flag lived only in memory an Ego Pro rig recorded four of its
+    seven cameras — every relayed frame read keyframe=False, so the gate never
+    opened and the whole topic vanished with no error anywhere.
+    """
+    msg = Message(stream_id=17, payload=b"\x01\x02", seq=7, keyframe=True)
+    decoded = decode_message(encode_message(msg))
+    assert decoded.keyframe is True
+    assert decoded == msg
+
+
+def test_non_keyframe_stays_false_across_the_wire() -> None:
+    """The default must not drift: if every P-frame claimed to be a sync point,
+    the gate this flag guards would admit undecodable video."""
+    msg = Message(stream_id=17, payload=b"\x01\x02", seq=7)
+    assert decode_message(encode_message(msg)).keyframe is False
+
+
 def test_corrupt_crc_raises() -> None:
     frame = bytearray(encode_frame(_make_header(), b"hello"))
     frame[-1] ^= 0xFF

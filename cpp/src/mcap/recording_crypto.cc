@@ -54,15 +54,19 @@ RecordingKeyFp RecordingKeyFingerprint(const RecordingKey& key) {
     return fp;
 }
 
-std::string FingerprintHex(const RecordingKeyFp& fp) {
+std::string HexOf(const std::uint8_t* p, std::size_t n) {
     static const char* kDigits = "0123456789abcdef";
     std::string out;
-    out.reserve(fp.size() * 2);
-    for (const std::uint8_t b : fp) {
-        out.push_back(kDigits[b >> 4]);
-        out.push_back(kDigits[b & 0x0f]);
+    out.reserve(n * 2);
+    for (std::size_t i = 0; i < n; ++i) {
+        out.push_back(kDigits[p[i] >> 4]);
+        out.push_back(kDigits[p[i] & 0x0f]);
     }
     return out;
+}
+
+std::string FingerprintHex(const RecordingKeyFp& fp) {
+    return HexOf(fp.data(), fp.size());
 }
 
 void WriteVrecHeader(const VrecHeader& header, std::uint8_t* out) {

@@ -30,7 +30,7 @@ message Channel {
   // by each hub as it relays. The wire Header's `stream_id` carries this value.
   uint32 id = 1;
 
-  // Fully-qualified topic, e.g. "/glove_left/imus/3/raw". Shape convention:
+  // Fully-qualified topic, e.g. "/glove_left/imu/3/raw". Shape convention:
   // /<device>/<sensor-group>/<index>/<sub-field>. This is the stream's stable
   // global identity; `id` is only a per-link compression label.
   string topic = 2;
@@ -84,7 +84,7 @@ message DeviceInfo {
   // Logical role / kind of this device — e.g. "ego", "glove_left",
   // "glove_right", "gripper_left", "gripper_right". Unlike `device_name` this is
   // NOT unique (many units share a role); it is the leading topic segment for
-  // this device's channels (e.g. "/glove_left/imus/3/raw"), so recordings and
+  // this device's channels (e.g. "/glove_left/imu/3/raw"), so recordings and
   // pipelines group by it. Empty if a device does not declare a role.
   string equipment_type = 7;
 }

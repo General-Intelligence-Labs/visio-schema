@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 from _helpers import FRAME_DT, T0, frame_index_of, indexed_frames
 
-from visio_schema.reader import Frame, Session, is_keyframe
+from visio_schema.reader import (
+    RAW_LUMA16,
+    Frame,
+    HevcDecoder,
+    HevcDepthEncoder,
+    Session,
+    is_keyframe,
+)
 
 
 def _au(*nals: bytes) -> bytes:
@@ -140,3 +148,64 @@ def test_time_window(rec):
     frames = list(Session([b.path]).stream(start_ns=lo, end_ns=hi))
     idxs = sorted(frame_index_of(f.image) for f in frames)
     assert idxs == [2, 3, 4]  # [start, end)
+
+
+# --- RAW_LUMA16: lifting sample data out of a 10-bit luma plane -------------- #
+
+def _coded(width, height, codes):
+    """One IDR access unit carrying `codes` in the luma of a Main 10 stream."""
+    enc = HevcDepthEncoder(width, height, keyint=1, crf=0)
+    return [au for _, au in enc.encode(codes, 0)] + [au for _, au in enc.flush()]
+
+
+@pytest.mark.parametrize("width", [64, 250])
+def test_raw_luma16_recovers_the_codes_a_converting_read_destroys(width):
+    """The regression that motivates `RAW_LUMA16` existing at all.
+
+    `to_ndarray(format="gray16le")` runs the plane through swscale, which applies a
+    limited-range -> full-range expansion AND clips: luma 511 comes back 33441, and
+    1021/1022/1023 all saturate to 65535. Both ends of the range are destroyed with
+    nothing raised. Sample data must never go through a colour conversion.
+
+    `width=250` also covers the padded-stride path — an aligned width has
+    `line_size == width * 2`, so the stride arithmetic is dead code without it.
+    """
+    height = 64
+    codes = np.zeros((height, width), np.uint16)
+    edges = [0, 1, 511, 1021, 1022, 1023]
+    codes[0, :len(edges)] = edges
+
+    frames = [f for f in (HevcDecoder("h265", pixel_format=RAW_LUMA16).decode(au)
+                          for au in _coded(width, height, codes)) if f is not None]
+    assert len(frames) == 1
+    got = frames[0]
+    assert got.dtype == np.uint16 and got.shape == (height, width)
+
+    # The invariant that separates a plane read from a colour conversion: samples
+    # stay inside the 10-bit range. A `gray16le` read returns values up to 65535.
+    assert got.max() <= 1023
+
+    # Exact equality is NOT asserted: x265 at crf 0 is near-lossless, not lossless
+    # (a couple of codes), and codec fidelity is not what this test guards. The
+    # margin still separates the two paths by three orders of magnitude — a
+    # converting read puts 511 at 33441 and every top code at 65535.
+    np.testing.assert_allclose(got[0, :len(edges)], edges, atol=4)
+
+
+def test_raw_luma16_does_not_alias_the_decoder_scratch_buffer():
+    """Successive decodes must not hand back views onto one recycled plane.
+
+    At an unpadded stride the sliced plane is already contiguous, so returning it
+    without a copy would alias — the previous frame silently becomes the next one.
+    """
+    w, h = 64, 64
+    enc = HevcDepthEncoder(w, h, keyint=1, crf=0)
+    aus = [au for _, au in enc.encode(np.full((h, w), 100, np.uint16), 0)]
+    aus += [au for _, au in enc.encode(np.full((h, w), 900, np.uint16), 1)]
+    aus += [au for _, au in enc.flush()]
+
+    dec = HevcDecoder("h265", pixel_format=RAW_LUMA16)
+    frames = [f for f in (dec.decode(au) for au in aus) if f is not None]
+    assert len(frames) == 2
+    assert int(np.median(frames[0])) == 100, "frame 0 was overwritten by frame 1"
+    assert int(np.median(frames[1])) == 900

@@ -42,6 +42,50 @@ _NAL_SYNTAX = {
 
 _START_CODE = b"\x00\x00\x01"
 
+# A `pixel_format` sentinel meaning "hand back the decoder's own luma plane,
+# unconverted" — for streams whose luma carries SAMPLE DATA rather than an image.
+#
+# `to_ndarray` must never be used for those. Measured on a 10-bit frame:
+# `to_ndarray(format="gray16le")` applies a limited-range -> full-range conversion
+# AND clips — luma 511 comes back 33441, and 1021, 1022 and 1023 all saturate to
+# 65535, destroying both ends of the range. `format="yuv420p10le"` raises outright
+# ("Conversion to numpy array with format `yuv420p10le` is not yet supported").
+# Reading plane 0 directly is exact and skips swscale entirely.
+RAW_LUMA16 = "raw16"
+
+#: Decoded pixel formats whose luma plane really is 2 bytes/sample.
+_LUMA16_FORMATS = frozenset({
+    "yuv420p10le", "yuv422p10le", "yuv444p10le", "gray10le",
+    "yuv420p12le", "yuv422p12le", "yuv444p12le", "gray12le",
+    "yuv420p16le", "gray16le",
+})
+
+
+def _read_luma16(frame) -> np.ndarray:
+    """Plane 0 as ``(h, w)`` uint16, honouring ``line_size`` padding.
+
+    Planes carry row padding, so a flat read of the buffer returns the image
+    sheared; reshaping to ``(h, stride)`` and slicing the left ``w * 2`` columns
+    lifts every row in one vectorized step — 0.30 ms per 960x544 frame as a Python
+    row loop, 0.037 ms this way.
+
+    ``.copy()`` is load-bearing, and `np.ascontiguousarray` is NOT a substitute: at
+    an unpadded stride the slice is already contiguous, so that would hand back a
+    VIEW onto the decoder's recycled plane buffer, which the next `decode` call
+    overwrites underneath the caller.
+    """
+    if frame.format.name not in _LUMA16_FORMATS:
+        raise ValueError(
+            f"RAW_LUMA16 lifts a 16-bit-per-sample luma plane, but this stream "
+            f"decoded as {frame.format.name!r} — the result would be half-width "
+            f"garbage"
+        )
+    plane = frame.planes[0]
+    h, stride = frame.height, plane.line_size
+    buf = np.frombuffer(memoryview(plane), np.uint8)
+    return buf[:h * stride].reshape(h, stride)[:, :frame.width * 2].copy().view(
+        np.uint16)
+
 def decodable_formats(codec: str | None = None) -> frozenset[str]:
     """Wire ``format`` strings this decoder accepts, optionally for one codec.
 
@@ -213,7 +257,8 @@ class HevcDecoder:
     def decode(self, access_unit: bytes) -> np.ndarray | None:
         """Decode one AU -> frame ndarray, or None (warm-up / corrupt AU).
 
-        ``rgb24`` gives ``(H, W, 3)`` uint8; ``gray`` gives ``(H, W)`` uint8.
+        ``rgb24`` gives ``(H, W, 3)`` uint8; ``gray`` gives ``(H, W)`` uint8;
+        `RAW_LUMA16` gives ``(H, W)`` uint16 straight off plane 0, unconverted.
         """
         av = self._av
         try:
@@ -226,4 +271,6 @@ class HevcDecoder:
             return None
         self._synced = True
         # All-P GOPs are strictly 1-in-1-out here, so frames[0] is THIS AU's.
+        if self._pixel_format == RAW_LUMA16:
+            return _read_luma16(frames[0])
         return frames[0].to_ndarray(format=self._pixel_format)

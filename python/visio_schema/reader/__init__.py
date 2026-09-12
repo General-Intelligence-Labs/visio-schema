@@ -36,8 +36,25 @@ Needs the ``[reader]`` extra (numpy, scipy) plus the base ``av`` and ``mcap``.
 
 from __future__ import annotations
 
-from ._decode import KEYFRAME_FORMATS, HevcDecoder, decodable_formats, is_keyframe
-from ._encode import HevcEncoder, NvHevcEncoder, make_rect_encoder
+from ._decode import (
+    KEYFRAME_FORMATS,
+    RAW_LUMA16,
+    HevcDecoder,
+    decodable_formats,
+    is_keyframe,
+)
+from ._encode import (
+    DEPTH_DISPARITY_FRAC,
+    DEPTH_PIX_FMT,
+    HevcDepthEncoder,
+    HevcEncoder,
+    NvHevcDepthEncoder,
+    NvHevcEncoder,
+    dequantize_disparity,
+    make_depth_encoder,
+    make_rect_encoder,
+    quantize_disparity,
+)
 from .adapters import (
     AdapterContext,
     AdapterFactory,
@@ -59,6 +76,7 @@ from .domain import (
     Calibration,
     CameraCalib,
     Element,
+    FileSummary,
     Frame,
     FrameExposure,
     ImuSample,
@@ -70,6 +88,7 @@ from .domain import (
     Sampled,
     SampleMethod,
     SessionMeta,
+    StreamSummary,
     SyncGroup,
     Tick,
     TopicInfo,
@@ -82,6 +101,8 @@ from .session import Session, strip_device_topic_prefix
 
 __all__ = [
     "CAM_CALIB_SCHEMA",
+    "DEPTH_DISPARITY_FRAC",
+    "DEPTH_PIX_FMT",
     "FRAME_INFO_SCHEMA",
     "FRAME_TF_SCHEMA",
     "IMAGE_SCHEMA",
@@ -90,6 +111,7 @@ __all__ = [
     "JOINT_STATES_SCHEMA",
     "KEYFRAME_FORMATS",
     "POSE_SCHEMA",
+    "RAW_LUMA16",
     "VIDEO_SCHEMA",
     "AdapterContext",
     "AdapterFactory",
@@ -97,14 +119,17 @@ __all__ = [
     "CameraCalib",
     "Element",
     "ElementAdapter",
+    "FileSummary",
     "Frame",
     "FrameExposure",
     "HevcDecoder",
+    "HevcDepthEncoder",
     "HevcEncoder",
     "ImuSample",
     "JointState",
     "KeyframeCadence",
     "Ns",
+    "NvHevcDepthEncoder",
     "NvHevcEncoder",
     "Pose",
     "Record",
@@ -113,6 +138,7 @@ __all__ = [
     "Sampled",
     "Session",
     "SessionMeta",
+    "StreamSummary",
     "SyncGroup",
     "Tick",
     "TopicInfo",
@@ -120,13 +146,16 @@ __all__ = [
     "build_adapter",
     "cpu_video_decoders",
     "decodable_formats",
+    "dequantize_disparity",
     "element_adapter",
     "elements",
     "interpolator",
     "is_keyframe",
     "make_T",
+    "make_depth_encoder",
     "make_rect_encoder",
     "prefetch",
+    "quantize_disparity",
     "registered_schemas",
     "resolve_message_class",
     "slerp_xyzw",

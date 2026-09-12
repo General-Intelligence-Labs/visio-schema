@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import numpy as np
+
+from visio_schema.reader.domain import make_T
 import pytest
 from _helpers import (
     CAM_K,
@@ -10,6 +12,10 @@ from _helpers import (
     T0,
     RecBuilder,
     indexed_frames,
+    stereo_calib_builder,
+    limb_calib_builder,
+    TCP_QUAT,
+    TCP_T,
     unindexed_mcap,
 )
 
@@ -72,6 +78,32 @@ def test_calib_topics_excludes_runtime_tf(stereo_calib_rec):
     assert "/tf" not in sess._calib_topics()
     # and the real extrinsics still win
     assert np.allclose(sess.calibration.stereo_T, [-0.062, 0, 0])
+
+
+def test_tcp_extrinsic_is_read_and_is_not_mistaken_for_stereo(tmp_path):
+    """A gripper limb's `camera/0/tcp_extrinsics` lands in `T_cam_tcp` verbatim.
+
+    `_pick_stereo` keys on `"/camera/" ... endswith("/extrinsics")`; the TCP topic
+    shares the `/camera/0/` prefix and the FrameTransform schema, so if its suffix
+    ever matched, a one-camera limb would grow a phantom stereo pair with the
+    tool pose as its baseline. Pin both: the TCP is read, and stereo stays None.
+    """
+    from scipy.spatial.transform import Rotation
+    b = limb_calib_builder(tmp_path / "limb.mcap")
+    path = b.write()
+    sess = Session([path])
+    assert "/gripper_left/camera/0/tcp_extrinsics" in sess._calib_topics()
+    cal = sess.calibration
+    expect_R = Rotation.from_quat(TCP_QUAT).as_matrix()
+    assert not np.allclose(expect_R, expect_R.T), "fixture must be asymmetric to be useful"
+    assert cal.T_cam_tcp is not None
+    assert np.allclose(cal.T_cam_tcp, make_T(expect_R, np.array(TCP_T)))
+    # not the stereo transform, and not the IMU's either
+    assert cal.stereo_R is None and cal.stereo_T is None and cal.baseline_m is None
+    assert np.allclose(cal.T_cam_imu[:3, 3], [-0.018, 0.026, -0.002])
+    # and a head with no tool reports none rather than borrowing a camera's pose
+    assert Session([stereo_calib_builder(tmp_path / "head.mcap").write()]) \
+        .calibration.T_cam_tcp is None
 
 
 def test_topics_cheap_summary(stereo_calib_rec):
@@ -305,3 +337,34 @@ def test_require_index_leaves_a_healthy_recording_alone(tmp_path):
     assert [
         t.topic for t in Session(b.write(), require_index=True).topics()
     ] == ["/cam/0"]
+
+
+def test_stream_summaries_describes_each_input_file(tmp_path):
+    """Per-stream inventory from the parsed summaries: one stream per positional,
+    each file's size/status/count and the metadata-record names it carries."""
+    rec = RecBuilder(tmp_path / "rec.mcap", capture={"session_name": "s1"})
+    rec.add_camera("/ego/camera/0", indexed_frames(5)).write()
+    side = RecBuilder(tmp_path / "side.mcap")
+    side.add_camera("/ego/camera/0", indexed_frames(5)).write()
+
+    ss = Session(rec.path, side.path).stream_summaries()
+    assert [s.origin for s in ss] == [0, 1]
+    f = ss[0].files[0]
+    assert f.path == str(rec.path) and f.size > 0
+    assert f.status == "ok" and f.messages == 5
+    assert "visio.capture" in f.metadata_names  # cheap, from the summary index
+    assert "visio.capture" not in ss[1].files[0].metadata_names
+
+
+def test_a_tcp_extrinsic_off_the_anchor_or_frame_is_refused(tmp_path):
+    """The contract pins the tool frame to camera 0 and the child `tcp`; a pose
+    published on another index, or under another child, is not the tool frame
+    and must not be read as one."""
+    b = RecBuilder(tmp_path / "off.mcap")
+    b.add_camera_calib("/gripper_left/camera/0/intrinsics")
+    b.add_extrinsics("/gripper_left/camera/1/tcp_extrinsics", T=TCP_T,
+                     quat=TCP_QUAT, child="tcp")
+    b.add_extrinsics("/gripper_left/camera/0/tcp_extrinsics", T=TCP_T,
+                     quat=TCP_QUAT, child="imu0")
+    sess = Session([b.write()])
+    assert sess.calibration.T_cam_tcp is None

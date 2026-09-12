@@ -26,6 +26,7 @@ visio_schema_v1_wire_Header ToHeader(const Message& msg) {
   h.seq = msg.seq;
   h.has_timestamp = true;
   h.timestamp = msg.timestamp;
+  h.keyframe = msg.keyframe;
   return h;
 }
 
@@ -86,6 +87,7 @@ FrameStatus DecodeFrame(std::string_view frame, Message* out) {
   out->stream_id = header.stream_id;
   out->seq = header.seq;
   out->timestamp = header.timestamp;
+  out->keyframe = header.keyframe;
   out->payload = std::string_view(frame.data() + payload_end,
                                   frame.size() - payload_end - 2);
   return FrameStatus::kOk;

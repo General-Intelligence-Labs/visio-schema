@@ -42,6 +42,7 @@ from .payload import (
     PLAINTEXT_VERSION,
     WARN_BYTES,
     encode,
+    normalize_bare_numbers,
     normalize_storage_prefix,
     validate,
 )
@@ -324,6 +325,7 @@ def cmd_qr(args: argparse.Namespace) -> int:
         except (KeyboardInterrupt, EOFError):
             raise CliError("aborted") from None
 
+    normalize_bare_numbers(cfg)
     normalize_storage_prefix(cfg)
     _warn_partial_meta(cfg)
     secrets = _collect_secrets(cfg, args)
@@ -477,6 +479,8 @@ def cmd_inspect(args: argparse.Namespace) -> int:
               f"sets {sealed.get('has')}", file=sys.stderr)
         print("the values are readable only by a device holding that "
               "generation's private key", file=sys.stderr)
+    # Checked as the app reads the code, after the dump shows what it carries.
+    normalize_bare_numbers(cfg)
     for problem in validate({**cfg, **({"sealed": sealed} if sealed else {})}):
         print(f"  ! {problem}", file=sys.stderr)
     return 0

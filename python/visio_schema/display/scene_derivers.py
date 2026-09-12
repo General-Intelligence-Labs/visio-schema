@@ -79,7 +79,13 @@ class TactileSceneDeriver:
             lay = TactileLayout()
             lay.ParseFromString(msg.payload)
             data_topic = topic[: -len("/layout")]
-            self._placement[data_topic] = hg.build_placement(lay, hg.side_is_left(data_topic))
+            side = hg.side_of_topic(data_topic)
+            if side is None:
+                # Unassigned unit (rooted at its code8): the placement is
+                # mirrored about the side, so drawing it would put the taxels on
+                # the wrong hand. Skip rather than guess — calibrate the unit.
+                return None
+            self._placement[data_topic] = hg.build_placement(lay, side == "left")
             return None
         if ch.schema_name == _TACTILE_SCHEMA and "/tactile/" in topic:
             pl = self._placement.get(topic)

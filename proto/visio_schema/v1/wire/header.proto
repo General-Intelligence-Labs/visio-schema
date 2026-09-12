@@ -55,4 +55,28 @@ message Header {
   uint32 stream_id = 1;
   uint32 seq = 2;
   google.protobuf.Timestamp timestamp = 3;
+
+  // This bulk frame is a SYNC POINT — an H.265 keyframe carrying VPS/SPS/PPS.
+  //
+  // On the wire because a HUB relays video it did not produce. The flag used to
+  // live only in the in-memory Message, "set by the producer", which holds right
+  // up until the producer is one hop away: a relayed leaf's frames arrived with
+  // it defaulted false, so the recorder's keyframe gate — which opens a video
+  // channel only on a decodable IDR — dropped every one of them, for the whole
+  // recording, silently. An Ego Pro rig recorded four of its seven cameras that
+  // way.
+  //
+  // SCOPE: this fixes the RECORDER's gate and nothing else yet. The bounded
+  // outbox's never-evict-a-keyframe rule reads the same bit, but it only ever
+  // sees frames it classed as `bulk` — and `bulk` is still in-memory only, set
+  // in the local publish path and never on relay, so relayed video lands in the
+  // CONTROL queue where the evict and shed rules never run. Serializing `bulk`
+  // is the same one-line fix; it is not done here because it moves relayed video
+  // between queues on the hot path and that wants hardware measurement first.
+  //
+  // Additive and safe across versions: a producer that does not set it reads as
+  // false, which is exactly the old behaviour. A rig whose leaves predate this
+  // field still loses their video — see the pre-keyframe warning in
+  // mcap/writer.cc, which makes that visible instead of silent.
+  bool keyframe = 4;
 }

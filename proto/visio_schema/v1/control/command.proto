@@ -59,6 +59,7 @@ message Command {
     SetNoticeVolume set_notice_volume = 38;
     SetRecordingKey set_recording_key = 39;
     SetHandDetection set_hand_detection = 40;
+    SetGpsTagging  set_gps_tagging = 41;
   }
 }
 
@@ -297,6 +298,28 @@ message SetAudioRecording {
 // ALWAYS address this to a specific device: an empty Command.target_device is
 // a broadcast, which on a suit would flip every detector-capable board at once.
 message SetHandDetection {
+  bool enabled = 1;
+}
+
+// Enable/disable geo-tagging of recordings on this device.
+//
+// The boards have no GNSS receiver, so a host is the only source of a fix
+// (SetTime, SetRecordingMeta, StartRecording). This switch is what a host
+// cannot express by simply withholding one: a 0 fix KEEPS the stored
+// coordinates, so a silent host leaves the device stamping the last position
+// it was ever told. Switched OFF the device stops stamping coordinates into
+// new sessions AND stops storing incoming ones, so neither a second host nor
+// an auto-started boot recording can re-tag it.
+//
+// Persisted to a device-side sidecar. Takes effect on the next recording; it
+// does NOT retag the in-progress session, and it never rewrites a session
+// already on the card. Default is ENABLED — every unit shipped so far tags,
+// and firmware that predates this switch must not appear to have it off.
+//
+// A device switched off keeps its stored fix; switching back on resumes
+// stamping it until a host pushes a fresher one. The current value is
+// reported in DeviceState.gps_tagging.
+message SetGpsTagging {
   bool enabled = 1;
 }
 
@@ -561,6 +584,8 @@ message SetNoticeVolume {
 //   intrinsics  -> /<dev>/camera/<i>/intrinsics  (foxglove.CameraCalibration)
 //   extrinsics  -> /<dev>/camera/<i>/extrinsics or /<dev>/imu/<i>/extrinsics
 //                  (foxglove.FrameTransform, child posed in the cam0 frame)
+//   tcp_extrinsics -> /<dev>/camera/<i>/tcp_extrinsics
+//                  (foxglove.FrameTransform, index 0 only)
 //   imu_info    -> /<dev>/imu/<i>/info           (ImuCalibration)
 //   encoder_info-> /<dev>/encoder/<i>/info       (EncoderCalibration)
 //   camera_tuning -> persisted only; NO topic    (CameraTuning)
@@ -571,12 +596,26 @@ message SetNoticeVolume {
 // consumes it, so it is stored and applied but never broadcast. That also means
 // the CommandResult is the ONLY acknowledgement: unlike the other artifacts,
 // there is no 1 Hz re-broadcast to confirm against.
+// `unit_side` is here, among per-sensor artifacts, because it IS calibration:
+// which limb a mirrored gripper is cannot be read off the board, one firmware
+// image serves both, and the extrinsics carried by this same message already
+// encode the side — a left unit's translation and rotation are not a right
+// unit's. Delivering the label through the same channel as the geometry it
+// labels is what stops the two disagreeing. The device validates it and refuses
+// anything but "left" or "right"; absent leaves the unit unassigned, which it
+// reports by rooting its topics at its own GILABS label rather than guessing.
 message SetCalibration {
   enum SensorKind {
     SENSOR_KIND_UNSPECIFIED = 0;
     CAMERA = 1;
     IMU = 2;
     ENCODER = 3;
+    // The BOARD itself, not a sensor on it: `sensor_index` is unused. Carries
+    // artifacts that describe the unit rather than one of its instruments —
+    // today just `unit_side`. Additive: firmware that predates this kind falls
+    // through its sensor_kind switch and REFUSES the command, which is the
+    // right answer, rather than silently applying it to a sensor.
+    UNIT = 4;
   }
   SensorKind sensor_kind = 1;   // which sensor family the artifact targets
   uint32     sensor_index = 2;  // 0-based instance within that family
@@ -587,6 +626,18 @@ message SetCalibration {
     visio_schema.v1.calibration.ImuCalibration imu_info = 13;  // IMU
     visio_schema.v1.calibration.EncoderCalibration encoder_info = 14;  // ENCODER
     visio_schema.v1.calibration.CameraTuning camera_tuning = 15;  // CAMERA, set-only
+    string unit_side = 16;  // UNIT: "left" or "right"
+    // CAMERA, and `sensor_index` MUST be 0 — the anchor. That is the inverse
+    // of the `extrinsics` rule, which forbids index 0 (cam0 is the frame the
+    // others are posed in, so it has no extrinsic of its own). The pose of the
+    // gripper's tool-centre-point frame expressed in cam0
+    // (`parent_frame_id="cam0"`, `child_frame_id="tcp"`,
+    // `p_cam0 = R * p_tcp + t`): the same direction as `camera/<i>/extrinsics`.
+    // Its own artifact rather than an `extrinsics` on a spare index because it
+    // is not a sensor's pose but the tool's; a limb has exactly one, so it hangs
+    // off the anchor camera and is re-published on
+    // `/<dev>/camera/0/tcp_extrinsics`.
+    foxglove.FrameTransform tcp_extrinsics = 17;
     // 10 reserved for a deferred magnetometer artifact.
   }
 }

@@ -7,6 +7,7 @@
 #include "visio_schema/mcap/writer_endpoint.hpp"
 
 #include <gtest/gtest.h>
+#include <atomic>
 
 #include <unistd.h>
 
@@ -18,6 +19,7 @@
 #include <memory>
 #include <unordered_map>
 
+#include "mcap_writer_test_util.hpp"
 #include "visio_schema/routing/channel.hpp"
 #include "visio_schema/routing/registry.hpp"
 #include "visio_schema/transport/stream_policy.hpp"
@@ -25,36 +27,15 @@
 
 using namespace visio_schema::mcap;
 using namespace visio_schema::transport;
+using namespace mcap_test;
 using visio_schema::Channel;
+using visio_schema::mcap::RecordingKey;
+using visio_schema::mcap::McapReadbackStats;
 using visio_schema::kDeviceInfo;
 using visio_schema::kFirstDynamic;
 using visio_schema::routing::ChannelRegistry;
 using visio_schema::wire::Message;
 namespace fs = std::filesystem;
-
-namespace {
-
-std::string TempPath(const std::string& name) {
-  return (fs::temp_directory_path() / name).string();
-}
-
-Channel MakeChannel(std::uint32_t id, const std::string& topic) {
-  Channel c;
-  c.id = id;
-  c.topic = topic;
-  c.schema_name = "visio_schema.v1.sensor.ImuRaw";
-  c.schema = std::string(8, '\x01');  // dummy FileDescriptorSet bytes
-  return c;
-}
-
-Message Data(std::uint32_t id, std::string payload) {
-  Message m;
-  m.stream_id = id;
-  m.payload = std::move(payload);
-  return m;
-}
-
-}  // namespace
 
 TEST(McapWriterEndpoint, RecordsResolvedChannel) {
   const std::string path = TempPath("visio_mcap_test_basic.mcap");
@@ -165,7 +146,14 @@ TEST(McapWriterEndpoint, DropsUntilMapped) {
     McapWriterEndpoint ep(path, resolve);
     ep.Start(nullptr, nullptr);
     ep.Send(Data(kFirstDynamic + 5, "x"));  // unmapped -> dropped, no crash
+    ep.Send(Data(kFirstDynamic + 6, "y"));  // a SECOND missing topic
     ep.Stop();
+    // The counter exists to separate this from a queue drop. Storage was never
+    // the problem here — whole topics are simply absent — and folding the two
+    // together would hide exactly the failure it was added to surface.
+    EXPECT_EQ(ep.unmapped_frames(), 2u);
+    EXPECT_EQ(ep.stats().unmapped, 2u);
+    EXPECT_EQ(ep.stats().dropped, 0u);
   }
   EXPECT_TRUE(fs::exists(path));  // a valid (empty) MCAP is still written
   std::remove(path.c_str());
@@ -410,4 +398,100 @@ TEST(McapWriterEndpoint, DeliversWhileRunningWithoutStopAsTheFlush) {
     ep.Stop();
   }
   std::remove(path.c_str());
+}
+
+// Write-time read-back passthrough: the options reach the inner writer, the
+// step is driven from a thread that is NOT the writer thread (this one),
+// and Stop() runs the bounded close flush so the final tail is verified.
+TEST(McapWriterEndpoint, ReadbackPassthrough) {
+  const std::string path = TempPath("visio_mcap_test_readback.mcap");
+  std::remove(path.c_str());
+  std::unordered_map<std::uint32_t, Channel> table{
+      {kFirstDynamic, MakeChannel(kFirstDynamic, "/dev/imu/0/raw")}};
+  auto resolve = [&](std::uint32_t id) -> const Channel* {
+    auto it = table.find(id);
+    return it == table.end() ? nullptr : &it->second;
+  };
+  McapReadbackOptions rb;
+  rb.ring_bytes = 4 << 20;
+  rb.settle_bytes = 0;
+  rb.close_flush_ms = 5000;
+  {
+    McapWriterEndpoint ep(path, resolve, /*max_bytes=*/0,
+                          /*max_duration_s=*/0.0, WritePolicy::lossless(),
+                          {}, false, 0, /*sync_span_bytes=*/64 * 1024,
+                          std::nullopt, rb);
+    ep.Start(nullptr, nullptr);
+    for (int i = 0; i < 512; ++i) {
+      ep.Send(Data(kFirstDynamic, std::string(3000, char('a' + i % 26))));
+      if (i % 64 == 0) ep.ReadbackStep(std::chrono::milliseconds(20));
+    }
+    ep.Stop();
+    EXPECT_EQ(ep.readback_pending(), 0u);
+    const McapReadbackStats st = ep.readback_stats();
+    EXPECT_EQ(st.bytes_verified, fs::file_size(path));  // spans + tail
+    EXPECT_EQ(st.spans_skipped, 0u);
+    EXPECT_EQ(st.spans_mismatched, 0u);
+    EXPECT_FALSE(ep.storage_fault());
+    EXPECT_FALSE(ep.write_failed());
+  }
+  std::remove(path.c_str());
+}
+
+// The one concurrent shape the library must survive: the writer thread
+// overrunning the ring while a stepper spins on it. A compare torn by the
+// writer is discarded, never mistaken for a mismatch — so with the bytes
+// intact there is never a fault, whatever the ring size, and the parts
+// are what read-back-off produces.
+TEST(McapWriterEndpoint, ReadbackOverrunUnderAConcurrentStepperNeverFaults) {
+  const RecordingKey key = TestKey(21);  // VREC: 64 KiB spans
+  std::unordered_map<std::uint32_t, Channel> table{
+      {kFirstDynamic, MakeChannel(kFirstDynamic, "/dev/imu/0/raw")}};
+  auto resolve = [&](std::uint32_t id) -> const Channel* {
+    auto it = table.find(id);
+    return it == table.end() ? nullptr : &it->second;
+  };
+  auto record = [&](const std::string& stem, std::uint64_t ring_bytes,
+                    bool step) {
+    RemoveParts(stem);
+    McapReadbackOptions rb;
+    rb.ring_bytes = ring_bytes;
+    rb.settle_bytes = 0;
+    McapWriterEndpoint ep(TempPath(stem + ".mcap"), resolve,
+                          /*max_bytes=*/1 << 20, /*max_duration_s=*/0.0,
+                          WritePolicy::lossless(), {}, false, 0,
+                          /*sync_span_bytes=*/64 * 1024, key, rb);
+    ep.Start(nullptr, nullptr);
+    std::atomic<bool> done{false};
+    std::thread stepper;
+    if (step) {
+      stepper = std::thread([&] {
+        while (!done.load()) ep.ReadbackStep(std::chrono::milliseconds(0));
+      });
+    }
+    for (int i = 0; i < 2048; ++i)
+      ep.Send(Data(kFirstDynamic, std::string(3000, char('a' + i % 26))));
+    ep.Stop();
+    done.store(true);
+    if (stepper.joinable()) stepper.join();
+    return ep.readback_stats();
+  };
+  const std::string ref = "visio_ep_rb_over_ref";
+  record(ref, 0, false);
+  for (const std::uint64_t ring : {64u << 10, 256u << 10, 1u << 20}) {
+    SCOPED_TRACE(ring);
+    const std::string on = "visio_ep_rb_over_on";
+    const McapReadbackStats st = record(on, ring, true);
+    EXPECT_EQ(st.spans_mismatched, 0u);
+    EXPECT_EQ(st.spans_unrepaired, 0u);
+    EXPECT_EQ(st.read_failed, 0u);
+    EXPECT_GT(st.spans_verified + st.spans_skipped, 0u);
+    ASSERT_EQ(PartCount(on), PartCount(ref));
+    for (int i = 0; i < PartCount(on); ++i)
+      EXPECT_EQ(DecryptPart(SlurpFile(PartPath(on, i)), key),
+                DecryptPart(SlurpFile(PartPath(ref, i)), key))
+          << "part " << i;
+    RemoveParts(on);
+  }
+  RemoveParts(ref);
 }

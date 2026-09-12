@@ -88,6 +88,18 @@ def build_placement(layout, is_left):
     return out
 
 
-def side_is_left(topic):
-    """True if a topic belongs to the left glove (/glove_left/...)."""
-    return topic.strip("/").split("/")[0] == "glove_left"
+def side_of_topic(topic):
+    """The glove side a topic belongs to, or None when the unit is unassigned.
+
+    The root is one segment, ``<role>_<side>`` for an assigned limb
+    (``/glove_left/...``) — see visio-schema/docs/protocol/stream_type_map.md.
+    An UNASSIGNED limb roots at ``<role>_<code8>`` instead, which names no side.
+
+    None, not False: taxel geometry is mirrored about the side, so guessing here
+    renders the wrong hand rather than rendering nothing. The caller must refuse.
+    """
+    root = topic.strip("/").split("/")[0]
+    _, sep, suffix = root.partition("_")
+    if not sep or suffix not in ("left", "right"):
+        return None
+    return suffix

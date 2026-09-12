@@ -33,6 +33,7 @@ from visio_schema.dataset.spec import (
     ee_pose,
     image,
     slot_of,
+    table_channels_for,
 )
 
 if TYPE_CHECKING:  # for type checkers only — no import cost at runtime
@@ -99,4 +100,5 @@ __all__ = [
     "scaled_dims",
     "slot_of",
     "spec_from_info",
+    "table_channels_for",
 ]

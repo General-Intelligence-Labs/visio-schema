@@ -4,7 +4,7 @@
 #include <iostream>
 #include <utility>
 
-#include "visio_schema/transport/link.hpp"  // SetCurrentThreadName
+#include "visio_schema/transport/link.hpp"  // EnterServiceThread
 
 namespace visio_schema::mcap {
 
@@ -23,11 +23,12 @@ McapWriterEndpoint::McapWriterEndpoint(std::string_view path, StreamResolver res
                                        std::map<std::string, std::string> metadata,
                                        bool rotate_on_keyframe, std::int64_t pair_guard_ns,
                                        std::uint64_t sync_span_bytes,
-                                       std::optional<RecordingKey> recording_key)
+                                       std::optional<RecordingKey> recording_key,
+                                       McapReadbackOptions readback)
     : resolve_(std::move(resolve)),
       writer_(std::make_unique<visio_schema::mcap::McapWriter>(
           path, max_bytes, max_duration_s, rotate_on_keyframe, pair_guard_ns,
-          sync_span_bytes, std::move(recording_key))),
+          sync_span_bytes, std::move(recording_key), std::move(readback))),
       policy_(policy) {
   // Written on this (constructing) thread, before Start() spawns the writer
   // thread — so it lands in the file ahead of any message, no locking needed.
@@ -67,11 +68,33 @@ void McapWriterEndpoint::Stop() {
   }
 }
 
+bool McapWriterEndpoint::CrossedLogThreshold(std::uint64_t prev,
+                                             std::size_t n) {
+  return prev == 0 || (prev + n) / 1000 != prev / 1000;
+}
+
 void McapWriterEndpoint::NoteDrop(std::size_t n) {
   const std::uint64_t prev = dropped_.fetch_add(n, std::memory_order_relaxed);
-  if (prev == 0 || (prev + n) / 1000 != prev / 1000) {
+  if (CrossedLogThreshold(prev, n)) {
     std::cerr << "McapWriterEndpoint: dropped " << (prev + n)
               << " frames (storage can't keep up with the recording)\n";
+  }
+}
+
+// Counted and reported, because the failure it hides is total: an id that never
+// maps loses its ENTIRE topic for the whole recording, and unlike a queue drop
+// no amount of faster storage helps. Deliberately NOT folded into `dropped` —
+// that one means storage is too slow, this one means a topic is missing.
+//
+// The id is not named: this counter is global to the endpoint, so with two
+// unmapped ids interleaving the message would name whichever arrived first and
+// never mention the second. A count is honest; a misleading id is not.
+void McapWriterEndpoint::NoteUnmapped(std::uint32_t) {
+  const std::uint64_t prev = unmapped_.fetch_add(1, std::memory_order_relaxed);
+  if (CrossedLogThreshold(prev, 1)) {
+    std::cerr << "McapWriterEndpoint: " << (prev + 1)
+              << " frames resolve to no channel — at least one topic is absent"
+                 " from this recording\n";
   }
 }
 
@@ -83,7 +106,10 @@ void McapWriterEndpoint::Send(const Message& msg) {
     ch = it->second;
   } else {
     const Channel* resolved = resolve_ ? resolve_(msg.stream_id) : nullptr;
-    if (resolved == nullptr) return;  // drop-until-mapped
+    if (resolved == nullptr) {
+      NoteUnmapped(msg.stream_id);  // drop-until-mapped
+      return;
+    }
     ch = std::make_shared<const Channel>(*resolved);
     channel_cache_.emplace(msg.stream_id, ch);
   }
@@ -116,7 +142,7 @@ void McapWriterEndpoint::Send(const Message& msg) {
 void McapWriterEndpoint::WriterLoop() {
   // Without a name this thread inherits its creator's comm (on-device that is
   // the command worker's), which mis-attributes all recording CPU in top -H.
-  transport::SetCurrentThreadName("mcap_wr");
+  transport::EnterServiceThread("mcap_wr", 0);
   for (;;) {
     std::deque<Entry> batch;
     {
@@ -194,6 +220,24 @@ std::uint64_t McapWriterEndpoint::bytes_written() const {
   return writer_ ? writer_->bytes_written() : 0;
 }
 
+// writer_ outlives the endpoint (see bytes_written); the read-back's own
+// lock serializes a step against Close, so no endpoint lock is needed.
+bool McapWriterEndpoint::ReadbackStep(std::chrono::milliseconds budget) {
+  return writer_ && writer_->ReadbackStep(budget);
+}
+
+std::size_t McapWriterEndpoint::readback_pending() const {
+  return writer_ ? writer_->readback_pending() : 0;
+}
+
+McapReadbackStats McapWriterEndpoint::readback_stats() const {
+  return writer_ ? writer_->readback_stats() : McapReadbackStats{};
+}
+
+bool McapWriterEndpoint::storage_fault() const {
+  return writer_ && writer_->storage_fault();
+}
+
 McapWriterStats McapWriterEndpoint::stats() const {
   McapWriterStats s;
   s.writes = stat_writes_.load(std::memory_order_relaxed);
@@ -201,6 +245,7 @@ McapWriterStats McapWriterEndpoint::stats() const {
   s.max_block_ns = stat_max_block_ns_.load(std::memory_order_relaxed);
   s.slow_writes = stat_slow_writes_.load(std::memory_order_relaxed);
   s.dropped = dropped_.load(std::memory_order_relaxed);
+  s.unmapped = unmapped_.load(std::memory_order_relaxed);
   s.max_pending_bytes = stat_max_pending_bytes_.load(std::memory_order_relaxed);
   return s;
 }

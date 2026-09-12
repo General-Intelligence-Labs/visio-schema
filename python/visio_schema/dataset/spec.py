@@ -65,6 +65,7 @@ DATASET_VERSION = 1
 VERSION_KEY = "visio_dataset_version"
 EE_NAMES_KEY = "ee_names"
 GRID_SLOT_KEY = "grid_slot"
+FPS_KEY = "fps"
 
 POSE_DIM = 7
 POSE_NAMES = ("x", "y", "z", "qx", "qy", "qz", "qw")
@@ -141,6 +142,25 @@ def slot_of(channel: str) -> str | None:
     return channel[len(prefix):] if channel.startswith(prefix) else None
 
 
+def table_channels_for(ee_names: Iterable[str]) -> tuple[str, ...]:
+    """Every channel that lives in the PARQUET, for this arm set.
+
+    Free-standing because the parquet's vocabulary is a function of the arms
+    ALONE — it needs no camera slots, no grid and no rate. A writer checking
+    an episode for completeness would otherwise have to build a whole
+    `DatasetSpec` and invent those, and an invented fact in a validation path
+    is a validation that lies.
+    """
+    ees = tuple(ee_names)
+    return (
+        COLLAR,
+        *(ee_pose(e) for e in ees),
+        *(action_ee_pose(e) for e in ees),
+        *(ee_gripper_width(e) for e in ees),
+        *(action_ee_gripper_width(e) for e in ees),
+    )
+
+
 class DatasetError(ValueError):
     """A dataset does not conform to this spec."""
 
@@ -170,15 +190,23 @@ class DatasetSpec:
     named after its entry. Fixing the shape is what makes a schema brittle;
     fixing the structure is what makes it a contract.
 
-    ``grid_slot`` names the camera whose frames define the row instants. It is
-    recorded because the same slot must drive the grid offline and online: a
-    dataset whose rows are camera-triggered and a serving loop that is
-    free-running would be two different alignment regimes wearing one name.
+    ``grid_slot`` names the camera whose frames define the row instants, and
+    ``fps`` is how often that camera produced one. They are the same kind of
+    fact and belong together: between them they define the grid a row sits on.
+
+    ``grid_slot`` is recorded because the same slot must drive the grid offline
+    and online — a dataset whose rows are camera-triggered and a serving loop
+    that is free-running would be two different alignment regimes wearing one
+    name. ``fps`` is recorded because a consumer replaying the rows as a
+    trajectory needs to know what a row's worth of time was; it is provenance,
+    not a constraint, and nothing here refuses a dataset for having a different
+    one.
     """
 
     ee_names: tuple[str, ...]
     image_slots: tuple[str, ...]
     grid_slot: str
+    fps: float
 
     def __post_init__(self) -> None:
         if not self.ee_names:
@@ -189,6 +217,8 @@ class DatasetSpec:
         ):
             if len(set(values)) != len(values):
                 raise DatasetError(f"duplicate entries in {field}: {values}")
+        if self.fps <= 0:
+            raise DatasetError(f"fps must be > 0, got {self.fps}")
         if self.grid_slot not in self.image_slots:
             raise DatasetError(
                 f"grid_slot {self.grid_slot!r} is not among image_slots "
@@ -222,12 +252,18 @@ class DatasetSpec:
         camera. Naming the table's own set removes the chance of asking a
         parquet for a picture.
         """
-        return (*self.pose_channels, *self.scalar_channels)
+        return table_channels_for(self.ee_names)
 
     @property
     def required_channels(self) -> tuple[str, ...]:
-        return (*self.pose_channels, *self.scalar_channels,
-                *self.image_channels)
+        """Everything an episode must carry: the parquet plus the videos.
+
+        Built from `table_channels`, not from `pose_channels` +
+        `scalar_channels` again — those two ARE the table, and listing them
+        here a second time meant a channel added to `table_channels_for` would
+        be silently absent from what this validates against.
+        """
+        return (*self.table_channels, *self.image_channels)
 
     def stamp(self) -> dict[str, Any]:
         """The identity keys this spec writes into ``meta/info.json``."""
@@ -235,6 +271,7 @@ class DatasetSpec:
             VERSION_KEY: DATASET_VERSION,
             EE_NAMES_KEY: list(self.ee_names),
             GRID_SLOT_KEY: self.grid_slot,
+            FPS_KEY: float(self.fps),
         }
 
     # ---- reading a dataset back -------------------------------------- #
@@ -271,10 +308,18 @@ class DatasetSpec:
         grid_slot = stamp.get(GRID_SLOT_KEY)
         if not grid_slot:
             raise DatasetError(f"meta carries no {GRID_SLOT_KEY!r}")
+        fps = stamp.get(FPS_KEY)
+        if not fps:
+            raise DatasetError(
+                f"meta carries no {FPS_KEY!r} — the grid rate is what turns a "
+                "row count into a duration, and nothing else in the file "
+                "records it (timestamps are derived FROM it)"
+            )
         return cls(
             ee_names=tuple(ee_names),
             image_slots=tuple(image_slots),
             grid_slot=str(grid_slot),
+            fps=float(fps),
         )
 
     def verify_channels(self, present: Iterable[str]) -> None:

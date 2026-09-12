@@ -50,6 +50,12 @@ class Message:
 
     seq: int = 0                                     # uint32, per stream_id
     timestamp: Timestamp = field(default_factory=Timestamp)
+    # This bulk frame is an H.265 sync point (VPS/SPS/PPS + IDR). Carried on the
+    # wire because a hub relays video it did not produce and a recorder opens a
+    # video channel only on a decodable keyframe — see the Header.keyframe
+    # comment in proto/visio_schema/v1/wire/header.proto for what went wrong
+    # while this lived only in memory.
+    keyframe: bool = False
 
     def to_header(self) -> Header:
         """Build the wire Header protobuf for this Message."""
@@ -57,6 +63,7 @@ class Message:
         h.stream_id = self.stream_id
         h.seq = self.seq
         h.timestamp.CopyFrom(self.timestamp)
+        h.keyframe = self.keyframe
         return h
 
     @classmethod
@@ -104,6 +111,7 @@ class Message:
             payload=payload,
             seq=header.seq,
             timestamp=ts,
+            keyframe=header.keyframe,
         )
 
 

@@ -2,8 +2,11 @@
 
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <pthread.h>
+#include <sched.h>
 #if defined(__linux__)
 #include <sys/prctl.h>
+#include <sys/resource.h>
 #endif
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -188,11 +191,22 @@ int AcceptCloexec(int listen_fd) {
 #endif
 }
 
-void SetCurrentThreadName(const char* name) {
+void EnterServiceThread(const char* name, int nice_value) {
 #if defined(__linux__)
   ::prctl(PR_SET_NAME, name, 0, 0, 0);
 #else
   (void)name;
+#endif
+  // Policy first: nice is meaningless under a real-time policy, so applied
+  // the other way round the renice would be silently dead.
+  ::sched_param timeshared{};
+  timeshared.sched_priority = 0;
+  ::pthread_setschedparam(::pthread_self(), SCHED_OTHER, &timeshared);
+#if defined(__linux__)
+  // PRIO_PROCESS with who=0 names the calling THREAD on Linux (a tid).
+  ::setpriority(PRIO_PROCESS, 0, nice_value);
+#else
+  (void)nice_value;
 #endif
 }
 

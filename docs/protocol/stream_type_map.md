@@ -10,7 +10,7 @@ carried in the periodic `DeviceInfo` announce:
 ```protobuf
 message Channel {
   uint32 id = 1;               // per-link stream_id label
-  string topic = 2;            // /glove_left/imus/3/raw
+  string topic = 2;            // /glove_left/imu/3/raw
   string encoding = 3;         // "protobuf"
   string schema_name = 4;      // visio_schema.v1.sensor.ImuRaw (protobuf full name)
   bytes  schema = 5;           // serialized FileDescriptorSet (payload + deps)
@@ -26,10 +26,36 @@ fleet reflash to add a stream.
 
 ## Topic convention
 
-`/<device>/<sensor-group>/<index>/<sub-field>` — e.g. `/glove_left/imus/3/raw`,
-`/glove_left/imus/3/quat`, `/gripper/cam/0/video`. The leading segment is the
-device's `equipment_type` (its logical role, e.g. `glove_left`) — not the
-per-unit `device_name`, which is a unique addressable label (e.g. `GILABS-<code8>`).
+`/<root>/<sensor-group>/<index>/<sub-field>` — e.g. `/glove_left/imu/3/raw`,
+`/glove_left/imu/3/quat`, `/gripper_left/camera/0`, `/ego/camera/0`.
+
+The root is **always exactly one path segment** — it never contains a `/`. It is
+*derived from*, but not identical to, the device's `equipment_type` (its logical
+role: `gripper`, `glove`, `ego`, `suit`):
+
+| device | root | example |
+|---|---|---|
+| unhanded | `equipment_type` | `/ego/`, `/suit/` |
+| handed, assigned | `equipment_type` + `_` + side | `/gripper_left/`, `/glove_right/` |
+| handed, unassigned | `equipment_type` + `_` + `code8` | `/gripper_aB3xY9pQ/` |
+
+Role and root answer different questions, which is why they are not one string.
+The **role** says what a board *is*: it is what a hub roster (`[hub] expect=`)
+admits and what a control frame may address, so a mirrored pair must **share** it.
+The **root** says where a board's data *lands*, so a mirrored pair must **not**
+share it — two limbs publishing one root collide, and the loser's streams are
+dropped with only a log line. `code8` is the 8-character base62 half of the device
+identity and contains no `-` and no `_`, so a root splits unambiguously on its
+first `_`.
+
+An unassigned limb roots at its `code8` rather than guessing a side: obviously
+unassigned beats silently becoming the wrong hand.
+
+Neither is the per-unit `device_name` (`GILABS-<code8>`), which is the unique
+addressable label. A bus **may** additionally prefix a relayed leaf's topics with
+`/<device_name>` (`prefix_topics_with_device_name`) when two units genuinely share
+a root — two ego heads on one bring-up host, say. That prefix goes **in front of**
+the root, and readers strip it before matching.
 
 ## Adding a stream
 

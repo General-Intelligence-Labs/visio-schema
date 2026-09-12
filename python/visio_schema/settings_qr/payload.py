@@ -19,7 +19,8 @@ Two payload versions coexist deliberately:
 Validation here is deliberately STRICTER than the app's on unknown keys — a
 hard error is a generator-side lint that catches an operator typo on a
 laptop, where the app merely warns so that old QRs keep working against
-newer apps.
+newer apps. Both read a bare whole number in a text field as its text; the
+app, whose JSON.parse cannot tell `101.0` from `101`, reads the former too.
 """
 
 from __future__ import annotations
@@ -48,6 +49,7 @@ __all__ = [
     "Provider",
     "RegionSource",
     "encode",
+    "normalize_bare_numbers",
     "normalize_storage_prefix",
     "provider_from_endpoint",
     "region_from_endpoint",
@@ -333,8 +335,12 @@ def _string(errs: list, where: str, v, required: bool = False,
     return v
 
 
+def _is_whole_number(v) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool)  # bool is an int subclass
+
+
 def _int_in_range(errs: list, where: str, v, lo: int, hi: int) -> None:
-    if not isinstance(v, int) or isinstance(v, bool):
+    if not _is_whole_number(v):
         errs.append(f"{where}: must be an integer")
         return
     if not lo <= v <= hi:
@@ -501,3 +507,20 @@ def normalize_storage_prefix(cfg: dict) -> None:
     if isinstance(prefix, str) and not prefix.endswith("/"):
         prefix += "/"
     storage["prefix"] = prefix
+
+
+_TEXT_SECTIONS = ("meta", "storage", "wifi")
+
+
+def normalize_bare_numbers(cfg: dict) -> None:
+    """A bare whole number in a text field (`"location": 101`) is its digits
+    with the quotes lost: rewrite it as text, so the printed code carries text
+    for every app version. Runs before validate(); any other wrong type is left
+    for it to reject."""
+    for section in _TEXT_SECTIONS:
+        fields = cfg.get(section)
+        if not isinstance(fields, dict):
+            continue
+        for name, value in fields.items():
+            if _is_whole_number(value):
+                fields[name] = str(value)

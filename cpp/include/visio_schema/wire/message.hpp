@@ -117,11 +117,11 @@ struct Message {
   // bandwidth-limited link. Set by the producer (publish_video).
   bool bulk = false;
 
-  // In-memory only (NOT serialized): this bulk frame is a SYNC POINT — an H.265
-  // keyframe carrying VPS/SPS/PPS. A bounded outbox must never evict one: losing
-  // a P-frame costs a frame, losing a keyframe costs the decoder its reference
-  // chain and blanks the viewer until the next one (a whole GOP). Set by the
-  // producer alongside `bulk`.
+  // SERIALIZED (Header.keyframe): this bulk frame is a SYNC POINT — an H.265
+  // keyframe carrying VPS/SPS/PPS. A bounded outbox must never evict one, and a
+  // recorder opens a video channel only on one. It crosses the wire because the
+  // consumer is not always the producer — a hub relays video from its leaves.
+  // Rationale and the scope of what that actually fixes: header.proto.
   bool keyframe = false;
 
   // In-memory only (NOT serialized): this message is SAFE TO SHED — a
@@ -154,8 +154,9 @@ struct Message {
   // Outbound framed bytes are byte-identical across sinks (the header is
   // stamped before fanout; per-link stream-id remap happens on hub INBOUND,
   // never per-sink), so one COBS+CRC pass serves the whole fanout. Safe
-  // without locking: Bus::Relay hands the same Message to sinks sequentially
-  // under its dispatch lock. `mutable` so Send(const Message&) can fill it.
+  // without locking: Bus::Relay and Bus::FanoutBatch both hand the same Message
+  // to sinks sequentially under one hold of the dispatch lock — batching inverts
+  // the loop but not that. `mutable` so Send(const Message&) can fill it.
   mutable std::shared_ptr<const std::vector<std::uint8_t>> framed;
 };
 

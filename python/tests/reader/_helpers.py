@@ -320,21 +320,43 @@ IMU_QUAT = tuple(
 STEREO_QUAT = tuple(
     Rotation.from_euler("xyz", [0.6, -1.1, 0.4], degrees=True).as_quat()
 )
+TCP_QUAT = tuple(
+    Rotation.from_euler("xyz", [2.0, -88.0, 1.5], degrees=True).as_quat()
+)
+TCP_T = (0.012, -0.004, 0.085)
+
+
+def _cam0_imu_calib(b, dev):
+    """cam0 intrinsics + the cam0 <- imu0 extrinsic/info every rig carries.
+
+    The IMU pose is published verbatim as kalibr's T_cam_imu. Near-inverted like
+    the real mount, but deliberately ASYMMETRIC: an exactly-180-deg rotation is
+    its own transpose, so it cannot detect a transposed rotation block."""
+    b.add_camera_calib(f"/{dev}/camera/0/intrinsics")
+    b.add_extrinsics(f"/{dev}/imu/0/extrinsics", T=(-0.018, 0.026, -0.002),
+                     quat=IMU_QUAT, child="imu0")
+    b.add_imu_calib(f"/{dev}/imu/0/info")
 
 
 def stereo_calib_builder(path):
     """A builder pre-loaded with stereo cameras' full calibration."""
     b = RecBuilder(path)
-    b.add_camera_calib("/ego/camera/0/intrinsics")
+    _cam0_imu_calib(b, "ego")
     b.add_camera_calib("/ego/camera/1/intrinsics")
     b.add_extrinsics("/ego/camera/1/extrinsics", T=(-0.062, 0, 0),
-                 quat=STEREO_QUAT, child="cam1")
-    # cam0 <- imu0, published verbatim as kalibr's T_cam_imu. Near-inverted like the
-    # real mount, but deliberately ASYMMETRIC: an exactly-180-deg rotation is its own
-    # transpose, so it cannot detect a transposed rotation block.
-    b.add_extrinsics("/ego/imu/0/extrinsics", T=(-0.018, 0.026, -0.002),
-                     quat=IMU_QUAT, child="imu0")
-    b.add_imu_calib("/ego/imu/0/info")
+                     quat=STEREO_QUAT, child="cam1")
+    return b
+
+
+def limb_calib_builder(path):
+    """A builder pre-loaded with a one-camera gripper limb's calibration: cam0
+    intrinsics, the IMU extrinsic/info, and the cam-TCP pose on the anchor camera's
+    `tcp_extrinsics` topic — NO stereo pair, so nothing may read as one."""
+    b = RecBuilder(path)
+    _cam0_imu_calib(b, "gripper_left")
+    # cam0 <- tcp: the tool frame posed in cam0, same direction as the others.
+    b.add_extrinsics("/gripper_left/camera/0/tcp_extrinsics", T=TCP_T,
+                     quat=TCP_QUAT, child="tcp")
     return b
 
 
