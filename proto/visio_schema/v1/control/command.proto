@@ -60,6 +60,7 @@ message Command {
     SetRecordingKey set_recording_key = 39;
     SetHandDetection set_hand_detection = 40;
     SetGpsTagging  set_gps_tagging = 41;
+    SetDiagVerbosity set_diag_verbosity = 42;
   }
 }
 
@@ -321,6 +322,18 @@ message SetHandDetection {
 // reported in DeviceState.gps_tagging.
 message SetGpsTagging {
   bool enabled = 1;
+}
+
+// How much the device's diagnostic log records to the SD-card tier
+// (docs/protocol/diag_log.md). Persisted to a device-side sidecar and applied
+// without a reboot. 0 = the default; higher levels add more of the 5 s
+// telemetry window and the kernel ring. The flash tier is NOT affected — it is
+// curated and small by design, and a reviewer asking for "more detail" wants
+// the card tier. The RMA loop uses this: a reviewer moves a ticket to
+// need_info, the app raises the level, the customer uses the rig for a week
+// and re-submits.
+message SetDiagVerbosity {
+  uint32 level = 1;
 }
 
 // Persist the camera H.265 target bitrate to a device-side sidecar, applied to

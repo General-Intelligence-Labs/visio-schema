@@ -1,0 +1,42 @@
+# Cross-language golden vectors for the diagnostic-log containers `VDLG`
+# (ring files on flash and on the SD card) and `VDLW` (one message on the
+# bus). One `key=hexbytes` per line.
+#
+# Generated from the Python reference implementation
+# (python/visio_schema/mcap/crypto.py). Both python/tests/
+# test_recording_crypto.py and cpp/tests/test_recording_crypto.cc load these
+# bytes and assert THEIR implementation reproduces them.
+#
+# THE KEY, NONCE AND PLAINTEXT ARE VREC'S, DELIBERATELY. Every input here is
+# byte-identical to tests/golden/vrec_vectors.txt, so the only thing that
+# differs is the CipherSuite. That makes these vectors a direct proof of the
+# one property the suites exist for: the same key and nonce under a different
+# label derive a different file key and produce unrelated ciphertext. If a
+# refactor ever collapsed two labels into one, the file keys below would
+# collide and these lines would stop matching.
+#
+# Why VDLW is a separate suite from VDLG rather than the same bytes on a
+# different medium: both are keyed from the SAME fleet key, and the ring
+# writer and the bus publisher are independent producers. Under one label
+# they would draw from a single nonce space and would have to coordinate
+# counters across two subsystems forever; nonce reuse under a stream cipher
+# recovers both plaintexts from the two ciphertexts alone. Separate labels
+# make them different keystreams by construction.
+#
+# The key and nonce are recognisable counting patterns. They are TEST values;
+# the real diagnostic key is a fleet secret and never enters this repo.
+
+# Shared with vrec_vectors.txt — see above.
+diag_key=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+diag_nonce=404142434445464748494a4b
+diag_key_fp=630dcd2966c43366
+
+# VDLG: HMAC-SHA256(key, b'visio-diag-v1' + nonce)
+vdlg_file_key=7b1dffb4e40ed6cd8604388909b78119d5aaf848af4aa52c99d9e478c791c629
+vdlg_header=56444c4701010000630dcd2966c43366404142434445464748494a4b00000000
+vdlg_ciphertext=419ac909d50fe764b03c825ade1ba65eb9a29eaae7fd8f8eaceeb0f552153cdccb4d26adddb23ddfc30a864dffc300dd824792ed1563a15365fef42d59c54035962f3e97a4061562b2bb792ab1ddb9e3964d1f89c06380ab7ade95c9e68e1b853cda552c42b46879be4ecadc1ebc0dfc007f0a5a8c9066b6c23cab2022c916a527a6053e9b046ce1e40d5ff256b9f73c992a5fc06641292bddfd0ef19614916d2afe9adb0fbb7c09629f2053ea07a70b7bf1f92c48b184edc9ceeb357d71cf9c1d816b9edb34580a
+
+# VDLW: HMAC-SHA256(key, b'visio-diag-wire-v1' + nonce)
+vdlw_file_key=91a4acdbdc675d7488b94778251fb0c2d2eb03892a0c652efcd6a26b748fbfcf
+vdlw_header=56444c5701010000630dcd2966c43366404142434445464748494a4b00000000
+vdlw_ciphertext=b90fee656ba09c504bfd42a4c9350afe2320349d6e1e08ed1b75798a9d858cf76dc5b49931de59cf49d33f5cd6a828e3212fd0394b0b3527f145bbd553fcfb1360125168534f359ecfb4915ad590b74f151b0b2ca2140361e04320fee292f3779a8141a27ddb15b81b42694c9da71885e704c833258336be712562b169fc88e62de97cff5df4c8c0b7de4e3f9988137e25709f3d26caf7cdd30dfbe2c1c88bba8aa367373997b3b1ba3f75b615b4af8aa014c57f3ab28a347fcb8f735c57bfcb0f9a81d17c11c2b3

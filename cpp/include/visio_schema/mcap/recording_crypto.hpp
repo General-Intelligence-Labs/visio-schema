@@ -60,6 +60,42 @@ constexpr std::uint8_t kVrecCipherChaCha20 = 1;
 // ChaCha20 block. A seek that is not block-aligned costs one discarded block.
 constexpr std::size_t kChaChaBlockBytes = 64;
 
+// A container's identity: the 4-byte magic it writes, and the HKDF-ish label
+// that domain-separates its per-file key derivation.
+//
+// WHY THIS IS A PARAMETER AND NOT THREE COPIES OF THIS FILE. The diagnostic
+// log wants exactly this construction — a 32-byte plaintext header, ChaCha20
+// with the plaintext-offset identity, a per-file key derived from a fleet key
+// — under a different magic so a reader cannot confuse the two, and a
+// different label so the two key spaces cannot collide. Everything else is
+// identical, and a forked copy would drift from the golden vectors that pin
+// this one.
+//
+// `kVrecSuite` is the default on every entry point below, so every existing
+// caller is untouched and the recording path cannot change by accident.
+struct CipherSuite {
+    std::array<char, 4> magic;
+    const char* key_label;
+};
+
+// The recording container. Do not change: fielded cards are written with it.
+inline constexpr CipherSuite kVrecSuite{{'V', 'R', 'E', 'C'}, "visio-rec-v1"};
+// The diagnostic log's ring files on flash and on the SD card.
+inline constexpr CipherSuite kVdlgSuite{{'V', 'D', 'L', 'G'}, "visio-diag-v1"};
+// One diagnostic-log message on the bus. A SEPARATE label from kVdlgSuite even
+// though both use the same fleet key: the file writer and the bus publisher
+// are independent producers, and under one label they would be drawing from a
+// single nonce space and would have to coordinate counters across two
+// subsystems forever. Different labels make them different keystreams by
+// construction.
+inline constexpr CipherSuite kVdlwSuite{{'V', 'D', 'L', 'W'},
+                                        "visio-diag-wire-v1"};
+
+// Longest key label the derivation buffer holds. The suites above are the only
+// callers and the longest is 18 bytes; this is a guard against a caller
+// inventing one, not a real limit.
+constexpr std::size_t kMaxKeyLabelBytes = 32;
+
 // SHA-256(key)[:8] — the fingerprint the header carries and the device reports.
 RecordingKeyFp RecordingKeyFingerprint(const RecordingKey& key);
 std::string FingerprintHex(const RecordingKeyFp& fp);
@@ -71,20 +107,34 @@ struct VrecHeader {
     std::uint8_t cipher = kVrecCipherChaCha20;
     RecordingKeyFp key_fp{};
     RecordingNonce nonce{};
+    // Plaintext bytes the writer last recorded as valid, u32 LE at offset 28
+    // (the bytes VREC has always left zero). 0 means "not recorded — read to
+    // EOF", which keeps every VREC part torn-tail-readable exactly as before.
+    // A `.vdlg` ring file rewrites this on each flush: without it, the bytes
+    // past a power-cut tear in an appended file are keystream over whatever
+    // was there, and a stream cipher will never flag them.
+    std::uint32_t bytes_valid = 0;
 };
 
-// Serialize into exactly kVrecHeaderBytes.
-void WriteVrecHeader(const VrecHeader& header, std::uint8_t* out);
+// Offset of `bytes_valid` inside the header, for a writer that updates it in
+// place after each flush without rewriting the rest.
+constexpr std::size_t kVrecBytesValidOffset = 28;
+
+// Serialize into exactly kVrecHeaderBytes, under `suite`'s magic.
+void WriteVrecHeader(const VrecHeader& header, std::uint8_t* out,
+                     const CipherSuite& suite = kVrecSuite);
 
 // Parse. False when `len` is short, the magic is wrong, or the format/cipher
 // is one this build does not implement — a future format must fail loudly
 // rather than be decrypted with the wrong cipher into plausible garbage.
 bool ParseVrecHeader(const std::uint8_t* data, std::size_t len,
-                     VrecHeader* out, std::string* err);
+                     VrecHeader* out, std::string* err,
+                     const CipherSuite& suite = kVrecSuite);
 
 // True when `data` starts with the VREC magic. Cheap sniff for readers that
 // accept both plaintext MCAP ("\x89MCAP") and VREC.
-bool LooksLikeVrec(const std::uint8_t* data, std::size_t len);
+bool LooksLikeVrec(const std::uint8_t* data, std::size_t len,
+                   const CipherSuite& suite = kVrecSuite);
 
 // A fresh nonce for a new part, from the CSPRNG.
 //
@@ -102,7 +152,10 @@ bool RandomNonce(RecordingNonce* out);
 class RecordingCipher {
 public:
     // `key` is the client recording key; `nonce` comes from the part header.
-    RecordingCipher(const RecordingKey& key, const RecordingNonce& nonce);
+    // `suite` selects the key label. An over-long label leaves the cipher
+    // invalid() rather than silently deriving from a truncated one.
+    RecordingCipher(const RecordingKey& key, const RecordingNonce& nonce,
+                    const CipherSuite& suite = kVrecSuite);
     ~RecordingCipher();
     RecordingCipher(const RecordingCipher&) = delete;
     RecordingCipher& operator=(const RecordingCipher&) = delete;

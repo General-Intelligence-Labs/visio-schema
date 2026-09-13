@@ -1,0 +1,126 @@
+// visio_schema/v1/service/diag/diag.proto
+//
+// Diagnostic-log read service: pull the device's on-flash log off a SEALED
+// unit. Host→device requests ride the CONTROL_STREAM_DIAG control stream
+// (end-to-end: forwarded across hops, so DiagRequest carries target_device,
+// exactly like Command and OtaMessage). Device→host replies are published on
+// the per-device named channel "/<device>/diag" (a dynamic data channel
+// advertised via DeviceInfo — NOT a reserved control id), mirroring the
+// OtaMessage (control id) / "/ota_status" (named channel) split.
+//
+// WHY THIS EXISTS. A customer image binds no adbd, and no Command or setup-page
+// route returns a file, so until now a sealed unit had no read path at all: the
+// only evidence a returned device carried was whatever the customer remembered.
+// The device now keeps a bounded encrypted ring of its own log
+// (docs/protocol/diag_log.md); this is how the app collects it during an RMA
+// or a one-tap "report a problem", and how the bench reads it at incoming
+// inspection.
+//
+// Why its own control stream rather than a Command body: a read is a chunked
+// transfer of up to a few MB, which is the shape OTA already has, inverted —
+// the device is the sender. It does not fit the single-ack CommandResult model.
+//
+// The bytes are opaque to the host: a `.vdlg` file is ciphertext under a fleet
+// key the app never holds, and the host relays it unchanged into RMA evidence.
+// A dev image with no key staged writes the ring in the clear, and the same
+// transfer carries that too.
+//
+// Throttling is the DEVICE's job. A read must never disturb a live recording;
+// the device paces chunks against its own I/O and the host simply consumes.
+
+syntax = "proto3";
+
+package visio_schema.v1.service.diag;
+
+// Host→device, on CONTROL_STREAM_DIAG.
+message DiagRequest {
+  // Intended recipient, by device name (DeviceInfo.device_name). A receiving
+  // peer MUST ignore requests whose target_device is neither empty nor its own
+  // name. Mirrors Command.target_device.
+  string target_device = 1;
+
+  // Correlates every reply of one request; echoed in DiagReply.session_id.
+  // The host picks it (monotonic per host is sufficient).
+  uint64 session_id = 2;
+
+  oneof body {
+    DiagList  list  = 10;  // what files exist, and how long each one is
+    DiagRead  read  = 11;  // stream a byte range of one file
+    DiagAbort abort = 12;  // stop an in-flight read
+  }
+}
+
+// Ask for the catalogue. The device answers with one DiagListing.
+message DiagList {}
+
+// Ask for [offset, offset+len) of one file. The device answers with a run of
+// DiagChunk carrying exactly those bytes, in order, the last one flagged.
+// len == 0 means "to the end of the valid region".
+//
+// Offsets are RAW FILE offsets, header included: the host is a blind relay and
+// the decoder wants the file as it sits on the device. `bytes_valid` in the
+// listing is the raw length that is worth reading; anything past it is
+// pre-allocation or a torn tail, and the device will not send it.
+message DiagRead {
+  string name   = 1;  // as listed
+  uint64 offset = 2;
+  uint32 len    = 3;
+}
+
+message DiagAbort {}
+
+// Device→host, on "/<device>/diag".
+message DiagReply {
+  string device     = 1;  // source device name (informational; topic is scoped)
+  uint64 session_id = 2;  // echoes DiagRequest.session_id
+
+  oneof body {
+    DiagListing listing = 10;
+    DiagChunk   chunk   = 11;
+    DiagStatus  status  = 12;
+  }
+}
+
+// One entry of the catalogue.
+message DiagFile {
+  // The file's own name, e.g. "GILABS-7K3M9QP2.3.vdlg" or
+  // "GILABS-7K3M9QP2.vitals.txt". Self-identifying by design: it is the only
+  // metadata that survives being copied into an email.
+  string name        = 1;
+  uint64 size        = 2;  // bytes on disk
+  // Bytes worth reading. For a `.vdlg` this is header + the plaintext length
+  // the writer last recorded; for a plaintext file it equals size.
+  uint64 bytes_valid = 3;
+  // Which tier: 1 = flash (the curated ring on /userdata), 2 = card (the full
+  // stream on the SD card root). Lets the app pull the small tier first.
+  uint32 tier        = 4;
+}
+
+message DiagListing {
+  repeated DiagFile files = 1;
+}
+
+// One run of bytes. HARD CEILING 65535 on `data`, for the same reason as
+// OtaChunk: nanopb is built without PB_FIELD_32BIT, so a larger payload cannot
+// be encoded or decoded at all.
+message DiagChunk {
+  string name   = 1;
+  uint64 offset = 2;  // raw file offset of data[0]
+  bytes  data   = 3;
+  bool   last   = 4;  // no more chunks for this request
+}
+
+// Errors and completion. Codes follow CommandResult's convention:
+// "no_such_file", "read_failed", "busy" (a recording is starting or stopping
+// and the read was declined), "aborted".
+message DiagStatus {
+  enum State {
+    IDLE    = 0;
+    READING = 1;
+    DONE    = 2;
+    FAILED  = 3;
+  }
+  State  state         = 1;
+  string error_code    = 2;
+  string error_message = 3;
+}

@@ -18,23 +18,25 @@ import pytest
 from visio_schema.mcap.crypto import (
     HEADER_BYTES,
     MCAP_MAGIC,
+    VDLG_SUITE,
+    VDLW_SUITE,
+    VREC_SUITE,
     RecordingKeyMismatch,
     RecordingKeyUnavailable,
+    _derive_file_key,
     fingerprint,
     is_vrec,
     open_recording,
     read_vrec_header,
 )
 
-_GOLDEN = (
-    Path(__file__).resolve().parents[1].parent
-    / "tests" / "golden" / "vrec_vectors.txt"
-)
+_GOLDEN_DIR = Path(__file__).resolve().parents[1].parent / "tests" / "golden"
+_GOLDEN = _GOLDEN_DIR / "vrec_vectors.txt"
 
 
-def _vectors() -> dict[str, bytes]:
+def _vectors(path: Path = _GOLDEN) -> dict[str, bytes]:
     out: dict[str, bytes] = {}
-    for line in _GOLDEN.read_text().splitlines():
+    for line in path.read_text().splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
@@ -44,6 +46,7 @@ def _vectors() -> dict[str, bytes]:
 
 
 V = _vectors()
+D = _vectors(_GOLDEN_DIR / "diag_vectors.txt")
 
 
 def _part(plaintext: bytes, key: bytes, nonce: bytes) -> bytes:
@@ -260,3 +263,75 @@ def test_remembering_a_known_key_leaves_the_file_untouched(tmp_path, monkeypatch
     before = keyring_path().stat().st_mtime_ns
     remember_key(key)
     assert keyring_path().stat().st_mtime_ns == before
+
+
+
+# ── The diagnostic-log suites ──────────────────────────────────────────────────
+#
+# diag_vectors.txt reuses VREC's key, nonce and plaintext byte for byte, so the
+# only variable is the CipherSuite. These tests are therefore a proof of domain
+# separation, not merely another round-trip.
+
+
+def test_diag_fixture_shares_vrec_inputs():
+    assert D["diag_key"] == V["vrec_key"]
+    assert D["diag_nonce"] == V["vrec_nonce"]
+    assert D["diag_key_fp"] == V["vrec_key_fp"] == fingerprint(D["diag_key"])
+
+
+@pytest.mark.parametrize(
+    "suite, prefix",
+    [(VDLG_SUITE, "vdlg"), (VDLW_SUITE, "vdlw")],
+    ids=["VDLG", "VDLW"],
+)
+def test_each_suite_derives_the_committed_file_key(suite, prefix):
+    got = _derive_file_key(D["diag_key"], D["diag_nonce"], suite)
+    assert got == D[f"{prefix}_file_key"]
+    # ...and it is not VREC's. The whole point.
+    assert got != V["vrec_file_key"]
+
+
+@pytest.mark.parametrize(
+    "suite, prefix",
+    [(VDLG_SUITE, "vdlg"), (VDLW_SUITE, "vdlw")],
+    ids=["VDLG", "VDLW"],
+)
+def test_each_suite_reads_back_the_committed_ciphertext(suite, prefix, tmp_path):
+    # A container is header + ciphertext; open_recording must hand back the
+    # shared plaintext when told which suite it is looking at.
+    part = tmp_path / f"{prefix}.bin"
+    part.write_bytes(D[f"{prefix}_header"] + D[f"{prefix}_ciphertext"])
+    with open_recording(part, D["diag_key"], suite=suite) as f:
+        assert f.read() == V["vrec_plaintext"]
+
+
+def test_a_diag_header_is_refused_by_the_recording_reader():
+    # VDLG bytes must not decrypt as a VREC part into convincing garbage.
+    head = D["vdlg_header"]
+    assert not is_vrec(head)
+    assert is_vrec(head, VDLG_SUITE)
+    with pytest.raises(ValueError, match="VREC"):
+        read_vrec_header(head)
+    assert read_vrec_header(head, VDLG_SUITE).nonce == D["diag_nonce"]
+
+
+def test_the_three_suites_share_no_keystream():
+    key, nonce = bytes(32), bytes(12)
+    keys = {_derive_file_key(key, nonce, s) for s in (VREC_SUITE, VDLG_SUITE, VDLW_SUITE)}
+    assert len(keys) == 3
+
+
+# ── bytes_valid ────────────────────────────────────────────────────────────────
+
+
+def test_a_vrec_part_leaves_bytes_valid_zero_and_reads_to_eof():
+    # What every fielded card has always written: zeros at 28..32, and a torn
+    # part readable up to its cut. The committed header proves the zeros.
+    assert V["vrec_header"][28:32] == b"\0\0\0\0"
+    assert read_vrec_header(V["vrec_header"]).bytes_valid == 0
+
+
+def test_bytes_valid_round_trips_little_endian():
+    head = bytearray(V["vrec_header"])
+    head[28:32] = (0x01020304).to_bytes(4, "little")
+    assert read_vrec_header(bytes(head)).bytes_valid == 0x01020304

@@ -138,6 +138,10 @@ visio-settings-qr = "visio_schema.settings_qr:run"
 # Plaintext copy of an encrypted recording, for the tools that will never take
 # a key: Foxglove Studio, the kalibr path, the frozen visio-setup bundle.
 visio-decrypt = "visio_schema.mcap.decrypt:run"
+# Open, render and summarise a device diagnostic log (docs/protocol/diag_log.md)
+# under the fleet key. In-package so the repair desk's `pip install visio-schema`
+# is the whole setup.
+visio-diag = "visio_schema.diag.cli:run"
 
 [project.urls]
 Homepage = "https://github.com/General-Intelligence-Labs/visio-schema"

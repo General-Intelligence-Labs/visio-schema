@@ -4,6 +4,44 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## Unreleased
+
+### Diagnostic log: `VDLG`/`VDLW` containers, `CONTROL_STREAM_DIAG`, `DiagLog`
+
+The device now keeps a bounded, encrypted ring of its own log so a returned unit
+carries weeks of history rather than the ten seconds an RMA self-check sees.
+This release publishes the wire contract for it — see `docs/protocol/diag_log.md`.
+
+- `recording_crypto` (C++ and Python) gains a `CipherSuite` parameter. `VREC` is
+  the default everywhere and its bytes are unchanged (the golden vectors prove
+  it). Two new suites share the construction under a different magic and key
+  label: `VDLG` for the ring files on flash and on the SD-card root, `VDLW` for
+  one log batch on the bus. `tests/golden/diag_vectors.txt` pins both against
+  VREC's own key, nonce and plaintext, so the vectors are a direct proof that
+  the suites derive disjoint keystreams.
+- The container header's reserved bytes at offset 28 now carry `bytes_valid`
+  (u32 LE): the plaintext length the writer last recorded. `0` — what every
+  VREC part has always written — means "read to EOF", so recordings are
+  unaffected; a `.vdlg` ring file uses it to make a torn tail visible to the
+  decoder instead of silently decrypting stale bytes.
+- `CONTROL_STREAM_DIAG = 7`, with `service/diag/diag.proto`: host→device
+  `DiagRequest` (list / read / abort) and device→host `DiagReply` (listing /
+  chunk / status) on the per-device `/<device>/diag` channel — the OTA shape,
+  inverted. This is the first read path a sealed customer unit has ever had.
+- `sensor/diag_log.proto`: `DiagLog`, one complete `VDLW` container per
+  message, published on `/<root>/diag_log` so the log lands inside every
+  recording on the footage's own clock.
+- `Command.set_diag_verbosity = 42` (`SetDiagVerbosity`), raising the card-tier
+  detail for the `need_info` RMA loop.
+- `visio-diag`: a console script that opens, renders and summarises a log
+  under the fleet key. `visio_schema.diag` holds the reference line parser.
+- `visio_schema.wire.diag`: the host half of the read path — `list_files` and
+  `read_file` over any `send`/`recv` pair, the way `wire.ota.relay` drives an
+  update. Chunks are reassembled in order and a gap aborts rather than splices,
+  because a spliced ciphertext decrypts to garbage from the gap on.
+
+New `.proto` files ⇒ MINOR: this is 0.10.0.
+
 ## 0.9.1 — 2026-09-11
 
 ### Published settings QR and fleet-key APIs

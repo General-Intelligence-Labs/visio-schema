@@ -280,3 +280,26 @@ foxglove.PointsAnnotation.metadata            type:FT_IGNORE
 
 # "left" or "right" — the device rejects anything else.
 visio_schema.v1.control.SetCalibration.unit_side   max_size:8
+
+# ── Diagnostic-log service (service/diag/diag.proto) ─────────────────────────
+# DiagRequest is DECODED by the device, so every string on it must be sized or
+# nanopb's static decode path silently never receives it (same rule as
+# Command above). DiagReply is ENCODED by the device; its strings are sized too
+# so the firmware fills a char[] rather than wiring a callback per field, and
+# the bulk `data` is FT_POINTER for the same reason as OtaChunk.data.
+visio_schema.v1.service.diag.DiagRequest.target_device  max_size:32
+visio_schema.v1.service.diag.DiagRead.name              max_size:64
+visio_schema.v1.service.diag.DiagReply.device           max_size:32
+visio_schema.v1.service.diag.DiagFile.name              max_size:64
+visio_schema.v1.service.diag.DiagChunk.name             max_size:64
+visio_schema.v1.service.diag.DiagChunk.data             type:FT_POINTER
+visio_schema.v1.service.diag.DiagStatus.error_code      max_size:32
+visio_schema.v1.service.diag.DiagStatus.error_message   max_size:128
+# DiagListing.files stays a callback: the device streams entries from its
+# directory walk rather than materialising a fixed array.
+
+# ── DiagLog (sensor/diag_log.proto) ──────────────────────────────────────────
+# One VDLW container per message. Inline so the publisher builds the message on
+# the stack; the device splits a long batch across messages rather than growing
+# this. 1 KiB comfortably holds a 32-byte header plus ~10 lines.
+visio_schema.v1.sensor.DiagLog.blob                     max_size:1024
