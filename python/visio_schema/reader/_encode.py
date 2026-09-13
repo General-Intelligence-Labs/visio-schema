@@ -37,7 +37,8 @@ from typing import Literal
 import numpy as np
 
 
-def x265_params(keyint: int, *, repeat_headers: bool = False) -> str:
+def x265_params(keyint: int, *, repeat_headers: bool = False,
+                bitrate_kbps: int | None = None) -> str:
     """The libx265 settings every encoder here shares. One home, deliberately.
 
     keyint => periodic IDR (seekable); bframes=0 => no reorder (1:1, in order);
@@ -47,11 +48,23 @@ def x265_params(keyint: int, *, repeat_headers: bool = False) -> str:
     The rect video does not need it (a consumer reads the stream from its start);
     a per-frame `CompressedVideo` message does, because Foxglove requires each
     keyframe message to carry its own parameter sets.
+
+    ``bitrate_kbps`` sets a one-pass ABR average with vbv capping the peak at 1.5x.
+    ``None`` leaves libx265 on its default CRF — the reference-video behaviour.
     """
+    rc = ""
+    if bitrate_kbps:
+        # `fps` rides WITH the rate control and only there: ABR has to know the frame
+        # rate to hit an average, and x265 otherwise assumes 25. A CRF stream (depth)
+        # needs none of it.
+        peak = int(bitrate_kbps * 1.5)
+        rc = (f":fps=30:bitrate={bitrate_kbps}"
+              f":vbv-maxrate={peak}:vbv-bufsize={peak}")
     return (
         f"log-level=none:keyint={keyint}:min-keyint={keyint}:"
         "bframes=0:rc-lookahead=0:scenecut=0:frame-threads=1"
         + (":repeat-headers=1" if repeat_headers else "")
+        + rc
     )
 
 
@@ -96,7 +109,8 @@ class HevcEncoder(_PyAvEncoder):
 
     codec_name = "libx265"
 
-    def __init__(self, width: int, height: int, *, keyint: int = 30) -> None:
+    def __init__(self, width: int, height: int, *, keyint: int = 30,
+                 bitrate_kbps: int | None = None) -> None:
         super().__init__()
         from fractions import Fraction
 
@@ -106,7 +120,14 @@ class HevcEncoder(_PyAvEncoder):
         self._ctx.width, self._ctx.height = width, height
         self._ctx.pix_fmt = "yuv420p"
         self._ctx.time_base = Fraction(1, 30)
-        self._ctx.options = {"x265-params": x265_params(keyint)}
+        self._ctx.framerate = Fraction(30, 1)  # VUI timing -> a raw-ES probe reads 30
+        self._ctx.options = {
+            "x265-params": x265_params(keyint, bitrate_kbps=bitrate_kbps),
+        }
+        if bitrate_kbps:
+            # On the context as well as in x265-params: PyAV reads it when it opens
+            # the codec, and the two disagreeing is how a target becomes advisory.
+            self._ctx.bit_rate = bitrate_kbps * 1000
         self._idx = 0
 
     def encode(self, rgb: np.ndarray, t_ns: int) -> list[tuple[int, bytes]]:
@@ -132,17 +153,23 @@ class NvHevcEncoder(_NvEncoder):
     codec_name = "nvenc-hevc"
 
     def __init__(self, width: int, height: int, *, keyint: int = 30,
-                 preset: str = "P3") -> None:
+                 preset: str = "P3", bitrate_kbps: int | None = None) -> None:
         super().__init__()
         import PyNvVideoCodec as nvc
 
+        # A delivery target (bitrate_kbps) => VBR at that average, vbv peak 1.5x, and
+        # the high_quality tuning; None keeps the low-latency reference-video default.
+        if bitrate_kbps:
+            rc = dict(tuning_info="high_quality", rc="vbr",
+                      bitrate=bitrate_kbps * 1000, maxbitrate=int(bitrate_kbps * 1500))
+        else:
+            rc = dict(tuning_info="ultra_low_latency")
         # NVENC packed-RGB input is ABGR: a 32-bit word read as bytes [R, G, B, A]
         # (verified by a red/blue round-trip). usecpuinputbuffer=True => NVENC copies
         # this host buffer into its own surface synchronously (no device-lifetime trap).
         self._enc = nvc.CreateEncoder(
             width, height, "ABGR", True,
-            codec="hevc", preset=preset, tuning_info="ultra_low_latency",
-            bf=0, gop=keyint,
+            codec="hevc", preset=preset, bf=0, gop=keyint, **rc,
         )
         self._abgr = np.empty((height, width, 4), np.uint8)  # reused host scratch
         self._abgr[..., 3] = 255
@@ -156,7 +183,7 @@ class NvHevcEncoder(_NvEncoder):
 def make_rect_encoder(
     width: int, height: int, *, keyint: int,
     choice: Literal["auto", "gpu", "cpu"], gpu_backend: bool,
-    log: logging.Logger,
+    log: logging.Logger, bitrate_kbps: int | None = None,
 ) -> HevcEncoder | NvHevcEncoder:
     """Pick the rect-video H.265 encoder.
 
@@ -164,14 +191,19 @@ def make_rect_encoder(
     libx265 on the cpu backend; ``"gpu"`` forces NVENC; ``"cpu"`` forces libx265. If
     NVENC is requested but cannot initialise, warn and fall back to libx265, so the
     stage never hard-fails on a missing/capped NVENC session.
+
+    ``bitrate_kbps`` sets a one-pass ABR/VBR average (a delivery bitrate floor) on
+    whichever encoder is chosen; ``None`` leaves each at its default (CRF / low
+    latency) — the reference-video behaviour a depth run wants.
     """
     want_gpu = choice == "gpu" or (choice == "auto" and gpu_backend)
     if want_gpu:
         try:
-            return NvHevcEncoder(width, height, keyint=keyint)
+            return NvHevcEncoder(width, height, keyint=keyint,
+                                 bitrate_kbps=bitrate_kbps)
         except Exception as e:
             log.warning("NVENC unavailable (%s); rect video falls back to libx265", e)
-    return HevcEncoder(width, height, keyint=keyint)
+    return HevcEncoder(width, height, keyint=keyint, bitrate_kbps=bitrate_kbps)
 
 
 # --------------------------------------------------------------------------- #
