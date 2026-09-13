@@ -40,7 +40,7 @@ import bisect
 import heapq
 import logging
 import struct
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import replace
 from functools import cache
 from pathlib import Path
@@ -1009,7 +1009,7 @@ class Session:
         end_ns: Ns | None = None,
         gray: bool = False,
         gpu: bool = False,
-        raw: bool = False,
+        raw: bool | Collection[str] = False,
     ) -> Iterator[Element]:
         """Yield ``Frame | ImuSample | Record`` in strict capture-time order.
 
@@ -1033,13 +1033,34 @@ class Session:
         is to reproduce a file rather than to interpret it. It also keeps the
         reorder heap cheap: a compressed H.265 AU is ~35 KB against a decoded
         1080p frame's ~6.2 MB, which is what makes a seam-sized window affordable.
+
+        ``raw`` also takes a **collection of canonical topics**: those stream as
+        passthrough `Record`s while every other selected topic decodes normally, in
+        ONE ordered pass. That is what a packager needs — stream-copy the video's
+        compressed access units while the IMU arrives already unbundled as
+        `ImuSample` — and a whole-call flag cannot express it, which used to force
+        consumers into two passes or a hand-rolled merge. ``topics`` must be given
+        and must contain them, so naming a raw topic that was never selected is an
+        error at the call rather than silence in the stream.
         """
         if raw and (gray or gpu):
             raise ValueError(
                 "stream(raw=True) does not decode, so `gray`/`gpu` — which only "
                 "choose a decoder — cannot apply"
             )
+        raw_all = raw is True
+        raw_set = frozenset() if isinstance(raw, bool) else frozenset(raw)
         want = set(topics) if topics is not None else None
+        if raw_set and want is None:
+            raise ValueError(
+                "stream(raw=<topics>) names a SUBSET of what is streamed, so "
+                "`topics` must be given too; use raw=True for whole-call passthrough"
+            )
+        if raw_set and not raw_set <= want:
+            raise ValueError(
+                "stream(raw=…) names topics that are not in `topics`: "
+                f"{', '.join(sorted(raw_set - want))}"
+            )
         if gpu and want is not None:
             # NVDEC has no MJPEG entry, so a named image topic would otherwise raise
             # from inside the generator on its first message, nowhere near the call
@@ -1054,16 +1075,16 @@ class Session:
                 )
         # `raw` decodes nothing, so binding a backend would raise on a combination
         # the check above has already excused.
-        make_decoders = None if raw else self._decoder_binder(gray, gpu, "stream")
+        make_decoders = None if raw_all else self._decoder_binder(gray, gpu, "stream")
         # Eager checks, lazy body — the shape `keyframe_stream` uses, and why every
         # check above fires at the CALL rather than on the first `next()`.
         return self._stream_elements(
             want, start_ns=start_ns, end_ns=end_ns,
-            make_decoders=make_decoders, raw=raw)
+            make_decoders=make_decoders, raw_all=raw_all, raw_set=raw_set)
 
     def _stream_elements(
         self, want: set[str] | None, *, start_ns: Ns | None, end_ns: Ns | None,
-        make_decoders, raw: bool,
+        make_decoders, raw_all: bool, raw_set: frozenset[str] = frozenset(),
     ) -> Iterator[Element]:
         # Early-stop bound pushed into the reader. `end_ns` alone would be correct
         # (mcap's `end_time` is exclusive, exactly `_in_window`'s `t < end_ns`), but
@@ -1088,8 +1109,8 @@ class Session:
                 if end_read is not None and not _spans_window(idx, None, end_read):
                     continue
                 yield from self._iter_file(
-                    self._files[i], idx, want, make_decoders, raw,
-                    end_ns=end_read)
+                    self._files[i], idx, want, make_decoders, raw_all,
+                    end_ns=end_read, raw_set=raw_set)
 
         def _raw() -> Iterator[tuple[Ns, Ns, Element]]:
             # Merged ACROSS streams by arrival, concatenated within one. Only one
@@ -1109,7 +1130,7 @@ class Session:
                 yield el
 
     def _wanted_prefixed(
-        self, idx: _FileIndex, want: set[str] | None, raw: bool = False
+        self, idx: _FileIndex, want: set[str] | None, raw_all: bool = False
     ) -> list[str]:
         """Prefixed topic names to read from this file.
 
@@ -1127,7 +1148,7 @@ class Session:
             canon = strip_device_topic_prefix(topic, self._device)
             if canon is None:
                 continue
-            if raw and want is None:
+            if raw_all and want is None:
                 out.append(topic)  # passthrough: EVERY topic, decodable or not
             elif want is None:
                 if schema in _DECODABLE:
@@ -1196,7 +1217,8 @@ class Session:
 
     def _iter_file(
         self, path: Path, idx: _FileIndex, want: set[str] | None,
-        make_decoders, raw: bool = False, *, end_ns: Ns | None = None,
+        make_decoders, raw_all: bool = False, *, end_ns: Ns | None = None,
+        raw_set: frozenset[str] = frozenset(),
     ) -> Iterator[tuple[Ns, Ns, Element]]:
         # Topic-filtered read: skip the discarded majority (IMU-quat, audio, …)
         # instead of building a Python object per message like read_mcap. The
@@ -1206,21 +1228,32 @@ class Session:
         # IMU: a bundle expands to samples up to ~1 s past the bundle's own
         # arrival, and the reorder watermark must follow arrival rather than
         # those expanded sample times — see _reorder.
-        wanted = self._wanted_prefixed(idx, want, raw)
+        wanted = self._wanted_prefixed(idx, want, raw_all)
         if not wanted:
             return
-        if raw:
+        if raw_all:
             yield from self._iter_file_raw(path, wanted, end_ns=end_ns)
             return
-        adapters = self._build_adapters(idx, set(wanted), make_decoders)
+        # Per-topic passthrough: adapters are built for the DECODED subset only, so a
+        # raw topic still costs no descriptor resolution and needs no generated
+        # module — the property `_iter_file_raw` exists to protect, kept here for the
+        # mixed case. The read itself is shared: one `_read_messages` pass serves
+        # both kinds, which is what makes a single ordered stream possible.
+        decoded = {t for t in wanted
+                   if strip_device_topic_prefix(t, self._device) not in raw_set}
+        adapters = self._build_adapters(idx, decoded, make_decoders)
         for schema, ch, msg in self._read_messages(
             path, topics=wanted, end_ns=end_ns):
             if schema is None:
                 continue
+            canon = strip_device_topic_prefix(ch.topic, self._device)
+            if canon in raw_set:
+                t = msg.log_time
+                yield t, t, Record(canon, t, schema.name, None, msg.data)
+                continue
             adapter = adapters.get(schema.name)
             if adapter is None:
                 continue
-            canon = strip_device_topic_prefix(ch.topic, self._device)
             yield from adapter.emit(msg.data, canon, msg.log_time)
         for adapter in adapters.values():
             yield from adapter.flush()
