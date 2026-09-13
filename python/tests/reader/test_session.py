@@ -3,23 +3,22 @@
 from __future__ import annotations
 
 import numpy as np
-
-from visio_schema.reader.domain import make_T
 import pytest
 from _helpers import (
     CAM_K,
     FRAME_DT,
     T0,
-    RecBuilder,
-    indexed_frames,
-    stereo_calib_builder,
-    limb_calib_builder,
     TCP_QUAT,
     TCP_T,
+    RecBuilder,
+    indexed_frames,
+    limb_calib_builder,
+    stereo_calib_builder,
     unindexed_mcap,
 )
 
-from visio_schema.reader import Frame, ImuSample, Session
+from visio_schema.reader import Frame, ImuSample, Record, Session
+from visio_schema.reader.domain import make_T
 
 
 def test_calibration_parse(stereo_calib_rec):
@@ -368,3 +367,76 @@ def test_a_tcp_extrinsic_off_the_anchor_or_frame_is_refused(tmp_path):
                      quat=TCP_QUAT, child="imu0")
     sess = Session([b.write()])
     assert sess.calibration.T_cam_tcp is None
+
+
+# --- per-topic raw: one ordered pass, some topics copied, others decoded ----- #
+
+
+def _mixed_rec(rec):
+    """A recording with two cameras and an IMU, on one shared timeline."""
+    b = rec()
+    b.add_camera("/ego/camera/0", indexed_frames(6), keyint=3)
+    b.add_camera("/ego/camera/1", indexed_frames(6), keyint=3)
+    b.add_imu_bundle("/ego/imu/0/raw", T0, [i * 5_000_000 for i in range(8)])
+    return b.write()
+
+
+def test_raw_per_topic_mixes_passthrough_and_decoded(rec):
+    """The packer's case: copy the video's access units, decode the IMU, one pass."""
+    path = _mixed_rec(rec)
+    cams = ["/ego/camera/0", "/ego/camera/1"]
+    els = list(Session([path]).stream(
+        [*cams, "/ego/imu/0/raw"], raw={*cams}))
+
+    kinds = {}
+    for el in els:
+        kinds.setdefault(el.topic, type(el))
+    assert kinds["/ego/camera/0"] is Record
+    assert kinds["/ego/camera/1"] is Record
+    assert kinds["/ego/imu/0/raw"] is ImuSample
+    # one stream, still in capture-time order
+    assert [e.t_ns for e in els] == sorted(e.t_ns for e in els)
+    # the raw side carries the wire payload and nothing parsed
+    vid = [e for e in els if e.topic == "/ego/camera/0"]
+    assert vid[0].msg is None and vid[0].data
+
+
+def test_raw_per_topic_matches_the_two_call_form(rec):
+    """Each half is identical to what a dedicated call would have produced.
+
+    The guarantee that lets a consumer fold two passes into one: per-topic `raw`
+    changes WHEN elements arrive relative to each other, never what they are.
+    """
+    path = _mixed_rec(rec)
+    cams = ["/ego/camera/0", "/ego/camera/1"]
+    s = Session([path])
+    mixed = list(s.stream([*cams, "/ego/imu/0/raw"], raw={*cams}))
+
+    raw_only = list(Session([path]).stream(cams, raw=True))
+    dec_only = list(Session([path]).stream(["/ego/imu/0/raw"]))
+    got_vid = [(e.topic, e.t_ns, e.data) for e in mixed if e.topic in set(cams)]
+    assert got_vid == [(e.topic, e.t_ns, e.data) for e in raw_only]
+    got_imu = [e.t_ns for e in mixed if e.topic == "/ego/imu/0/raw"]
+    assert got_imu == [e.t_ns for e in dec_only]
+
+
+def test_raw_per_topic_needs_its_topics_selected(rec):
+    """A raw topic that was never selected is an error at the call, not silence."""
+    path = _mixed_rec(rec)
+    with pytest.raises(ValueError, match="not in `topics`"):
+        Session([path]).stream(["/ego/camera/0"], raw={"/ego/camera/1"})
+    with pytest.raises(ValueError, match="`topics` must be given"):
+        Session([path]).stream(raw={"/ego/camera/0"})
+
+
+def test_raw_per_topic_leaves_whole_call_modes_alone(rec):
+    """`True`/`False` keep their exact meaning — the widening is additive."""
+    path = _mixed_rec(rec)
+    cams = ["/ego/camera/0", "/ego/camera/1"]
+    assert all(isinstance(e, Record)
+               for e in Session([path]).stream(cams, raw=True))
+    assert all(isinstance(e, Frame)
+               for e in Session([path]).stream(cams))
+    # an empty collection is "decode everything", like False
+    assert all(isinstance(e, Frame)
+               for e in Session([path]).stream(cams, raw=set()))
