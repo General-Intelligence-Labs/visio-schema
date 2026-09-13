@@ -105,3 +105,53 @@ def test_delivery_contract_survives_every_rung(kw, tmp_path):
                 longest = max(longest, gap)
                 gap = 0
         assert max(longest, gap) <= 10
+
+
+def test_full_range_declares_what_the_samples_are():
+    """swscale writes full-range luma out of RGB whatever the tag says, so the tag
+    has to be set deliberately or the stream lies about its own samples."""
+    full = HevcEncoder(W, H, keyint=10, full_range=True)
+    assert full._ctx.color_range == 2          # AVCOL_RANGE_JPEG
+    limited = HevcEncoder(W, H, keyint=10)
+    assert limited._ctx.color_range == 1       # the default stays today's behaviour
+
+
+def test_full_range_reaches_the_stream_not_just_the_context(tmp_path):
+    for full_range, want in ((True, "yuvj420p"), (False, "yuv420p")):
+        data, _ = _encode(_frames(12), full_range=full_range)
+        path = tmp_path / f"{full_range}.hevc"
+        path.write_bytes(data)
+        with av.open(str(path), format="hevc") as c:
+            for frame in c.decode(video=0):
+                assert frame.format.name == want
+                break
+
+
+def test_nvenc_cannot_declare_full_range_so_the_pair_is_refused():
+    """`full_range` describes the STREAM, so honouring it on one backend and
+    dropping it on the other would make a delivery's colour range depend on which
+    machine encoded it. NVENC has no colour-range control, so ask and it refuses."""
+    import logging
+
+    from visio_schema.reader import make_rect_encoder
+    for kw in ({"choice": "gpu", "gpu_backend": False},
+               {"choice": "auto", "gpu_backend": True}):
+        with pytest.raises(ValueError, match="cannot be honoured by NVENC"):
+            make_rect_encoder(W, H, keyint=10, log=logging.getLogger(),
+                              full_range=True, **kw)
+    # the cpu arm carries it through
+    enc = make_rect_encoder(W, H, keyint=10, choice="cpu", gpu_backend=False,
+                            log=logging.getLogger(), full_range=True)
+    assert enc._ctx.color_range == 2
+
+
+def test_the_depth_encoder_is_untouched_by_the_delivery_knobs():
+    """Not just `x265_params`' defaults — the depth encoder ITSELF, so a future
+    copy-paste of the delivery knobs into it is caught."""
+    from visio_schema.reader._encode import HevcDepthEncoder
+
+    enc = HevcDepthEncoder(W, H, keyint=30)
+    params = enc._ctx.options["x265-params"]
+    assert "frame-threads=1" in params and "repeat-headers=1" in params
+    assert "preset" not in enc._ctx.options
+    assert "fps=" not in params and "bitrate=" not in params

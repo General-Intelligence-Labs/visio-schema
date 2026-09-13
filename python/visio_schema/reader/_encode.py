@@ -36,6 +36,10 @@ from typing import Literal
 
 import numpy as np
 
+# PyAV exposes `color_range` as a bare int with no named enum of its own.
+_RANGE_LIMITED = 1  # AVCOL_RANGE_MPEG — 16-235
+_RANGE_FULL = 2     # AVCOL_RANGE_JPEG — 0-255
+
 
 def x265_params(keyint: int, *, repeat_headers: bool = False,
                 frame_threads: int = 1, bitrate_kbps: int | None = None) -> str:
@@ -120,7 +124,7 @@ class HevcEncoder(_PyAvEncoder):
 
     def __init__(self, width: int, height: int, *, keyint: int = 30,
                  bitrate_kbps: int | None = None, frame_threads: int = 0,
-                 preset: str | None = "faster") -> None:
+                 preset: str | None = "faster", full_range: bool = False) -> None:
         """``frame_threads``/``preset`` default to the DELIVERY point, not the
         reference one: this encoder's callers are offline. `HevcDepthEncoder` keeps
         `x265_params`' own `frame_threads=1` default and never sees a preset."""
@@ -134,6 +138,20 @@ class HevcEncoder(_PyAvEncoder):
         self._ctx.pix_fmt = "yuv420p"
         self._ctx.time_base = Fraction(1, 30)
         self._ctx.framerate = Fraction(30, 1)  # VUI timing -> a raw-ES probe reads 30
+        # Declare the range the DATA is in. swscale writes full-range luma out of
+        # RGB whatever the tag says, so leaving this unset ships full-range samples
+        # labelled limited — self-consistent through ffmpeg, which reads the tag the
+        # same way it wrote it, but a mismatch for any decoder that honours the tag
+        # and expands 16-235. The ego source declares full (`yuvj420p`), and a
+        # delivery should not silently re-label what it copies the picture from.
+        # Measured: the samples are identical either way, only the VUI flag moves.
+        #
+        # Defaults to False — today's behaviour — because this encoder is shared and
+        # flipping it moves the decoded pixel values every existing consumer sees
+        # (the fixture that round-trips a frame index through them catches it). The
+        # DELIVERY asks for full range; nothing else has to care.
+        self._ctx.color_range = _RANGE_FULL if full_range else _RANGE_LIMITED
+        self._full_range = full_range
         self._ctx.options = {
             "x265-params": x265_params(
                 keyint, frame_threads=frame_threads, bitrate_kbps=bitrate_kbps),
@@ -158,6 +176,7 @@ class HevcEncoder(_PyAvEncoder):
 
         self._pending.append(int(t_ns))
         vf = av.VideoFrame.from_ndarray(np.ascontiguousarray(rgb), format="rgb24")
+        vf.color_range = _RANGE_FULL if self._full_range else _RANGE_LIMITED
         vf = vf.reformat(format="yuv420p")
         vf.pts = self._idx  # monotonic counter so PyAV doesn't invent a pts
         self._idx += 1
@@ -209,6 +228,7 @@ def make_rect_encoder(
     choice: Literal["auto", "gpu", "cpu"], gpu_backend: bool,
     log: logging.Logger, bitrate_kbps: int | None = None,
     frame_threads: int = 0, preset: str | None = "faster",
+    full_range: bool = False,
 ) -> HevcEncoder | NvHevcEncoder:
     """Pick the rect-video H.265 encoder.
 
@@ -224,7 +244,17 @@ def make_rect_encoder(
     ``frame_threads``/``preset`` tune the libx265 arm only. They are x265's own
     vocabulary and NVENC's ``preset`` is a different namespace ("P1".."P7"), so
     forwarding one to the other would be a category error, not a convenience.
+
+    ``full_range`` is different: it describes the STREAM, not the encoder, so a
+    caller that asks for it means it whichever encoder runs. `NvHevcEncoder` cannot
+    declare it, so asking for both is refused here rather than honoured on one
+    backend and dropped on the other — a delivery whose colour range depends on
+    which machine encoded it is the bug this argument exists to prevent.
     """
+    if full_range and (choice == "gpu" or (choice == "auto" and gpu_backend)):
+        raise ValueError(
+            "make_rect_encoder(full_range=True) cannot be honoured by NVENC, which "
+            "has no colour-range control; use choice='cpu' or drop full_range")
     want_gpu = choice == "gpu" or (choice == "auto" and gpu_backend)
     if want_gpu:
         try:
@@ -234,7 +264,8 @@ def make_rect_encoder(
     # The fallback carries the delivery settings too: an NVENC miss must change the
     # encoder, never the rate target the caller asked for.
     return HevcEncoder(width, height, keyint=keyint, bitrate_kbps=bitrate_kbps,
-                       frame_threads=frame_threads, preset=preset)
+                       frame_threads=frame_threads, preset=preset,
+                       full_range=full_range)
 
 
 # --------------------------------------------------------------------------- #
