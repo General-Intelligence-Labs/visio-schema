@@ -3,23 +3,22 @@
 from __future__ import annotations
 
 import numpy as np
-
-from visio_schema.reader.domain import make_T
 import pytest
 from _helpers import (
     CAM_K,
     FRAME_DT,
     T0,
-    RecBuilder,
-    indexed_frames,
-    stereo_calib_builder,
-    limb_calib_builder,
     TCP_QUAT,
     TCP_T,
+    RecBuilder,
+    indexed_frames,
+    limb_calib_builder,
+    stereo_calib_builder,
     unindexed_mcap,
 )
 
 from visio_schema.reader import Frame, ImuSample, Record, Session
+from visio_schema.reader.domain import make_T
 
 
 def test_calibration_parse(stereo_calib_rec):
