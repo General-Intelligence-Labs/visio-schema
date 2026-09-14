@@ -125,13 +125,23 @@ inline void FsyncPathBestEffort(const std::string& path,
 // SD card a power-down within the writeback window (~30 s) would otherwise
 // truncate or corrupt the just-finalized file. fsync the file (its data +
 // size) and then the containing directory so the entry is durable too.
+inline std::string ParentDir(const std::string& path) {
+  const std::size_t slash = path.find_last_of('/');
+  return slash == std::string::npos ? "."
+         : slash == 0               ? "/"
+                                    : path.substr(0, slash);
+}
+
+// Make a directory entry durable on its own — the half of FsyncPart that
+// matters when the entry is being REMOVED rather than written, where fsyncing
+// the file first would only make the state we are discarding durable.
+inline void FsyncDirEntry(const std::string& path) {
+  FsyncPathBestEffort(ParentDir(path), O_DIRECTORY);
+}
+
 inline void FsyncPart(const std::string& path) {
   FsyncPathBestEffort(path, 0);
-  const std::size_t slash = path.find_last_of('/');
-  const std::string dir = slash == std::string::npos ? "."
-                          : slash == 0               ? "/"
-                                                     : path.substr(0, slash);
-  FsyncPathBestEffort(dir, O_DIRECTORY);
+  FsyncDirEntry(path);
 }
 
 }  // namespace visio_schema::mcap::file_sync
