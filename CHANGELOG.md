@@ -42,6 +42,29 @@ This release publishes the wire contract for it — see `docs/protocol/diag_log.
 
 New `.proto` files ⇒ MINOR: this is 0.10.0.
 
+### Added `visio_schema.v1.sensor.SystemHealth.camera_temps` (tag 11)
+
+Per-camera image-sensor die temperature, alongside the SoC's `cpu_temp_c` (tag
+2) that this message has always carried. Devices have measured it for some time
+but had nowhere to put it, so the only way to read a camera's temperature was to
+scrape the device's own log over a debug link — which a sealed unit does not
+have. It now rides the same 0.2 Hz frame as every other health number.
+
+A `repeated CameraTemp {index, sensor_temp_c}`, not a parallel array of floats:
+only a sensor that can actually measure its die temperature reports one, so the
+entry count tracks the fitted parts rather than the camera count, and a
+`repeated float` could not say "camera 1 cannot answer" without either
+substituting a value or shifting every index after it. Consumers key on `index`.
+This mirrors `ImuRaw.Sample.temperature_c`, which likewise hangs the temperature
+off the per-instance message.
+
+Bounded at `max_count:8` in `nanopb.options` so the message stays FT_STATIC on
+device — no allocation and no hand-written encode callback on the publish path.
+
+Purely additive: an old consumer ignores tag 11, and an empty list is what every
+device without a temperature-capable sensor already sends. Ships with the
+matching firmware producer change.
+
 ## 0.9.1 — 2026-09-11
 
 ### Published settings QR and fleet-key APIs

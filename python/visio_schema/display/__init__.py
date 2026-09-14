@@ -855,7 +855,8 @@ class RerunSink:
       * ros geometry_msgs Quaternion -> a box rotated by the quat in the FLU
         imu_world 3D scene (static rr.Boxes3D + rr.Transform3D), + x/y/z/w scalars
       * sensor.v1.ImuRaw          -> latest sample's accel/gyro/mag/temp rr.Scalars
-      * sensor.v1.SystemHealth    -> the set fields as rr.Scalars
+      * sensor.v1.SystemHealth    -> the set fields as rr.Scalars, plus one
+        entity per camera that reports a sensor die temperature
 
     Decode runs on the read thread, exactly like the reference. The blueprint is
     re-sent only when a new stream appears (resending resets the 3D camera)."""
@@ -988,6 +989,12 @@ class RerunSink:
             if h.HasField(field):
                 self._rr.log(f"{base}/{field}",
                              self._rr.Scalars(float(getattr(h, field))))
+        # Keyed by the entry's own index, not its position. These land under
+        # the health topic, so the existing time-series view picks them up
+        # with no blueprint change.
+        for cam in h.camera_temps:
+            self._rr.log(f"{base}/camera/{cam.index}/sensor_temp_c",
+                         self._rr.Scalars(float(cam.sensor_temp_c)))
 
     def _send_blueprint(self) -> None:
         # Called only when a new stream appeared (self._dirty). Resending resets

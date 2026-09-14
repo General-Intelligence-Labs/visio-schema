@@ -303,3 +303,13 @@ visio_schema.v1.service.diag.DiagStatus.error_message   max_size:128
 # the stack; the device splits a long batch across messages rather than growing
 # this. 1 KiB comfortably holds a 32-byte header plus ~10 lines.
 visio_schema.v1.sensor.DiagLog.blob                     max_size:1024
+
+# ── SystemHealth per-camera temperature (sensor/system_health.proto) ─────────
+# Bounded so SystemHealth stays FT_STATIC — no malloc, no hand-written encode
+# callback on the 0.2 Hz publish path, same reasoning as ImageAnnotations
+# above. Eight is headroom, not a fitted count: the widest board we build has
+# four cameras, and entries are only ~12 B each, so the slack is cheaper than
+# a schema bump if a wider head appears. Overrunning is not a decode hazard
+# here (the device ENCODES this message) but the publisher still clamps, so a
+# board wider than the bound reports the first N instead of corrupting.
+visio_schema.v1.sensor.SystemHealth.camera_temps        max_count:8
