@@ -66,4 +66,12 @@ message Heartbeat {
   // identity costs no extra round trip; it therefore arrives shortly AFTER
   // accept, and occupancy is resolved when it does.
   string client_id = 5;
+
+  // Optional camera-sync hint. The sender's most recent camera frame capture
+  // time (ns) in its own monotonic clock, reported on a fixed grid at the
+  // shared frame cadence. A peer that runs its own camera can phase-lock onto
+  // this grid so the two sensors land on coincident capture instants. A bare
+  // uint64 in the sender's local clock, like the timesync fields above — immune
+  // to the Header.timestamp offset-rewrite. 0 = not reported.
+  uint64 cam_grid_phase_ns = 6;
 }
