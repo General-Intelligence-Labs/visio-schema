@@ -30,6 +30,11 @@ COMMAND = ControlStream.CONTROL_STREAM_COMMAND
 # replies land on the device's own `/ota_status` channel rather than as a
 # CommandResult. See visio_schema/wire/ota.py for the driver.
 OTA = ControlStream.CONTROL_STREAM_OTA
+# End-to-end and target-addressed like COMMAND: a diagnostic-log read is a
+# directed request. Its own stream because the replies are a chunked file
+# transfer (DiagChunk), not a single CommandResult; they land on the device's own
+# `/<device>/diag` channel. See visio_schema/v1/service/diag/diag.proto.
+DIAG = ControlStream.CONTROL_STREAM_DIAG
 
 # Control streams that never cross a hop (the bus drops them rather than relaying).
 # A new control stream belongs here iff it is link-scoped and carries no device
@@ -66,6 +71,7 @@ def command_message(command: _ProtoMessage) -> Message:
 __all__ = [
     "COMMAND",
     "DEVICE_INFO",
+    "DIAG",
     "FIRST_DYNAMIC",
     "HEARTBEAT",
     "LINK_LOCAL_CONTROL",

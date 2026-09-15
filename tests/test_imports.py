@@ -45,6 +45,7 @@ VISIO_MODULES = [
     "visio_schema.v1.sensor.button_pb2",
     "visio_schema.v1.sensor.camera_frame_info_pb2",
     "visio_schema.v1.sensor.tactile_raw_pb2",
+    "visio_schema.v1.sensor.diag_log_pb2",
     "visio_schema.v1.calibration.imu_pb2",
     "visio_schema.v1.calibration.encoder_pb2",
     "visio_schema.v1.calibration.tactile_pb2",
@@ -56,6 +57,7 @@ VISIO_MODULES = [
     "visio_schema.v1.service.device_info.device_info_pb2",
     "visio_schema.v1.service.heartbeat.heartbeat_pb2",
     "visio_schema.v1.service.ota.ota_pb2",
+    "visio_schema.v1.service.diag.diag_pb2",
 ]
 
 # A representative subset of foxglove.* modules we depend on. They ship

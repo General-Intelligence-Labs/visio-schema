@@ -21,26 +21,32 @@ namespace visio_schema {
 namespace mcap {
 namespace {
 
-constexpr char kMagic[4] = {'V', 'R', 'E', 'C'};
-// Domain separation: the per-part file key is derived from the client key, so
-// the client key itself never runs a cipher and one part's key tells you
-// nothing about another's.
-constexpr char kKeyLabel[] = "visio-rec-v1";
-
 // One ChaCha20 block of zeros, to skip the sub-block remainder after a seek.
 // Static and const: shared, never written, no per-seek allocation.
 const std::uint8_t kZeroBlock[kChaChaBlockBytes] = {0};
 
+// Whether `suite`'s label fits the derivation buffer below.
+bool LabelFits(const CipherSuite& suite) {
+    return suite.key_label != nullptr &&
+           std::strlen(suite.key_label) <= kMaxKeyLabelBytes;
+}
+
+// Domain separation: the per-file key is derived from the caller's key, so the
+// caller's key itself never runs a cipher, one file's key tells you nothing
+// about another's, and two suites over the SAME key derive into disjoint
+// spaces. Callers must have checked LabelFits() first.
 RecordingKey DeriveFileKey(const RecordingKey& key,
-                           const RecordingNonce& nonce) {
-    std::uint8_t message[sizeof(kKeyLabel) - 1 + sizeof(RecordingNonce)];
-    std::memcpy(message, kKeyLabel, sizeof(kKeyLabel) - 1);
-    std::memcpy(message + sizeof(kKeyLabel) - 1, nonce.data(), nonce.size());
+                           const RecordingNonce& nonce,
+                           const CipherSuite& suite) {
+    const std::size_t label_len = std::strlen(suite.key_label);
+    std::uint8_t message[kMaxKeyLabelBytes + sizeof(RecordingNonce)];
+    std::memcpy(message, suite.key_label, label_len);
+    std::memcpy(message + label_len, nonce.data(), nonce.size());
 
     RecordingKey out{};
     unsigned int len = 0;
     HMAC(EVP_sha256(), key.data(), static_cast<int>(key.size()), message,
-         sizeof(message), out.data(), &len);
+         label_len + nonce.size(), out.data(), &len);
     return out;
 }
 
@@ -69,38 +75,53 @@ std::string FingerprintHex(const RecordingKeyFp& fp) {
     return HexOf(fp.data(), fp.size());
 }
 
-void WriteVrecHeader(const VrecHeader& header, std::uint8_t* out) {
+void WriteVrecHeader(const VrecHeader& header, std::uint8_t* out,
+                     const CipherSuite& suite) {
     std::memset(out, 0, kVrecHeaderBytes);
-    std::memcpy(out, kMagic, sizeof(kMagic));
+    std::memcpy(out, suite.magic.data(), suite.magic.size());
     out[4] = header.format;
     out[5] = header.cipher;
     std::memcpy(out + 8, header.key_fp.data(), header.key_fp.size());
     std::memcpy(out + 16, header.nonce.data(), header.nonce.size());
+    // Little-endian by hand: the device is ARM LE and the readers are x86,
+    // but a memcpy of a std::uint32_t would still be a promise about the host.
+    const std::uint32_t v = header.bytes_valid;
+    out[kVrecBytesValidOffset + 0] = static_cast<std::uint8_t>(v);
+    out[kVrecBytesValidOffset + 1] = static_cast<std::uint8_t>(v >> 8);
+    out[kVrecBytesValidOffset + 2] = static_cast<std::uint8_t>(v >> 16);
+    out[kVrecBytesValidOffset + 3] = static_cast<std::uint8_t>(v >> 24);
 }
 
-bool LooksLikeVrec(const std::uint8_t* data, std::size_t len) {
-    return len >= sizeof(kMagic) &&
-           std::memcmp(data, kMagic, sizeof(kMagic)) == 0;
+bool LooksLikeVrec(const std::uint8_t* data, std::size_t len,
+                   const CipherSuite& suite) {
+    return len >= suite.magic.size() &&
+           std::memcmp(data, suite.magic.data(), suite.magic.size()) == 0;
 }
 
 bool ParseVrecHeader(const std::uint8_t* data, std::size_t len,
-                     VrecHeader* out, std::string* err) {
+                     VrecHeader* out, std::string* err,
+                     const CipherSuite& suite) {
     auto fail = [&](const char* why) {
         if (err) *err = why;
         return false;
     };
-    if (len < kVrecHeaderBytes) return fail("shorter than a VREC header");
-    if (!LooksLikeVrec(data, len)) return fail("not a VREC container");
+    if (len < kVrecHeaderBytes) return fail("shorter than a container header");
+    if (!LooksLikeVrec(data, len, suite)) return fail("wrong container magic");
     // A newer format must fail loudly. Decrypting it with this cipher would
     // produce plausible garbage that MCAP would then reject somewhere deep
     // inside, and the report would blame the recording rather than the reader.
-    if (data[4] != kVrecFormat) return fail("unsupported VREC format version");
-    if (data[5] != kVrecCipherChaCha20) return fail("unsupported VREC cipher");
+    if (data[4] != kVrecFormat) return fail("unsupported container format version");
+    if (data[5] != kVrecCipherChaCha20) return fail("unsupported container cipher");
 
     out->format = data[4];
     out->cipher = data[5];
     std::memcpy(out->key_fp.data(), data + 8, out->key_fp.size());
     std::memcpy(out->nonce.data(), data + 16, out->nonce.size());
+    const std::uint8_t* b = data + kVrecBytesValidOffset;
+    out->bytes_valid = static_cast<std::uint32_t>(b[0]) |
+                       (static_cast<std::uint32_t>(b[1]) << 8) |
+                       (static_cast<std::uint32_t>(b[2]) << 16) |
+                       (static_cast<std::uint32_t>(b[3]) << 24);
     return true;
 }
 
@@ -110,9 +131,14 @@ bool RandomNonce(RecordingNonce* out) {
 }
 
 RecordingCipher::RecordingCipher(const RecordingKey& key,
-                                 const RecordingNonce& nonce)
+                                 const RecordingNonce& nonce,
+                                 const CipherSuite& suite)
     : nonce_(nonce) {
-    file_key_ = DeriveFileKey(key, nonce);
+    // Refuse rather than derive from a truncated label: two suites whose
+    // labels agreed after truncation would share a key space, which is the one
+    // thing the label exists to prevent.
+    if (!LabelFits(suite)) return;
+    file_key_ = DeriveFileKey(key, nonce, suite);
     ctx_ = EVP_CIPHER_CTX_new();
     valid_ = ctx_ != nullptr;
 }

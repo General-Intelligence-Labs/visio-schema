@@ -23,7 +23,9 @@ from visio_schema.mcap.crypto import (
     HEADER_BYTES,
     RecordingKeyMismatch,
     RecordingKeyUnavailable,
+    add_key_args,
     is_vrec,
+    key_from_args,
     open_recording,
     read_vrec_header,
 )
@@ -41,19 +43,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("input", help="the recording, encrypted or not")
     p.add_argument("output", help="plaintext .mcap to write")
-    p.add_argument("--key", metavar="HEX",
-                   help="recording key, 64 hex chars. Prefer --key-file: an "
-                        "argument is visible in `ps` to every user")
-    p.add_argument("--key-file", metavar="PATH",
-                   help="file holding the key as 64 hex chars")
+    add_key_args(p, what="recording key")
     args = p.parse_args(argv)
 
     src, dst = Path(args.input), Path(args.output)
-    if args.key and args.key_file:
-        p.error("--key and --key-file are mutually exclusive")
-    key: bytes | str | None = args.key
-    if args.key_file:
-        key = Path(args.key_file).expanduser().read_text().strip()
+    key: bytes | str | None = key_from_args(args)
 
     # Refuse rather than silently clobber: the output is a full second copy of
     # a recording, and overwriting the wrong path can cost a whole shift.

@@ -26,7 +26,9 @@ constructed, so the CPU-only SDK import path stays free of GPU wheels
 (``visio-schema[gpu]``). One decoder per camera stream — never feed two through one.
 
 Scope: this is a **camera** source (RGB). VIO's gray/bit-exact path stays on
-PyAV; ``gray`` decode and IMU interleaving are not handled here.
+PyAV, and ``gray`` decode is not handled here. Interleaving with IMU is: the
+frames come back later than the access units that produced them, and
+``Session`` widens its reorder window (``_NVDEC_LAG_NS``) to absorb that.
 """
 
 from __future__ import annotations

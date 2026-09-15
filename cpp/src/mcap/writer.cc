@@ -463,7 +463,36 @@ bool McapWriter::ShouldRoll() const {
 
 void McapWriter::CloseCurrentPart() {
   const std::string p = PartPath();  // capture before close, while state is live
+  // A part is opened eagerly the moment its predecessor crosses the cap, so one
+  // can close having never accepted a record: the keyframe gate below drops the
+  // very frame that triggered the roll, and every frame after it, until that
+  // stream's next IDR — and a write path that fails leaves nothing at all, not
+  // even the header. Either way the file carries no records, which no reader
+  // will open, sitting in a session directory that is otherwise sound. Drop it
+  // instead of shipping it.
+  //
+  // Part 0 is exempt: it is the only part a short session has, and a session
+  // directory holding no recording at all is a worse thing to hand a reader
+  // than an empty but well-formed file.
+  const bool drop_part = part_index_ > 0 && part_bytes_ == 0;
   writer_->close();
+  if (drop_part) {
+    // Before any fsync or read-back post: syncing a file about to be unlinked
+    // only makes the discarded state durable, and a tail posted here names a
+    // path that no longer exists by the time the reader reaches it (an ENOENT
+    // counted as a read failure). Finish() accounts for an unposted tail.
+    if (std::remove(p.c_str()) != 0 && errno != ENOENT) {
+      // Best-effort but never silent, the same contract FsyncPathBestEffort
+      // keeps: on a card that has gone read-only this is the one failure that
+      // puts the artifact back, so it says what shipped and why.
+      std::fprintf(stderr,
+                   "McapWriter: cannot remove empty part %s (it will ship in "
+                   "the session): %s\n",
+                   p.c_str(), std::strerror(errno));
+    }
+    file_sync::FsyncDirEntry(p);  // the REMOVAL is what has to survive a cut
+    return;
+  }
   file_sync::FsyncPart(p);
   // Only now is the tail on the media: post it for read-back.
   if (readback_) readback_->CommitTail();

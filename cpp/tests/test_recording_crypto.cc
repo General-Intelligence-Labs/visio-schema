@@ -299,9 +299,9 @@ std::string VrecHex(const std::string& raw) {
   return out;
 }
 
-std::map<std::string, std::string> LoadVrecGolden() {
-  std::ifstream f(std::string(VISIO_GOLDEN_DIR) + "/vrec_vectors.txt");
-  EXPECT_TRUE(f.is_open()) << "cannot open vrec_vectors.txt under "
+std::map<std::string, std::string> LoadGolden(const char* name) {
+  std::ifstream f(std::string(VISIO_GOLDEN_DIR) + "/" + name);
+  EXPECT_TRUE(f.is_open()) << "cannot open " << name << " under "
                            << VISIO_GOLDEN_DIR;
   std::map<std::string, std::string> out;
   std::string line;
@@ -325,7 +325,7 @@ std::array<std::uint8_t, N> ToArray(const std::string& s) {
 }  // namespace
 
 TEST(RecordingCryptoGolden, FingerprintMatchesTheCommittedVector) {
-  const auto v = LoadVrecGolden();
+  const auto v = LoadGolden("vrec_vectors.txt");
   const auto key = ToArray<32>(v.at("vrec_key"));
   const auto fp = RecordingKeyFingerprint(key);
   EXPECT_EQ(VrecHex(std::string(fp.begin(), fp.end())),
@@ -333,7 +333,7 @@ TEST(RecordingCryptoGolden, FingerprintMatchesTheCommittedVector) {
 }
 
 TEST(RecordingCryptoGolden, HeaderSerializationMatchesTheCommittedVector) {
-  const auto v = LoadVrecGolden();
+  const auto v = LoadGolden("vrec_vectors.txt");
   VrecHeader h;
   h.key_fp = ToArray<8>(v.at("vrec_key_fp"));
   h.nonce = ToArray<12>(v.at("vrec_nonce"));
@@ -346,7 +346,7 @@ TEST(RecordingCryptoGolden, HeaderSerializationMatchesTheCommittedVector) {
 TEST(RecordingCryptoGolden, EncryptingTheCommittedPlaintextYieldsItsCiphertext) {
   // The direction that matters most: this is literally what the recorder
   // writes to the card, asserted against what Python will read back.
-  const auto v = LoadVrecGolden();
+  const auto v = LoadGolden("vrec_vectors.txt");
   const auto key = ToArray<32>(v.at("vrec_key"));
   const auto nonce = ToArray<12>(v.at("vrec_nonce"));
   const std::string& plain = v.at("vrec_plaintext");
@@ -365,7 +365,7 @@ TEST(RecordingCryptoGolden, DecryptingFromAnyOffsetMatchesThePythonReader) {
   // Offsets chosen to straddle the 64-byte ChaCha20 block (63/64/65) and to
   // land mid-block (1/100/199) — where an off-by-one in the sub-block skip
   // lives. The Python suite asserts the SAME offsets.
-  const auto v = LoadVrecGolden();
+  const auto v = LoadGolden("vrec_vectors.txt");
   const auto key = ToArray<32>(v.at("vrec_key"));
   const auto nonce = ToArray<12>(v.at("vrec_nonce"));
   const std::string& plain = v.at("vrec_plaintext");
@@ -386,5 +386,141 @@ TEST(RecordingCryptoGolden, DecryptingFromAnyOffsetMatchesThePythonReader) {
   }
 }
 
+
+// ── The diagnostic-log suites ───────────────────────────────────────────────
+//
+// Every input below is VREC's, byte for byte — same key, same nonce, same
+// plaintext. Only the CipherSuite differs. That is what makes these tests a
+// proof of domain separation rather than just another round-trip: if two
+// labels ever collapsed into one, the file keys would collide and the
+// committed ciphertexts would stop matching.
+
+TEST(DiagCryptoGolden, EachSuiteDerivesItsOwnFileKeyAndCiphertext) {
+  const auto vrec = LoadGolden("vrec_vectors.txt");
+  const auto diag = LoadGolden("diag_vectors.txt");
+
+  // The fixtures really do share their inputs; if this drifts, everything
+  // below is comparing two different experiments.
+  ASSERT_EQ(vrec.at("vrec_key"), diag.at("diag_key"));
+  ASSERT_EQ(vrec.at("vrec_nonce"), diag.at("diag_nonce"));
+
+  const auto key = ToArray<32>(diag.at("diag_key"));
+  const auto nonce = ToArray<12>(diag.at("diag_nonce"));
+  const std::string& plain = vrec.at("vrec_plaintext");
+
+  struct Case {
+    const CipherSuite& suite;
+    const char* header_key;
+    const char* ct_key;
+  };
+  const Case cases[] = {
+      {kVdlgSuite, "vdlg_header", "vdlg_ciphertext"},
+      {kVdlwSuite, "vdlw_header", "vdlw_ciphertext"},
+  };
+
+  for (const Case& c : cases) {
+    VrecHeader h;
+    h.key_fp = ToArray<8>(diag.at("diag_key_fp"));
+    h.nonce = nonce;
+    std::array<std::uint8_t, kVrecHeaderBytes> raw{};
+    WriteVrecHeader(h, raw.data(), c.suite);
+    EXPECT_EQ(VrecHex(std::string(raw.begin(), raw.end())),
+              VrecHex(diag.at(c.header_key)))
+        << "header for " << std::string(c.suite.magic.begin(),
+                                        c.suite.magic.end());
+
+    RecordingCipher cipher(key, nonce, c.suite);
+    ASSERT_TRUE(cipher.valid());
+    std::string got = plain;
+    ASSERT_TRUE(cipher.XorAt(0,
+                             reinterpret_cast<const std::uint8_t*>(got.data()),
+                             got.size(),
+                             reinterpret_cast<std::uint8_t*>(got.data())));
+    EXPECT_EQ(VrecHex(got), VrecHex(diag.at(c.ct_key)))
+        << "ciphertext for " << std::string(c.suite.magic.begin(),
+                                            c.suite.magic.end());
+  }
+}
+
+TEST(DiagCrypto, TheThreeSuitesShareNoKeystreamUnderOneKeyAndNonce) {
+  // The property in its own right, independent of any committed bytes: this is
+  // what stops the ring writer and the bus publisher from having to coordinate
+  // a nonce space across two subsystems.
+  const RecordingKey key = ToArray<32>(std::string(32, '\x11'));
+  const RecordingNonce nonce = ToArray<12>(std::string(12, '\x22'));
+  const std::string plain(128, 'A');
+
+  std::vector<std::string> outs;
+  for (const CipherSuite& s : {kVrecSuite, kVdlgSuite, kVdlwSuite}) {
+    RecordingCipher cipher(key, nonce, s);
+    ASSERT_TRUE(cipher.valid());
+    std::string got = plain;
+    ASSERT_TRUE(cipher.XorAt(0,
+                             reinterpret_cast<const std::uint8_t*>(got.data()),
+                             got.size(),
+                             reinterpret_cast<std::uint8_t*>(got.data())));
+    outs.push_back(got);
+  }
+  EXPECT_NE(outs[0], outs[1]);
+  EXPECT_NE(outs[0], outs[2]);
+  EXPECT_NE(outs[1], outs[2]);
+}
+
+TEST(DiagCrypto, AHeaderIsOnlyAcceptedUnderItsOwnSuite) {
+  // A VDLG file handed to the recording reader must not decrypt as a VREC
+  // part: it would produce convincing garbage and the report would blame the
+  // recording rather than the reader.
+  VrecHeader h;
+  h.nonce = ToArray<12>(std::string(12, '\x33'));
+  std::array<std::uint8_t, kVrecHeaderBytes> raw{};
+  WriteVrecHeader(h, raw.data(), kVdlgSuite);
+
+  VrecHeader parsed;
+  std::string err;
+  EXPECT_FALSE(ParseVrecHeader(raw.data(), raw.size(), &parsed, &err));
+  EXPECT_NE(err.find("magic"), std::string::npos) << err;
+  EXPECT_FALSE(LooksLikeVrec(raw.data(), raw.size()));
+
+  EXPECT_TRUE(ParseVrecHeader(raw.data(), raw.size(), &parsed, &err,
+                              kVdlgSuite))
+      << err;
+  EXPECT_TRUE(LooksLikeVrec(raw.data(), raw.size(), kVdlgSuite));
+}
+
+TEST(DiagCrypto, BytesValidRoundTripsLittleEndianAndVrecLeavesItZero) {
+  VrecHeader h;
+  h.nonce = ToArray<12>(std::string(12, '\x66'));
+  h.bytes_valid = 0x01020304u;
+  std::array<std::uint8_t, kVrecHeaderBytes> raw{};
+  WriteVrecHeader(h, raw.data(), kVdlgSuite);
+  // Little-endian on the wire regardless of host.
+  EXPECT_EQ(raw[kVrecBytesValidOffset + 0], 0x04);
+  EXPECT_EQ(raw[kVrecBytesValidOffset + 1], 0x03);
+  EXPECT_EQ(raw[kVrecBytesValidOffset + 2], 0x02);
+  EXPECT_EQ(raw[kVrecBytesValidOffset + 3], 0x01);
+  VrecHeader parsed;
+  std::string err;
+  ASSERT_TRUE(ParseVrecHeader(raw.data(), raw.size(), &parsed, &err, kVdlgSuite)) << err;
+  EXPECT_EQ(parsed.bytes_valid, 0x01020304u);
+
+  // A default header — what every VREC part is written with — keeps the
+  // reserved bytes zero, so fielded cards are byte-identical to before.
+  VrecHeader plain;
+  std::array<std::uint8_t, kVrecHeaderBytes> raw2{};
+  WriteVrecHeader(plain, raw2.data());
+  for (std::size_t i = kVrecBytesValidOffset; i < kVrecHeaderBytes; ++i)
+    EXPECT_EQ(raw2[i], 0) << "offset " << i;
+}
+
+TEST(DiagCrypto, AnOverLongLabelLeavesTheCipherInvalid) {
+  // Refusing beats deriving from a truncated label: two suites that agreed
+  // after truncation would share a key space, which is the one thing the label
+  // exists to prevent.
+  const std::string too_long(kMaxKeyLabelBytes + 1, 'x');
+  const CipherSuite bad{{'B', 'A', 'D', '!'}, too_long.c_str()};
+  RecordingCipher cipher(ToArray<32>(std::string(32, '\x44')),
+                         ToArray<12>(std::string(12, '\x55')), bad);
+  EXPECT_FALSE(cipher.valid());
+}
 }  // namespace mcap
 }  // namespace visio_schema

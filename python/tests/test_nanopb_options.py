@@ -137,3 +137,55 @@ def test_every_sealed_cap_agrees(sizes: dict[str, int]) -> None:
     sealed = {k: v for k, v in sizes.items() if k.endswith(".sealed")}
     assert len(sealed) == 3, f"expected three sealed fields, found {sorted(sealed)}"
     assert len(set(sealed.values())) == 1, sealed
+
+
+# ── max_count, and that the generator actually applied it ────────────────────
+#
+# A repeated field with NO entry here degrades to `pb_callback_t`, which needs a
+# hand-written encode callback the firmware does not have. A mistyped field path
+# is ignored silently by the generator, so the only thing that would notice is
+# the firmware cross-build failing on `sizeof(...)/sizeof(...)` — which no host
+# suite in any repo runs. These two tests are what make the bound real.
+_GENERATED_HEADER = (
+    Path(__file__).resolve().parents[2]
+    / "cpp" / "generated_nanopb" / "visio_schema" / "v1" / "sensor"
+    / "system_health.pb.h"
+)
+
+
+def _max_counts() -> dict[str, int]:
+    """Every `<full.field> max_count:N` in the file, keyed by full field path."""
+    out: dict[str, int] = {}
+    for line in _OPTIONS.read_text().splitlines():
+        m = re.match(r"(\S+)\s+.*max_count:(\d+)", line.strip())
+        if m:
+            out[m.group(1)] = int(m.group(2))
+    return out
+
+
+def test_system_health_camera_temps_is_bounded() -> None:
+    counts = _max_counts()
+    field = "visio_schema.v1.sensor.SystemHealth.camera_temps"
+    assert field in counts, (
+        f"{field} has no max_count — the repeated field becomes pb_callback_t "
+        "and the firmware cannot encode it"
+    )
+    # The widest board we build fits four cameras; the bound carries headroom.
+    assert counts[field] >= 4
+
+
+@pytest.mark.skipif(
+    not _GENERATED_HEADER.exists(),
+    reason="generated nanopb headers are source-only at HEAD; run `make gen`",
+)
+def test_camera_temps_bound_reached_the_generated_header() -> None:
+    """The option is spelled correctly, so the field really is FT_STATIC.
+
+    A wrong field path leaves the array absent and the field a callback; this
+    reads the generator's own output rather than trusting the option line.
+    """
+    header = _GENERATED_HEADER.read_text()
+    want = _max_counts()["visio_schema.v1.sensor.SystemHealth.camera_temps"]
+    assert f"camera_temps[{want}]" in header
+    assert "pb_size_t camera_temps_count;" in header
+    assert "STATIC,   REPEATED, MESSAGE,  camera_temps" in header

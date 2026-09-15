@@ -4,6 +4,148 @@ All notable wire-contract changes to `visio-schema`. Versioning follows
 [`docs/protocol/versioning.md`](docs/protocol/versioning.md). Pre-1.0, breaking changes
 bump the MINOR version.
 
+## Unreleased
+
+### The rect encoder tells the truth about its colour, and NVENC can encode from the device
+
+`make_rect_encoder(full_range=True)` used to move the VUI flag and nothing else.
+swscale kept converting RGB to YUV at LIMITED range whatever the frame said it
+was, so the stream carried 16-235 samples labelled 0-255 and any decoder that
+honoured the tag expanded them a second time. Measured: RGB 0/255 both encoded
+to Y 16/235 with the flag on *or* off. `HevcEncoder` now asks the reformatter
+for a full-range destination, so the samples are where the tag says they are.
+
+The matrix travels with the range, because a range without one is still a stream
+a consumer has to guess at. swscale's default here is BT.601 (pure red to Y 81)
+while the recorder signals BT.709 (Y 54), so a delivery re-encoding a decoded
+709 picture through the default shifted every colour and declared nothing.
+`full_range=True` now also declares BT.709 primaries, transfer and matrix.
+`full_range=False` is untouched — this encoder is shared, and moving either half
+moves the decoded pixels every existing consumer sees.
+
+**`NvHevcEncoder` was refused that combination and no longer is.** NVENC has no
+24-bit packed RGB input at all (its formats are `NV12, YUV420, ARGB, ABGR,
+YUV444, P010, YUV444_10BIT, YUV444_16BIT, NV16, P210`), and for packed RGB the
+driver converts with a fixed BT.470BG limited matrix and forces
+`videoFullRangeFlag` to 0 — FFmpeg's own `nvenc.c` special-cases exactly that.
+So the encoder now converts to NV12 itself (`reader/_gpu_color.py`, a fused cupy
+kernel: full-range BT.709 for a delivery, limited BT.601 for the reference video,
+which is what the ABGR path produced) and inserts the colour signalling NVENC
+omits. PyNvVideoCodec exposes no VUI knob, so that is done with FFmpeg's
+`hevc_metadata` bitstream filter over the parameter-set blob — once per session,
+since NVENC prefixes every IRAP with the same bytes, leaving a prefix swap per
+access unit rather than a filter pass.
+
+**It also takes device input.** `NvHevcEncoder.encode` accepts a cupy frame as
+well as a host one, so a device-resident pipeline never copies the picture back
+to system memory; the host RGB-to-ABGR pack it replaces measured 20.8 ms/frame
+against NVENC's own 0.83 ms. The input must be wrapped as an NVCV tensor — NVENC
+rejects a bare cupy array with "incorrect usage of CPU input buffer" — so
+`cvcuda` joins the `[gpu]` extra.
+
+### `Session.stream(gpu=True)` may be mixed with IMU again
+
+`_reorder` releases an element once the ARRIVAL watermark passes its `t_ns`,
+which is sound only under its own invariant: no future message can produce a
+`t_ns` below its own arrival. The CPU decoder is 1-in-1-out so that holds, but
+NVDEC is deep-pipelined and hands back a frame stamped earlier than the access
+unit just fed, so IMU samples inside that gap were released before the frame was
+pushed — measured 851 of 4000 elements out of order against 0 on the CPU path.
+The window is now widened by the decoder's pipeline depth when `gpu=True`, at a
+cost of about fifteen device frames held in the heap. The "camera-only" caveat
+is gone from `stream`, `_gpu_decode` and `rows`.
+
+### OTA: one package to one device, and a normative spec
+
+A caller now pushes ONE file to ONE device and is agnostic to what is behind it.
+A device with limbs attached takes the same single object a single-board device
+takes, containing every board's image, and updates its own children from it —
+so nothing above a device plans a per-board delivery any more.
+
+- **`docs/protocol/ota.md` is new and normative**: the session, what
+  `bytes_received` means, the chunk-size negotiation, the `OtaBegin.board` mark
+  and the package container. It carries an explicit normative/tuning split —
+  timers and window sizes are deliberately outside the contract, so raising a
+  stall timeout is not a MAJOR bump.
+- **`visio_schema.wire.package`** (Python) and **`wire/package.hpp`** (C++): the
+  multi-board container, a stored ustar whose `index.txt` MUST be member 0 and
+  whose receiving board's own image comes LAST. The index is `key=value` lines,
+  not JSON — a device has to parse it — and is authenticated with HMAC-SHA256
+  under the bundle key, because every image is independently encrypted but
+  nothing otherwise stops an attacker RELABELLING which board one is for.
+- **`visio_schema.wire.ota`** gains `Reason` (a closed, append-only set, so an
+  outcome is conformance-testable across languages), `query_message`,
+  `negotiate_chunk`, `next_session_id` and an `Image` source so a 260 MB package
+  is not held in RAM. `wire/ota.hpp` is a new header-only C++ sender.
+- **`tests/golden/ota_vectors.txt`** pins the driver as a TRANSCRIPT — the
+  ordered messages an implementation must emit against a scripted device, and
+  the outcome it must reach. Replayed by Python, C++ and (in visio-companion)
+  TypeScript. It pins sends and the outcome, never the recv call pattern.
+- **`OtaBegin.hold_apply` and `OtaApply` are deprecated**, never removed and
+  never reused. A sender no longer defers a device's apply; a device that defers
+  its own (a head flashing itself last) decides that from the package it
+  received. `hold_apply=false` is omitted by proto3, so every begin on the wire
+  stays byte-identical to one sent before the field existed.
+
+### Diagnostic log: `VDLG`/`VDLW` containers, `CONTROL_STREAM_DIAG`, `DiagLog`
+
+The device now keeps a bounded, encrypted ring of its own log so a returned unit
+carries weeks of history rather than the ten seconds an RMA self-check sees.
+This release publishes the wire contract for it — see `docs/protocol/diag_log.md`.
+
+- `recording_crypto` (C++ and Python) gains a `CipherSuite` parameter. `VREC` is
+  the default everywhere and its bytes are unchanged (the golden vectors prove
+  it). Two new suites share the construction under a different magic and key
+  label: `VDLG` for the ring files on flash and on the SD-card root, `VDLW` for
+  one log batch on the bus. `tests/golden/diag_vectors.txt` pins both against
+  VREC's own key, nonce and plaintext, so the vectors are a direct proof that
+  the suites derive disjoint keystreams.
+- The container header's reserved bytes at offset 28 now carry `bytes_valid`
+  (u32 LE): the plaintext length the writer last recorded. `0` — what every
+  VREC part has always written — means "read to EOF", so recordings are
+  unaffected; a `.vdlg` ring file uses it to make a torn tail visible to the
+  decoder instead of silently decrypting stale bytes.
+- `CONTROL_STREAM_DIAG = 7`, with `service/diag/diag.proto`: host→device
+  `DiagRequest` (list / read / abort) and device→host `DiagReply` (listing /
+  chunk / status) on the per-device `/<device>/diag` channel — the OTA shape,
+  inverted. This is the first read path a sealed customer unit has ever had.
+- `sensor/diag_log.proto`: `DiagLog`, one complete `VDLW` container per
+  message, published on `/<root>/diag_log` so the log lands inside every
+  recording on the footage's own clock.
+- `Command.set_diag_verbosity = 42` (`SetDiagVerbosity`), raising the card-tier
+  detail for the `need_info` RMA loop.
+- `visio-diag`: a console script that opens, renders and summarises a log
+  under the fleet key. `visio_schema.diag` holds the reference line parser.
+- `visio_schema.wire.diag`: the host half of the read path — `list_files` and
+  `read_file` over any `send`/`recv` pair, the way `wire.ota.relay` drives an
+  update. Chunks are reassembled in order and a gap aborts rather than splices,
+  because a spliced ciphertext decrypts to garbage from the gap on.
+
+New `.proto` files ⇒ MINOR: this is 0.10.0.
+
+### Added `visio_schema.v1.sensor.SystemHealth.camera_temps` (tag 11)
+
+Per-camera image-sensor die temperature, alongside the SoC's `cpu_temp_c` (tag
+2) that this message has always carried. Devices have measured it for some time
+but had nowhere to put it, so the only way to read a camera's temperature was to
+scrape the device's own log over a debug link — which a sealed unit does not
+have. It now rides the same 0.2 Hz frame as every other health number.
+
+A `repeated CameraTemp {index, sensor_temp_c}`, not a parallel array of floats:
+only a sensor that can actually measure its die temperature reports one, so the
+entry count tracks the fitted parts rather than the camera count, and a
+`repeated float` could not say "camera 1 cannot answer" without either
+substituting a value or shifting every index after it. Consumers key on `index`.
+This mirrors `ImuRaw.Sample.temperature_c`, which likewise hangs the temperature
+off the per-instance message.
+
+Bounded at `max_count:8` in `nanopb.options` so the message stays FT_STATIC on
+device — no allocation and no hand-written encode callback on the publish path.
+
+Purely additive: an old consumer ignores tag 11, and an empty list is what every
+device without a temperature-capable sensor already sends. Ships with the
+matching firmware producer change.
+
 ## 0.9.1 — 2026-09-11
 
 ### Published settings QR and fleet-key APIs

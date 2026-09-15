@@ -34,14 +34,18 @@ import io
 import json
 import os
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, NamedTuple
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms
 
 __all__ = [
     "HEADER_BYTES",
     "MCAP_MAGIC",
+    "VDLG_SUITE",
+    "VDLW_SUITE",
     "VREC_MAGIC",
+    "VREC_SUITE",
+    "CipherSuite",
     "RecordingKeyMismatch",
     "RecordingKeyUnavailable",
     "VrecHeader",
@@ -59,9 +63,37 @@ VREC_MAGIC = b"VREC"
 MCAP_MAGIC = b"\x89MCAP0\r\n"
 HEADER_BYTES = 32
 _BLOCK = 64
-_KEY_LABEL = b"visio-rec-v1"
 _KEY_BYTES = 32
 _NONCE_BYTES = 12
+
+
+class CipherSuite(NamedTuple):
+    """A container's identity: its 4-byte magic and its key-derivation label.
+
+    Mirrors ``CipherSuite`` in ``cpp/include/visio_schema/mcap/recording_crypto.hpp``;
+    the golden vectors pin the two together.
+
+    The construction below — 32-byte plaintext header, ChaCha20 with the
+    plaintext-offset identity, a per-file key derived from the caller's key — is
+    wanted by more than recordings. The diagnostic log uses it under a different
+    magic, so a reader cannot confuse the two, and a different label, so their
+    key spaces cannot collide. Everything else is shared, and a forked copy
+    would drift from the vectors that pin this one.
+    """
+
+    magic: bytes
+    key_label: bytes
+
+
+#: The recording container. Do not change: fielded cards are written with it.
+VREC_SUITE = CipherSuite(VREC_MAGIC, b"visio-rec-v1")
+#: The diagnostic log's ring files on flash and on the SD card.
+VDLG_SUITE = CipherSuite(b"VDLG", b"visio-diag-v1")
+#: One diagnostic-log message on the bus. A separate label from ``VDLG_SUITE``
+#: even though both use the same fleet key — the file writer and the bus
+#: publisher are independent producers, and one label would put them in a single
+#: nonce space they would have to coordinate across two subsystems forever.
+VDLW_SUITE = CipherSuite(b"VDLW", b"visio-diag-wire-v1")
 
 _ENV_KEY = "VISIO_RECORDING_KEY"
 _ENV_KEY_FILE = "VISIO_RECORDING_KEY_FILE"
@@ -89,13 +121,26 @@ class RecordingKeyMismatch(Exception):
 class VrecHeader:
     """The 32 plaintext bytes at the head of an encrypted part."""
 
-    __slots__ = ("cipher", "format", "key_fp", "nonce")
+    __slots__ = ("bytes_valid", "cipher", "format", "key_fp", "nonce")
 
-    def __init__(self, format: int, cipher: int, key_fp: bytes, nonce: bytes):
+    def __init__(
+        self,
+        format: int,
+        cipher: int,
+        key_fp: bytes,
+        nonce: bytes,
+        bytes_valid: int = 0,
+    ):
         self.format = format
         self.cipher = cipher
         self.key_fp = key_fp
         self.nonce = nonce
+        #: Plaintext bytes the writer last recorded as valid (u32 LE at offset
+        #: 28 — the bytes VREC has always left zero). ``0`` means "not recorded,
+        #: read to EOF", so every recording keeps its torn-tail behaviour. A
+        #: ``.vdlg`` ring file uses it to stop the reader at the last flush
+        #: rather than decrypt a torn tail into noise.
+        self.bytes_valid = bytes_valid
 
     @property
     def key_fp_hex(self) -> str:
@@ -110,28 +155,33 @@ def fingerprint(key: bytes) -> bytes:
     return hashlib.sha256(key).digest()[:8]
 
 
-def is_vrec(head: bytes) -> bool:
-    """Cheap sniff for a reader that accepts both plaintext MCAP and VREC."""
-    return head[: len(VREC_MAGIC)] == VREC_MAGIC
+def is_vrec(head: bytes, suite: CipherSuite = VREC_SUITE) -> bool:
+    """Cheap sniff for a reader that accepts both plaintext MCAP and a container."""
+    return head[: len(suite.magic)] == suite.magic
 
 
-def read_vrec_header(head: bytes) -> VrecHeader:
+def read_vrec_header(head: bytes, suite: CipherSuite = VREC_SUITE) -> VrecHeader:
     """Parse the container header, refusing anything this build cannot read."""
-    if len(head) < HEADER_BYTES or not is_vrec(head):
-        raise ValueError("not a VREC recording")
+    if len(head) < HEADER_BYTES or not is_vrec(head, suite):
+        raise ValueError(f"not a {suite.magic.decode()} container")
     fmt, cipher = head[4], head[5]
     # A future format must fail loudly rather than be decrypted with the wrong
     # cipher into convincing garbage.
     if fmt != 1 or cipher != 1:
         raise ValueError(
-            f"VREC format {fmt}/cipher {cipher} is newer than this reader "
-            "understands — upgrade visio-schema"
+            f"{suite.magic.decode()} format {fmt}/cipher {cipher} is newer than "
+            "this reader understands — upgrade visio-schema"
         )
-    return VrecHeader(fmt, cipher, head[8:16], head[16:28])
+    return VrecHeader(
+        fmt, cipher, head[8:16], head[16:28],
+        int.from_bytes(head[28:32], "little"),
+    )
 
 
-def _derive_file_key(key: bytes, nonce: bytes) -> bytes:
-    return hmac.new(key, _KEY_LABEL + nonce, hashlib.sha256).digest()
+def _derive_file_key(
+    key: bytes, nonce: bytes, suite: CipherSuite = VREC_SUITE
+) -> bytes:
+    return hmac.new(key, suite.key_label + nonce, hashlib.sha256).digest()
 
 
 def _parse_hex_key(text: str, source: str) -> bytes:
@@ -323,16 +373,26 @@ class _VrecReader(io.RawIOBase):
     plain MCAP keeps its arithmetic — the container's whole design.
     """
 
-    def __init__(self, raw: BinaryIO, header: VrecHeader, key: bytes):
+    def __init__(
+        self,
+        raw: BinaryIO,
+        header: VrecHeader,
+        key: bytes,
+        suite: CipherSuite = VREC_SUITE,
+    ):
         self._raw = raw
         self._header = header
-        self._file_key = _derive_file_key(key, header.nonce)
+        self._file_key = _derive_file_key(key, header.nonce, suite)
         self._pos = 0
         raw.seek(0, os.SEEK_END)
         # A torn part (power cut mid-recording) is shorter than a header claims
         # nothing about — there is no length field precisely so that a torn
         # file stays readable up to its cut.
         self._size = max(0, raw.tell() - HEADER_BYTES)
+        # A writer that records its valid length is trusted over the file's
+        # size: what lies past it is pre-allocation or a torn flush.
+        if header.bytes_valid:
+            self._size = min(self._size, header.bytes_valid)
         raw.seek(HEADER_BYTES)
 
     # -- io plumbing -------------------------------------------------------- #
@@ -396,9 +456,15 @@ class _VrecReader(io.RawIOBase):
 
 
 def open_recording(
-    path: str | os.PathLike[str], key: bytes | str | None = None
+    path: str | os.PathLike[str],
+    key: bytes | str | None = None,
+    suite: CipherSuite = VREC_SUITE,
 ) -> BinaryIO:
     """Open a recording, transparently decrypting a ``VREC`` one.
+
+    ``suite`` selects the container: the default reads recordings; the
+    diagnostic-log tooling passes ``VDLG_SUITE`` / ``VDLW_SUITE`` and supplies
+    the fleet key explicitly, since the recording keyring holds no such key.
 
     A plaintext MCAP is returned as the plain file object it always was, so
     this is safe to put on every read path — nothing changes for the
@@ -424,12 +490,30 @@ def open_recording(
     raw = open(path, "rb")
     try:
         head = raw.read(HEADER_BYTES)
-        if not is_vrec(head):
+        if not is_vrec(head, suite):
             raw.seek(0)
             return raw
-        header = read_vrec_header(head)
+        header = read_vrec_header(head, suite)
         resolved = _resolve_key(header, key)
-        return io.BufferedReader(_VrecReader(raw, header, resolved))
+        return io.BufferedReader(_VrecReader(raw, header, resolved, suite))
     except Exception:
         raw.close()
         raise
+
+
+
+def add_key_args(parser, *, what: str = "key") -> None:
+    """The `--key HEX` / `--key-file PATH` pair every decrypting CLI takes."""
+    g = parser.add_mutually_exclusive_group()
+    g.add_argument("--key", metavar="HEX",
+                   help=f"{what}, 64 hex chars. Prefer --key-file: an argument is "
+                        "visible in `ps` to every user")
+    g.add_argument("--key-file", metavar="PATH",
+                   help=f"file holding the {what} as 64 hex chars")
+
+
+def key_from_args(args) -> str | None:
+    """The hex text those arguments name, or None when neither was given."""
+    if args.key_file:
+        return Path(args.key_file).expanduser().read_text().strip()
+    return args.key
