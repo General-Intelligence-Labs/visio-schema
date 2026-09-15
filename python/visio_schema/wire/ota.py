@@ -116,6 +116,22 @@ SOFT_RETRY_S = 6.0
 COMMIT_WAIT_S = 8.0
 DEADLINE_S = 900.0
 
+#: What a pusher drops on its own link for the duration of a transfer.
+#:
+#: Video alone, because video alone binds: four H.265 feeds at 9 Mbps against
+#: ~19 kB/s of fused IMU. Ordered, first match wins, with an implicit
+#: "everything else at full rate" tail -- so ota_status, a learned TOPIC rather
+#: than a control stream, keeps flowing. Leading '**' because a relay may
+#: namespace a leaf's topics under its device name (command.proto's glob
+#: grammar).
+#:
+#: Why this lives in the driver rather than in each caller, and why every hop
+#: must quiet its OWN leg: docs/protocol/ota.md §6. Keep in step with the C++
+#: twin, kQuiesceRules in cpp/include/visio_schema/wire/ota.hpp.
+QUIESCE_RULES = ("**/camera/*",)
+#: Correlates the CommandResult for the quiesce.
+QUIESCE_COMMAND_ID = 0xB15
+
 
 class Reason(enum.IntEnum):
     """Why a relay ended, as a CLOSED set.
@@ -346,6 +362,7 @@ def relay(send: Callable[[bytes], None],
           deadline_s: float = DEADLINE_S,
           max_resumes: int | None = None,
           on_progress: Callable[[Progress], None] | None = None,
+          quiesce: Callable[[bool], bool] | None = None,
           clock: Callable[[], float] = time.monotonic) -> Outcome:
     """Stream ``image`` to a device: begin -> windowed, RESUME-aware chunks ->
     commit, paced by ``OtaStatus.bytes_received``.
@@ -368,6 +385,13 @@ def relay(send: Callable[[bytes], None],
             committing — proves the transfer path without flashing anything.
             A bench verb, and the one way to exercise a push against a unit you
             are not willing to reboot.
+        quiesce: drop ``QUIESCE_RULES`` on this link for the transfer, and put
+            the link back at the end. Called ``quiesce(True)`` before the begin
+            and ``quiesce(False)`` on EVERY exit, success or not; returns
+            whether the device acked. Omit it to push against a live link on
+            purpose (the ``--no-pause-video`` bench verb). The transport
+            supplies the mechanism; the driver owns the policy and guarantees
+            the restore. Contract: docs/protocol/ota.md §6.
     """
     OS = ota_pb2.OtaStatus
     total = len(image)
@@ -430,7 +454,15 @@ def relay(send: Callable[[bytes], None],
     committed = False
     cursor = last_ack = last_log = resumes = 0
     derive_resumes = max_resumes is None
+    quieted = False
     try:
+        if quiesce is not None:
+            # Before the negotiation, not after: the OtaQuery's answer has to
+            # cross the same link the video is saturating, and a query that
+            # times out silently costs the transfer its negotiated chunk size.
+            # INSIDE the try: a link that dies here must still return an
+            # Outcome, not a traceback.
+            quieted = quiesce(True)
         if negotiate:
             # Before the begin, never during: chunk_bytes is the device's ack
             # cadence as well as the frame size, so it cannot change once the
@@ -542,4 +574,13 @@ def relay(send: Callable[[bytes], None],
                         resumes, Reason.OK_LINK_AFTER_COMMIT)
         return done(False, f"link dropped mid-transfer: {e}", resumes,
                     Reason.FAIL_LINK_DROPPED)
+    finally:
+        # EVERY exit, including the ones that raised on the way out. A device
+        # that rebooted to apply will refuse this, and that is fine — it comes
+        # back with no policy at all.
+        if quieted:
+            try:
+                quiesce(False)
+            except OSError:
+                pass
 

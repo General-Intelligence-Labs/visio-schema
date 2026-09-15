@@ -505,3 +505,81 @@ def test_next_session_id_is_distinct_per_call():
     assert len(ids) == 50
     assert ota.DEFAULT_SESSION_ID not in ids
     assert ota.RIG_TERMINAL_SESSION not in ids
+
+
+# ── the quiesce the driver owns ──────────────────────────────────────────────
+#
+# The rules used to be copied into every pusher, kept in step by a comment
+# saying so. That held until a fourth pusher appeared -- a rig head driving its
+# own limbs -- and simply did not have them. Its first attempt at each limb died
+# on the 45 s stall while the limb pushed two H.265 feeds up the very link the
+# head was pushing 40 MB down.
+#
+# A policy describes ONE LINK and is absorbed at the hop it arrives on, so no
+# pusher upstream can quiet a leg it is not on. Only the client of a link can,
+# which is exactly why this belongs to the driver every client shares.
+
+
+def test_the_driver_quiets_the_link_before_the_begin_and_restores_it_after():
+    dev = Device()
+    calls = []
+    out = ota.relay(dev.send, dev.recv, b"x" * TOTAL, fw_version="1.0.0",
+                    board=BOARD, chunk=CHUNK, negotiate=False,
+                    quiesce=lambda quiet: (calls.append(quiet), True)[1])
+    assert out.ok
+    assert calls == [True, False], "quiet on entry, restore on exit, once each"
+
+
+def test_the_restore_runs_even_when_the_transfer_fails():
+    """The restore is the half a caller forgets, and the half that matters: a
+    rig head's leg to a limb outlives the transfer, so a policy left behind
+    keeps that limb's cameras dark."""
+    dev = Device()
+    dev.dead_after = 2                      # link dies mid-transfer
+    calls = []
+    out = ota.relay(dev.send, dev.recv, b"x" * TOTAL, fw_version="1.0.0",
+                    board=BOARD, chunk=CHUNK, negotiate=False,
+                    quiesce=lambda quiet: (calls.append(quiet), True)[1])
+    assert not out.ok and out.reason is ota.Reason.FAIL_LINK_DROPPED
+    assert calls == [True, False]
+
+
+def test_a_device_that_never_acked_the_quiesce_is_not_restored():
+    """Nothing was applied, so there is nothing to put back — and sending a
+    policy we never established would REPLACE whatever the device does have."""
+    dev = Device()
+    calls = []
+    ota.relay(dev.send, dev.recv, b"x" * TOTAL, fw_version="1.0.0",
+              board=BOARD, chunk=CHUNK, negotiate=False,
+              quiesce=lambda quiet: (calls.append(quiet), False)[1])
+    assert calls == [True], "no ack, no restore"
+
+
+def test_the_quiesce_precedes_the_negotiation():
+    """The OtaQuery's answer crosses the same link the video is saturating, so
+    a query that times out under load silently costs the transfer its
+    negotiated chunk size."""
+    order = []
+    dev = Device()
+    dev.max_chunk = 16 * 1024
+    real_send = dev.send
+
+    def send(payload):
+        m = ota_pb2.OtaMessage()
+        m.ParseFromString(payload)
+        if m.HasField("query"):
+            order.append("query")
+        real_send(payload)
+
+    ota.relay(send, dev.recv, b"x" * TOTAL, fw_version="1.0.0", board=BOARD,
+              chunk=CHUNK, quiesce=lambda quiet: (order.append("quiesce"), True)[1])
+    assert order[:2] == ["quiesce", "query"]
+
+
+def test_omitting_the_hook_pushes_against_a_live_link():
+    """`--no-pause-video` is a documented bench verb — measuring a push against
+    a loaded link on purpose must stay expressible."""
+    dev = Device()
+    out = ota.relay(dev.send, dev.recv, b"x" * TOTAL, fw_version="1.0.0",
+                    board=BOARD, chunk=CHUNK, negotiate=False)
+    assert out.ok

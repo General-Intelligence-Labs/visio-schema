@@ -13,9 +13,9 @@ what it received, updates its own limbs, and reports one verdict. Nothing above
 a device plans a per-board delivery, and the shape recurses: a device drives its
 children exactly as a sender drives it.
 
-> **Normative vs non-normative.** §1–§5 are the contract: implementations MUST
+> **Normative vs non-normative.** §1–§6 are the contract: implementations MUST
 > conform, and a change there is a MAJOR bump under
-> [`versioning.md`](versioning.md). §6 is TUNING — timers, window sizes and the
+> [`versioning.md`](versioning.md). §7 is TUNING — timers, window sizes and the
 > retry cadence. Those are what the reference implementations happen to use;
 > they are deliberately outside the contract, because a stall timeout that
 > needed a major version bump to raise is a stall timeout nobody can raise.
@@ -176,7 +176,53 @@ A stream whose first bytes are a bare image rather than a tar is an implicit
 package of one: board from `OtaBegin.board`, destination self. That is what
 keeps a single-board device's contract unchanged.
 
-## 6. Tuning — NOT normative
+## 6. Quieting the link
+
+A sender MUST stop the device streaming bulk data at it for the duration of a
+transfer, and MUST put the link back afterwards.
+
+The bus is ONE link per client whatever carries it, so the chunks climb the same
+socket the video comes down. On an Ego Pro head that is four H.265 feeds at
+9 Mbps against a push; left streaming, a transfer does not merely go slow, it
+dies on the stall timeout while the device's own log says `link congested (video
+outbox evicting)`.
+
+**A policy describes ONE LINK.** `SetStreamPolicy` is absorbed by the bus at the
+hop it arrives on — `target_device` is ignored — so it is never relayed onward.
+Two consequences, and both have been got wrong in this repo:
+
+- A sender CANNOT quiet a link it is not on. An app quieting its leg to a rig
+  head stops the head FORWARDING the limbs' video and does nothing about the
+  limbs still SENDING it up their own legs.
+- Therefore **every hop quiets its own leg**, as the OTA client of that leg. A
+  head pushing to its limbs MUST quiet each head→limb link itself. This is the
+  recursion in "one package, one device" applied to the link, not just the
+  image.
+
+**Restoring is not optional, and it is not symmetric with the quiet.** A sender
+whose link goes away when it finishes (a phone) can rely on the device dropping
+the policy with the connection. A sender whose link OUTLIVES the transfer (a rig
+head's leg to a limb) cannot: a policy left behind keeps that limb's cameras
+dark until something reconnects it. Restore on EVERY exit, including the
+failures — those are when a link left dark is hardest to explain.
+
+A sender that could not establish the quiet MUST NOT send a restore: a policy
+REPLACES the link's previous one outright, so "undoing" something never applied
+would clear whatever the device legitimately had.
+
+**Where it lives is a lane decision, not a wire one.** The Python and C++
+reference drivers own it (`relay(quiesce=…)`, `Io::quiesce`) so the caller
+cannot forget the restore; the app owns it one level lower, in a ref-counted
+video gate held for the transport's lifetime, which additionally survives a
+reconnect that a one-shot policy would not. Both conform. What does not conform
+is not doing it — which is what a rig head shipped with, because:
+
+> **The conformance vectors cannot see this.** `ota_vectors.txt` pins
+> `OtaMessage` frames; a quiesce is a `Command` on another stream and appears
+> nowhere in them. This section is the only thing standing between a new
+> implementation and a push that dies on a loaded link.
+
+## 7. Tuning — NOT normative
 
 These are the reference implementations' numbers. A conforming sender may use
 others; none of them is part of the wire contract and changing one is not a

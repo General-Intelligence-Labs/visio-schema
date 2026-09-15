@@ -78,6 +78,16 @@ constexpr std::uint64_t kDefaultSessionId = 0xCA11;
 // the firmware spells this one kRigTerminalSession. The number is the contract.
 constexpr std::uint64_t kRigTerminalSession = 0xB1D;
 
+// What a pusher drops on its own link for the duration of a transfer. Why a
+// link can only be quieted by the client that is ON it, and why that puts this
+// in the driver rather than in every caller: docs/protocol/ota.md §6. Keep in
+// step with the Python twin, visio_schema.wire.ota.QUIESCE_RULES (pinned by
+// python/tests/test_wire_ota.py).
+constexpr const char* kQuiesceRules[] = {"**/camera/*"};
+constexpr std::size_t kQuiesceRuleCount =
+    sizeof(kQuiesceRules) / sizeof(kQuiesceRules[0]);
+constexpr std::uint32_t kQuiesceCommandId = 0xB15;
+
 constexpr double kStallTimeoutS = 45.0;
 constexpr double kSoftRetryS = 6.0;
 constexpr double kCommitWaitS = 8.0;
@@ -135,6 +145,12 @@ struct Io {
     // Random access to the image. A rig package is hundreds of MB; neither a
     // phone nor an RV1126B head can hold one in RAM.
     std::function<bool(std::uint64_t, std::size_t, std::uint8_t*)> read_image;
+    // Drop kQuiesceRules on this link for the transfer, and put the link back
+    // afterwards. Called with `true` before the begin and `false` on EVERY exit;
+    // returns whether the device acked. Unset = push against a live link.
+    // The transport supplies the mechanism; the driver owns the policy and
+    // guarantees the restore. Contract: docs/protocol/ota.md §6.
+    std::function<bool(bool)> quiesce;
     std::uint64_t image_bytes = 0;
 };
 
@@ -406,6 +422,28 @@ inline Outcome Relay(const Io& io, const Options& opt) {
     auto abort_now = [&](const char* why) {  // best effort
         if (AbortMessage(opt, why, &frame)) io.send(frame.data(), frame.size());
     };
+
+    // RAII, because Relay returns from a dozen places and the restore must
+    // happen at every one of them.
+    struct Quiet {
+        const std::function<bool(bool)>* q;
+        bool held = false;
+        ~Quiet() {
+            // `held` is only ever set from a hook that exists, so *q is live.
+            // The catch is not optional: this runs during unwinding, where an
+            // escaping exception is std::terminate.
+            if (!held) return;
+            try {
+                (*q)(false);
+            } catch (...) {
+            }
+        }
+    } quiet{&io.quiesce};
+    // Before the negotiation, not after: the OtaQuery's answer crosses the same
+    // link the video is saturating, and a query that times out silently costs
+    // the transfer its negotiated chunk size.
+    if (io.quiesce) quiet.held = io.quiesce(true);
+
 
     std::uint32_t chunk = opt.chunk;
     if (opt.negotiate) {
