@@ -6,6 +6,38 @@ bump the MINOR version.
 
 ## Unreleased
 
+### OTA: one package to one device, and a normative spec
+
+A caller now pushes ONE file to ONE device and is agnostic to what is behind it.
+A device with limbs attached takes the same single object a single-board device
+takes, containing every board's image, and updates its own children from it —
+so nothing above a device plans a per-board delivery any more.
+
+- **`docs/protocol/ota.md` is new and normative**: the session, what
+  `bytes_received` means, the chunk-size negotiation, the `OtaBegin.board` mark
+  and the package container. It carries an explicit normative/tuning split —
+  timers and window sizes are deliberately outside the contract, so raising a
+  stall timeout is not a MAJOR bump.
+- **`visio_schema.wire.package`** (Python) and **`wire/package.hpp`** (C++): the
+  multi-board container, a stored ustar whose `index.txt` MUST be member 0 and
+  whose receiving board's own image comes LAST. The index is `key=value` lines,
+  not JSON — a device has to parse it — and is authenticated with HMAC-SHA256
+  under the bundle key, because every image is independently encrypted but
+  nothing otherwise stops an attacker RELABELLING which board one is for.
+- **`visio_schema.wire.ota`** gains `Reason` (a closed, append-only set, so an
+  outcome is conformance-testable across languages), `query_message`,
+  `negotiate_chunk`, `next_session_id` and an `Image` source so a 260 MB package
+  is not held in RAM. `wire/ota.hpp` is a new header-only C++ sender.
+- **`tests/golden/ota_vectors.txt`** pins the driver as a TRANSCRIPT — the
+  ordered messages an implementation must emit against a scripted device, and
+  the outcome it must reach. Replayed by Python, C++ and (in visio-companion)
+  TypeScript. It pins sends and the outcome, never the recv call pattern.
+- **`OtaBegin.hold_apply` and `OtaApply` are deprecated**, never removed and
+  never reused. A sender no longer defers a device's apply; a device that defers
+  its own (a head flashing itself last) decides that from the package it
+  received. `hold_apply=false` is omitted by proto3, so every begin on the wire
+  stays byte-identical to one sent before the field existed.
+
 ### Diagnostic log: `VDLG`/`VDLW` containers, `CONTROL_STREAM_DIAG`, `DiagLog`
 
 The device now keeps a bounded, encrypted ring of its own log so a returned unit
