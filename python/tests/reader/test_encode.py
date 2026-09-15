@@ -107,13 +107,55 @@ def test_delivery_contract_survives_every_rung(kw, tmp_path):
         assert max(longest, gap) <= 10
 
 
-def test_full_range_declares_what_the_samples_are():
-    """swscale writes full-range luma out of RGB whatever the tag says, so the tag
-    has to be set deliberately or the stream lies about its own samples."""
-    full = HevcEncoder(W, H, keyint=10, full_range=True)
-    assert full._ctx.color_range == 2          # AVCOL_RANGE_JPEG
-    limited = HevcEncoder(W, H, keyint=10)
-    assert limited._ctx.color_range == 1       # the default stays today's behaviour
+def _flat(value):
+    """A frame of one grey level — the only shape that pins a conversion exactly."""
+    return np.full((H, W, 3), value, np.uint8)
+
+
+def _luma(frames, **kw) -> list[int]:
+    """Encode ``frames``, then the median Y of each, off the coded planes.
+
+    `to_ndarray()` with no format argument is deliberate: asking for rgb24 would
+    run the samples back through swscale using the very tag under test, which
+    turns a mislabelled stream into a self-consistent one and hides the bug.
+    """
+    enc = HevcEncoder(W, H, keyint=10, **kw)
+    aus = []
+    for i, f in enumerate(frames):
+        aus += [au for _t, au in enc.encode(f, T0 + i * DT)]
+    aus += [au for _t, au in enc.flush()]
+    ctx = av.CodecContext.create("hevc", "r")
+    out = []
+    for au in aus:
+        for frame in ctx.decode(av.Packet(au)):
+            out.append(int(np.median(frame.to_ndarray()[:H])))
+    return out
+
+
+def test_full_range_converts_the_samples_not_just_the_tag():
+    """The tag alone was the bug: swscale converts RGB -> YUV at LIMITED range
+    whatever the frame says it is, so setting `color_range` shipped 16-235 samples
+    labelled 0-255 and a decoder honouring the tag expanded them twice."""
+    grey = [_flat(0), _flat(128), _flat(255)]
+    assert _luma(grey, full_range=True) == [0, 128, 255]
+    # The default is unchanged — this encoder is shared, and moving it would move
+    # every existing consumer's pixels.
+    assert _luma(grey) == [16, 126, 235]
+
+
+def test_full_range_declares_bt709_because_the_default_matrix_is_601():
+    """A range without a matrix is still a stream a consumer has to guess at. The
+    recorder signals BT.709; swscale's default here is BT.601, which moves every
+    colour (pure red: Y 54 under 709 full, Y 81 under 601 limited)."""
+    red = np.zeros((H, W, 3), np.uint8)
+    red[..., 0] = 255
+    assert _luma([red], full_range=True) == [54]
+    enc = HevcEncoder(W, H, keyint=10, full_range=True)
+    assert enc._ctx.color_range == 2                 # AVCOL_RANGE_JPEG
+    assert enc._ctx.colorspace == 1                  # AVCOL_SPC_BT709
+    assert enc._ctx.color_primaries == 1
+    assert enc._ctx.color_trc == 1
+    assert HevcEncoder(W, H, keyint=10)._ctx.color_range == 1   # default untouched
 
 
 def test_full_range_reaches_the_stream_not_just_the_context(tmp_path):
@@ -127,22 +169,24 @@ def test_full_range_reaches_the_stream_not_just_the_context(tmp_path):
                 break
 
 
-def test_nvenc_cannot_declare_full_range_so_the_pair_is_refused():
-    """`full_range` describes the STREAM, so honouring it on one backend and
-    dropping it on the other would make a delivery's colour range depend on which
-    machine encoded it. NVENC has no colour-range control, so ask and it refuses."""
+def test_full_range_is_not_refused_on_the_gpu_arm():
+    """`full_range` describes the STREAM, so it has to survive whichever encoder
+    runs. NVENC reaches it by being handed NV12 we converted ourselves plus an
+    inserted VUI — not by a config knob, which PyNvVideoCodec does not expose."""
     import logging
 
     from visio_schema.reader import make_rect_encoder
-    for kw in ({"choice": "gpu", "gpu_backend": False},
-               {"choice": "auto", "gpu_backend": True}):
-        with pytest.raises(ValueError, match="cannot be honoured by NVENC"):
-            make_rect_encoder(W, H, keyint=10, log=logging.getLogger(),
-                              full_range=True, **kw)
-    # the cpu arm carries it through
     enc = make_rect_encoder(W, H, keyint=10, choice="cpu", gpu_backend=False,
                             log=logging.getLogger(), full_range=True)
     assert enc._ctx.color_range == 2
+    # The gpu arm must not raise on the combination. Without a GPU present it
+    # degrades to libx265 with the same request intact, which is the property that
+    # matters here; `test_encode_gpu.py` covers the NVENC samples themselves.
+    gpu = make_rect_encoder(W, H, keyint=10, choice="auto", gpu_backend=True,
+                            log=logging.getLogger(), full_range=True)
+    assert gpu.codec_name in ("nvenc-hevc", "libx265")
+    if gpu.codec_name == "libx265":
+        assert gpu._ctx.color_range == 2
 
 
 def test_the_depth_encoder_is_untouched_by_the_delivery_knobs():
@@ -155,3 +199,25 @@ def test_the_depth_encoder_is_untouched_by_the_delivery_knobs():
     assert "frame-threads=1" in params and "repeat-headers=1" in params
     assert "preset" not in enc._ctx.options
     assert "fps=" not in params and "bitrate=" not in params
+
+
+def test_insert_colour_vui_adds_the_signalling_nvenc_omits():
+    """Host-runnable on purpose: only OBTAINING NVENC's parameter sets needs a
+    device, and the insertion is the half that can silently do nothing.
+
+    libx265's own limited-range parameter sets stand in for NVENC's — both arrive
+    without full-range signalling, which is exactly the input this must fix."""
+    from visio_schema.reader._encode import insert_colour_vui
+
+    limited, _ = _encode(_frames(2))                  # yuv420p, no full-range flag
+    patched = insert_colour_vui(limited, W, H)
+    assert patched != limited
+
+    ctx = av.CodecContext.create("hevc", "r")
+    for frame in ctx.decode(av.Packet(patched)):
+        assert frame.format.name == "yuvj420p"        # full range now declared
+        assert int(frame.color_range) == 2
+        assert int(frame.colorspace) == 1             # BT.709
+        break
+    else:
+        pytest.fail("the patched parameter sets decoded no frame")

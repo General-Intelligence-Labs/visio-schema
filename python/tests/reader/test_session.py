@@ -440,3 +440,58 @@ def test_raw_per_topic_leaves_whole_call_modes_alone(rec):
     # an empty collection is "decode everything", like False
     assert all(isinstance(e, Frame)
                for e in Session([path]).stream(cams, raw=set()))
+
+
+def test_gpu_stream_stays_monotonic_when_nvdec_hands_frames_back_late(
+        stereo_calib_rec, monkeypatch):
+    """NVDEC breaks `_reorder`'s arrival invariant, and the widened window fixes it.
+
+    The CPU decoder is 1-in-1-out, so a frame's `t_ns` IS its arrival and the heap's
+    "no future message can produce a `t_ns` below its own arrival" holds. NVDEC is
+    deep-pipelined: it reports the arrival of the access unit just fed for a frame
+    stamped several earlier, so IMU samples inside that gap were released before the
+    frame was pushed. Measured on a real recording before the fix: 851 of 4000
+    elements out of order, against 0 on the CPU path.
+
+    No GPU here — `_gpu_video_decoders` is a bound method resolved at call time, so a
+    fake binder with the same lateness reproduces the ordering exactly.
+    """
+    from visio_schema.reader import rows as _rows
+    # 23 frames is the fixture's ceiling: its red channel encodes the frame index.
+    path = _calib_rec_with_imu(stereo_calib_rec, n_frames=23, n_bundles=3,
+                               span_ms=200, step_ms=10)
+    sess = Session([path])
+    depth = 9  # frames NVDEC keeps in flight
+
+    def late_decoders(video):
+        """Emit each frame stamped `depth` access units behind its own arrival."""
+        cpu_emit, _ = _rows.cpu_video_decoders(video, "rgb24", None)
+        held: list = []
+
+        def emit(topic, t):
+            for pts, _arrival, frame in cpu_emit(topic, t):
+                held.append((pts, frame))
+            while len(held) > depth:
+                pts, frame = held.pop(0)
+                yield pts, t, frame          # arrival is the CURRENT AU's
+
+        def flush():
+            for pts, frame in held:
+                yield pts, pts, frame
+            held.clear()
+
+        return emit, flush
+
+    monkeypatch.setattr(Session, "_gpu_video_decoders",
+                        lambda self, video: late_decoders(video))
+
+    ts = [e.t_ns for e in sess.stream(gpu=True)]
+    assert ts == sorted(ts), "the widened gpu window did not absorb the NVDEC lag"
+
+    # ...and the same lateness through the UNWIDENED window is what it protects
+    # against, so this fails the moment `_NVDEC_LAG_NS` stops being added.
+    narrow = list(sess._stream_elements(
+        None, start_ns=None, end_ns=None,
+        make_decoders=sess._decoder_binder(False, True, "stream"),
+        raw_all=False, reorder_ns=sess._reorder_ns))
+    assert [e.t_ns for e in narrow] != sorted(e.t_ns for e in narrow)

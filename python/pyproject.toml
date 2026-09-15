@@ -95,10 +95,14 @@ reader = [
     "scipy>=1.10",
     "av>=14.2,<17",
 ]
-# Device-resident NVDEC decode (`Session.stream(gpu=True)`). Heavy (~GB), from
-# NVIDIA's index; lazy-imported so the reader stays CPU-only without it.
+# Device-resident NVDEC decode (`Session.stream(gpu=True)`) and NVENC encode
+# (`NvHevcEncoder`). Heavy (~GB), from NVIDIA's index; lazy-imported so the reader
+# stays CPU-only without it. cvcuda is not optional on the encode side: NVENC
+# rejects a bare cupy array as device input ("incorrect usage of CPU input
+# buffer") and takes only an NVCV tensor, which cvcuda is what supplies.
 gpu = [
     "cupy-cuda13x>=14,<15",
+    "cvcuda-cu13==0.16.*",
     "PyNvVideoCodec>=2.2",
 ]
 # `visio_schema.dataset` stores episode tables as parquet and decodes source

@@ -6,6 +6,55 @@ bump the MINOR version.
 
 ## Unreleased
 
+### The rect encoder tells the truth about its colour, and NVENC can encode from the device
+
+`make_rect_encoder(full_range=True)` used to move the VUI flag and nothing else.
+swscale kept converting RGB to YUV at LIMITED range whatever the frame said it
+was, so the stream carried 16-235 samples labelled 0-255 and any decoder that
+honoured the tag expanded them a second time. Measured: RGB 0/255 both encoded
+to Y 16/235 with the flag on *or* off. `HevcEncoder` now asks the reformatter
+for a full-range destination, so the samples are where the tag says they are.
+
+The matrix travels with the range, because a range without one is still a stream
+a consumer has to guess at. swscale's default here is BT.601 (pure red to Y 81)
+while the recorder signals BT.709 (Y 54), so a delivery re-encoding a decoded
+709 picture through the default shifted every colour and declared nothing.
+`full_range=True` now also declares BT.709 primaries, transfer and matrix.
+`full_range=False` is untouched — this encoder is shared, and moving either half
+moves the decoded pixels every existing consumer sees.
+
+**`NvHevcEncoder` was refused that combination and no longer is.** NVENC has no
+24-bit packed RGB input at all (its formats are `NV12, YUV420, ARGB, ABGR,
+YUV444, P010, YUV444_10BIT, YUV444_16BIT, NV16, P210`), and for packed RGB the
+driver converts with a fixed BT.470BG limited matrix and forces
+`videoFullRangeFlag` to 0 — FFmpeg's own `nvenc.c` special-cases exactly that.
+So the encoder now converts to NV12 itself (`reader/_gpu_color.py`, a fused cupy
+kernel: full-range BT.709 for a delivery, limited BT.601 for the reference video,
+which is what the ABGR path produced) and inserts the colour signalling NVENC
+omits. PyNvVideoCodec exposes no VUI knob, so that is done with FFmpeg's
+`hevc_metadata` bitstream filter over the parameter-set blob — once per session,
+since NVENC prefixes every IRAP with the same bytes, leaving a prefix swap per
+access unit rather than a filter pass.
+
+**It also takes device input.** `NvHevcEncoder.encode` accepts a cupy frame as
+well as a host one, so a device-resident pipeline never copies the picture back
+to system memory; the host RGB-to-ABGR pack it replaces measured 20.8 ms/frame
+against NVENC's own 0.83 ms. The input must be wrapped as an NVCV tensor — NVENC
+rejects a bare cupy array with "incorrect usage of CPU input buffer" — so
+`cvcuda` joins the `[gpu]` extra.
+
+### `Session.stream(gpu=True)` may be mixed with IMU again
+
+`_reorder` releases an element once the ARRIVAL watermark passes its `t_ns`,
+which is sound only under its own invariant: no future message can produce a
+`t_ns` below its own arrival. The CPU decoder is 1-in-1-out so that holds, but
+NVDEC is deep-pipelined and hands back a frame stamped earlier than the access
+unit just fed, so IMU samples inside that gap were released before the frame was
+pushed — measured 851 of 4000 elements out of order against 0 on the CPU path.
+The window is now widened by the decoder's pipeline depth when `gpu=True`, at a
+cost of about fifteen device frames held in the heap. The "camera-only" caveat
+is gone from `stream`, `_gpu_decode` and `rows`.
+
 ### OTA: one package to one device, and a normative spec
 
 A caller now pushes ONE file to ONE device and is agnostic to what is behind it.

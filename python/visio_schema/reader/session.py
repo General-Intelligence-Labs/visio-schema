@@ -110,6 +110,33 @@ _PARALLEL_OVERLAP_FRAC = 0.5
 # device-resident. 5 s is ~5x the worst seam ever measured on this hardware.
 _MAX_SEAM_SLACK_NS = 5_000_000_000
 
+# Extra reorder budget for `gpu=True`, and the reason it is needed at all.
+#
+# `_reorder`'s watermark follows ARRIVAL, which is sound only under its own stated
+# invariant: no future message can produce a `t_ns` below its own arrival. The CPU
+# decoder is 1-in-1-out, so a frame's `t_ns` IS its arrival and the invariant holds.
+# NVDEC is deep-pipelined — `_gpu_video_decoders` emits `(pts, t_AU, Frame)` where
+# `pts` belongs to an EARLIER frame than the access unit just fed — so a frame does
+# arrive with a `t_ns` below its own arrival, and any IMU sample in that gap has
+# already been released. Measured before this window existed: 851 of 4000 elements
+# out of order on a camera+IMU stream (0 on the CPU path), worst backward lag 16.9 ms.
+#
+# Sized from the decoder's PIPELINE DEPTH (~9 frames in flight) rather than from the
+# lag one clip happened to show (16.9 ms).
+#
+# It ADDS to `self._reorder_ns`, which already carries `_seam_slack()` — measured at
+# 985 ms on a real multi-chunk session — so the window in practice is ~1.5 s, not
+# 500 ms, and up to 5.5 s at the `_MAX_SEAM_SLACK_NS` cap. `_reorder` holds every
+# element in that window, both eyes included: ~90 frames of 1080p RGB ≈ 560 MB of
+# DEVICE memory on a normal stereo pass, ~2 GB at the cap. Bounded in time, never in
+# bytes — nothing here consults free VRAM, so a second worker on one card is not free.
+#
+# The window is a symptom fix. The invariant break is in `_gpu_video_decoders`, which
+# reports the ARRIVAL of the access unit just fed for a frame whose `pts` is older; if
+# the decoder reported the oldest pts still in flight instead, `_reorder` would hold
+# exactly as much as it does on the CPU path.
+_NVDEC_LAG_NS = 500_000_000
+
 # What a BARE `stream()` selects. Deliberately excludes IMAGE_SCHEMA: naming a topic
 # is how a derived stream opts in (`_wanted_prefixed`), and "no topics -> the
 # recording's own video and IMU" is a documented guarantee (docs/output.md).
@@ -1021,9 +1048,11 @@ class Session:
         **camera** streams (the depth fast-path): frames come out as on-GPU cupy
         arrays with the *same* timestamps and frame set as the CPU path. This is
         a construction-time choice — the decoder class is bound once here, ops
-        downstream never branch on it. Camera-only: NVDEC's deep pipeline delays
-        frames relative to IMU, so ``gpu`` is not for mixed camera+IMU streaming
-        (VIO stays on the CPU/PyAV path); ``gray`` is unsupported with ``gpu``.
+        downstream never branch on it. Mixed camera+IMU streaming is supported:
+        NVDEC's deep pipeline hands frames back later than the access unit that
+        produced them, so the reorder window is widened by ``_NVDEC_LAG_NS`` to
+        keep the interleave in ``t_ns`` order (it costs ~15 device frames of heap).
+        VIO stays on the CPU/PyAV path; ``gray`` is unsupported with ``gpu``.
 
         ``raw=True`` is **passthrough**: every topic, no decoding at all. Each
         message comes back as a `Record` whose `data` holds the wire payload and
@@ -1080,11 +1109,13 @@ class Session:
         # check above fires at the CALL rather than on the first `next()`.
         return self._stream_elements(
             want, start_ns=start_ns, end_ns=end_ns,
-            make_decoders=make_decoders, raw_all=raw_all, raw_set=raw_set)
+            make_decoders=make_decoders, raw_all=raw_all, raw_set=raw_set,
+            reorder_ns=self._reorder_ns + (_NVDEC_LAG_NS if gpu else 0))
 
     def _stream_elements(
         self, want: set[str] | None, *, start_ns: Ns | None, end_ns: Ns | None,
-        make_decoders, raw_all: bool, raw_set: frozenset[str] = frozenset(),
+        make_decoders, raw_all: bool, reorder_ns: Ns,
+        raw_set: frozenset[str] = frozenset(),
     ) -> Iterator[Element]:
         # Early-stop bound pushed into the reader. `end_ns` alone would be correct
         # (mcap's `end_time` is exclusive, exactly `_in_window`'s `t < end_ns`), but
@@ -1096,7 +1127,7 @@ class Session:
         # window paid to decode the rest of the recording. `start_ns` is deliberately
         # NOT pushed down — a decoder entering a chunk mid-GOP has no keyframe, so the
         # read must begin at each chunk's head and `_in_window` trims the front.
-        end_read = None if end_ns is None else end_ns + self._reorder_ns
+        end_read = None if end_ns is None else end_ns + reorder_ns
 
         def _one_stream(members: list[int]) -> Iterator[tuple[Ns, Ns, Element]]:
             # Sequential: a stream's chunks do not overlap, and decoders reset per
@@ -1125,7 +1156,7 @@ class Session:
 
         # start/end and `t_ns` are the same clock — both are log_time (the bounds
         # come from SessionMeta's summary message_start_time/message_end_time).
-        for el in _reorder(_raw(), self._reorder_ns):
+        for el in _reorder(_raw(), reorder_ns):
             if _in_window(el.t_ns, start_ns, end_ns):
                 yield el
 
