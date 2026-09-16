@@ -6,6 +6,20 @@ bump the MINOR version.
 
 ## Unreleased
 
+### `keyframe_stream` no longer leaks a whole recording's access units
+
+`_keyframe_frames` built one `CompressedVideo` parse buffer before the shard loop
+and reused it for every `ParseFromString` of the read. Under protobuf's default
+upb (C) backend a reused message never frees its arena — each parse retains
+another access unit's bytes — so a single `Session` over a long multi-shard
+recording climbed RSS without bound and was OOM-killed (measured 49 MB → 1.6 GB
+over 15 real ego shards; ~13 GB on a 110-shard recording). The buffer is now
+scoped per shard, released at each seam, the same way `_iter_file` scopes its
+adapter buffer — a bounded sawtooth in place of an unbounded climb. The decoder,
+mcap reader and writer were each ruled out by isolation; the reuse was the whole
+of it (`Clear()` does not free the arena; a fresh instance per parse does).
+Fixes #33.
+
 ### The rect encoder tells the truth about its colour, and NVENC can encode from the device
 
 `make_rect_encoder(full_range=True)` used to move the VUI flag and nothing else.

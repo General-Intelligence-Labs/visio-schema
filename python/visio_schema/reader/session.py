@@ -1452,13 +1452,17 @@ class Session:
         # ONE counter for the whole call: a per-file one would restart the phase at
         # every chunk boundary, a re-phase the caller never asked for.
         seen = aus = 0
-        video = message_class(VIDEO_SCHEMA)()
         for path, prefixed in self._video_files(
             topic, start_ns=start_ns, end_ns=end_ns
         ):
-            # A fresh decoder pair per chunk, as `_iter_file` binds one — free of
-            # consequence here, since every AU fed is self-contained anyway.
+            # A fresh parse buffer AND decoder pair per shard, as `_iter_file` binds
+            # its adapter buffer per file. The buffer must be shard-scoped, not
+            # call-scoped: one reused across the whole recording never frees its
+            # protobuf (upb) arena — each `ParseFromString` retains another AU's
+            # worth of bytes — so RSS climbs unbounded and a long multi-shard read
+            # OOMs. Fresh per shard bounds it to one shard, released at the seam.
             # `flush()` still matters: NVDEC holds frames in flight per chunk.
+            video = message_class(VIDEO_SCHEMA)()
             emit, flush = make_decoders(video)
             for _t_ns, key in self._iter_video_aus(
                 path, prefixed, topic, video, start_ns=start_ns, end_ns=end_ns
