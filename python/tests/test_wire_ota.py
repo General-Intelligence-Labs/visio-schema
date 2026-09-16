@@ -40,6 +40,9 @@ class Device:
         self.clock = clock
         self.dead_after = None
         self.dead_on_recv = False
+        #: What this board answers the pre-Begin OtaQuery with. 0 models
+        #: firmware predating the field, which keeps the caller's chunk.
+        self.max_chunk = 0
 
     # -- transport seam ------------------------------------------------ #
     def send(self, payload):
@@ -62,13 +65,17 @@ class Device:
         return None
 
     # -- helpers -------------------------------------------------------- #
-    def say(self, state, *, acked=None, error_code="", error_message=""):
+    def say(self, state, *, acked=None, error_code="", error_message="",
+            max_chunk=0):
         s = OS(state=state, bytes_received=self.acked if acked is None else acked,
-               error_code=error_code, error_message=error_message)
+               error_code=error_code, error_message=error_message,
+               max_chunk_bytes=max_chunk)
         self.outbox.append(s.SerializeToString())
 
     def ack_contiguous(self, m):
-        if m.HasField("chunk"):
+        if m.HasField("query"):
+            self.say(OS.IDLE, acked=0, max_chunk=self.max_chunk)
+        elif m.HasField("chunk"):
             if m.chunk.offset == self.acked:      # in-order: advance
                 self.acked = m.chunk.offset + len(m.chunk.data)
             self.say(OS.RECEIVING)
@@ -83,13 +90,20 @@ class Device:
     def kinds(self):
         return [m.WhichOneof("body") for m in self.sent]
 
+    @property
+    def begin(self):
+        """The begin, wherever it landed — a pre-Begin OtaQuery precedes it."""
+        return next(m for m in self.sent if m.HasField("begin")).begin
+
 
 def run(dev, *, image=None, clock=None, **kw):
     clock = clock or Clock()
     dev.clock = clock
     kw.setdefault("fw_version", "1.2.3")
+    kw.setdefault("chunk", CHUNK)
+    kw.setdefault("window", 4 * CHUNK)
     return ota.relay(dev.send, dev.recv, image or bytes(dev.total),
-                     chunk=CHUNK, window=4 * CHUNK, clock=clock, **kw)
+                     clock=clock, **kw)
 
 
 # --- the happy path ------------------------------------------------------ #
@@ -99,7 +113,9 @@ def test_streams_every_byte_in_order_exactly_once_then_commits():
     image = bytes(range(256)) * (TOTAL // 256) + bytes(TOTAL % 256)
     out = run(dev, image=image)
     assert out.ok and out.detail == "STAGED"
-    assert dev.kinds[0] == "begin" and dev.kinds[-1] == "commit"
+    assert out.reason is ota.Reason.OK_STAGED
+    # The query is the chunk-size negotiation ota.proto requires before a begin.
+    assert dev.kinds[:2] == ["query", "begin"] and dev.kinds[-1] == "commit"
     rebuilt = b"".join(c.chunk.data for c in dev.chunks)
     assert rebuilt == image
     assert [c.chunk.offset for c in dev.chunks] == list(range(0, TOTAL, CHUNK))
@@ -108,37 +124,41 @@ def test_streams_every_byte_in_order_exactly_once_then_commits():
 def test_begin_carries_the_image_board_and_version_not_the_devices():
     dev = Device()
     run(dev, fw_version="9.9.9", board="audio_ego_v3")
-    b = dev.sent[0].begin
+    b = dev.begin
     assert (b.fw_version, b.board) == ("9.9.9", "audio_ego_v3")
     assert (b.total_bytes, b.chunk_bytes) == (TOTAL, CHUNK)
 
 
-def test_hold_apply_rides_the_begin_and_defaults_off():
-    """Two-phase (rig) mode is declared ONCE, on the begin — nowhere else.
+def test_a_begin_can_no_longer_ask_a_device_to_stage_and_wait():
+    """The two-phase hold is GONE from the wire a pusher speaks.
 
-    Off by default, and absent rather than false: the single-unit begin every
-    fielded device has ever been sent stays byte-identical, and old firmware
-    that predates the field applies at commit as always.
+    It existed to shrink the mixed-version window when the APP pushed to each
+    board of a rig over a phone link. A hub now holds every image locally before
+    it pushes any, so that window is seconds -- and the revert path has to be
+    bulletproof regardless, so a mechanism that keeps the common failures away
+    from it only leaves it untested. A commit applies, on a limb exactly as on a
+    single board.
     """
     dev = Device()
-    run(dev)
-    assert dev.kinds[0] == "begin" and not dev.sent[0].begin.hold_apply
-    plain = dev.sent[0].begin.SerializeToString()
+    out = run(dev)
+    assert out.ok
+    assert not dev.begin.hold_apply
+    assert "hold_apply" not in {f.name for f, _ in dev.begin.ListFields()}
+    assert "apply" not in dev.kinds
+    # and the driver offers no way to ask for one
+    assert not hasattr(ota, "apply")
+    assert not hasattr(ota, "apply_message")
 
-    dev = Device()
-    out = run(dev, hold_apply=True)
-    assert out.ok, out.detail
-    assert dev.kinds[0] == "begin" and dev.sent[0].begin.hold_apply
-    assert dev.sent[0].begin.SerializeToString() != plain
-    assert "chunk" in dev.kinds and dev.kinds[-1] == "commit"
 
-    # begin_message stands alone too, with the same default
-    m = ota_pb2.OtaMessage()
-    m.ParseFromString(ota.begin_message(TOTAL, CHUNK, "1.2.3", BOARD))
-    assert not m.begin.hold_apply
-    m.ParseFromString(ota.begin_message(TOTAL, CHUNK, "1.2.3", BOARD,
-                                        hold_apply=True))
-    assert m.begin.hold_apply
+def test_a_commit_that_is_never_acked_still_succeeds():
+    """The device reboots to apply and its STAGED ack routinely races the link
+    drop, so the ack is not required -- the caller's post-reboot version check
+    is the real proof. With no held commit there is no longer an exception to
+    that rule."""
+    dev = Device(policy=lambda d, m: d.ack_contiguous(m)
+                 if not m.HasField("commit") else None)
+    out = run(dev)
+    assert out.ok and out.reason is ota.Reason.OK_COMMITTED_UNCONFIRMED
 
 
 def test_bundle_terminal_session_is_reserved_and_never_folded():
@@ -146,14 +166,14 @@ def test_bundle_terminal_session_is_reserved_and_never_folded():
     device firmware sets aside for exactly this. A relay must both know it
     (to read the verdict) and never fold it (it is not a transfer's
     status)."""
-    assert ota.BUNDLE_TERMINAL_SESSION == 0xB1D
-    assert ota.BUNDLE_TERMINAL_SESSION != ota.DEFAULT_SESSION_ID
+    assert ota.RIG_TERMINAL_SESSION == 0xB1D
+    assert ota.RIG_TERMINAL_SESSION != ota.DEFAULT_SESSION_ID
 
     # The consequential direction: a bundle SUCCESS on the reserved session
     # mid-transfer must not read as OUR success and end the transfer early.
     def verdict_crosstalk(dev, m):
         dev.ack_contiguous(m)
-        s = OS(state=OS.SUCCESS, session_id=ota.BUNDLE_TERMINAL_SESSION)
+        s = OS(state=OS.SUCCESS, session_id=ota.RIG_TERMINAL_SESSION)
         dev.outbox.append(s.SerializeToString())
 
     dev = Device(policy=verdict_crosstalk)
@@ -161,52 +181,6 @@ def test_bundle_terminal_session_is_reserved_and_never_folded():
     assert out.ok and out.detail == "STAGED", out.detail
     assert len(dev.chunks) == TOTAL // CHUNK and out.acked == TOTAL
 
-
-def test_a_held_commit_needs_the_staged_ack():
-    """With hold_apply the device does NOT reboot, so a link drop after the
-    commit is not the reboot race — an unconfirmed held commit is not staged,
-    and the caller must not release a bundle on the strength of it."""
-    def policy(dev, m):
-        if m.HasField("chunk"):
-            dev.acked = m.chunk.offset + len(m.chunk.data)
-            dev.say(OS.RECEIVING)
-        elif m.HasField("commit"):
-            dev.dead_on_recv = True
-    out = run(Device(policy=policy), hold_apply=True)
-    assert not out.ok and "held commit" in out.detail
-
-    def silent(dev, m):
-        if m.HasField("chunk"):
-            dev.acked = m.chunk.offset + len(m.chunk.data)
-            dev.say(OS.RECEIVING)
-    out = run(Device(policy=silent), hold_apply=True, commit_wait=0.2)
-    assert not out.ok and "held commit" in out.detail
-    # ...whereas the plain (rebooting) commit keeps its racing verdict.
-    out = run(Device(policy=silent), commit_wait=0.2)
-    assert out.ok and "raced the reboot" in out.detail
-
-
-def test_target_device_is_stamped_on_every_frame():
-    """A relay owning a socket has the link as its addressing; on a
-    shared bus leg an unstamped frame is a broadcast."""
-    dev = Device()
-    run(dev, target_device="GILABS-AABBCCDD")
-    assert dev.sent and all(m.target_device == "GILABS-AABBCCDD" for m in dev.sent)
-    assert all(m.session_id == ota.DEFAULT_SESSION_ID for m in dev.sent)
-
-
-def test_an_early_staged_skips_the_transfer_entirely():
-    """A/B instant revert: the slot already holds this build."""
-    def policy(dev, m):
-        if m.HasField("begin"):
-            dev.say(OS.STAGED)
-    dev = Device(policy=policy)
-    out = run(dev)
-    assert out.ok and out.detail == "staged (no transfer needed)"
-    assert not dev.chunks
-
-
-# --- flow control -------------------------------------------------------- #
 
 def test_in_flight_never_exceeds_the_window():
     """The only backpressure on a non-blocking transport."""
@@ -455,3 +429,157 @@ def test_a_status_from_another_session_is_ignored():
 
     assert out.ok, out.detail                  # the foreign FAILED did not land
     assert out.acked == TOTAL
+
+
+# --- the pre-Begin chunk negotiation ------------------------------------- #
+#
+# ota.proto makes this mandatory and it had never been in this module: the
+# laptop pusher grew it, the app grew it separately, and the four rules below
+# each survived in exactly ONE of them.
+
+def _negotiated(advert, *, want=CHUNK, cap=0, adverts=None):
+    """The chunk `relay` would send, for a device advertising `advert`."""
+    dev = Device()
+    dev.max_chunk = advert
+    if adverts is not None:
+        # Several boards answer one query — a begin addressed to a board class.
+        dev.policy = lambda d, m: (
+            [d.say(OS.IDLE, acked=0, max_chunk=a) for a in adverts]
+            if m.HasField("query") else d.ack_contiguous(m))
+    run(dev, chunk=want, chunk_cap=cap, window=64 * CHUNK)
+    return dev.begin.chunk_bytes
+
+
+def test_no_advert_keeps_the_callers_chunk_untouched():
+    """0 is firmware predating the field, and silence is not a failure.
+
+    Specifically NOT floored: USB_CHUNK_BYTES is below MIN_CHUNK_BYTES on
+    purpose (the CDC-ACM gadget RX FIFO), so flooring the caller's own choice
+    would break the serial leg outright.
+    """
+    assert _negotiated(0) == CHUNK
+    assert ota.USB_CHUNK_BYTES < ota.MIN_CHUNK_BYTES
+    assert _negotiated(0, want=ota.USB_CHUNK_BYTES) == ota.USB_CHUNK_BYTES
+
+
+def test_an_advert_wins_over_the_callers_default_including_upwards():
+    """min(want, advert) would make the field a no-op for every board that can
+    take more than the 32 KiB default — which is most of them."""
+    assert _negotiated(56 * 1024, want=32 * 1024) == 56 * 1024
+    assert _negotiated(16 * 1024, want=32 * 1024) == 16 * 1024
+
+
+def test_the_smallest_advert_across_responders_wins():
+    """One image means one chunk size, so it must fit the most constrained
+    board on the link — an eMMC head answering beside two NAND hands."""
+    assert _negotiated(0, adverts=[56 * 1024, 16 * 1024, 32 * 1024]) == 16 * 1024
+
+
+def test_an_advert_is_clamped_to_the_nanopb_ceiling_and_floor():
+    # Above PB_SIZE_MAX the device cannot pb_decode the chunk at all, and the
+    # transfer never advances — which reads like a dead link, not a size bug.
+    assert _negotiated(256 * 1024) == ota.MAX_CHUNK_BYTES
+    assert _negotiated(512) == ota.MIN_CHUNK_BYTES
+
+
+def test_the_link_cap_beats_everything():
+    """The CDC-ACM FIFO is a property of the LINK, which the device cannot see
+    and so cannot report."""
+    assert _negotiated(56 * 1024, cap=ota.USB_CHUNK_BYTES) == ota.USB_CHUNK_BYTES
+
+
+def test_negotiation_can_be_declined_and_then_no_query_is_sent():
+    dev = Device()
+    dev.max_chunk = 56 * 1024
+    run(dev, negotiate=False)
+    assert "query" not in dev.kinds
+    assert dev.begin.chunk_bytes == CHUNK
+
+
+# --- session ids ---------------------------------------------------------- #
+
+def test_next_session_id_is_distinct_per_call():
+    """One process driving SEVERAL boards — a hub updating two limbs — would
+    otherwise have both transfers folding each other's statuses."""
+    ids = {ota.next_session_id() for _ in range(50)}
+    assert len(ids) == 50
+    assert ota.DEFAULT_SESSION_ID not in ids
+    assert ota.RIG_TERMINAL_SESSION not in ids
+
+
+# ── the quiesce the driver owns ──────────────────────────────────────────────
+#
+# The rules used to be copied into every pusher, kept in step by a comment
+# saying so. That held until a fourth pusher appeared -- a rig head driving its
+# own limbs -- and simply did not have them. Its first attempt at each limb died
+# on the 45 s stall while the limb pushed two H.265 feeds up the very link the
+# head was pushing 40 MB down.
+#
+# A policy describes ONE LINK and is absorbed at the hop it arrives on, so no
+# pusher upstream can quiet a leg it is not on. Only the client of a link can,
+# which is exactly why this belongs to the driver every client shares.
+
+
+def test_the_driver_quiets_the_link_before_the_begin_and_restores_it_after():
+    dev = Device()
+    calls = []
+    out = ota.relay(dev.send, dev.recv, b"x" * TOTAL, fw_version="1.0.0",
+                    board=BOARD, chunk=CHUNK, negotiate=False,
+                    quiesce=lambda quiet: (calls.append(quiet), True)[1])
+    assert out.ok
+    assert calls == [True, False], "quiet on entry, restore on exit, once each"
+
+
+def test_the_restore_runs_even_when_the_transfer_fails():
+    """The restore is the half a caller forgets, and the half that matters: a
+    rig head's leg to a limb outlives the transfer, so a policy left behind
+    keeps that limb's cameras dark."""
+    dev = Device()
+    dev.dead_after = 2                      # link dies mid-transfer
+    calls = []
+    out = ota.relay(dev.send, dev.recv, b"x" * TOTAL, fw_version="1.0.0",
+                    board=BOARD, chunk=CHUNK, negotiate=False,
+                    quiesce=lambda quiet: (calls.append(quiet), True)[1])
+    assert not out.ok and out.reason is ota.Reason.FAIL_LINK_DROPPED
+    assert calls == [True, False]
+
+
+def test_a_device_that_never_acked_the_quiesce_is_not_restored():
+    """Nothing was applied, so there is nothing to put back — and sending a
+    policy we never established would REPLACE whatever the device does have."""
+    dev = Device()
+    calls = []
+    ota.relay(dev.send, dev.recv, b"x" * TOTAL, fw_version="1.0.0",
+              board=BOARD, chunk=CHUNK, negotiate=False,
+              quiesce=lambda quiet: (calls.append(quiet), False)[1])
+    assert calls == [True], "no ack, no restore"
+
+
+def test_the_quiesce_precedes_the_negotiation():
+    """The OtaQuery's answer crosses the same link the video is saturating, so
+    a query that times out under load silently costs the transfer its
+    negotiated chunk size."""
+    order = []
+    dev = Device()
+    dev.max_chunk = 16 * 1024
+    real_send = dev.send
+
+    def send(payload):
+        m = ota_pb2.OtaMessage()
+        m.ParseFromString(payload)
+        if m.HasField("query"):
+            order.append("query")
+        real_send(payload)
+
+    ota.relay(send, dev.recv, b"x" * TOTAL, fw_version="1.0.0", board=BOARD,
+              chunk=CHUNK, quiesce=lambda quiet: (order.append("quiesce"), True)[1])
+    assert order[:2] == ["quiesce", "query"]
+
+
+def test_omitting_the_hook_pushes_against_a_live_link():
+    """`--no-pause-video` is a documented bench verb — measuring a push against
+    a loaded link on purpose must stay expressible."""
+    dev = Device()
+    out = ota.relay(dev.send, dev.recv, b"x" * TOTAL, fw_version="1.0.0",
+                    board=BOARD, chunk=CHUNK, negotiate=False)
+    assert out.ok

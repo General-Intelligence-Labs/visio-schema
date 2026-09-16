@@ -54,4 +54,19 @@ message SystemHealth {
   // host has pushed it (SetTime) and/or the RTC seeded it at boot. A Timestamp
   // (not a raw int64) so Foxglove and other tools render it as a readable date.
   google.protobuf.Timestamp realtime = 9;
+
+  // Per-camera image-sensor die temperature. One entry per camera that can
+  // measure it; a sensor with no temperature register, or one that has not
+  // answered yet, is absent rather than zero. Consumers must therefore key on
+  // `index`, not on position in the list.
+  message CameraTemp {
+    // Camera index, matching this device's camera/<index> topics.
+    uint32 index = 1;
+
+    // Image-sensor die temperature in degrees Celsius. Sensor-reported
+    // telemetry: the trend is dependable, the absolute offset is only as
+    // good as the part's own factory calibration.
+    float sensor_temp_c = 2;
+  }
+  repeated CameraTemp camera_temps = 11;
 }

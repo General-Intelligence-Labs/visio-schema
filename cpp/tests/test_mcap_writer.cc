@@ -374,6 +374,33 @@ TEST(McapWriterGate, PartWithNoKeyframeStaysEmptyAndDoesNotRoll) {
   RemoveParts("visio_schema_gate_e");
 }
 
+// (e2) The mirror of (e) one part along: a part that WAS rolled into and then
+// never received a message is removed at close. Such a part carries nothing by
+// construction, and when the write path is what failed it is left without even
+// a header — a file no reader can open, sitting in an otherwise valid session.
+// Part 0 is exempt (see (e) above: an empty part 0 is kept, because removing it
+// would leave a session with no recording at all).
+TEST(McapWriterGate, RotatedPartThatNeverGotAMessageIsRemoved) {
+  RemoveParts("visio_schema_gate_e2");
+  const std::string path = TempPath("visio_schema_gate_e2.mcap");
+  const Channel v = VideoChannel(kFirstDynamic, "/dev/camera/0");
+  {
+    McapWriter w(path, /*max_bytes=*/16);  // rotate_on_keyframe defaults off
+    w.Write(v, VideoMsg(kFirstDynamic, std::string(10, 'a'), true, 1000));   // part0 prime
+    w.Write(v, VideoMsg(kFirstDynamic, std::string(10, 'a'), false, 2000));  // part0, pb=20
+    // Rolls into part1, where the keyframe gate then drops this P-frame: part1
+    // exists on disk and holds nothing. Closing here is the window the fix is
+    // about — no IDR ever arrives to prime it.
+    w.Write(v, VideoMsg(kFirstDynamic, std::string(5, 'a'), false, 3000));
+    EXPECT_EQ(w.bytes_written(), 20u);
+    w.Close();
+  }
+  EXPECT_TRUE(fs::exists(TempPath("visio_schema_gate_e2_0000.mcap")));
+  EXPECT_FALSE(fs::exists(TempPath("visio_schema_gate_e2_0001.mcap")))
+      << "an empty rolled part must not be left on the card";
+  RemoveParts("visio_schema_gate_e2");
+}
+
 // (f) rotate_on_keyframe: once the cap is crossed mid-GOP, the part keeps growing
 // (no roll on P-frames) until a NEW-pair keyframe arrives, which cuts cleanly.
 TEST(McapWriterRotateKeyframe, DefersRollToNextKeyframe) {

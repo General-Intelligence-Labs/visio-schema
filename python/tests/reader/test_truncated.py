@@ -18,8 +18,10 @@ import os
 
 import pytest
 from _helpers import (
+    CAM_W,
     FRAME_DT,
     T0,
+    RecBuilder,
     frame_index_of,
     indexed_frames,
     stereo_calib_builder,
@@ -225,6 +227,48 @@ def test_intact_sibling_answers_calibration_before_a_truncated_file(tmp_path):
     got = s.calibration
     assert sorted(got.cams) == sorted(intact.cams)
     assert got.cam_imu_dt_ns == intact.cam_imu_dt_ns
+
+
+def _derived_cam_sidecar(path, topic="/ego/camera/1/sampled/intrinsics"):
+    """A sidecar carrying ONE camera model — the shape a derived stage writes for
+    its own images (undistorted, or merely downscaled, so not the recording's K)."""
+    b = RecBuilder(path)
+    b.add_camera_calib(topic, K=[[371.0, 0, 476.0], [0, 371.0, 259.0], [0, 0, 1.0]],
+                       D=[0.0, 0.0, 0.0, 0.0], w=960, h=540, model="pinhole")
+    return b.write()
+
+
+def test_a_derived_sidecar_adds_its_camera_without_hiding_the_recording(tmp_path):
+    """A sidecar publishes the model ITS images are in, under its own key. That must
+    ADD a camera, never answer for the whole session."""
+    rec = stereo_calib_builder(tmp_path / "ego_0000.mcap")
+    rec.add_camera("/ego/camera/1", indexed_frames(6))
+    rec.write()
+    side = _derived_cam_sidecar(tmp_path / "sampled.mcap")
+    cal = Session([rec.path, side]).calibration
+    assert sorted(cal.cams) == [
+        "/ego/camera/0", "/ego/camera/1", "/ego/camera/1/sampled"]
+    assert cal.stereo_R is not None and cal.cam_imu_dt_ns is not None
+    assert cal.cams["/ego/camera/1/sampled"].width == 960
+    assert cal.cams["/ego/camera/1"].width == CAM_W  # the recording's own, untouched
+
+
+def test_an_intact_sidecar_does_not_suppress_a_truncated_recording(tmp_path):
+    """Intact files are asked first, so a one-topic sidecar sorts AHEAD of a
+    truncated recording. It must not answer for the topics it does not carry —
+    losing stereo/IMU extrinsics that way is silent and breaks depth downstream."""
+    rec = stereo_calib_builder(tmp_path / "ego_0000.mcap")
+    rec.add_camera("/ego/camera/1", indexed_frames(10))
+    rec.write(chunk_size=512)
+    _chop_tail(rec.path)  # truncated, but its calibration is still readable
+    side = _derived_cam_sidecar(tmp_path / "sampled.mcap")
+    s = Session([rec.path, side])
+    assert s.truncated_files == [rec.path]
+    cal = s.calibration
+    assert sorted(cal.cams) == [
+        "/ego/camera/0", "/ego/camera/1", "/ego/camera/1/sampled"]
+    assert cal.stereo_R is not None, "the sidecar suppressed the recording's extrinsics"
+    assert cal.cam_imu_dt_ns is not None
 
 
 # ---- the scan's own bounds --------------------------------------------- #

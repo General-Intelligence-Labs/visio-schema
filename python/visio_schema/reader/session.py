@@ -40,7 +40,7 @@ import bisect
 import heapq
 import logging
 import struct
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import replace
 from functools import cache
 from pathlib import Path
@@ -109,6 +109,33 @@ _PARALLEL_OVERLAP_FRAC = 0.5
 # ~372 MB per second of window (two 1080p cams), and with `gpu=True` it is
 # device-resident. 5 s is ~5x the worst seam ever measured on this hardware.
 _MAX_SEAM_SLACK_NS = 5_000_000_000
+
+# Extra reorder budget for `gpu=True`, and the reason it is needed at all.
+#
+# `_reorder`'s watermark follows ARRIVAL, which is sound only under its own stated
+# invariant: no future message can produce a `t_ns` below its own arrival. The CPU
+# decoder is 1-in-1-out, so a frame's `t_ns` IS its arrival and the invariant holds.
+# NVDEC is deep-pipelined — `_gpu_video_decoders` emits `(pts, t_AU, Frame)` where
+# `pts` belongs to an EARLIER frame than the access unit just fed — so a frame does
+# arrive with a `t_ns` below its own arrival, and any IMU sample in that gap has
+# already been released. Measured before this window existed: 851 of 4000 elements
+# out of order on a camera+IMU stream (0 on the CPU path), worst backward lag 16.9 ms.
+#
+# Sized from the decoder's PIPELINE DEPTH (~9 frames in flight) rather than from the
+# lag one clip happened to show (16.9 ms).
+#
+# It ADDS to `self._reorder_ns`, which already carries `_seam_slack()` — measured at
+# 985 ms on a real multi-chunk session — so the window in practice is ~1.5 s, not
+# 500 ms, and up to 5.5 s at the `_MAX_SEAM_SLACK_NS` cap. `_reorder` holds every
+# element in that window, both eyes included: ~90 frames of 1080p RGB ≈ 560 MB of
+# DEVICE memory on a normal stereo pass, ~2 GB at the cap. Bounded in time, never in
+# bytes — nothing here consults free VRAM, so a second worker on one card is not free.
+#
+# The window is a symptom fix. The invariant break is in `_gpu_video_decoders`, which
+# reports the ARRIVAL of the access unit just fed for a frame whose `pts` is older; if
+# the decoder reported the oldest pts still in flight instead, `_reorder` would hold
+# exactly as much as it does on the CPU path.
+_NVDEC_LAG_NS = 500_000_000
 
 # What a BARE `stream()` selects. Deliberately excludes IMAGE_SCHEMA: naming a topic
 # is how a derived stream opts in (`_wanted_prefixed`), and "no topics -> the
@@ -930,7 +957,7 @@ class Session:
         )
 
     def _iter_calib(self, want_topics: list[str]) -> Iterator[tuple[str, str, object]]:
-        """Seek only the calib topics, first file wins — INTACT files first.
+        """Seek only the calib topics, first file wins PER TOPIC — INTACT files first.
 
         Every file in a session carries the same calibration, so which one answers
         is free — except that a truncated file may hold only PART of it, and "first
@@ -939,27 +966,47 @@ class Session:
         than reading one more file, so intact files are asked first and a truncated
         one only stands in when none of them carries calibration at all.
 
+        The accounting is PER TOPIC, not per file. A session is not always one
+        camera's worth of calibration: a sidecar publishes the model its OWN images
+        are in (`<topic>/sampled/intrinsics` beside the recording's
+        `/ego/camera/1/intrinsics`), and those are different cameras under different
+        keys. Stopping at the first file that yields anything would let whichever
+        file sorted first answer for the whole session — and since intact files sort
+        ahead of truncated ones, an intact one-topic sidecar beside a truncated
+        recording would suppress that recording's stereo and IMU extrinsics outright.
+        So keep going until every wanted topic has been seen.
+
         On an intact file the read is a chunk-index seek (`_chunks_matching_topics`
         drops every chunk with no calib channel, so a file without them costs zero
         chunk reads). A truncated file has no index to seek by and is a full linear
         pass, which is why the per-file `idx.topics()` pre-filter below matters
-        there and is free here.
+        there and is free here. The usual multi-chunk session costs exactly what it
+        did before: every chunk carries the same topics, so the first file completes
+        `seen` and the rest are skipped unread by that same pre-filter.
         """
         want = set(want_topics)
+        seen: set[str] = set()
         pairs = list(zip(self._files, self._index, strict=True))
         for path, idx in sorted(pairs, key=lambda pi: pi[1].truncated):
-            if not any(t in want for (t, _s, _n) in idx.topics()):
+            here = {t for (t, _s, _n) in idx.topics()} & want
+            if here <= seen:   # nothing this file adds (empty set included)
                 continue
-            got = False
             for schema, channel, msg in self._read_messages(
-                    path, topics=want_topics):
-                if schema is None:
+                    path, topics=sorted(here - seen)):
+                if schema is None or channel.topic in seen:
                     continue
                 proto = message_class(schema.name)()
                 proto.ParseFromString(msg.data)
                 yield schema.name, channel.topic, proto
-                got = True
-            if got:
+                seen.add(channel.topic)
+                if here <= seen:
+                    # Everything this file can contribute, contributed. A recording
+                    # republishes its calibration once per chunk — 131 times per
+                    # topic on a real session — and without this the loop runs the
+                    # file to exhaustion, decompressing every chunk that carries one
+                    # so `_read_calibration` can discard 650 of 655 messages.
+                    break
+            if seen >= want:
                 return
 
     def _read_metadata(self) -> SessionMeta:
@@ -989,7 +1036,7 @@ class Session:
         end_ns: Ns | None = None,
         gray: bool = False,
         gpu: bool = False,
-        raw: bool = False,
+        raw: bool | Collection[str] = False,
     ) -> Iterator[Element]:
         """Yield ``Frame | ImuSample | Record`` in strict capture-time order.
 
@@ -1001,9 +1048,11 @@ class Session:
         **camera** streams (the depth fast-path): frames come out as on-GPU cupy
         arrays with the *same* timestamps and frame set as the CPU path. This is
         a construction-time choice — the decoder class is bound once here, ops
-        downstream never branch on it. Camera-only: NVDEC's deep pipeline delays
-        frames relative to IMU, so ``gpu`` is not for mixed camera+IMU streaming
-        (VIO stays on the CPU/PyAV path); ``gray`` is unsupported with ``gpu``.
+        downstream never branch on it. Mixed camera+IMU streaming is supported:
+        NVDEC's deep pipeline hands frames back later than the access unit that
+        produced them, so the reorder window is widened by ``_NVDEC_LAG_NS`` to
+        keep the interleave in ``t_ns`` order (it costs ~15 device frames of heap).
+        VIO stays on the CPU/PyAV path; ``gray`` is unsupported with ``gpu``.
 
         ``raw=True`` is **passthrough**: every topic, no decoding at all. Each
         message comes back as a `Record` whose `data` holds the wire payload and
@@ -1013,13 +1062,34 @@ class Session:
         is to reproduce a file rather than to interpret it. It also keeps the
         reorder heap cheap: a compressed H.265 AU is ~35 KB against a decoded
         1080p frame's ~6.2 MB, which is what makes a seam-sized window affordable.
+
+        ``raw`` also takes a **collection of canonical topics**: those stream as
+        passthrough `Record`s while every other selected topic decodes normally, in
+        ONE ordered pass. That is what a packager needs — stream-copy the video's
+        compressed access units while the IMU arrives already unbundled as
+        `ImuSample` — and a whole-call flag cannot express it, which used to force
+        consumers into two passes or a hand-rolled merge. ``topics`` must be given
+        and must contain them, so naming a raw topic that was never selected is an
+        error at the call rather than silence in the stream.
         """
         if raw and (gray or gpu):
             raise ValueError(
                 "stream(raw=True) does not decode, so `gray`/`gpu` — which only "
                 "choose a decoder — cannot apply"
             )
+        raw_all = raw is True
+        raw_set = frozenset() if isinstance(raw, bool) else frozenset(raw)
         want = set(topics) if topics is not None else None
+        if raw_set and want is None:
+            raise ValueError(
+                "stream(raw=<topics>) names a SUBSET of what is streamed, so "
+                "`topics` must be given too; use raw=True for whole-call passthrough"
+            )
+        if raw_set and not raw_set <= want:
+            raise ValueError(
+                "stream(raw=…) names topics that are not in `topics`: "
+                f"{', '.join(sorted(raw_set - want))}"
+            )
         if gpu and want is not None:
             # NVDEC has no MJPEG entry, so a named image topic would otherwise raise
             # from inside the generator on its first message, nowhere near the call
@@ -1034,23 +1104,44 @@ class Session:
                 )
         # `raw` decodes nothing, so binding a backend would raise on a combination
         # the check above has already excused.
-        make_decoders = None if raw else self._decoder_binder(gray, gpu, "stream")
+        make_decoders = None if raw_all else self._decoder_binder(gray, gpu, "stream")
         # Eager checks, lazy body — the shape `keyframe_stream` uses, and why every
         # check above fires at the CALL rather than on the first `next()`.
         return self._stream_elements(
             want, start_ns=start_ns, end_ns=end_ns,
-            make_decoders=make_decoders, raw=raw)
+            make_decoders=make_decoders, raw_all=raw_all, raw_set=raw_set,
+            reorder_ns=self._reorder_ns + (_NVDEC_LAG_NS if gpu else 0))
 
     def _stream_elements(
         self, want: set[str] | None, *, start_ns: Ns | None, end_ns: Ns | None,
-        make_decoders, raw: bool,
+        make_decoders, raw_all: bool, reorder_ns: Ns,
+        raw_set: frozenset[str] = frozenset(),
     ) -> Iterator[Element]:
+        # Early-stop bound pushed into the reader. `end_ns` alone would be correct
+        # (mcap's `end_time` is exclusive, exactly `_in_window`'s `t < end_ns`), but
+        # widen it by the reorder window so the heap sees every message that could
+        # still reorder AHEAD of an in-window element before the feed is cut — the
+        # same slack `_reorder`'s watermark waits out. Without this the pass decoded
+        # every remaining frame to EOF (and opened later chunks) only to have
+        # `_in_window` drop them, which is pathological for video: an end-bounded 2 s
+        # window paid to decode the rest of the recording. `start_ns` is deliberately
+        # NOT pushed down — a decoder entering a chunk mid-GOP has no keyframe, so the
+        # read must begin at each chunk's head and `_in_window` trims the front.
+        end_read = None if end_ns is None else end_ns + reorder_ns
+
         def _one_stream(members: list[int]) -> Iterator[tuple[Ns, Ns, Element]]:
             # Sequential: a stream's chunks do not overlap, and decoders reset per
             # chunk (each carries its own keyframes).
             for i in members:
+                idx = self._index[i]
+                # A whole file past the bound holds nothing in-window and no later
+                # file depends on its decoder state (decoders reset per chunk), so
+                # skip it unopened rather than open it for an empty read.
+                if end_read is not None and not _spans_window(idx, None, end_read):
+                    continue
                 yield from self._iter_file(
-                    self._files[i], self._index[i], want, make_decoders, raw)
+                    self._files[i], idx, want, make_decoders, raw_all,
+                    end_ns=end_read, raw_set=raw_set)
 
         def _raw() -> Iterator[tuple[Ns, Ns, Element]]:
             # Merged ACROSS streams by arrival, concatenated within one. Only one
@@ -1065,12 +1156,12 @@ class Session:
 
         # start/end and `t_ns` are the same clock — both are log_time (the bounds
         # come from SessionMeta's summary message_start_time/message_end_time).
-        for el in _reorder(_raw(), self._reorder_ns):
+        for el in _reorder(_raw(), reorder_ns):
             if _in_window(el.t_ns, start_ns, end_ns):
                 yield el
 
     def _wanted_prefixed(
-        self, idx: _FileIndex, want: set[str] | None, raw: bool = False
+        self, idx: _FileIndex, want: set[str] | None, raw_all: bool = False
     ) -> list[str]:
         """Prefixed topic names to read from this file.
 
@@ -1088,7 +1179,7 @@ class Session:
             canon = strip_device_topic_prefix(topic, self._device)
             if canon is None:
                 continue
-            if raw and want is None:
+            if raw_all and want is None:
                 out.append(topic)  # passthrough: EVERY topic, decodable or not
             elif want is None:
                 if schema in _DECODABLE:
@@ -1098,7 +1189,7 @@ class Session:
         return out
 
     def _iter_file_raw(
-        self, path: Path, wanted: list[str]
+        self, path: Path, wanted: list[str], *, end_ns: Ns | None = None,
     ) -> Iterator[tuple[Ns, Ns, Element]]:
         """Passthrough: no decoder, no descriptor resolution, no parse.
 
@@ -1109,7 +1200,8 @@ class Session:
         only copying. `t_ns == arrival` here: nothing expands into the future the
         way an IMU bundle does, so the pair is degenerate on purpose.
         """
-        for schema, ch, msg in self._read_messages(path, topics=wanted):
+        for schema, ch, msg in self._read_messages(
+            path, topics=wanted, end_ns=end_ns):
             if schema is None:
                 continue
             canon = strip_device_topic_prefix(ch.topic, self._device)
@@ -1156,7 +1248,8 @@ class Session:
 
     def _iter_file(
         self, path: Path, idx: _FileIndex, want: set[str] | None,
-        make_decoders, raw: bool = False,
+        make_decoders, raw_all: bool = False, *, end_ns: Ns | None = None,
+        raw_set: frozenset[str] = frozenset(),
     ) -> Iterator[tuple[Ns, Ns, Element]]:
         # Topic-filtered read: skip the discarded majority (IMU-quat, audio, …)
         # instead of building a Python object per message like read_mcap. The
@@ -1166,20 +1259,32 @@ class Session:
         # IMU: a bundle expands to samples up to ~1 s past the bundle's own
         # arrival, and the reorder watermark must follow arrival rather than
         # those expanded sample times — see _reorder.
-        wanted = self._wanted_prefixed(idx, want, raw)
+        wanted = self._wanted_prefixed(idx, want, raw_all)
         if not wanted:
             return
-        if raw:
-            yield from self._iter_file_raw(path, wanted)
+        if raw_all:
+            yield from self._iter_file_raw(path, wanted, end_ns=end_ns)
             return
-        adapters = self._build_adapters(idx, set(wanted), make_decoders)
-        for schema, ch, msg in self._read_messages(path, topics=wanted):
+        # Per-topic passthrough: adapters are built for the DECODED subset only, so a
+        # raw topic still costs no descriptor resolution and needs no generated
+        # module — the property `_iter_file_raw` exists to protect, kept here for the
+        # mixed case. The read itself is shared: one `_read_messages` pass serves
+        # both kinds, which is what makes a single ordered stream possible.
+        decoded = {t for t in wanted
+                   if strip_device_topic_prefix(t, self._device) not in raw_set}
+        adapters = self._build_adapters(idx, decoded, make_decoders)
+        for schema, ch, msg in self._read_messages(
+            path, topics=wanted, end_ns=end_ns):
             if schema is None:
+                continue
+            canon = strip_device_topic_prefix(ch.topic, self._device)
+            if canon in raw_set:
+                t = msg.log_time
+                yield t, t, Record(canon, t, schema.name, None, msg.data)
                 continue
             adapter = adapters.get(schema.name)
             if adapter is None:
                 continue
-            canon = strip_device_topic_prefix(ch.topic, self._device)
             yield from adapter.emit(msg.data, canon, msg.log_time)
         for adapter in adapters.values():
             yield from adapter.flush()

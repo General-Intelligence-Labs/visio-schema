@@ -26,6 +26,12 @@ inline constexpr std::uint32_t kHeartbeat = static_cast<std::uint32_t>(
     visio_schema_v1_wire_ControlStream_CONTROL_STREAM_HEARTBEAT);
 inline constexpr std::uint32_t kCommand = static_cast<std::uint32_t>(
     visio_schema_v1_wire_ControlStream_CONTROL_STREAM_COMMAND);
+// End-to-end and target-addressed like kCommand: a diagnostic-log read is a
+// directed request. Its own stream because the replies are a chunked file
+// transfer, not a single CommandResult; they land on the device's own
+// "/<device>/diag" channel. See service/diag/diag.proto.
+inline constexpr std::uint32_t kDiag = static_cast<std::uint32_t>(
+    visio_schema_v1_wire_ControlStream_CONTROL_STREAM_DIAG);
 
 // True for control streams that never cross a hop (the bus drops them rather than
 // relaying). The single source of truth for "link-scoped"; mirrors Python's

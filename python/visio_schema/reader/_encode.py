@@ -10,13 +10,10 @@ Two backends behind one interface, picked by ``make_rect_encoder``:
 - ``NvHevcEncoder`` — NVENC via ``PyNvVideoCodec`` (GPU): offloads the encode to the
   video engine so it never competes with the depth engine for CPU/GPU compute.
 
-**Both take a HOST ``(H, W, 3)`` uint8 RGB frame** and return ``[(t_ns, au_bytes)]``.
-NVENC is fed through its *CPU input buffer* (``usecpuinputbuffer=True``): it copies
-the host frame into its own managed surface synchronously, which sidesteps the
-device-surface-lifetime trap — NVENC runs a ~3-frame async pipeline, so a caller-owned
-device buffer would be recycled out from under it before the encoder reads it. The one
-extra device→host copy on the GPU backend is cheap (~2 MB); the heavy lifting still
-runs on NVENC silicon.
+Both take a ``(H, W, 3)`` uint8 RGB frame — host or device — and return
+``[(t_ns, au_bytes)]``. NVENC is handed a device NV12 surface we fill ourselves
+(see :mod:`._gpu_color` for why the conversion is ours and not the driver's);
+``NvHevcEncoder._INFLIGHT`` explains how long that buffer has to stay alive.
 
 
 Counterpart of ``_decode``: the same codec table, and the x265 params here
@@ -30,28 +27,58 @@ visio-pp's need to synthesize a stream the reader will accept.
 from __future__ import annotations
 
 import collections
+import functools
 import logging
 from collections.abc import Callable
 from typing import Literal
 
 import numpy as np
 
+# PyAV exposes `color_range` as a bare int with no named enum of its own.
+_RANGE_LIMITED = 1  # AVCOL_RANGE_MPEG — 16-235
+_RANGE_FULL = 2     # AVCOL_RANGE_JPEG — 0-255
+# BT.709 happens to be 1 in all three of AVColorSpace, AVColorPrimaries and
+# AVColorTransferCharacteristic, so one constant covers the whole description.
+_BT709 = 1
 
-def x265_params(keyint: int, *, repeat_headers: bool = False) -> str:
+
+def x265_params(keyint: int, *, repeat_headers: bool = False,
+                frame_threads: int = 1, bitrate_kbps: int | None = None) -> str:
     """The libx265 settings every encoder here shares. One home, deliberately.
 
     keyint => periodic IDR (seekable); bframes=0 => no reorder (1:1, in order);
-    rc-lookahead=0 + frame-threads=1 => low-latency, deterministic emission.
+    rc-lookahead=0 => no lookahead delay.
 
     ``repeat_headers`` puts VPS/SPS/PPS on every IRAP rather than only the first.
     The rect video does not need it (a consumer reads the stream from its start);
     a per-frame `CompressedVideo` message does, because Foxglove requires each
     keyframe message to carry its own parameter sets.
+
+    ``frame_threads`` defaults to **1**, and that is a latency choice rather than a
+    quality one: one frame in, one packet out, deterministically. A live or
+    reference path wants it, and `HevcDepthEncoder` MUST keep it — its luma is the
+    disparity measurement, not a picture. An offline delivery encode wants the
+    opposite and passes ``0`` (auto): measured 10.93 -> 17.31 fps at 1080p, with
+    `bframes=0` and the GOP unchanged. The default lives here, not at the call
+    sites, so adding this knob cannot silently re-tune depth.
+
+    ``bitrate_kbps`` sets a one-pass ABR average with vbv capping the peak at 1.5x.
+    ``None`` leaves libx265 on its default CRF — the reference-video behaviour.
     """
+    rc = ""
+    if bitrate_kbps:
+        # `fps` rides WITH the rate control and only there: ABR has to know the frame
+        # rate to hit an average, and x265 otherwise assumes 25. A CRF stream (depth)
+        # needs none of it, and adding it there would re-tune a measurement stream for
+        # no reason.
+        peak = int(bitrate_kbps * 1.5)
+        rc = (f":fps=30:bitrate={bitrate_kbps}"
+              f":vbv-maxrate={peak}:vbv-bufsize={peak}")
     return (
         f"log-level=none:keyint={keyint}:min-keyint={keyint}:"
-        "bframes=0:rc-lookahead=0:scenecut=0:frame-threads=1"
+        f"bframes=0:rc-lookahead=0:scenecut=0:frame-threads={frame_threads}"
         + (":repeat-headers=1" if repeat_headers else "")
+        + rc
     )
 
 
@@ -96,7 +123,12 @@ class HevcEncoder(_PyAvEncoder):
 
     codec_name = "libx265"
 
-    def __init__(self, width: int, height: int, *, keyint: int = 30) -> None:
+    def __init__(self, width: int, height: int, *, keyint: int = 30,
+                 bitrate_kbps: int | None = None, frame_threads: int = 0,
+                 preset: str | None = "faster", full_range: bool = False) -> None:
+        """``frame_threads``/``preset`` default to the DELIVERY point, not the
+        reference one: this encoder's callers are offline. `HevcDepthEncoder` keeps
+        `x265_params`' own `frame_threads=1` default and never sees a preset."""
         super().__init__()
         from fractions import Fraction
 
@@ -106,7 +138,55 @@ class HevcEncoder(_PyAvEncoder):
         self._ctx.width, self._ctx.height = width, height
         self._ctx.pix_fmt = "yuv420p"
         self._ctx.time_base = Fraction(1, 30)
-        self._ctx.options = {"x265-params": x265_params(keyint)}
+        self._ctx.framerate = Fraction(30, 1)  # VUI timing -> a raw-ES probe reads 30
+        # Describe the picture the way it actually is, and CONVERT it that way.
+        #
+        # The tag alone is not enough: setting `color_range` only moves the VUI flag
+        # while swscale keeps converting RGB -> YUV at LIMITED range, so the stream
+        # shipped 16-235 samples labelled 0-255 and any decoder honouring the tag
+        # expanded them a second time. Measured: RGB 0/255 -> Y 16/235 with the flag
+        # on OR off. `encode` therefore hands the reformatter a full-range
+        # DESTINATION; this attribute is only its label.
+        #
+        # The matrix travels with it. swscale's default here is BT.601 (pure red ->
+        # Y 81) while the recorder signals BT.709 (`color_space=bt709`, red -> Y 54),
+        # so a delivery that re-encodes a decoded 709 picture through the default
+        # shifts every colour AND says nothing about it. Both are declared together
+        # or not at all — a range without a matrix is still a stream a consumer has
+        # to guess at.
+        #
+        # Defaults to False because this encoder is shared and flipping either half
+        # moves the decoded pixel values every existing consumer sees (the fixture
+        # that round-trips a frame index through them catches it). The DELIVERY asks
+        # for this; nothing else has to care.
+        self._ctx.color_range = _RANGE_FULL if full_range else _RANGE_LIMITED
+        self._full_range = full_range
+        self._reformat_kw: dict = {}
+        if full_range:
+            from av.video.reformatter import ColorRange, Colorspace
+
+            self._ctx.colorspace = _BT709
+            self._ctx.color_primaries = _BT709
+            self._ctx.color_trc = _BT709
+            self._reformat_kw = {"dst_color_range": ColorRange.JPEG,
+                                 "dst_colorspace": Colorspace.ITU709}
+        self._ctx.options = {
+            "x265-params": x265_params(
+                keyint, frame_threads=frame_threads, bitrate_kbps=bitrate_kbps),
+        }
+        if bitrate_kbps:
+            # `bit_rate` on the context as well as in x265-params: PyAV reads it when
+            # it opens the codec, and the two disagreeing is how a target silently
+            # becomes advisory.
+            self._ctx.bit_rate = bitrate_kbps * 1000
+        if preset:
+            # A SEPARATE option, never a key inside `x265-params`: x265's param
+            # parser does not recognise `preset` there and ignores it silently
+            # (measured: identical fps and a byte-identical stream). As an option it
+            # reaches `x265_param_default_preset`, which FFmpeg applies BEFORE
+            # parsing `x265-params` — so everything above still overrides it, and
+            # `bframes=0`/`keyint` survive the faster rungs (verified).
+            self._ctx.options["preset"] = preset
         self._idx = 0
 
     def encode(self, rgb: np.ndarray, t_ns: int) -> list[tuple[int, bytes]]:
@@ -114,49 +194,250 @@ class HevcEncoder(_PyAvEncoder):
 
         self._pending.append(int(t_ns))
         vf = av.VideoFrame.from_ndarray(np.ascontiguousarray(rgb), format="rgb24")
-        vf = vf.reformat(format="yuv420p")
+        vf.color_range = _RANGE_FULL if self._full_range else _RANGE_LIMITED
+        # `dst_color_range`/`dst_colorspace` are what actually steer swscale; the
+        # frame's own attributes above describe the SOURCE, and for rgb24 they tell
+        # it nothing it did not already know.
+        vf = vf.reformat(format="yuv420p", **self._reformat_kw)
         vf.pts = self._idx  # monotonic counter so PyAV doesn't invent a pts
         self._idx += 1
         return self._pair(self._ctx.encode(vf), bytes)
 
 
-class NvHevcEncoder(_NvEncoder):
-    """NVENC (PyNvVideoCodec): host RGB -> Annex-B H.265 on the video engine.
+def _want_gpu(choice: str, gpu_backend: bool) -> bool:
+    """``"auto"`` follows the pipeline's backend; ``"gpu"``/``"cpu"`` override it."""
+    return choice == "gpu" or (choice == "auto" and gpu_backend)
 
-    Lazy GPU dep (``PyNvVideoCodec``): imported only when constructed, so the CPU-only
-    SDK import path stays free of GPU wheels. Raises on construction if NVENC can't
-    initialise (missing wheel, no encode-capable GPU, session cap) — ``make_rect_encoder``
-    catches that and falls back to libx265.
+
+def _require_even(width: int, height: int, who: str) -> None:
+    """4:2:0 has no half chroma sample, and neither arm degrades gracefully: x265
+    refuses the geometry outright while the NV12 kernels truncate `W/2` and write a
+    mis-sized buffer. Fail here so both fail the same way."""
+    if width % 2 or height % 2:
+        raise ValueError(f"{who}: 4:2:0 needs even dimensions, got {width}x{height}")
+
+
+@functools.lru_cache(maxsize=8)
+def insert_colour_vui(param_sets: bytes, width: int, height: int) -> bytes:
+    """Add full-range BT.709 signalling to a blob of Annex-B parameter sets.
+
+    Cached because it is pure and costs ~6 ms of PyAV setup, while `make_rect_encoder`
+    runs once per CLIP per eye — a hundred-clip episode would otherwise spend a second
+    of it rebuilding the same bytes.
+
+    NVENC emits ``video_signal_type_present_flag = 0`` — no range, no matrix, no
+    primaries — and PyNvVideoCodec exposes no VUI knob to change that (NVIDIA's API
+    reference lists only codec/preset/tuning/rc/bitrate/gop/bf/profile/slice/timing,
+    and candidate key names are accepted and silently ignored). So the fields have to
+    be INSERTED, which reflows the rest of the SPS and its emulation prevention —
+    FFmpeg's ``hevc_metadata`` filter already does that correctly, and hand-rolling a
+    bitstream rewriter to avoid one dependency we already have would be a poor trade.
+    """
+    import io
+
+    import av
+    from av.bitstream import BitStreamFilterContext
+
+    # The filter needs codec parameters to initialise, and the only thing that
+    # carries them is a stream — so synthesize one over a throwaway buffer rather
+    # than demux a file we do not have. Nothing is ever written to it.
+    with av.open(io.BytesIO(), "w", format="hevc") as container:
+        stream = container.add_stream("hevc")
+        stream.width, stream.height = width, height
+        bsf = BitStreamFilterContext(
+            "hevc_metadata=video_full_range_flag=1:colour_primaries=1"
+            ":transfer_characteristics=1:matrix_coefficients=1",
+            in_stream=stream,
+        )
+        out = bsf.filter(av.Packet(param_sets))
+        # `flush` returns None rather than an empty list when the filter is holding
+        # nothing, which is the normal case here — parameter sets pass straight
+        # through. Measured on PyAV 16.1; not a hedge.
+        out += bsf.flush() or []
+    patched = b"".join(bytes(p) for p in out)
+    if not patched:
+        raise RuntimeError(
+            "insert_colour_vui: hevc_metadata returned no parameter sets; cannot "
+            "declare the delivery's colour range")
+    return patched
+
+
+class NvHevcEncoder(_NvEncoder):
+    """NVENC (PyNvVideoCodec): RGB -> Annex-B H.265 on the video engine.
+
+    Takes a HOST ``(H, W, 3)`` uint8 RGB frame or a DEVICE one (cupy / anything with
+    ``__cuda_array_interface__``) — a host frame is uploaded once and everything after
+    that stays on the GPU, so a device-resident pipeline never round-trips through
+    system memory. See :mod:`._gpu_color` for why the conversion to NV12 is ours and
+    not the driver's. A DEVICE frame must be ready on the legacy default stream; a
+    caller on its own non-blocking stream owns that ordering (see ``__init__``).
+
+    Lazy GPU deps (``PyNvVideoCodec``, ``cupy``, ``cvcuda``): imported only when
+    constructed, so the CPU-only SDK import path stays free of GPU wheels. Raises on
+    construction if NVENC can't initialise (missing wheel, no encode-capable GPU,
+    session cap) — ``make_rect_encoder`` catches that and falls back to libx265.
     """
 
     codec_name = "nvenc-hevc"
 
+    # NVENC runs a ~4-frame asynchronous pipeline (measured, both tunings) and reads
+    # the input surface after `Encode` returns, so a `_ring` slot must not come round
+    # again before the encoder is done with it; 6 leaves two frames of headroom.
+    # NVENC's C API signals release exactly (UnmapInputResource); PyNvVideoCodec's
+    # `Encode` does not expose it, so the headroom is a guess where it could be a fact.
+    _INFLIGHT = 6
+
     def __init__(self, width: int, height: int, *, keyint: int = 30,
-                 preset: str = "P3") -> None:
+                 preset: str = "P3", bitrate_kbps: int | None = None,
+                 full_range: bool = False) -> None:
         super().__init__()
+        import cupy
+        import cvcuda
         import PyNvVideoCodec as nvc
 
-        # NVENC packed-RGB input is ABGR: a 32-bit word read as bytes [R, G, B, A]
-        # (verified by a red/blue round-trip). usecpuinputbuffer=True => NVENC copies
-        # this host buffer into its own surface synchronously (no device-lifetime trap).
-        self._enc = nvc.CreateEncoder(
-            width, height, "ABGR", True,
-            codec="hevc", preset=preset, tuning_info="ultra_low_latency",
-            bf=0, gop=keyint,
-        )
-        self._abgr = np.empty((height, width, 4), np.uint8)  # reused host scratch
-        self._abgr[..., 3] = 255
+        self._cupy, self._cvcuda = cupy, cvcuda
+        self._full_range = full_range
+        # A delivery target (bitrate_kbps) => VBR at that average, vbv peak 1.5x, and
+        # the high_quality tuning; None keeps the low-latency reference-video default.
+        if bitrate_kbps:
+            rc = dict(tuning_info="high_quality", rc="vbr",
+                      bitrate=bitrate_kbps * 1000, maxbitrate=int(bitrate_kbps * 1500))
+        else:
+            rc = dict(tuning_info="ultra_low_latency")
+        # Bind NVENC to the CUDA context, and to a stream OF OUR OWN. Without the
+        # context it makes its own, and a device pointer from ours is then not one it
+        # can read. The DEVICE is whichever one the caller already selected —
+        # `cupy.empty` forces that one's primary context to exist without moving it.
+        #
+        # `cudastream` must be a REAL handle: PyNvVideoCodec's default is 0 and cupy's
+        # default-stream ptr is ALSO 0, so `get_current_stream().ptr` bound nothing at
+        # all, and NVENC read its input unordered against the kernels filling it. The
+        # stream is what orders the fill before the read; `_ring` is what keeps the
+        # surfaces out of any other encoder's reach.
+        #
+        # BLOCKING (`non_blocking=False`), deliberately: it still synchronizes
+        # implicitly with the legacy default stream, which is where the caller's
+        # decode and remap run, so a caller needs no event of its own. A caller that
+        # moves to its own NON-blocking stream owns that ordering.
+        cupy.empty(1, cupy.uint8)
+        ctx = cupy.cuda.driver.ctxGetCurrent()
+        self._stream = cupy.cuda.Stream(non_blocking=False)
+        # `usecpuinputbuffer=False` + NV12: we hand NVENC a device surface we filled
+        # ourselves. NOTE the input must be an NVCV (cvcuda) tensor — a bare cupy
+        # array is rejected with "incorrect usage of CPU input buffer" even here,
+        # so `encode` wraps every buffer with `cvcuda.as_tensor` (zero-copy).
+        # Both inside the stream: NVENC's session setup so any device work it does
+        # lands there too, and the ring because cupy keys its free lists by the
+        # ALLOCATING stream — which is what lets `flush` give exactly these blocks
+        # back. A private ring rather than a per-frame `cupy.empty`: that goes to the
+        # process-wide pool, and a block one encoder frees is handed to whichever
+        # encoder allocates next — measured, every one of 13 pointers reached both.
+        with self._stream:
+            self._enc = nvc.CreateEncoder(
+                width, height, "NV12", False, cudacontext=ctx,
+                cudastream=self._stream.ptr,
+                codec="hevc", preset=preset, bf=0, gop=keyint, **rc,
+            )
+            self._ring: list[cupy.ndarray] = [
+                cupy.empty((height * 3 // 2, width), cupy.uint8)
+                for _ in range(self._INFLIGHT)]
+        self._shape = (height, width)
+        self._slot = 0
+        self._swapped = 0
+        self._params = self._colour_params(width, height) if full_range else None
 
-    def encode(self, rgb: np.ndarray, t_ns: int) -> list[tuple[int, bytes]]:
+    def _colour_params(self, width: int, height: int) -> tuple[bytes, bytes]:
+        """``(as NVENC writes them, with the colour description added)``.
+
+        Runs ONCE, because those bytes are constant for an encoder session: NVENC
+        prefixes every IRAP access unit with exactly this blob, so `_au` only has to
+        swap a known prefix (measured 0.5 us/AU, against 0.3 ms/AU to filter each).
+        """
+        original = bytes(self._enc.GetSequenceParams())
+        return original, insert_colour_vui(original, width, height)
+
+    def encode(self, rgb, t_ns: int) -> list[tuple[int, bytes]]:
+        from ._gpu_color import rgb_to_nv12
+
+        if rgb.shape[:2] != self._shape:
+            # NVENC is configured for one geometry; a frame of another size would be
+            # converted into a correctly-shaped NV12 buffer of the WRONG picture.
+            raise ValueError(
+                f"NvHevcEncoder: frame is {rgb.shape[1]}x{rgb.shape[0]} but the "
+                f"session was opened at {self._shape[1]}x{self._shape[0]}")
+        nv12 = self._ring[self._slot]
+        # Wrap at the increment, so the index is always in range. `itertools.cycle` is
+        # the tempting tidy-up and a trap: it snapshots the list, so `flush`'s
+        # `_ring.clear()` would stop dropping the references and the reclaim there
+        # would silently stop working.
+        self._slot = (self._slot + 1) % self._INFLIGHT
         self._pending.append(int(t_ns))
-        self._abgr[..., :3] = rgb  # host RGB -> ABGR bytes [R, G, B, 255]
-        return self._pair(self._enc.Encode(self._abgr), self._au)
+        # On the encoder's own stream so the fill is ordered before NVENC reads it,
+        # and so every buffer allocated here belongs to this encoder's arena.
+        with self._stream:
+            # Zero-copy for a cupy array AND for a foreign `__cuda_array_interface__`
+            # carrier, an upload for a host one — so no branch is needed, and the
+            # foreign case reaches `rgb_to_nv12` as something cupy will accept.
+            src = self._cupy.asarray(rgb)
+            rgb_to_nv12(src, full_range=self._full_range, out=nv12)
+            # A fresh tensor per frame, never cached beside the slot: cvcuda keeps its
+            # own tensors alive, so a cached one pins the surface past `flush` and the
+            # reclaim there silently stops working. The loop is NVENC-bound anyway.
+            packets = self._enc.Encode(self._cvcuda.as_tensor(nv12[:, :, None], "HWC"))
+        return self._pair(packets, self._au)
+
+    def _au(self, d) -> bytes:
+        """Every emitted access unit passes here, on both `encode` and `flush`.
+
+        Overriding the pairing hook rather than wrapping two call sites is what
+        stops the two paths drifting — `flush`'s tail would otherwise be the one
+        that quietly shipped unpatched parameter sets.
+        """
+        au = bytes(d["data"])
+        if self._params is None:
+            return au
+        original, patched = self._params
+        if not au.startswith(original):
+            return au  # a delta frame: it carries no parameter sets to swap
+        self._swapped += 1
+        return patched + au[len(original):]
+
+    def flush(self) -> list[tuple[int, bytes]]:
+        out = super().flush()
+        # Hand the ring back: cupy's free lists are per-stream, so otherwise it stays
+        # cached on a stream nothing else can allocate from — 17.8 MiB (6 x 2.97 MiB
+        # at 1080p) per encoder, and `pack` builds an encoder PAIR per clip, ~3.5 GB
+        # over a 100-clip episode. cupy would reclaim it under its OWN pressure, so
+        # this is not a leak to cupy; it is invisible to everyone else, which is the
+        # point on a box where NVENC's surfaces and a TRT engine want the same VRAM.
+        #
+        # `clear_cache` first, or this gives back 14.8 of the 17.8: cvcuda caches the
+        # tensor `encode` wrapped the last slot in, and that pins the surface. The
+        # next clip's flush frees only its OWN stream's arena, so that block is
+        # stranded for good — measured 2.97 MiB per clip, ~300 MiB an episode. LOCAL
+        # scope, not the GLOBAL default: this drops only what this thread cached, and
+        # a live consumer keeps its own tensors (checked: `_GpuRemap` still remaps
+        # correctly after one). 1.7 us, once per clip.
+        self._cvcuda.clear_cache(self._cvcuda.ThreadScope.LOCAL)
+        self._ring.clear()
+        self._cupy.get_default_memory_pool().free_all_blocks(stream=self._stream)
+        if self._params is not None and not self._swapped:
+            # Every IRAP is supposed to carry the blob `_colour_params` probed. If
+            # none ever matched, the driver emits something else per-AU and the whole
+            # stream shipped with no colour signalling — silently, which is the one
+            # outcome this feature exists to prevent.
+            raise RuntimeError(
+                "NvHevcEncoder: no access unit carried the parameter sets this "
+                "session probed, so the delivery has no colour signalling")
+        return out
 
 
 def make_rect_encoder(
     width: int, height: int, *, keyint: int,
     choice: Literal["auto", "gpu", "cpu"], gpu_backend: bool,
-    log: logging.Logger,
+    log: logging.Logger, bitrate_kbps: int | None = None,
+    frame_threads: int = 0, preset: str | None = "faster",
+    full_range: bool = False,
 ) -> HevcEncoder | NvHevcEncoder:
     """Pick the rect-video H.265 encoder.
 
@@ -164,14 +445,35 @@ def make_rect_encoder(
     libx265 on the cpu backend; ``"gpu"`` forces NVENC; ``"cpu"`` forces libx265. If
     NVENC is requested but cannot initialise, warn and fall back to libx265, so the
     stage never hard-fails on a missing/capped NVENC session.
+
+    ``bitrate_kbps`` sets a one-pass ABR/VBR average (a delivery bitrate floor) on
+    whichever encoder is chosen; ``None`` leaves each at its default (CRF / low
+    latency) — the reference-video behaviour a depth run wants.
+
+    ``frame_threads``/``preset`` tune the libx265 arm only. They are x265's own
+    vocabulary and NVENC's ``preset`` is a different namespace ("P1".."P7"), so
+    forwarding one to the other would be a category error, not a convenience.
+
+    ``full_range`` is different: it describes the STREAM, not the encoder, so a
+    caller that asks for it means it whichever encoder runs — full-range BT.709
+    samples under a VUI that says so, on both backends. Neither encoder gets there
+    by itself (swscale converts at limited range whatever the tag says; NVENC's
+    packed-RGB path is hardwired to BT.470BG limited and writes no VUI at all), so
+    each arm builds it deliberately. A delivery whose colour depends on which
+    machine encoded it is the bug this argument exists to prevent.
     """
-    want_gpu = choice == "gpu" or (choice == "auto" and gpu_backend)
-    if want_gpu:
+    _require_even(width, height, "make_rect_encoder")
+    if _want_gpu(choice, gpu_backend):
         try:
-            return NvHevcEncoder(width, height, keyint=keyint)
+            return NvHevcEncoder(width, height, keyint=keyint,
+                                 bitrate_kbps=bitrate_kbps, full_range=full_range)
         except Exception as e:
             log.warning("NVENC unavailable (%s); rect video falls back to libx265", e)
-    return HevcEncoder(width, height, keyint=keyint)
+    # The fallback carries the delivery settings too: an NVENC miss must change the
+    # encoder, never the rate target the caller asked for.
+    return HevcEncoder(width, height, keyint=keyint, bitrate_kbps=bitrate_kbps,
+                       frame_threads=frame_threads, preset=preset,
+                       full_range=full_range)
 
 
 # --------------------------------------------------------------------------- #
@@ -396,15 +698,11 @@ def make_depth_encoder(
     something different — the failure mode this guards against is a run configured
     for near-lossless depth that quietly ships the default instead.
     """
-    if width % 2 or height % 2:
-        # Checked here, not inside the try below: 4:2:0 needs even dimensions on
-        # BOTH encoders, so demoting this to "NVENC unavailable" would fall back to
-        # a path that cannot take them either, and send the reader hunting for a GPU
-        # problem that does not exist.
-        raise ValueError(
-            f"4:2:0 needs even dimensions, got {width}x{height}")
-    want_gpu = choice == "gpu" or (choice == "auto" and gpu_backend)
-    if want_gpu:
+    # Checked before the try below: 4:2:0 needs even dimensions on BOTH encoders, so
+    # demoting this to "NVENC unavailable" would fall back to a path that cannot take
+    # them either, and send the reader hunting for a GPU problem that does not exist.
+    _require_even(width, height, "make_depth_encoder")
+    if _want_gpu(choice, gpu_backend):
         try:
             encoder = NvHevcDepthEncoder(width, height, keyint=keyint)
         except Exception as e:

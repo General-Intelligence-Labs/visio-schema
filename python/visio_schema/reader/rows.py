@@ -55,8 +55,10 @@ def elements(
     watermark has passed its ``t_ns`` by this much. ``0`` releases immediately and is
     right only for a single-topic stream or one already in order.
 
-    ``gray=True`` decodes mono8 (VIO). There is deliberately no ``gpu``: NVDEC's deep
-    pipeline delays frames relative to IMU, and a row source is by definition mixed.
+    ``gray=True`` decodes mono8 (VIO). There is deliberately no ``gpu``: a row source
+    is a live/bus source, and the widened reorder window that makes NVDEC's pipeline
+    delay safe for a file (`session._NVDEC_LAG_NS`) is half a second of added latency
+    a live consumer should not pay silently.
 
     ``adapters`` overrides the global table per schema name, exactly as
     `build_adapter` documents.

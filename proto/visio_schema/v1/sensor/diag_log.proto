@@ -1,0 +1,39 @@
+// visio/sensor/v1/diag_log.proto
+//
+// One batch of the device's own diagnostic log, published on "/<root>/diag_log"
+// beside "/<root>/system_health" — so the log lands INSIDE every recording, on
+// the same clock as the footage. A customer who sends us an MCAP has sent us
+// the device's account of what it was doing, whether or not they ever open a
+// return.
+//
+// The bytes are one complete `VDLW` container (docs/protocol/diag_log.md): a
+// 32-byte plaintext header and ChaCha20 ciphertext of a run of log lines. Each
+// message is self-contained on purpose. A reader joins mid-stream, a stream
+// policy may drop messages, an MCAP can be torn at a power cut — any of those
+// makes a continuous keystream unrecoverable from that point on, so every
+// message carries its own nonce and decrypts alone. The header's magic is what
+// tells a reader this is a log batch and not a recording part.
+//
+// A sibling of SystemHealth rather than a field inside it, deliberately.
+// SystemHealth is a typed message Foxglove renders; an opaque ciphertext field
+// would turn a readable health panel into noise. And MCAP indexes per channel,
+// so a host tool lifts the log out of a recording without touching video —
+// while SetStreamPolicy can drop it by topic for a live viewer.
+//
+// Cadence is bursty and low: batched at ~0.2–1 Hz, hard-capped by the device so
+// a kernel error storm cannot inflate every recording on a sick unit.
+
+syntax = "proto3";
+
+package visio_schema.v1.sensor;
+
+import "google/protobuf/timestamp.proto";
+
+message DiagLog {
+  // Time of the LAST line in the batch (producer's local monotonic clock), so
+  // a reader aligning log to video seeks to the moment the batch closed.
+  google.protobuf.Timestamp timestamp = 1;
+
+  // One complete VDLW container. Opaque to every consumer but the decoder.
+  bytes blob = 2;
+}
