@@ -1,5 +1,6 @@
 #include "visio_schema/mcap/writer.hpp"
 
+#include "visio_schema/log.hpp"
 #include "visio_schema/mcap/recording_crypto.hpp"
 
 #include <fcntl.h>
@@ -114,7 +115,8 @@ class CloexecFileWriter final : public ::mcap::IWritable {
     // the optimization (default buffering stands), but say so — a silently
     // absent buffer looks exactly like the fix not working.
     if (::setvbuf(file_, nullptr, _IOFBF, 256 * 1024) != 0) {
-      std::fprintf(stderr, "mcap: setvbuf(256KiB) failed — default buffering\n");
+      log::Write(log::Severity::kWarning,
+                 "mcap: setvbuf(256KiB) failed — default buffering");
     }
     if (encrypting_) {
       const ::mcap::Status st = BeginVrec(filename);
@@ -143,8 +145,9 @@ class CloexecFileWriter final : public ::mcap::IWritable {
       if (!cipher_->XorAt(size_, src + done, n, scratch_.data())) {
         if (!write_err_logged_) {
           write_err_logged_ = true;
-          std::fprintf(stderr, "mcap: VREC encrypt failed at offset %llu\n",
-                       static_cast<unsigned long long>(size_));
+          log::Write(log::Severity::kError,
+                     "mcap: VREC encrypt failed at offset %llu",
+                     static_cast<unsigned long long>(size_));
         }
         return;
       }
@@ -165,9 +168,9 @@ class CloexecFileWriter final : public ::mcap::IWritable {
     // spans included) matches the file, and say so once.
     if (wrote != size && !write_err_logged_) {
       write_err_logged_ = true;
-      std::fprintf(stderr, "mcap: short write (%zu of %llu): %s\n", wrote,
-                   static_cast<unsigned long long>(size),
-                   std::strerror(errno));
+      log::Write(log::Severity::kError, "mcap: short write (%zu of %llu): %s",
+                 wrote, static_cast<unsigned long long>(size),
+                 std::strerror(errno));
     }
     // The read-back's copy of what just landed, keyed by FILE offset —
     // below the cipher, so it is the bytes as they are on disk. This
@@ -278,10 +281,10 @@ class CloexecFileWriter final : public ::mcap::IWritable {
     if (std::fflush(file_) != 0) {
       if (!sync_disabled_) {
         sync_disabled_ = true;
-        std::fprintf(stderr,
-                     "mcap: fflush in SyncSpan failed (%s) — dirty-set "
-                     "bounding disabled for this part\n",
-                     std::strerror(errno));
+        log::Write(log::Severity::kWarning,
+                   "mcap: fflush in SyncSpan failed (%s) — dirty-set bounding "
+                   "disabled for this part",
+                   std::strerror(errno));
         if (readback_) readback_->OnSyncDisabled();
       }
       // Aligned like the happy path, or the next span's fadvise would round
@@ -308,10 +311,11 @@ class CloexecFileWriter final : public ::mcap::IWritable {
     if (err == 0 && prev_len_ > 0) err = EvictPreviousSpan();
     if (err != 0 && !sync_disabled_) {
       sync_disabled_ = true;
-      std::fprintf(stderr,
-                   "mcap: span writeback failed (%s) — dirty-set bounding "
-                   "disabled for this part\n",
-                   std::strerror(err));
+      log::Write(
+          log::Severity::kWarning,
+          "mcap: span writeback failed (%s) — dirty-set bounding disabled "
+          "for this part",
+          std::strerror(err));
       if (readback_) readback_->OnSyncDisabled();
     }
     prev_off_ = off;
@@ -444,8 +448,9 @@ void McapWriter::WriteStoredMetadata() {
   // must not be silent either (the part would ship without capture meta).
   const ::mcap::Status st = writer_->write(md);
   if (!st.ok())
-    std::fprintf(stderr, "McapWriter: metadata record write failed: %s\n",
-                 st.message.c_str());
+    log::Write(log::Severity::kError,
+               "McapWriter: metadata record write failed: %s",
+               st.message.c_str());
 }
 
 bool McapWriter::ShouldRoll() const {
@@ -485,10 +490,10 @@ void McapWriter::CloseCurrentPart() {
       // Best-effort but never silent, the same contract FsyncPathBestEffort
       // keeps: on a card that has gone read-only this is the one failure that
       // puts the artifact back, so it says what shipped and why.
-      std::fprintf(stderr,
-                   "McapWriter: cannot remove empty part %s (it will ship in "
-                   "the session): %s\n",
-                   p.c_str(), std::strerror(errno));
+      log::Write(log::Severity::kWarning,
+                 "McapWriter: cannot remove empty part %s (it will ship in the "
+                 "session): %s",
+                 p.c_str(), std::strerror(errno));
     }
     file_sync::FsyncDirEntry(p);  // the REMOVAL is what has to survive a cut
     return;
@@ -549,13 +554,12 @@ void McapWriter::Write(const Channel& channel, const Message& msg) {
       // any legitimate wait.
       auto& n = unprimed_video_frames_[channel.topic];
       if (++n == kUnprimedVideoWarnFrames) {
-        std::fprintf(stderr,
-                     "McapWriter: %s has sent %llu video frames with no "
-                     "keyframe — the whole topic is being dropped from this "
-                     "recording. If it is relayed, its device may predate the "
-                     "wire keyframe flag.\n",
-                     channel.topic.c_str(),
-                     static_cast<unsigned long long>(n));
+        log::Write(
+            log::Severity::kWarning,
+            "McapWriter: %s has sent %llu video frames with no keyframe — "
+            "the whole topic is being dropped from this recording. If it is "
+            "relayed, its device may predate the wire keyframe flag.",
+            channel.topic.c_str(), static_cast<unsigned long long>(n));
       }
       return;  // pre-keyframe P-frame — drop, don't count
     }

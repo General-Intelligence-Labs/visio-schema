@@ -54,6 +54,8 @@ add_library(visio_schema STATIC
   "${NANOPB_DIR}/pb_common.c"
   # nanopb-generated bindings for the whole schema (Header + all payloads)
   ${NANOPB_GEN_SRCS}
+  # where the library reports what it notices (visio_schema/log.hpp)
+  src/log.cc
   # hand-written codec
   src/codec/crc16.cc
   src/codec/cobs.cc
@@ -132,6 +134,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT CMAKE_CROSSCOMPILI
     tests/test_framed_outbox.cc
     tests/test_frame_once.cc
     tests/test_topic_match.cc
+    tests/test_log.cc
     tests/test_golden_vectors.cc
     tests/test_ota_vectors.cc
     tests/test_wire_ota_quiesce.cc
