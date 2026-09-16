@@ -132,3 +132,79 @@ def test_parameter_sets_are_swapped_only_on_irap():
     swapped = [au for au in aus if au.startswith(patched)]
     assert swapped, "no access unit carried the patched parameter sets"
     assert not any(au.startswith(original) for au in aus)
+
+
+def test_two_encoders_never_deliver_each_others_pictures():
+    """The pack's real shape: TWO sessions alternating, one per eye.
+
+    Three ingredients, and dropping any one makes this pass on the broken code:
+    full resolution and textured (a 192x128 flat frame encodes before the next submit
+    can collide with it), two encoders alternating (one has nobody to steal from), and
+    a FRESH device allocation per frame — that churn is what hands one encoder the
+    block the other just freed, and it is what the real path does (NVDEC copies out
+    into a new buffer, cvcuda.remap allocates its output). Pre-uploading the frames
+    once makes the race disappear.
+
+    The eye tag alone catches 100% of cross-encoder corruption (measured: it is whole
+    -frame substitution, never a tear). The index tag is not redundant with it — it is
+    the only thing here that can catch a SAME-encoder stale read, which is what
+    ``_INFLIGHT`` guards.
+    """
+    w, h, n, distinct = 1920, 1080, 120, 8
+    tags = (30, 220)
+    rng = np.random.default_rng(0)
+    # Per-eye tag block a decode reads back, over noise the encoder cannot collapse
+    # to nothing. Held on the HOST: the upload inside the loop is the churn.
+    host = []
+    base = rng.integers(0, 256, (h, w, 3), dtype=np.uint8)   # shared: only tags are read
+    for tag in tags:
+        frames = []
+        for i in range(distinct):
+            f = np.roll(base, i * 37, axis=1)
+            f[:160, :160] = tag
+            f[:160, 200:360] = 10 + i * 30   # which frame, not just which eye
+            frames.append(f)
+        host.append(frames)
+
+    encs = [NvHevcEncoder(w, h, keyint=30, bitrate_kbps=8000, full_range=True)
+            for _ in range(2)]
+    aus: list[list[bytes]] = [[], []]
+    try:
+        for i in range(n):
+            for e in (0, 1):
+                frame = cupy.asarray(host[e][i % distinct])   # fresh device buffer
+                aus[e] += [au for _t, au in encs[e].encode(frame, T0 + i * DT)]
+    finally:
+        # A consumer card caps concurrent NVENC sessions, so an assertion failure
+        # must not leave two of them held for the rest of the module.
+        for e in (0, 1):
+            aus[e] += [au for _t, au in encs[e].flush()]
+
+    for e, want in enumerate(tags):
+        ctx = av.CodecContext.create("hevc", "r")
+        # Frame threading: the decode dominates this test (measured 7.1 s -> 3.7 s).
+        # It holds a tail, so the drain below is what keeps `len(got) == n` true.
+        ctx.thread_type = "FRAME"
+        ctx.thread_count = 0
+        got = []
+        for au in [*aus[e], None]:
+            for frame in (ctx.decode(None) if au is None
+                          else ctx.decode(av.Packet(au))):
+                plane = frame.to_ndarray()[:h]
+                got.append((float(plane[20:140, 20:140].mean()),
+                            float(plane[20:140, 220:340].mean())))
+        assert len(got) == n, f"eye {e} decoded {len(got)} of {n} frames"
+        # Two tolerances, because the two blocks do not decode equally well. The eye
+        # tag is flush in the corner and comes back within 1 code, so 5 is 5x margin.
+        # The index tag has high-entropy noise on both sides and at 8 Mbps on 1080p
+        # noise the rate control pins QP near its ceiling: measured 4.82 off, which
+        # left 0.18 of headroom against a tolerance of 5. A 30-apart step with a
+        # tolerance of 10 restores ~2x margin while keeping the index unambiguous —
+        # a wrong index is >=30 away. Both stay tight enough to catch a PARTIALLY
+        # overwritten block, which a loose threshold waves through.
+        wrong = [(j, eye, idx) for j, (eye, idx) in enumerate(got)
+                 if abs(eye - want) > 5 or abs(idx - (10 + (j % distinct) * 30)) > 10]
+        shown = [(j, round(a), round(b)) for j, a, b in wrong[:8]]
+        assert not wrong, (
+            f"eye {e}: {len(wrong)} of {len(got)} frames carry the wrong picture; "
+            f"wanted eye-tag {want}, got (frame, eye-tag, index-tag) {shown}")

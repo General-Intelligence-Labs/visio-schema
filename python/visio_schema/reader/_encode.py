@@ -269,7 +269,8 @@ class NvHevcEncoder(_NvEncoder):
     ``__cuda_array_interface__``) — a host frame is uploaded once and everything after
     that stays on the GPU, so a device-resident pipeline never round-trips through
     system memory. See :mod:`._gpu_color` for why the conversion to NV12 is ours and
-    not the driver's.
+    not the driver's. A DEVICE frame must be ready on the legacy default stream; a
+    caller on its own non-blocking stream owns that ordering (see ``__init__``).
 
     Lazy GPU deps (``PyNvVideoCodec``, ``cupy``, ``cvcuda``): imported only when
     constructed, so the CPU-only SDK import path stays free of GPU wheels. Raises on
@@ -279,9 +280,11 @@ class NvHevcEncoder(_NvEncoder):
 
     codec_name = "nvenc-hevc"
 
-    # NVENC runs a ~3-frame asynchronous pipeline and reads the input surface after
-    # `Encode` returns, so a buffer recycled too early is read mid-encode. Hold a few
-    # more than the pipeline depth and rotate.
+    # NVENC runs a ~4-frame asynchronous pipeline (measured, both tunings) and reads
+    # the input surface after `Encode` returns, so a buffer recycled too early is read
+    # mid-encode. Hold a few more than the pipeline depth and rotate. This bounds the
+    # SAME encoder's reuse only — what stops one encoder's buffer reaching another's
+    # NVENC is the per-encoder stream, not this number.
     _INFLIGHT = 6
 
     def __init__(self, width: int, height: int, *, keyint: int = 30,
@@ -301,21 +304,36 @@ class NvHevcEncoder(_NvEncoder):
                       bitrate=bitrate_kbps * 1000, maxbitrate=int(bitrate_kbps * 1500))
         else:
             rc = dict(tuning_info="ultra_low_latency")
-        # Bind NVENC to the CUDA context and stream cupy is already using. Without
-        # this it makes its own context, and a device pointer from ours is then not
-        # one it can read. The DEVICE is whichever one the caller already selected —
+        # Bind NVENC to the CUDA context, and to a stream OF OUR OWN. Without the
+        # context it makes its own, and a device pointer from ours is then not one it
+        # can read. The DEVICE is whichever one the caller already selected —
         # `cupy.empty` forces that one's primary context to exist without moving it.
+        #
+        # `cudastream` must be a REAL handle: PyNvVideoCodec's default is 0 and cupy's
+        # default-stream ptr is ALSO 0, so `get_current_stream().ptr` bound nothing at
+        # all. A stream of our own buys two things — the NV12 fill is ordered before
+        # NVENC's read of it, and cupy keys its free lists by the ALLOCATING stream,
+        # so one encoder's buffers cannot reach another encoder's NVENC.
+        #
+        # BLOCKING (`non_blocking=False`), deliberately: it still synchronizes
+        # implicitly with the legacy default stream, which is where the caller's
+        # decode and remap run, so a caller needs no event of its own. A caller that
+        # moves to its own NON-blocking stream owns that ordering.
         cupy.empty(1, cupy.uint8)
         ctx = cupy.cuda.driver.ctxGetCurrent()
-        stream = cupy.cuda.get_current_stream().ptr
+        self._stream = cupy.cuda.Stream(non_blocking=False)
         # `usecpuinputbuffer=False` + NV12: we hand NVENC a device surface we filled
         # ourselves. NOTE the input must be an NVCV (cvcuda) tensor — a bare cupy
         # array is rejected with "incorrect usage of CPU input buffer" even here,
         # so `encode` wraps every buffer with `cvcuda.as_tensor` (zero-copy).
-        self._enc = nvc.CreateEncoder(
-            width, height, "NV12", False, cudacontext=ctx, cudastream=stream,
-            codec="hevc", preset=preset, bf=0, gop=keyint, **rc,
-        )
+        # Constructed with our stream current so whatever device work NVENC's session
+        # setup does lands on it too; it costs nothing once per session.
+        with self._stream:
+            self._enc = nvc.CreateEncoder(
+                width, height, "NV12", False, cudacontext=ctx,
+                cudastream=self._stream.ptr,
+                codec="hevc", preset=preset, bf=0, gop=keyint, **rc,
+            )
         self._shape = (height, width)
         self._pool: collections.deque = collections.deque(maxlen=self._INFLIGHT)
         self._swapped = 0
@@ -341,10 +359,17 @@ class NvHevcEncoder(_NvEncoder):
                 f"NvHevcEncoder: frame is {rgb.shape[1]}x{rgb.shape[0]} but the "
                 f"session was opened at {self._shape[1]}x{self._shape[0]}")
         self._pending.append(int(t_ns))
-        src = rgb if hasattr(rgb, "__cuda_array_interface__") else self._cupy.asarray(rgb)
-        nv12 = rgb_to_nv12(src, full_range=self._full_range)
-        self._pool.append(nv12)  # keep it alive while NVENC is still reading it
-        packets = self._enc.Encode(self._cvcuda.as_tensor(nv12[:, :, None], "HWC"))
+        # `rgb_to_nv12` must ALLOCATE inside this block: cupy keys its free lists by
+        # the allocating stream, and that is what keeps one encoder's NV12 buffers out
+        # of another's reach. The submit belongs here for the ordering. See `__init__`.
+        with self._stream:
+            # Zero-copy for a cupy array AND for a foreign `__cuda_array_interface__`
+            # carrier, an upload for a host one — so no branch is needed, and the
+            # foreign case reaches `rgb_to_nv12` as something cupy will accept.
+            src = self._cupy.asarray(rgb)
+            nv12 = rgb_to_nv12(src, full_range=self._full_range)
+            self._pool.append(nv12)  # keep it alive while NVENC is still reading it
+            packets = self._enc.Encode(self._cvcuda.as_tensor(nv12[:, :, None], "HWC"))
         return self._pair(packets, self._au)
 
     def _au(self, d) -> bytes:
@@ -365,6 +390,16 @@ class NvHevcEncoder(_NvEncoder):
 
     def flush(self) -> list[tuple[int, bytes]]:
         out = super().flush()
+        # The session is over, so give its NV12 buffers back. Per-stream free lists
+        # are what isolate the encoders (see `__init__`), and the flip side is that
+        # this stream's arena is unreachable to everything else once the encoder
+        # dies: measured 20.8 MiB per lifetime (7 chunks of 2.97 MiB), and `pack`
+        # builds an encoder pair PER CLIP — ~4 GB over a 100-clip episode. cupy would
+        # reclaim it under its OWN pressure, so this is not a leak to cupy; it is
+        # invisible to everyone else, which is the point on a box where NVENC's own
+        # surfaces and a TRT engine want the same VRAM. 7 `cudaFree`s, once per clip.
+        self._pool.clear()
+        self._cupy.get_default_memory_pool().free_all_blocks(stream=self._stream)
         if self._params is not None and not self._swapped:
             # Every IRAP is supposed to carry the blob `_colour_params` probed. If
             # none ever matched, the driver emits something else per-AU and the whole

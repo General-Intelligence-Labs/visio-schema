@@ -221,3 +221,65 @@ def test_insert_colour_vui_adds_the_signalling_nvenc_omits():
         break
     else:
         pytest.fail("the patched parameter sets decoded no frame")
+
+
+def test_nvenc_binds_a_cuda_stream_of_its_own(monkeypatch):
+    """Host-runnable ON PURPOSE: this is the one CI can actually run.
+
+    The delivery bug was a single constructor argument — `cudastream` was handed
+    `cupy.cuda.get_current_stream().ptr`, which is 0 on the default stream, and
+    PyNvVideoCodec reads 0 as "not provided". NVENC then read its input surface
+    unordered against the cupy kernels filling it and, with every encoder's NV12
+    buffers coming from one process-wide pool, delivered another encoder's picture.
+
+    `test_encode_gpu.py` proves the CONSEQUENCE on real hardware, but visio-schema CI
+    has no GPU runner, so it skips there and guards nothing. This fakes the three GPU
+    modules and asserts on what `CreateEncoder` was handed. A shape guard, not a
+    semantics one — but the shape is exactly what broke.
+    """
+    import sys
+    import types
+
+    from visio_schema.reader._encode import NvHevcEncoder
+
+    made, got = [], {}
+
+    class _Stream:
+        def __init__(self, **kw):
+            self.ptr, self.depth, self.kw = 0xBEEF, 0, kw
+            made.append(self)
+
+        def __enter__(self):
+            self.depth += 1
+            return self
+
+        def __exit__(self, *exc):
+            self.depth -= 1
+            return False
+
+    cupy = types.ModuleType("cupy")
+    cupy.uint8 = np.uint8
+    cupy.empty = lambda *a, **k: None
+    cupy.cuda = types.SimpleNamespace(
+        Stream=_Stream,
+        driver=types.SimpleNamespace(ctxGetCurrent=lambda: 0xC7),
+        # cupy's default stream really is 0 — the trap the fix exists for.
+        get_current_stream=lambda: types.SimpleNamespace(ptr=0),
+    )
+    nvc = types.ModuleType("PyNvVideoCodec")
+    nvc.CreateEncoder = (
+        lambda *a, **k: got.update(k, opened_inside=made[0].depth) or object())
+    monkeypatch.setitem(sys.modules, "cupy", cupy)
+    monkeypatch.setitem(sys.modules, "cvcuda", types.ModuleType("cvcuda"))
+    monkeypatch.setitem(sys.modules, "PyNvVideoCodec", nvc)
+
+    NvHevcEncoder(W, H, keyint=10)
+
+    assert got["cudastream"] not in (0, None), "NVENC was bound to no stream at all"
+    assert got["cudastream"] != cupy.cuda.get_current_stream().ptr, (
+        "NVENC was handed the default stream's ptr, which PyNvVideoCodec reads as "
+        "'not provided'")
+    assert got["opened_inside"] == 1, "the session was opened outside its own stream"
+    assert made[0].kw == {"non_blocking": False}, (
+        "a non-blocking stream drops the implicit sync with the legacy default "
+        "stream, moving the ordering burden onto every caller")
