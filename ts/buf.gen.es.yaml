@@ -1,0 +1,16 @@
+# TypeScript bindings for the npm package. Deliberately a SEPARATE template from
+# the repo's buf.gen.yaml, which emits Python and sets `clean: true` — sharing
+# one file would wipe this tree on every `make gen`, and would put a Node
+# requirement on the lanes that build the wheel.
+#
+# `import_extension=none` matches what visio-companion has always generated, so
+# the bytes are comparable across the move; Metro and tsx both resolve
+# extensionless, which is the whole consumer set.
+version: v2
+clean: true
+plugins:
+  - local: ./node_modules/.bin/protoc-gen-es
+    out: src/gen
+    opt:
+      - target=ts
+      - import_extension=none

@@ -7,10 +7,17 @@ python/visio_schema/foxglove/
 # C++ (nanopb only; no host full-protobuf C++ output):
 cpp/generated_nanopb/
 
-# buf installed locally via npm.
+# buf installed locally via npm at the repo ROOT — a throwaway `npm install
+# @bufbuild/buf` must not get committed. Anchored, so the real package under
+# ts/ (which HAS a committed package.json) is unaffected.
 node_modules/
-package.json
-package-lock.json
+/package.json
+/package-lock.json
+
+# The TypeScript package: generated bindings and build output only. Its
+# package.json, tsconfig and sources are committed.
+ts/src/gen/
+ts/dist/
 
 # C++ build trees + Python build/test artifacts.
 build/

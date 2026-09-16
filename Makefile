@@ -5,6 +5,7 @@
 #   make breaking  - check for wire-breaking changes vs main (skipped if
 #                    main doesn't exist yet, e.g. before first commit/push)
 #   make gen       - lint, then generate Python (full-protobuf) + C++ (nanopb)
+#   make gen-ts    - the npm package's TypeScript bindings (node; outside `gen`)
 #                    bindings IN-PACKAGE (python/visio_schema + cpp/generated_nanopb)
 #   make test      - codegen sanity check: import every generated Python module
 #   make pytest    - run the Python codec tests (python/tests)
@@ -39,12 +40,15 @@ NANOPB_OPTIONS := proto/nanopb.options
 NANOPB_WKT_INC := third_party/nanopb/generator/proto
 FOXGLOVE_PROTO := third_party/foxglove-sdk/schemas/proto
 
-.PHONY: lint breaking gen test pytest tools-test cpp wheel sdist dist clean help
+.PHONY: lint breaking gen gen-ts ts-build ts-check test pytest tools-test cpp wheel sdist dist clean help
 
 help:
 	@echo "make lint      - lint protos"
 	@echo "make breaking  - check for wire-breaking changes vs main"
 	@echo "make gen       - lint, then regenerate python/visio_schema + cpp/generated_nanopb bindings"
+	@echo "make gen-ts    - regenerate the npm package's TS bindings (needs node; NOT in the gen chain)"
+	@echo "make ts-check  - type-check the npm package"
+	@echo "make ts-build  - build the npm package into ts/dist"
 	@echo "make test      - import every generated Python module (codegen sanity)"
 	@echo "make pytest    - run the Python codec tests (python/tests)"
 	@echo "make tools-test - run the standalone tools' tests (tools/)"
@@ -105,6 +109,31 @@ breaking:
 	git worktree remove --force "$$wt" >/dev/null 2>&1 || rm -rf "$$wt"; \
 	git worktree prune >/dev/null 2>&1; \
 	exit $$rc
+
+# ── The TypeScript package (ts/) ────────────────────────────────────────────
+#
+# DELIBERATELY OUTSIDE the `gen` chain, and it must stay that way. `gen` is a
+# prerequisite of pytest, cpp, wheel, sdist and dist, and this repo's CI
+# installs buf as a Go binary with no Node at all — a reduction made on purpose
+# after an apt outage cost a 1h40m hang. Folding TS codegen into `gen` would put
+# a Node requirement on every lane that builds the wheel. `tools-test` is the
+# existing precedent for a target held out of that chain.
+#
+# It also uses its OWN buf template: buf.gen.yaml sets `clean: true`, so sharing
+# it would wipe ts/src/gen on every Python regen.
+TS_DIR = $(CURDIR)/ts
+
+$(TS_DIR)/node_modules:
+	cd $(TS_DIR) && npm install --no-audit --no-fund
+
+gen-ts: $(TS_DIR)/node_modules
+	cd $(TS_DIR) && npm run gen
+
+ts-check: $(TS_DIR)/node_modules
+	cd $(TS_DIR) && npm run type-check
+
+ts-build: $(TS_DIR)/node_modules
+	cd $(TS_DIR) && npm run build
 
 gen: lint
 	# ---- Python: generate into the package tree (python/visio_schema, python/foxglove)
