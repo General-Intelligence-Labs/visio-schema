@@ -358,9 +358,18 @@ export async function relay(io: OtaIo, o: OtaOptions): Promise<Outcome> {
   const emit = (sent: number, state: string) =>
     io.onProgress?.({ sent, acked: st.acked, total, resumes, state });
 
+  // DRAIN, don't take one. Statuses arrive in bursts — one per chunk on a fast
+  // leg — and folding a single one per loop iteration leaves the window
+  // artificially closed, degrading a windowed transfer toward stop-and-wait
+  // (the reason C++'s Io::recv documents that a 0 timeout must return whatever
+  // is already buffered). It also decides which of two statuses in one burst
+  // wins: a FAILED arriving behind a STAGED is only seen if we drain.
   const pump = async (timeoutS: number) => {
-    const raw = await io.recv(timeoutS);
-    if (raw !== null) fold(st, raw, a.sessionId);
+    let raw = await io.recv(timeoutS);
+    while (raw !== null) {
+      fold(st, raw, a.sessionId);
+      raw = await io.recv(0);
+    }
   };
 
   const sendFrame = async (frame: Uint8Array): Promise<boolean> => {
