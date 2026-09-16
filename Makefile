@@ -40,7 +40,7 @@ NANOPB_OPTIONS := proto/nanopb.options
 NANOPB_WKT_INC := third_party/nanopb/generator/proto
 FOXGLOVE_PROTO := third_party/foxglove-sdk/schemas/proto
 
-.PHONY: lint breaking gen gen-ts ts-build ts-check test pytest tools-test cpp wheel sdist dist clean help
+.PHONY: lint breaking gen gen-ts ts-build ts-check ts-test test pytest tools-test cpp wheel sdist dist clean help
 
 help:
 	@echo "make lint      - lint protos"
@@ -49,6 +49,7 @@ help:
 	@echo "make gen-ts    - regenerate the npm package's TS bindings (needs node; NOT in the gen chain)"
 	@echo "make ts-check  - type-check the npm package"
 	@echo "make ts-build  - build the npm package into ts/dist"
+	@echo "make ts-test   - replay the golden corpus through the TS driver"
 	@echo "make test      - import every generated Python module (codegen sanity)"
 	@echo "make pytest    - run the Python codec tests (python/tests)"
 	@echo "make tools-test - run the standalone tools' tests (tools/)"
@@ -134,6 +135,12 @@ ts-check: $(TS_DIR)/node_modules
 
 ts-build: $(TS_DIR)/node_modules
 	cd $(TS_DIR) && npm run build
+
+# The TS driver's half of the cross-language pin. Needs `gen-ts` first: the
+# driver imports the generated bindings, which are gitignored like every other
+# generated tree here.
+ts-test: gen-ts
+	cd $(TS_DIR) && npm test
 
 gen: lint
 	# ---- Python: generate into the package tree (python/visio_schema, python/foxglove)

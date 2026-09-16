@@ -7,11 +7,26 @@
  * submodule path is advanced/internal — still importable, not covered by the
  * guarantee, and free to change without a major bump.
  *
- * The facade is deliberately EMPTY until the modules it would name have
- * settled. Freezing a surface before there is anything to freeze buys a pin
- * that only ever describes the last thing added; `python/tests/test_public_api.py`
- * is the shape to copy once `wire/` lands, including its co-update ritual —
- * facade, pin, AGENTS.md table, CHANGELOG, version, together.
+ * It is NOT frozen yet. `python/tests/test_public_api.py` is the shape to copy
+ * once the remaining modules land, including its co-update ritual — facade,
+ * pin, AGENTS.md table, CHANGELOG, version, together. Pinning a surface that is
+ * still growing buys a test that only ever describes the last thing added.
  */
 
-export {};
+export {
+  // The OTA driver. `relay` is the entry point; the rest is the vocabulary a
+  // caller needs to read its answer or drive its seams.
+  relay,
+  negotiateChunk,
+  negotiatedChunkBytes,
+  nextSessionId,
+  bundleError,
+  Reason,
+  STREAM_OTA,
+  QUIESCE_RULES,
+  QUIESCE_COMMAND_ID,
+  type OtaIo,
+  type OtaOptions,
+  type Outcome,
+  type Progress,
+} from './wire/ota';
