@@ -11,12 +11,20 @@ from __future__ import annotations
 
 import base64
 import json
+import sys
+from pathlib import Path
 
 import pytest
 
 # Reuse the container builder that pins the C++ writer, so an "encrypted
 # recording" here is byte-identical to one off a card.
-from tests.test_recording_crypto import _part
+#
+# By PATH, not as `tests.test_recording_crypto`: tests/ is not a package (no
+# __init__.py), so the dotted form raises ModuleNotFoundError at COLLECTION,
+# which aborts the entire run rather than failing one file. test_ota_vectors.py
+# reaches its own shared helper the same way.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from test_recording_crypto import _part  # noqa: E402
 from visio_schema.crypto import envelope
 from visio_schema.display import recording_key as rk
 from visio_schema.mcap.crypto import fingerprint, keyring_path, open_recording

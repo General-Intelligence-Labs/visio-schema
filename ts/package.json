@@ -1,6 +1,6 @@
 {
   "name": "@gilabs/visio-schema",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "description": "The Visio wire contract for TypeScript: generated protobuf bindings plus the drivers and codecs that ride on them.",
   "license": "MIT",
   "type": "module",
@@ -15,6 +15,14 @@
     "./wire/ota": {
       "types": "./dist/wire/ota.d.ts",
       "default": "./dist/wire/ota.js"
+    },
+    "./wire/diag": {
+      "types": "./dist/wire/diag.d.ts",
+      "default": "./dist/wire/diag.js"
+    },
+    "./routing/topics": {
+      "types": "./dist/routing/topics.d.ts",
+      "default": "./dist/routing/topics.js"
     },
     "./gen/*": {
       "types": "./dist/gen/*.d.ts",
