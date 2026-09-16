@@ -135,20 +135,21 @@ def test_parameter_sets_are_swapped_only_on_irap():
 
 
 def test_two_encoders_never_deliver_each_others_pictures():
-    """The pack's real shape: TWO sessions alternating, one per eye.
+    """The pack's real shape — TWO sessions alternating, one per eye — end to end.
 
-    Three ingredients, and dropping any one makes this pass on the broken code:
-    full resolution and textured (a 192x128 flat frame encodes before the next submit
-    can collide with it), two encoders alternating (one has nobody to steal from), and
-    a FRESH device allocation per frame — that churn is what hands one encoder the
-    block the other just freed, and it is what the real path does (NVDEC copies out
-    into a new buffer, cvcuda.remap allocates its output). Pre-uploading the frames
-    once makes the race disappear.
+    Defence in depth, and deliberately NOT the first line of it. Each mechanism has a
+    cheap host test of its own: the stream binding in `test_encode.py`, the ring's
+    allocation, rotation and release there too. Mutating any ONE of those now leaves
+    this test green, because either mechanism alone is enough to deliver the right
+    picture. What it uniquely still buys is the belt-and-braces property: if someone
+    later drops the private ring for a pool-based scheme, or unbinds the stream while
+    reworking the ring, this is what fails — on real hardware, on the real codec.
 
-    The eye tag alone catches 100% of cross-encoder corruption (measured: it is whole
-    -frame substitution, never a tear). The index tag is not redundant with it — it is
-    the only thing here that can catch a SAME-encoder stale read, which is what
-    ``_INFLIGHT`` guards.
+    It needs full resolution and textured content: a 192x128 flat frame encodes before
+    the next submit can collide with it, and a stale read of a flat frame is the same
+    picture. The eye tag catches cross-encoder substitution (measured: it is always
+    whole-frame, never a tear); the index tag catches a frame delivered out of its own
+    sequence, which the eye tag cannot see.
     """
     w, h, n, distinct = 1920, 1080, 120, 8
     tags = (30, 220)

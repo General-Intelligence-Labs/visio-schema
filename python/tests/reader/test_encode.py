@@ -223,31 +223,30 @@ def test_insert_colour_vui_adds_the_signalling_nvenc_omits():
         pytest.fail("the patched parameter sets decoded no frame")
 
 
-def test_nvenc_binds_a_cuda_stream_of_its_own(monkeypatch):
-    """Host-runnable ON PURPOSE: this is the one CI can actually run.
+# Deliberately NOT `W, H`: there `H * 3 // 2 == W == 192`, so a ring allocated at the
+# frame's geometry instead of NV12's would be indistinguishable from the right one.
+RW, RH = 256, 128
 
-    The delivery bug was a single constructor argument — `cudastream` was handed
-    `cupy.cuda.get_current_stream().ptr`, which is 0 on the default stream, and
-    PyNvVideoCodec reads 0 as "not provided". NVENC then read its input surface
-    unordered against the cupy kernels filling it and, with every encoder's NV12
-    buffers coming from one process-wide pool, delivered another encoder's picture.
 
-    `test_encode_gpu.py` proves the CONSEQUENCE on real hardware, but visio-schema CI
-    has no GPU runner, so it skips there and guards nothing. This fakes the three GPU
-    modules and asserts on what `CreateEncoder` was handed. A shape guard, not a
-    semantics one — but the shape is exactly what broke.
+@pytest.fixture
+def fake_gpu(monkeypatch):
+    """The three GPU modules, faked, recording every allocation, fill and free.
+
+    Host-runnable ON PURPOSE. `test_encode_gpu.py` proves these properties on real
+    hardware, but visio-schema CI has no GPU runner, so all of it skips there and
+    guards nothing. Everything `NvHevcEncoder` does to its input surfaces is
+    bookkeeping over three vendor calls, and bookkeeping is checkable without a card.
     """
     import sys
     import types
 
-    from visio_schema.reader._encode import NvHevcEncoder
-
-    made, got = [], {}
+    rec = types.SimpleNamespace(allocs=[], fills=[], freed=[], made=[], created={},
+                               cleared=[])
 
     class _Stream:
         def __init__(self, **kw):
             self.ptr, self.depth, self.kw = 0xBEEF, 0, kw
-            made.append(self)
+            rec.made.append(self)
 
         def __enter__(self):
             self.depth += 1
@@ -257,29 +256,127 @@ def test_nvenc_binds_a_cuda_stream_of_its_own(monkeypatch):
             self.depth -= 1
             return False
 
+    class _Buf:
+        def __init__(self, shape, dtype):
+            self.shape, self.dtype = shape, dtype
+
+        def __getitem__(self, _key):
+            return self
+
+    def _empty(shape, dtype, *a, **k):
+        rec.allocs.append(_Buf(shape, dtype))
+        return rec.allocs[-1]
+
     cupy = types.ModuleType("cupy")
     cupy.uint8 = np.uint8
-    cupy.empty = lambda *a, **k: None
+    cupy.empty = _empty
+    cupy.asarray = lambda x: x
+    cupy.get_default_memory_pool = lambda: types.SimpleNamespace(
+        free_all_blocks=lambda stream=None: rec.freed.append(stream))
     cupy.cuda = types.SimpleNamespace(
         Stream=_Stream,
         driver=types.SimpleNamespace(ctxGetCurrent=lambda: 0xC7),
         # cupy's default stream really is 0 — the trap the fix exists for.
         get_current_stream=lambda: types.SimpleNamespace(ptr=0),
     )
+    cvcuda = types.ModuleType("cvcuda")
+    cvcuda.as_tensor = lambda buf, layout: ("tensor", buf)
+    cvcuda.ThreadScope = types.SimpleNamespace(LOCAL="local")
+    cvcuda.clear_cache = lambda scope: rec.cleared.append(scope)
     nvc = types.ModuleType("PyNvVideoCodec")
-    nvc.CreateEncoder = (
-        lambda *a, **k: got.update(k, opened_inside=made[0].depth) or object())
+    nvc.CreateEncoder = lambda *a, **k: rec.created.update(
+        k, opened_inside=rec.made[-1].depth) or types.SimpleNamespace(
+        Encode=lambda _t: [], EndEncode=lambda: [])
     monkeypatch.setitem(sys.modules, "cupy", cupy)
-    monkeypatch.setitem(sys.modules, "cvcuda", types.ModuleType("cvcuda"))
+    monkeypatch.setitem(sys.modules, "cvcuda", cvcuda)
     monkeypatch.setitem(sys.modules, "PyNvVideoCodec", nvc)
 
-    NvHevcEncoder(W, H, keyint=10)
+    from visio_schema.reader import _gpu_color
+    monkeypatch.setattr(
+        _gpu_color, "rgb_to_nv12",
+        lambda src, *, full_range, out=None: rec.fills.append(out) or out)
+    return rec
+
+
+def test_nvenc_binds_a_cuda_stream_of_its_own(fake_gpu):
+    """The delivery bug was a single constructor argument: `cudastream` was handed
+    `cupy.cuda.get_current_stream().ptr`, which is 0 on the default stream, and
+    PyNvVideoCodec reads 0 as "not provided". NVENC then read its input surface
+    unordered against the cupy kernels filling it.
+
+    A shape guard, not a semantics one — but the shape is exactly what broke.
+    """
+    from visio_schema.reader._encode import NvHevcEncoder
+
+    NvHevcEncoder(RW, RH, keyint=10)
+    got = fake_gpu.created
 
     assert got["cudastream"] not in (0, None), "NVENC was bound to no stream at all"
-    assert got["cudastream"] != cupy.cuda.get_current_stream().ptr, (
+    assert got["cudastream"] != 0, (
         "NVENC was handed the default stream's ptr, which PyNvVideoCodec reads as "
         "'not provided'")
     assert got["opened_inside"] == 1, "the session was opened outside its own stream"
-    assert made[0].kw == {"non_blocking": False}, (
+    assert fake_gpu.made[0].kw == {"non_blocking": False}, (
         "a non-blocking stream drops the implicit sync with the legacy default "
         "stream, moving the ordering burden onto every caller")
+
+
+def test_the_nv12_ring_is_one_allocation_per_encoder_not_one_per_frame(fake_gpu):
+    """The regression the ring exists for: a per-frame `cupy.empty` returns the block
+    to the process-wide pool between frames, where the OTHER eye's encoder can be
+    handed it. Counting allocations is the only thing that says so — two rings being
+    disjoint is true under any fake, pool or no pool.
+    """
+    from visio_schema.reader._encode import NvHevcEncoder
+
+    enc = NvHevcEncoder(RW, RH, keyint=10)
+    after_construction = len(fake_gpu.allocs)
+    frame = np.zeros((RH, RW, 3), np.uint8)
+    for i in range(3 * NvHevcEncoder._INFLIGHT):
+        enc.encode(frame, T0 + i * DT)
+    assert len(fake_gpu.allocs) == after_construction, (
+        "`encode` allocated a device buffer; the ring is meant to be the only one")
+    # At NV12 geometry, not the frame's: a (H, W) ring is a buffer NVENC reads two
+    # thirds of a picture out of.
+    assert [(b.shape, b.dtype) for b in enc._ring] == (
+        [((RH * 3 // 2, RW), np.uint8)] * NvHevcEncoder._INFLIGHT)
+
+
+def test_the_ring_rotates_through_every_slot_and_wraps(fake_gpu):
+    """Rotation is the mechanism: a slot that comes round again before NVENC has
+    finished with it is a stale read, and a `_slot` that never advances reuses slot 0
+    for every frame — which no assertion on NVENC's OUTPUT detects.
+    """
+    from visio_schema.reader._encode import NvHevcEncoder
+
+    enc = NvHevcEncoder(RW, RH, keyint=10)
+    n = 2 * NvHevcEncoder._INFLIGHT + 1
+    frame = np.zeros((RH, RW, 3), np.uint8)
+    for i in range(n):
+        enc.encode(frame, T0 + i * DT)
+    want = [enc._ring[i % NvHevcEncoder._INFLIGHT] for i in range(n)]
+    assert [id(b) for b in fake_gpu.fills] == [id(b) for b in want]
+    assert len({id(b) for b in fake_gpu.fills}) == NvHevcEncoder._INFLIGHT
+    # A literal floor, because every assertion above is derived from `_INFLIGHT` and
+    # so passes at `_INFLIGHT = 1`. NVENC's pipeline is ~4 frames deep (measured, both
+    # tunings); at or below that a slot comes round while NVENC is still reading it.
+    assert NvHevcEncoder._INFLIGHT >= 6
+
+
+def test_flush_gives_the_ring_back_on_the_encoders_own_stream(fake_gpu):
+    """`pack` builds an encoder pair PER CLIP, and cupy keys its free lists by the
+    allocating stream: a ring left referenced stays cached on a stream nothing else
+    can allocate from.
+    """
+    from visio_schema.reader._encode import NvHevcEncoder
+
+    enc = NvHevcEncoder(RW, RH, keyint=10)
+    stream = enc._stream
+    enc.flush()
+    assert enc._ring == [], "the ring outlived the session"
+    assert fake_gpu.freed == [stream], (
+        "the per-stream arena was not reclaimed on the encoder's own stream")
+    # Without this the last slot stays pinned by cvcuda's cached tensor and is
+    # stranded for good, because the next clip frees only its own stream's arena.
+    assert fake_gpu.cleared == ["local"], (
+        "cvcuda's cache still holds a tensor wrapping a ring slot")

@@ -93,13 +93,18 @@ def _build(full: bool):
     return y_kernel, uv_kernel
 
 
-def rgb_to_nv12(rgb, *, full_range: bool) -> cupy.ndarray:
+def rgb_to_nv12(rgb, *, full_range: bool,
+                out: cupy.ndarray | None = None) -> cupy.ndarray:
     """Device RGB ``(H, W, 3)`` uint8 -> NV12 ``(H * 3 // 2, W)`` uint8.
 
     ``full_range`` picks BT.709 full range (the delivery) or BT.601 limited (the
     reference video). Chroma is the 2x2 box average of the source RGB: averaging
     RGB and then converting is identical to converting and then averaging (the
     transform is linear), so this matches swscale up to rounding.
+
+    ``out`` writes into a caller-owned buffer instead of allocating one: NVENC reads
+    its input surface after ``Encode`` returns, so only the caller knows when a
+    surface is free to reuse. ``None`` allocates, which is the reference path.
     """
     import cupy
 
@@ -119,7 +124,14 @@ def rgb_to_nv12(rgb, *, full_range: bool) -> cupy.ndarray:
     # reference return for every producer we have (NVDEC and cvcuda both hand back
     # packed buffers), so it costs nothing in the normal case.
     src = cupy.ascontiguousarray(rgb)
-    out = cupy.empty((h * 3 // 2, w), cupy.uint8)
+    shape = (h * 3 // 2, w)
+    if out is None:
+        out = cupy.empty(shape, cupy.uint8)
+    elif out.shape != shape or out.dtype != cupy.uint8:
+        # Same reason the kernels demand a contiguous source: they index with raw
+        # offsets, so a mis-shaped destination is written past rather than rejected.
+        raise ValueError(
+            f"rgb_to_nv12: out must be {shape} uint8, got {out.shape} {out.dtype}")
     y_kernel(src, out[:h])
     uv_kernel(src, cupy.int32(w), out[h:], size=(h // 2) * (w // 2))
     return out

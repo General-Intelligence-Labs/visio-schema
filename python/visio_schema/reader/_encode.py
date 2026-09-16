@@ -281,10 +281,10 @@ class NvHevcEncoder(_NvEncoder):
     codec_name = "nvenc-hevc"
 
     # NVENC runs a ~4-frame asynchronous pipeline (measured, both tunings) and reads
-    # the input surface after `Encode` returns, so a buffer recycled too early is read
-    # mid-encode. Hold a few more than the pipeline depth and rotate. This bounds the
-    # SAME encoder's reuse only — what stops one encoder's buffer reaching another's
-    # NVENC is the per-encoder stream, not this number.
+    # the input surface after `Encode` returns, so a `_ring` slot must not come round
+    # again before the encoder is done with it; 6 leaves two frames of headroom.
+    # NVENC's C API signals release exactly (UnmapInputResource); PyNvVideoCodec's
+    # `Encode` does not expose it, so the headroom is a guess where it could be a fact.
     _INFLIGHT = 6
 
     def __init__(self, width: int, height: int, *, keyint: int = 30,
@@ -311,9 +311,9 @@ class NvHevcEncoder(_NvEncoder):
         #
         # `cudastream` must be a REAL handle: PyNvVideoCodec's default is 0 and cupy's
         # default-stream ptr is ALSO 0, so `get_current_stream().ptr` bound nothing at
-        # all. A stream of our own buys two things — the NV12 fill is ordered before
-        # NVENC's read of it, and cupy keys its free lists by the ALLOCATING stream,
-        # so one encoder's buffers cannot reach another encoder's NVENC.
+        # all, and NVENC read its input unordered against the kernels filling it. The
+        # stream is what orders the fill before the read; `_ring` is what keeps the
+        # surfaces out of any other encoder's reach.
         #
         # BLOCKING (`non_blocking=False`), deliberately: it still synchronizes
         # implicitly with the legacy default stream, which is where the caller's
@@ -326,16 +326,23 @@ class NvHevcEncoder(_NvEncoder):
         # ourselves. NOTE the input must be an NVCV (cvcuda) tensor — a bare cupy
         # array is rejected with "incorrect usage of CPU input buffer" even here,
         # so `encode` wraps every buffer with `cvcuda.as_tensor` (zero-copy).
-        # Constructed with our stream current so whatever device work NVENC's session
-        # setup does lands on it too; it costs nothing once per session.
+        # Both inside the stream: NVENC's session setup so any device work it does
+        # lands there too, and the ring because cupy keys its free lists by the
+        # ALLOCATING stream — which is what lets `flush` give exactly these blocks
+        # back. A private ring rather than a per-frame `cupy.empty`: that goes to the
+        # process-wide pool, and a block one encoder frees is handed to whichever
+        # encoder allocates next — measured, every one of 13 pointers reached both.
         with self._stream:
             self._enc = nvc.CreateEncoder(
                 width, height, "NV12", False, cudacontext=ctx,
                 cudastream=self._stream.ptr,
                 codec="hevc", preset=preset, bf=0, gop=keyint, **rc,
             )
+            self._ring: list[cupy.ndarray] = [
+                cupy.empty((height * 3 // 2, width), cupy.uint8)
+                for _ in range(self._INFLIGHT)]
         self._shape = (height, width)
-        self._pool: collections.deque = collections.deque(maxlen=self._INFLIGHT)
+        self._slot = 0
         self._swapped = 0
         self._params = self._colour_params(width, height) if full_range else None
 
@@ -358,17 +365,24 @@ class NvHevcEncoder(_NvEncoder):
             raise ValueError(
                 f"NvHevcEncoder: frame is {rgb.shape[1]}x{rgb.shape[0]} but the "
                 f"session was opened at {self._shape[1]}x{self._shape[0]}")
+        nv12 = self._ring[self._slot]
+        # Wrap at the increment, so the index is always in range. `itertools.cycle` is
+        # the tempting tidy-up and a trap: it snapshots the list, so `flush`'s
+        # `_ring.clear()` would stop dropping the references and the reclaim there
+        # would silently stop working.
+        self._slot = (self._slot + 1) % self._INFLIGHT
         self._pending.append(int(t_ns))
-        # `rgb_to_nv12` must ALLOCATE inside this block: cupy keys its free lists by
-        # the allocating stream, and that is what keeps one encoder's NV12 buffers out
-        # of another's reach. The submit belongs here for the ordering. See `__init__`.
+        # On the encoder's own stream so the fill is ordered before NVENC reads it,
+        # and so every buffer allocated here belongs to this encoder's arena.
         with self._stream:
             # Zero-copy for a cupy array AND for a foreign `__cuda_array_interface__`
             # carrier, an upload for a host one — so no branch is needed, and the
             # foreign case reaches `rgb_to_nv12` as something cupy will accept.
             src = self._cupy.asarray(rgb)
-            nv12 = rgb_to_nv12(src, full_range=self._full_range)
-            self._pool.append(nv12)  # keep it alive while NVENC is still reading it
+            rgb_to_nv12(src, full_range=self._full_range, out=nv12)
+            # A fresh tensor per frame, never cached beside the slot: cvcuda keeps its
+            # own tensors alive, so a cached one pins the surface past `flush` and the
+            # reclaim there silently stops working. The loop is NVENC-bound anyway.
             packets = self._enc.Encode(self._cvcuda.as_tensor(nv12[:, :, None], "HWC"))
         return self._pair(packets, self._au)
 
@@ -390,15 +404,22 @@ class NvHevcEncoder(_NvEncoder):
 
     def flush(self) -> list[tuple[int, bytes]]:
         out = super().flush()
-        # The session is over, so give its NV12 buffers back. Per-stream free lists
-        # are what isolate the encoders (see `__init__`), and the flip side is that
-        # this stream's arena is unreachable to everything else once the encoder
-        # dies: measured 20.8 MiB per lifetime (7 chunks of 2.97 MiB), and `pack`
-        # builds an encoder pair PER CLIP — ~4 GB over a 100-clip episode. cupy would
-        # reclaim it under its OWN pressure, so this is not a leak to cupy; it is
-        # invisible to everyone else, which is the point on a box where NVENC's own
-        # surfaces and a TRT engine want the same VRAM. 7 `cudaFree`s, once per clip.
-        self._pool.clear()
+        # Hand the ring back: cupy's free lists are per-stream, so otherwise it stays
+        # cached on a stream nothing else can allocate from — 17.8 MiB (6 x 2.97 MiB
+        # at 1080p) per encoder, and `pack` builds an encoder PAIR per clip, ~3.5 GB
+        # over a 100-clip episode. cupy would reclaim it under its OWN pressure, so
+        # this is not a leak to cupy; it is invisible to everyone else, which is the
+        # point on a box where NVENC's surfaces and a TRT engine want the same VRAM.
+        #
+        # `clear_cache` first, or this gives back 14.8 of the 17.8: cvcuda caches the
+        # tensor `encode` wrapped the last slot in, and that pins the surface. The
+        # next clip's flush frees only its OWN stream's arena, so that block is
+        # stranded for good — measured 2.97 MiB per clip, ~300 MiB an episode. LOCAL
+        # scope, not the GLOBAL default: this drops only what this thread cached, and
+        # a live consumer keeps its own tensors (checked: `_GpuRemap` still remaps
+        # correctly after one). 1.7 us, once per clip.
+        self._cvcuda.clear_cache(self._cvcuda.ThreadScope.LOCAL)
+        self._ring.clear()
         self._cupy.get_default_memory_pool().free_all_blocks(stream=self._stream)
         if self._params is not None and not self._swapped:
             # Every IRAP is supposed to carry the blob `_colour_params` probed. If

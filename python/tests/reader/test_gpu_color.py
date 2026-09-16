@@ -106,3 +106,51 @@ def test_a_shape_the_kernels_cannot_index_is_refused(shape):
     would read past the buffer rather than fail."""
     with pytest.raises(ValueError):
         rgb_to_nv12(cupy.zeros(shape, cupy.uint8), full_range=True)
+
+
+def test_out_writes_into_the_callers_buffer():
+    """`NvHevcEncoder` hands NVENC the buffer it passed as ``out``, not the return
+    value — so a version that allocated a fresh one and wrote THERE would submit an
+    unwritten surface, and NVENC would encode whatever that ring slot held last. The
+    identity of the buffer is the contract, not just its bytes."""
+    rng = np.random.default_rng(11)
+    rgb = cupy.asarray(rng.integers(0, 256, (H, W, 3), dtype=np.uint8))
+    want = rgb_to_nv12(rgb, full_range=True)
+
+    out = cupy.full((H * 3 // 2, W), 0xAB, cupy.uint8)
+    got = rgb_to_nv12(rgb, full_range=True, out=out)
+    assert got is out, "`out` was not the buffer written"
+    assert bool((out == want).all()), "the out= path and the allocating path differ"
+    # Both planes: a fill that wrote only Y leaves the chroma at the sentinel.
+    assert int(out[H:].max()) != 0xAB or int(out[H:].min()) != 0xAB
+
+
+def test_a_reused_out_keeps_no_trace_of_the_previous_frame():
+    """The ring hands the same slot back every ``_INFLIGHT`` frames, so a partial
+    fill is a frame of the previous picture — the corruption this guards, one
+    encoder's own version of it."""
+    rng = np.random.default_rng(12)
+    a = cupy.asarray(rng.integers(0, 256, (H, W, 3), dtype=np.uint8))
+    b = cupy.asarray(rng.integers(0, 256, (H, W, 3), dtype=np.uint8))
+    out = cupy.empty((H * 3 // 2, W), cupy.uint8)
+    rgb_to_nv12(a, full_range=True, out=out)
+    rgb_to_nv12(b, full_range=True, out=out)
+    assert bool((out == rgb_to_nv12(b, full_range=True)).all())
+
+
+@pytest.mark.parametrize("bad", [(H, W), (H * 3 // 2, W + 2), (H * 3 // 2 + 2, W)])
+def test_a_mis_shaped_out_is_refused_rather_than_written_past(bad):
+    """The kernels index with hand-computed offsets and no bounds check, so a short
+    ``out`` is a device-side overrun rather than an exception."""
+    rgb = cupy.zeros((H, W, 3), cupy.uint8)
+    with pytest.raises(ValueError, match="out must be"):
+        rgb_to_nv12(rgb, full_range=True, out=cupy.empty(bad, cupy.uint8))
+
+
+def test_an_out_of_the_wrong_dtype_is_refused():
+    """A uint16 ``out`` is the right element count and twice the bytes; the kernels
+    would write every other byte and NVENC would read a comb."""
+    rgb = cupy.zeros((H, W, 3), cupy.uint8)
+    with pytest.raises(ValueError, match="out must be"):
+        rgb_to_nv12(rgb, full_range=True,
+                    out=cupy.empty((H * 3 // 2, W), cupy.uint16))
