@@ -1,11 +1,12 @@
-# TypeScript bindings for the npm package. Deliberately a SEPARATE template from
-# the repo's buf.gen.yaml, which emits Python and sets `clean: true` — sharing
+# TypeScript bindings for the package. Deliberately a SEPARATE template from
+# the repo's buf.gen.yaml, which emits Python and sets `clean: true` -- sharing
 # one file would wipe this tree on every `make gen`, and would put a Node
 # requirement on the lanes that build the wheel.
 #
-# `import_extension=none` matches what visio-companion has always generated, so
-# the bytes are comparable across the move; Metro and tsx both resolve
-# extensionless, which is the whole consumer set.
+# `import_extension=js` because this package ships BUILT ESM that node resolves
+# directly, and node requires an explicit extension on a relative specifier.
+# `none` looks right for Metro and tsx, and is wrong the moment anything loads
+# dist/ -- see ts/scripts/verify-pack.mjs.
 version: v2
 clean: true
 plugins:
@@ -13,4 +14,4 @@ plugins:
     out: src/gen
     opt:
       - target=ts
-      - import_extension=none
+      - import_extension=js

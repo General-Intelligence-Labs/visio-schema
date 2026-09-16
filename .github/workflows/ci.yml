@@ -34,6 +34,50 @@ jobs:
       - name: make breaking
         run: make breaking BREAKING_REF=origin/${{ github.base_ref || 'main' }} BREAKING_STRICT=1
 
+  ts:
+    # The TypeScript package. A JOB OF ITS OWN, with Node, because the lanes
+    # below deliberately have none -- buf is installed as a Go binary there, a
+    # reduction made after an apt outage cost a 1h40m hang. `gen-ts`/`ts-*` sit
+    # outside the `gen` chain for the same reason, so nothing here can put a
+    # Node requirement on the wheel.
+    #
+    # Until this existed, `ts-build` was an orphan target: nothing in the
+    # Makefile depended on it and no lane ran it, so the one check that
+    # exercises what actually ships (ts/scripts/verify-pack.mjs) ran only by
+    # hand. That is how dist/ was unloadable by node for the whole life of the
+    # package while every gate stayed green.
+    name: typescript package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive   # foxglove-sdk supplies the second buf module
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Install
+        run: cd ts && npm ci --no-audit --no-fund
+
+      # ts/src/gen is COMMITTED, unlike the Python and C++ generated trees,
+      # which `make gen` rebuilds on every run and therefore cannot drift. It is
+      # committed because consumers resolve this package straight out of the
+      # repo and must find the bindings already there. That makes it the one
+      # generated tree here that CAN silently diverge from proto/ -- so the
+      # regen has to be checked, not assumed. The bug this package shipped with
+      # (a missing relative-import extension) lived in exactly this tree.
+      - name: Committed bindings still match the protos
+        run: |
+          make gen-ts
+          git diff --exit-code ts/src/gen
+
+      - run: make ts-check
+      - run: make ts-test
+      # Build, stage the corpus, then import every `exports` entry under plain
+      # node -- the only check that exercises the built artifact.
+      - name: Pack check
+        run: cd ts && npm run pack-check
+
   tests:
     # Two legs over the install surface: "" is the lean codec-only install that a
     # wire-contract consumer gets; "[display]" adds the viewer/`--serve` extra. Only

@@ -29,4 +29,4 @@ export {
   type OtaOptions,
   type Outcome,
   type Progress,
-} from './wire/ota';
+} from './wire/ota.js';

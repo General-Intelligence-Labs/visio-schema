@@ -25,7 +25,7 @@ import {
   OtaStatusSchema,
   OtaStatus_State,
   type OtaStatus,
-} from '../gen/visio_schema/v1/service/ota/ota_pb';
+} from '../gen/visio_schema/v1/service/ota/ota_pb.js';
 
 // ── the contract's constants ────────────────────────────────────────────────
 

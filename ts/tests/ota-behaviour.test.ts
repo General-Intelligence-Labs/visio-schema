@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { relay, Reason, type OtaIo, type Outcome } from '../src/wire/ota';
+import { relay, Reason, type OtaIo, type Outcome } from '../src/wire/ota.js';
 
 const TOTAL = 10_000;
 const CHUNK = 1_000;
@@ -144,8 +144,8 @@ test('a trickle that never finishes still hits the overall deadline', async () =
 
 test('SUCCESS at commit is reported as SUCCESS, not STAGED', async () => {
   const r = rig((_n, acked, push) => push(status(S.RECEIVING, acked)));
-  const io = r.io as OtaIo & { send: (p: Uint8Array) => boolean };
-  const inner = io.send.bind(io);
+  const io = r.io;
+  const inner = io.send.bind(io) as (p: Uint8Array) => boolean;
   const outbox: Uint8Array[] = [];
   io.send = (p: Uint8Array) => {
     if (isCommit(p)) { outbox.push(status(S.SUCCESS, TOTAL)); return true; }
@@ -163,8 +163,8 @@ test('a commit whose STAGED races the reboot is still a success', async () => {
   // caller's post-reboot version check is the real proof, so the driver must
   // not call this a failure.
   const r = rig((_n, acked, push) => push(status(S.RECEIVING, acked)));
-  const io = r.io as OtaIo & { send: (p: Uint8Array) => boolean };
-  const inner = io.send.bind(io);
+  const io = r.io;
+  const inner = io.send.bind(io) as (p: Uint8Array) => boolean;
   io.send = (p: Uint8Array) => (isCommit(p) ? true : inner(p));  // commit acked by nothing
   const out = await relay(io, { ...OPTS, commitWaitS: 2 });
   assert.ok(out.ok, out.detail);
@@ -174,8 +174,8 @@ test('a commit whose STAGED races the reboot is still a success', async () => {
 test('a link that dies AFTER the commit is a success, before it is not', async () => {
   const dying = (dieOn: (p: Uint8Array) => boolean) => {
     const r = rig((_n, acked, push) => push(status(S.RECEIVING, acked)));
-    const io = r.io as OtaIo & { send: (p: Uint8Array) => boolean };
-    const inner = io.send.bind(io);
+    const io = r.io;
+    const inner = io.send.bind(io) as (p: Uint8Array) => boolean;
     io.send = (p: Uint8Array) => { if (dieOn(p)) throw new Error('EPIPE'); return inner(p); };
     return io;
   };
@@ -233,8 +233,8 @@ test('the in-flight window is respected', async () => {
   let maxInFlight = 0;
   let acked = 0;
   const r = rig((n, a, push) => { acked = a; push(status(S.RECEIVING, a)); });
-  const io = r.io as OtaIo & { send: (p: Uint8Array) => boolean };
-  const inner = io.send.bind(io);
+  const io = r.io;
+  const inner = io.send.bind(io) as (p: Uint8Array) => boolean;
   let sentBytes = 0;
   io.send = (p: Uint8Array) => {
     if (isChunk(p)) { sentBytes += CHUNK; maxInFlight = Math.max(maxInFlight, sentBytes - acked); }

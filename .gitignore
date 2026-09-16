@@ -10,14 +10,29 @@ cpp/generated_nanopb/
 # buf installed locally via npm at the repo ROOT — a throwaway `npm install
 # @bufbuild/buf` must not get committed. Anchored, so the real package under
 # ts/ (which HAS a committed package.json) is unaffected.
+#
+# A root manifest is not merely unwanted, it BREAKS ts/: one declaring
+# `workspaces: ["ts"]` makes npm resolve ts/'s lockfile at the root, and
+# `npm ci` there fails with "can only install with an existing
+# package-lock.json". Consumers reach this package by path, so there is
+# nothing a workspace root would buy.
 node_modules/
 /package.json
 /package-lock.json
 
-# The TypeScript package: generated bindings and build output only. Its
-# package.json, tsconfig and sources are committed.
-ts/src/gen/
+# The TypeScript package: build output only. Its package.json, tsconfig,
+# sources AND its generated bindings are committed.
+#
+# The bindings are the one generated tree here that IS committed, because a
+# consumer resolves this package from a plain checkout: whatever the sibling
+# holds is what it gets. Generating them there would put buf — a ~100 MB
+# downloaded Go binary — on the install path of every consumer lane, where
+# only tsc is otherwise needed. Being committed, they are also the one
+# generated tree that can DRIFT from proto/, so ci.yml regenerates and diffs
+# them. `make gen-ts` stays the maintainer verb.
 ts/dist/
+# ...and the corpus copy prepack stages in (ts/scripts/stage-golden.mjs).
+ts/golden/
 
 # C++ build trees + Python build/test artifacts.
 build/

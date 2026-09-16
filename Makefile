@@ -133,13 +133,19 @@ gen-ts: $(TS_DIR)/node_modules
 ts-check: $(TS_DIR)/node_modules
 	cd $(TS_DIR) && npm run type-check
 
+# Builds, stages the corpus, then LOADS what it built -- the only check that
+# exercises the shipped artifact; see ts/scripts/verify-pack.mjs for why that
+# is separate from `ts-test`. Same script `prepack` runs, so the two cannot
+# drift.
 ts-build: $(TS_DIR)/node_modules
-	cd $(TS_DIR) && npm run build
+	cd $(TS_DIR) && npm run pack-check
 
-# The TS driver's half of the cross-language pin. Needs `gen-ts` first: the
-# driver imports the generated bindings, which are gitignored like every other
-# generated tree here.
-ts-test: gen-ts
+# The TS driver's half of the cross-language pin. Does NOT depend on `gen-ts`:
+# the bindings are committed now, and `buf.gen.es.yaml` sets `clean: true`, so a
+# regen here would delete and rewrite 68 TRACKED files -- turning any
+# generator-version skew into spurious worktree modifications on a test run.
+# Regenerating is `make gen-ts`, deliberately explicit.
+ts-test: $(TS_DIR)/node_modules
 	cd $(TS_DIR) && npm test
 
 gen: lint

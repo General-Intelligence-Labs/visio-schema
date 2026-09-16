@@ -13,7 +13,7 @@ import { test } from 'node:test';
 
 import {
   relay, Reason, QUIESCE_RULES, QUIESCE_COMMAND_ID, type OtaIo,
-} from '../src/wire/ota';
+} from '../src/wire/ota.js';
 
 const TOTAL = 10_000;
 const CHUNK = 1_000;

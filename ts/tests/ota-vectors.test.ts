@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
-import { relay, Reason, type OtaIo } from '../src/wire/ota';
+import { relay, Reason, type OtaIo } from '../src/wire/ota.js';
 
 const VECTORS = fileURLToPath(new URL('../../tests/golden/ota_vectors.txt', import.meta.url));
 
