@@ -4,10 +4,10 @@
 #include <unistd.h>
 
 #include <cerrno>
-#include <cstdio>
 #include <cstring>
 
 #include "file_sync.hpp"
+#include "visio_schema/log.hpp"
 
 #if defined(__linux__) && !defined(O_DIRECT)
 #error "the read-back needs O_DIRECT to read the medium rather than the cache"
@@ -76,10 +76,9 @@ bool PartReadbackFile::Open(const std::string& path) {
     // The file system refuses direct I/O (tmpfs on older kernels, some
     // FUSE mounts): reads may be served from the page cache, so this is
     // a weaker check — say so, once per part.
-    std::fprintf(stderr,
-                 "mcap readback: %s: O_DIRECT unavailable, buffered "
-                 "fallback\n",
-                 path.c_str());
+    log::Write(log::Severity::kWarning,
+               "mcap readback: %s: O_DIRECT unavailable, buffered fallback",
+               path.c_str());
     read_fd_ = OpenFd(O_RDONLY);
   }
 #else
@@ -87,8 +86,8 @@ bool PartReadbackFile::Open(const std::string& path) {
 #endif
   if (read_fd_ < 0 && !open_failure_logged_) {
     open_failure_logged_ = true;
-    std::fprintf(stderr, "mcap readback: cannot open %s: %s\n", path.c_str(),
-                 std::strerror(last_errno_));
+    log::Write(log::Severity::kWarning, "mcap readback: cannot open %s: %s",
+               path.c_str(), std::strerror(last_errno_));
   }
   return read_fd_ >= 0;
 }
@@ -148,9 +147,9 @@ bool PartReadbackFile::WritePiece(std::uint64_t off, const void* buf,
   }
   if (direct) return true;
   if (const int err = file_sync::WritebackAndEvict(fd, off, len)) {
-    std::fprintf(stderr,
-                 "mcap readback: %s: writeback after rewrite failed: %s\n",
-                 path_.c_str(), std::strerror(err));
+    log::Write(log::Severity::kWarning,
+               "mcap readback: %s: writeback after rewrite failed: %s",
+               path_.c_str(), std::strerror(err));
   }
   return true;
 }

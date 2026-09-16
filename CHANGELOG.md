@@ -20,6 +20,21 @@ mcap reader and writer were each ruled out by isolation; the reuse was the whole
 of it (`Clear()` does not free the arena; a fresh instance per parse does).
 Fixes #33.
 
+### The C++ library reports through one hook, so an application can keep its lines
+
+Every line the C++ library printed while running (a link that stalls or
+recovers, a failed recording write, a read-back mismatch, dropped frames) went
+straight to `std::cerr` or `stderr` from its own call site, with no severity.
+An application with a log of its own had no way to capture them. They now go
+through `visio_schema/log.hpp`: `SetSink` installs a function that receives
+each line as a `Record` carrying its severity (info, warning or error) and the
+format literal of the site that reported it, which a rate-limiting sink can key
+on. With no sink the output is what it was, one line on stderr, now written in
+a single `write(2)` so lines from concurrent threads never splice. A line past
+1023 bytes is cut and ends in ` ...`.
+
+A build that lists the C++ sources by hand must add `cpp/src/log.cc`.
+
 ### The rect encoder tells the truth about its colour, and NVENC can encode from the device
 
 `make_rect_encoder(full_range=True)` used to move the VUI flag and nothing else.

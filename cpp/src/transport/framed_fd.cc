@@ -4,9 +4,9 @@
 #include <sys/resource.h>
 #include <unistd.h>
 
-#include <iostream>
 #include <iterator>
 
+#include "visio_schema/log.hpp"
 #include "visio_schema/transport/framing.hpp"
 #include "visio_schema/transport/link.hpp"  // EnterServiceThread
 #include "visio_schema/wire/time.hpp"       // MonotonicNs
@@ -170,10 +170,12 @@ bool FramedFdEndpoint::EnqueueOne(const Message& msg, bool stalled) {
         // fresh eviction — stay latched.
         if (degrade_hold_until_ns_.compare_exchange_strong(
                 hold_ns, 0, std::memory_order_relaxed)) {
-          std::cerr << "visio-schema: link congestion cleared — resuming "
-                       "full-rate video ("
-                    << degrade_dropped_.load(std::memory_order_relaxed)
-                    << " frames shed at the keyframes-only gate)\n";
+          log::Write(
+              log::Severity::kInfo,
+              "visio-schema: link congestion cleared — resuming full-rate "
+              "video (%llu frames shed at the keyframes-only gate)",
+              static_cast<unsigned long long>(
+                  degrade_dropped_.load(std::memory_order_relaxed)));
         }
       }
     }
@@ -268,9 +270,12 @@ bool FramedFdEndpoint::PassesRateGate(const Message& msg,
     // it buys is the packet-rate saturation this gate exists to prevent, so it
     // must not be silent. Once per stream: it cannot be fixed from here.
     st.mixed_warned = true;
-    std::cerr << "visio-schema: stream " << msg.stream_id
-              << " mixes capture-stamped and unstamped messages under a rate "
-                 "cap — the cap cannot hold; give every message a capture time\n";
+    log::Write(
+        log::Severity::kWarning,
+        "visio-schema: stream %u mixes capture-stamped and unstamped messages "
+        "under a rate cap — the cap cannot hold; give every message a capture "
+        "time",
+        static_cast<unsigned>(msg.stream_id));
   }
   std::int64_t& grid = st.grid_us;
   if (t_us < grid) {
@@ -376,8 +381,10 @@ void FramedFdEndpoint::UpdateStallState(long accepted) {
     evictions_seen_ = evicted;
     if (degrade_hold_until_ns_.exchange(now_ns + degrade_hold_ns_,
                                         std::memory_order_relaxed) == 0) {
-      std::cerr << "visio-schema: link congested (video outbox evicting) — "
-                   "degrading to keyframes-only\n";
+      log::Write(
+          log::Severity::kWarning,
+          "visio-schema: link congested (video outbox evicting) — degrading "
+          "to keyframes-only");
     }
   }
   const bool pending = ctrl_outbox_.HasPending() || outbox_.HasPending();
@@ -385,9 +392,11 @@ void FramedFdEndpoint::UpdateStallState(long accepted) {
     last_progress_ns_ = now_ns;
     if (link_stalled_.load(std::memory_order_relaxed) && accepted > 0) {
       link_stalled_.store(false, std::memory_order_relaxed);
-      std::cerr << "visio-schema: link recovered ("
-                << door_dropped_.load(std::memory_order_relaxed)
-                << " frames door-dropped while stalled)\n";
+      log::Write(log::Severity::kInfo,
+                 "visio-schema: link recovered (%llu frames door-dropped while "
+                 "stalled)",
+                 static_cast<unsigned long long>(
+                     door_dropped_.load(std::memory_order_relaxed)));
       // The reader is back. Whatever bulk survived queuing is stale; flush it
       // so the viewer re-syncs on the next keyframe instead of replaying a
       // dead backlog.
@@ -400,8 +409,10 @@ void FramedFdEndpoint::UpdateStallState(long accepted) {
   } else if (now_ns - last_progress_ns_ > stall_ns_ &&
              !link_stalled_.load(std::memory_order_relaxed)) {
     link_stalled_.store(true, std::memory_order_relaxed);
-    std::cerr << "visio-schema: link stalled (no reader for "
-              << stall_ns_ / 1'000'000 << " ms) — shedding bulk/decimatable\n";
+    log::Write(log::Severity::kWarning,
+               "visio-schema: link stalled (no reader for %lld ms) — shedding "
+               "bulk/decimatable",
+               static_cast<long long>(stall_ns_ / 1'000'000));
   }
 }
 

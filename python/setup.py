@@ -66,6 +66,7 @@ def _ext_modules():
     sources = [
         os.path.join("src", "creader.cc"),
         # reused C++ wire codec + transport (byte-identical to firmware)
+        v("src", "log.cc"),
         v("src", "codec", "crc16.cc"),
         v("src", "codec", "cobs.cc"),
         v("src", "codec", "frame.cc"),

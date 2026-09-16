@@ -5,12 +5,12 @@
 
 #include <algorithm>
 #include <cerrno>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <utility>
 
 #include "file_sync.hpp"
+#include "visio_schema/log.hpp"
 #include "visio_schema/mcap/recording_crypto.hpp"  // HexOf
 
 namespace visio_schema::mcap {
@@ -42,17 +42,19 @@ SpanReadback::SpanReadback(McapReadbackOptions opts)
       piece_bytes_(static_cast<std::size_t>(file_sync::RoundUpToPage(
           std::max<std::uint64_t>(opts_.piece_bytes, file_sync::kPageBytes)))) {
 #if !defined(__linux__)
-  std::fprintf(stderr, "mcap readback: Linux only — off for this recording\n");
+  log::Write(log::Severity::kInfo,
+             "mcap readback: Linux only — off for this recording");
   return;
 #endif
   ring_ = AllocPageAligned(static_cast<std::size_t>(ring_bytes_));
   scratch_ = AllocPageAligned(piece_bytes_);
   if (!ring_ || !scratch_) {
     ReleaseBuffers();
-    std::fprintf(stderr,
-                 "mcap readback: cannot allocate %llu + %zu bytes — "
-                 "read-back off for this recording\n",
-                 ull(ring_bytes_), piece_bytes_);
+    log::Write(
+        log::Severity::kWarning,
+        "mcap readback: cannot allocate %llu + %zu bytes — read-back off for "
+        "this recording",
+        ull(ring_bytes_), piece_bytes_);
   }
 }
 
@@ -202,14 +204,15 @@ void SpanReadback::Finish() {
 
 void SpanReadback::LogTotals() const {
   const McapReadbackStats s = stats();
-  std::fprintf(stderr,
-               "mcap readback: %s: verified %llu spans (%llu B), mismatched "
-               "%llu, rewritten %llu, unrepaired %llu, skipped %llu, read "
-               "failures %llu, max lag %llu B\n",
-               first_part_path_.c_str(), ull(s.spans_verified),
-               ull(s.bytes_verified), ull(s.spans_mismatched),
-               ull(s.spans_rewritten_ok), ull(s.spans_unrepaired),
-               ull(s.spans_skipped), ull(s.read_failed), ull(s.max_lag_bytes));
+  log::Write(
+      log::Severity::kInfo,
+      "mcap readback: %s: verified %llu spans (%llu B), mismatched %llu, "
+      "rewritten %llu, unrepaired %llu, skipped %llu, read failures %llu, "
+      "max lag %llu B",
+      first_part_path_.c_str(), ull(s.spans_verified), ull(s.bytes_verified),
+      ull(s.spans_mismatched), ull(s.spans_rewritten_ok),
+      ull(s.spans_unrepaired), ull(s.spans_skipped), ull(s.read_failed),
+      ull(s.max_lag_bytes));
 }
 
 // ---- stepping side -------------------------------------------------------
@@ -306,9 +309,9 @@ SpanReadback::PieceOutcome SpanReadback::VerifyPiece(std::uint64_t off,
   bytes_verified_.fetch_add(s.len, std::memory_order_relaxed);
   if (c.pass == Pass::kReverify) {
     spans_rewritten_ok_.fetch_add(1, std::memory_order_relaxed);
-    std::fprintf(stderr,
-                 "mcap readback: %s [%llu,+%llu) rewritten and verified\n",
-                 s.path->c_str(), ull(s.file_off), ull(s.len));
+    log::Write(log::Severity::kInfo,
+               "mcap readback: %s [%llu,+%llu) rewritten and verified",
+               s.path->c_str(), ull(s.file_off), ull(s.len));
   }
   return PieceOutcome::kSpanDone;
 }
@@ -359,8 +362,9 @@ SpanReadback::PieceOutcome SpanReadback::NoteReadFailed(
     return PieceOutcome::kSpanDone;
   }
   read_failed_.fetch_add(1, std::memory_order_relaxed);
-  std::fprintf(stderr, "mcap readback: %s [%llu,+%llu) read failed: %s\n",
-               s.path->c_str(), ull(s.file_off), ull(s.len), why);
+  log::Write(log::Severity::kWarning,
+             "mcap readback: %s [%llu,+%llu) read failed: %s", s.path->c_str(),
+             ull(s.file_off), ull(s.len), why);
   return PieceOutcome::kSpanDone;
 }
 
@@ -418,24 +422,26 @@ bool SpanReadback::FindFirstDiffAgainstRing(std::uint64_t pos,
 }
 
 void SpanReadback::LogMismatch(const Span& s, const Diff& d) const {
-  std::fprintf(stderr,
-               "mcap readback: %s %s [%llu,+%llu) mismatch at %llu "
-               "(cluster+%llu): expected %s got %s — rewriting the span\n",
-               s.path->c_str(), s.tail ? "tail" : "span", ull(s.file_off),
-               ull(s.len), ull(d.file_off), ull(d.file_off % kClusterBytes),
-               HexOf(d.expected, d.shown).c_str(),
-               HexOf(d.got, d.shown).c_str());
+  log::Write(
+      log::Severity::kWarning,
+      "mcap readback: %s %s [%llu,+%llu) mismatch at %llu (cluster+%llu): "
+      "expected %s got %s — rewriting the span",
+      s.path->c_str(), s.tail ? "tail" : "span", ull(s.file_off), ull(s.len),
+      ull(d.file_off), ull(d.file_off % kClusterBytes),
+      HexOf(d.expected, d.shown).c_str(), HexOf(d.got, d.shown).c_str());
 }
 
 void SpanReadback::NoteUnrepaired(const Span& s, const char* why) {
   spans_unrepaired_.fetch_add(1, std::memory_order_relaxed);
-  std::fprintf(stderr, "mcap readback: %s [%llu,+%llu) %s — leaving it\n",
-               s.path->c_str(), ull(s.file_off), ull(s.len), why);
+  log::Write(log::Severity::kError,
+             "mcap readback: %s [%llu,+%llu) %s — leaving it", s.path->c_str(),
+             ull(s.file_off), ull(s.len), why);
   if (!storage_fault_.exchange(true, std::memory_order_relaxed)) {
-    std::fprintf(stderr,
-                 "mcap readback: storage fault on %s — the medium does not "
-                 "hold what was written; recording continues\n",
-                 s.path->c_str());
+    log::Write(
+        log::Severity::kError,
+        "mcap readback: storage fault on %s — the medium does not hold what "
+        "was written; recording continues",
+        s.path->c_str());
   }
 }
 
