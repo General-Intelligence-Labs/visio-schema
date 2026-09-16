@@ -36,12 +36,14 @@ Four traps this gets right, all of which manufacture fake faults if missed:
   * A drop is a MISSING TIMESTAMP, so that is what gets counted. Each stream's
     expected grid is fitted from its own timestamps (least squares, seeded from
     the median interval), and a drop is a grid slot no sample landed in --
-    counted exactly, not inferred by thresholding an interval. Where a stream
-    also carries a producer-side counter (CameraFrameInfo.isp_frame_id) it is
-    reported alongside as corroboration only; if the two disagree, both are
-    shown, because that disagreement localises the fault. Counting messages and
-    dividing by duration would hide a burst loss inside a healthy average, so
+    counted exactly, not inferred by thresholding an interval. Counting messages
+    and dividing by duration would hide a burst loss inside a healthy average, so
     consecutive missing slots are grouped and the worst burst is always shown.
+
+CameraFrameInfo (/camera/<i>/frame_info) is also checked for its contract: a zero
+exposure, a rolling-shutter line delay with no readout direction, or a readout
+direction this tool does not know is a FAIL; a recording that still uses the
+retired raw layout (no exposure_us) is flagged.
 
 Verdicts are per stream: loss below --warn-loss is OK, above --fail-loss is FAIL.
 Non-monotonic or duplicate timestamps are always a FAIL -- they break every
@@ -74,6 +76,11 @@ IMU_RAW = "imu_raw"
 IMU_QUAT = "imu_quat"
 AUDIO = "audio"
 OTHER = "other"
+
+
+# CameraFrameInfo.ReadoutDirection values.
+READOUT_DIRECTION_UNSPECIFIED = 0
+KNOWN_READOUT_DIRECTIONS = frozenset({0, 1, 2})
 
 
 def _ts(t) -> int:
@@ -319,11 +326,7 @@ def verdict(st, kind, warn_loss, fail_loss, warn_swing=0.5):
     """Worst-first list of problems; empty means the stream is clean.
 
     Drops are judged by MISSING TIMESTAMPS -- the empty slots in the producer's
-    grid. Where a stream also carries a producer-side sequence counter, that
-    counter is reported as CORROBORATION only, never as the verdict: it says what
-    the producer believes it emitted, while the timestamps are what a consumer
-    can actually use. When the two disagree, both numbers are shown, because the
-    disagreement localises the fault rather than resolving it.
+    grid.
     """
     bad = []
     if "error" in st:
@@ -345,13 +348,20 @@ def verdict(st, kind, warn_loss, fail_loss, warn_swing=0.5):
         bad.append(f"WARN {loss:.2f}% lost ({st['n_missing']} missing timestamp(s) in "
                    f"{st['n_gaps']} gap(s))")
 
-    c = st.get("counter")
-    if c and c["missing"] != st.get("n_missing"):
-        bad.append(f"INFO timestamps say {st.get('n_missing')} missing, the producer's "
-                   f"frame counter says {c['missing']} -- they disagree")
-    if c and (c["repeats"] or c["backwards"]):
-        bad.append(f"FAIL frame counter not unique: {c['repeats']} repeat, "
-                   f"{c['backwards']} backwards")
+    fi = st.get("frame_info")
+    if fi:
+        if fi["retired"]:
+            bad.append("WARN retired CameraFrameInfo layout (no exposure_us) -- "
+                       "no exposure timing in this recording")
+        if fi["zero_exposure"]:
+            bad.append(f"FAIL {fi['zero_exposure']} frame_info entr(ies) with "
+                       f"exposure_us == 0")
+        if fi["unoriented"]:
+            bad.append(f"FAIL {fi['unoriented']} frame_info entr(ies) with a line delay "
+                       f"but no readout direction")
+        if fi["unknown_direction"]:
+            bad.append(f"FAIL {fi['unknown_direction']} frame_info entr(ies) with an "
+                       f"unknown readout direction")
     # Jitter that survives gap removal is a cadence problem, not a loss problem.
     if st.get("jitter_pct", 0) > 50:
         bad.append(f"WARN jitter sd = {st['jitter_pct']:.0f}% of the period")
@@ -366,6 +376,35 @@ def verdict(st, kind, warn_loss, fail_loss, warn_swing=0.5):
     return bad
 
 
+def _widen(span, v):
+    return (v, v) if span is None else (min(span[0], v), max(span[1], v))
+
+
+def _frame_info_acc():
+    """Running CameraFrameInfo summary: bounded however long the recording is."""
+    return {"retired": False, "zero_exposure": 0, "unoriented": 0, "unknown_direction": 0,
+            "exposure_us": None, "mid_offset_us": None, "gain": None,
+            "line_delay_ns": set(), "readout_direction": set()}
+
+
+def _add_frame_info(acc, decoded):
+    # The file's own descriptor says which layout its producer wrote.
+    if "exposure_us" not in decoded.DESCRIPTOR.fields_by_name:
+        acc["retired"] = True
+        return
+    exposure = int(decoded.exposure_us)
+    delay = int(decoded.line_delay_ns)
+    direction = int(decoded.readout_direction)
+    acc["zero_exposure"] += exposure == 0
+    acc["unoriented"] += bool(delay) and direction == READOUT_DIRECTION_UNSPECIFIED
+    acc["unknown_direction"] += direction not in KNOWN_READOUT_DIRECTIONS
+    acc["exposure_us"] = _widen(acc["exposure_us"], exposure)
+    acc["mid_offset_us"] = _widen(acc["mid_offset_us"], int(decoded.exposure_mid_offset_us))
+    acc["gain"] = _widen(acc["gain"], float(decoded.gain))
+    acc["line_delay_ns"].add(delay)
+    acc["readout_direction"].add(direction)
+
+
 def read_file(path, gap_factor):
     """One pass: every stream's capture times, plus the file's own metadata."""
     streams = {}  # topic -> dict
@@ -377,15 +416,15 @@ def read_file(path, gap_factor):
         for schema, channel, message, decoded in reader.iter_decoded_messages():
             s = streams.get(channel.topic)
             if s is None:
+                kind = classify(schema.name if schema else "")
                 s = streams[channel.topic] = {
                     "schema": schema.name if schema else "?",
-                    "kind": classify(schema.name if schema else ""),
+                    "kind": kind,
                     "t": [],
                     "log": [],
                     "bundles": [],
                     "fallbacks": 0,
-                    "counter": [],
-                    "drain": [],
+                    "frame_info": _frame_info_acc() if kind == CAM_INFO else None,
                 }
             times, bundle = sample_times(s["kind"], decoded, message.log_time)
             s["t"].extend(times)
@@ -397,18 +436,8 @@ def read_file(path, gap_factor):
                 s["bundles"].append(bundle)
             elif bundle == 0:
                 s["fallbacks"] += 1
-            # CameraFrameInfo carries a unique per-frame ISP counter, which
-            # counts drops EXACTLY instead of inferring them from timing.
-            fid = getattr(decoded, "isp_frame_id", None)
-            if fid is not None:
-                s["counter"].append(int(fid))
-                # vi_time_ref was removed in schema 0.7.0. Only collect the drain
-                # latency when the recording actually carries it -- defaulting to
-                # `fid` would report a flat +0 for every frame, i.e. fabricate a
-                # perfectly-healthy reading out of a field that is not there.
-                vtr = getattr(decoded, "vi_time_ref", None)
-                if vtr is not None:
-                    s["drain"].append(int(vtr) - int(fid))
+            if s["frame_info"] is not None:
+                _add_frame_info(s["frame_info"], decoded)
 
     result = {"path": path, "metadata": meta, "streams": {}, "_times": {}}
     for topic, s in sorted(streams.items()):
@@ -427,27 +456,10 @@ def read_file(path, gap_factor):
                 max=int(b.max()),
                 msg_rate_hz=b.size / st["span_s"] if st.get("span_s") else float("nan"),
             )
-        if s["counter"]:
-            c = np.array(s["counter"], dtype=np.int64)
-            d = np.diff(c)
-            st["counter"] = dict(
-                first=int(c[0]),
-                last=int(c[-1]),
-                expected=int(c[-1] - c[0] + 1),
-                seen=int(c.size),
-                missing=int((c[-1] - c[0] + 1) - c.size),
-                repeats=int((d == 0).sum()),
-                backwards=int((d < 0).sum()),
-            )
-            if s["drain"]:
-                # Pre-0.7.0 recordings only (vi_time_ref is gone since).
-                # vi_time_ref - isp_frame_id: how many frames after capture the
-                # ISP stats entry was drained. Constant is healthy; a mixture
-                # means entries are being bound to frames inconsistently.
-                dr = np.array(s["drain"], dtype=np.int64)
-                st["counter"]["drain_frames"] = {
-                    int(v): int((dr == v).sum()) for v in np.unique(dr)
-                }
+        if s["frame_info"] is not None:
+            fi = s["frame_info"]
+            st["frame_info"] = {**fi, "line_delay_ns": sorted(fi["line_delay_ns"]),
+                                "readout_direction": sorted(fi["readout_direction"])}
         result["streams"][topic] = st
     return result
 
@@ -567,15 +579,14 @@ def fmt(result, args):
                 L.append(f"        -> {topic}: WARN smallest bundle is exactly {b['min']} "
                          f"-- looks like a producer ring overflow, not a sensor drop")
                 worst.append("WARN")
-        if st.get("counter"):
-            c = st["counter"]
-            L.append(f"        .. frame counter: {c['seen']}/{c['expected']} seen, "
-                     f"{c['missing']} missing, {c['repeats']} repeat, "
-                     f"{c['backwards']} backwards")
-            if c.get("drain_frames"):
-                d = ", ".join(f"{k:+d}:{v}" for k, v in sorted(c["drain_frames"].items()))
-                L.append(f"        .. drain latency (vi_time_ref - isp_frame_id, "
-                         f"pre-0.7.0 only): {d}")
+        fi = st.get("frame_info")
+        if fi and fi["exposure_us"]:
+            L.append(f"        .. exposure {fi['exposure_us'][0] / 1e3:.3f}-"
+                     f"{fi['exposure_us'][1] / 1e3:.3f} ms, midpoint offset "
+                     f"{fi['mid_offset_us'][0] / 1e3:+.3f}..{fi['mid_offset_us'][1] / 1e3:+.3f} ms, "
+                     f"gain {fi['gain'][0]:.2f}-{fi['gain'][1]:.2f}, "
+                     f"line delay ns {fi['line_delay_ns']}, "
+                     f"readout direction {fi['readout_direction']}")
         if args.verbose and st.get("method") == "grid":
             L.append(f"        .. grid: {st['nominal_hz']:.3f} Hz, worst sample is "
                      f"{st['grid_resid_ms']:.3f} ms off its slot")

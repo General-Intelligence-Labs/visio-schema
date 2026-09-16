@@ -1,26 +1,28 @@
-"""Per-frame exposure (`CameraFrameInfo`) attached to `Frame.exposure`.
+"""Per-frame exposure timing (`CameraFrameInfo`) attached to `Frame.exposure`.
 
-The stream is opt-in on the device and off by default, so the ABSENT case is the
-common one and must stay free. When present, the contract is: every frame gets a
-`FrameExposure`, exact where an entry exists and interpolated where one is missing
-— never `None` mid-stream, because a consumer applying an exposure-derived timing
-correction would otherwise have that one frame snap back to uncorrected.
+The contract: every frame of a camera with a `frame_info` stream gets a
+`FrameExposure` — exact where an entry exists, interpolated where one is missing,
+never `None` mid-stream, because a consumer placing the frame at its exposure
+midpoint would otherwise have that one frame snap back to its capture stamp.
 
-Gaps cannot be produced on demand from hardware (a real capture has a complete
-counter and, in a static scene, a frozen AE), so the interpolation cases are pinned
-here on synthetic recordings and the join itself is verified against a real one.
+The producer computes everything (duration, midpoint offset, gain, rolling-shutter
+geometry); the reader converts units, binds the midpoint to each frame's own stamp
+and bridges gaps.
 """
 
 from __future__ import annotations
+
+import logging
 
 import numpy as np
 import pytest
 from _helpers import CAM_K, FRAME_DT, T0, RecBuilder, indexed_frames
 
-from visio_schema.reader import Frame, Session
+from visio_schema.reader import Frame, FrameExposure, ReadoutDirection, Session
 
 CAM0 = "/ego/camera/0"
 IMU = "/ego/imu/0/raw"
+TOP, BOTTOM = int(ReadoutDirection.TOP_TO_BOTTOM), int(ReadoutDirection.BOTTOM_TO_TOP)
 
 
 def _rec(tmp_path, n=6, **kw):
@@ -35,7 +37,7 @@ def _frames(path) -> list[Frame]:
 
 
 def test_absent_frame_info_leaves_exposure_none(tmp_path):
-    """The default device config. Must cost nothing and claim nothing."""
+    """No stream: must cost nothing and claim nothing."""
     b = RecBuilder(tmp_path / "r.mcap")
     b.add_camera(CAM0, indexed_frames(4))
     frames = _frames(b.write())
@@ -45,84 +47,150 @@ def test_absent_frame_info_leaves_exposure_none(tmp_path):
 def test_exposure_joins_every_frame_exactly(tmp_path):
     frames = _frames(_rec(tmp_path, n=6))
     assert len(frames) == 6
+    for f in frames:
+        e = f.exposure
+        assert e is not None and e.interpolated is False
+        assert e.exposure_ns == 4_000_000  # wire µs -> reader ns
+        assert e.gain == pytest.approx(2.0)
+        assert e.mid_ns == f.t_ns - 2_231_000
+        assert e.line_delay_ns == 0
+        assert e.readout_direction is ReadoutDirection.UNSPECIFIED
+
+
+def test_midpoint_is_bound_to_each_frames_own_stamp(tmp_path):
+    offsets = [-1000, -2000, -3000, -4000]
+    frames = _frames(_rec(tmp_path, n=4, mid_offsets_us=offsets))
     for i, f in enumerate(frames):
-        assert f.exposure is not None
-        assert f.exposure.interpolated is False
-        assert f.exposure.isp_frame_id == i  # the diagnostic, carried through
-        assert f.exposure.exposure_time_s == pytest.approx(0.004002193)
+        assert f.exposure.mid_ns == f.t_ns + offsets[i] * 1000
 
 
-def test_line_time_is_derived_from_sensor_timing(tmp_path):
-    """HTS / pclk -> the rolling-shutter row delay, which replaced the
-    never-populated `Calibration.rs_line_delay_ns`."""
-    f = _frames(_rec(tmp_path, n=2))[0]
-    # 612 / 44.65 MHz = 13.706 us, matching the AR0234's v4l2 subdev measurement
-    assert f.exposure.line_time_ns == pytest.approx(13706.6, abs=0.1)
-    assert not hasattr(Session([_rec(tmp_path, n=2)]).calibration, "rs_line_delay_ns")
+def test_global_shutter_rows_share_the_midpoint(tmp_path):
+    e = _frames(_rec(tmp_path, n=1))[0].exposure
+    assert e.row_mid_ns(0, 1080) == e.row_mid_ns(1079, 1080) == e.mid_ns
+
+
+@pytest.mark.parametrize("direction, first_row_earlier", [(TOP, True), (BOTTOM, False)])
+def test_rolling_shutter_row_midpoints_follow_readout_order(
+        tmp_path, direction, first_row_earlier):
+    """The midpoint names the CENTRE row; row 0 sits (H-1)/2 line delays away, on
+    the side the readout direction says."""
+    e = _frames(_rec(tmp_path, n=1, line_delay_ns=24_510, direction=direction))[0].exposure
+    half_span = 13_223_145  # (1080 - 1) / 2 rows x 24 510 ns, exact
+    sign = -1 if first_row_earlier else 1
+    assert e.row_mid_ns(539.5, 1080) == e.mid_ns
+    top, bottom = e.row_mid_ns(0, 1080), e.row_mid_ns(1079, 1080)
+    assert (type(top), type(bottom)) == (int, int), "epoch ns must stay exact"
+    assert top == e.mid_ns + sign * half_span
+    assert bottom == e.mid_ns - sign * half_span
+
+
+def test_line_delay_without_direction_is_rejected_loudly(tmp_path):
+    """A skew with no direction cannot be placed; refused at read, not at first use."""
+    path = _rec(tmp_path, n=2, line_delay_ns=24_510, direction=0)
+    with pytest.raises(ValueError, match="no readout direction"):
+        _frames(path)
+
+
+def test_a_hand_built_unoriented_exposure_refuses_row_midpoints():
+    e = FrameExposure(exposure_ns=4_000_000, mid_ns=0, gain=1.0, line_delay_ns=24_510,
+                      readout_direction=ReadoutDirection.UNSPECIFIED)
+    with pytest.raises(ValueError, match="no readout direction"):
+        e.row_mid_ns(0, 1080)
 
 
 def test_a_missing_entry_is_interpolated_not_dropped(tmp_path):
-    """The jitter guard. Frame 2 has no entry; it must still carry an exposure
+    """The jitter guard. Frame 2 has no entry; it must still carry exposure timing
     between its neighbours', flagged, rather than None."""
-    exps = [0.001, 0.002, 0.003, 0.004, 0.005, 0.006]
-    frames = _frames(_rec(tmp_path, n=6, exposures=exps, drop=(2,)))
+    exps = [1000, 2000, 3000, 4000, 5000, 6000]
+    offs = [-e // 2 for e in exps]
+    gains = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    frames = _frames(_rec(tmp_path, n=6, exposures_us=exps, mid_offsets_us=offs,
+                          gains=gains, drop=(2,)))
     assert all(f.exposure is not None for f in frames), "a gap became None"
     gap = frames[2]
     assert gap.exposure.interpolated is True
-    assert gap.exposure.isp_frame_id is None, "an interpolated value has no source id"
-    # midway between its bracketing entries (2 ms at index 1, 4 ms at index 3)
-    assert gap.exposure.exposure_time_s == pytest.approx(0.003)
+    assert gap.exposure.exposure_ns == 3_000_000  # midway between 2 ms and 4 ms
+    assert gap.exposure.gain == pytest.approx(3.0)
+    assert gap.exposure.mid_ns == gap.t_ns - 1_500_000, "offset blended, bound to own stamp"
     for i, f in enumerate(frames):
         if i != 2:
             assert f.exposure.interpolated is False
 
 
 def test_a_run_of_missing_entries_interpolates_across_the_whole_gap(tmp_path):
-    exps = [0.001, 0.002, 0.003, 0.004, 0.005, 0.006]
-    frames = _frames(_rec(tmp_path, n=6, exposures=exps, drop=(2, 3)))
-    got = [f.exposure.exposure_time_s for f in frames]
-    # 1 ms .. 5 ms bracket spanning indices 1..4, sampled on a uniform grid
-    assert got[2] == pytest.approx(0.002 + (0.005 - 0.002) * (1 / 3))
-    assert got[3] == pytest.approx(0.002 + (0.005 - 0.002) * (2 / 3))
+    exps = [1000, 2000, 3000, 4000, 5000, 6000]
+    frames = _frames(_rec(tmp_path, n=6, exposures_us=exps, drop=(2, 3)))
+    got = [f.exposure.exposure_ns for f in frames]
+    assert got[2] == round(2_000_000 + 3_000_000 / 3)
+    assert got[3] == round(2_000_000 + 3_000_000 * 2 / 3)
     assert [f.exposure.interpolated for f in frames] == [
         False, False, True, True, False, False]
 
 
+def test_interpolated_nanoseconds_round_to_integers(tmp_path):
+    """Thirds of an odd step do not divide: the blend rounds, and stays an int."""
+    frames = _frames(_rec(tmp_path, n=4, exposures_us=[1000, 0, 0, 2001],
+                          mid_offsets_us=[-1000, 0, 0, -2001], drop=(1, 2)))
+    one, two = frames[1].exposure, frames[2].exposure
+    assert (one.exposure_ns, two.exposure_ns) == (1_333_667, 1_667_333)
+    assert one.mid_ns - frames[1].t_ns == -1_333_667
+    assert two.mid_ns - frames[2].t_ns == -1_667_333
+    assert all(type(v) is int for v in (one.exposure_ns, one.mid_ns, two.mid_ns))
+
+
 def test_edges_hold_the_nearest_rather_than_extrapolate(tmp_path):
     """Past the ends of the track there is no bracket. Holding is bounded;
-    extrapolating an AE curve is a guess with no bound."""
-    exps = [0.001, 0.002, 0.003, 0.004]
-    frames = _frames(_rec(tmp_path, n=4, exposures=exps, drop=(0, 3)))
-    assert frames[0].exposure.exposure_time_s == pytest.approx(0.002)  # from idx 1
-    assert frames[-1].exposure.exposure_time_s == pytest.approx(0.003)  # from idx 2
-    assert frames[0].exposure.interpolated is True
-    assert frames[-1].exposure.interpolated is True
+    extrapolating an AE curve is a guess with no bound. The held offset still binds
+    to the edge frame's OWN stamp."""
+    exps = [1000, 2000, 3000, 4000]
+    frames = _frames(_rec(tmp_path, n=4, exposures_us=exps,
+                          mid_offsets_us=[-500, -1000, -1500, -2000], drop=(0, 3)))
+    first, last = frames[0].exposure, frames[-1].exposure
+    assert first.exposure_ns == 2_000_000 and first.interpolated is True
+    assert last.exposure_ns == 3_000_000 and last.interpolated is True
+    assert first.mid_ns == frames[0].t_ns - 1_000_000
+    assert last.mid_ns == frames[-1].t_ns - 1_500_000
 
 
-def test_static_sensor_timing_is_not_blended(tmp_path):
-    """Interpolating a pixel clock would be meaningless, not merely approximate —
-    the AE outputs vary continuously, the sensor mode does not."""
-    frames = _frames(_rec(tmp_path, n=5, drop=(2,)))
-    gap = frames[2]
-    assert gap.exposure.interpolated is True
-    assert gap.exposure.line_time_ns == frames[0].exposure.line_time_ns
-    assert gap.exposure.frame_length_lines == frames[0].exposure.frame_length_lines
-    # integer register fields come from a real operating point, not a fraction
-    assert isinstance(gap.exposure.coarse_integration_time_lines, int)
+def test_readout_geometry_is_not_blended(tmp_path):
+    """Line delay and direction are fixed by the sensor mode and mount — a blended
+    value would be meaningless — so a gap takes them from the nearer neighbour."""
+    b = RecBuilder(tmp_path / "r.mcap")
+    b.add_camera(CAM0, indexed_frames(4))
+    b.add_frame_info(CAM0, n=1, line_delay_ns=20_000, direction=TOP)
+    b.add_frame_info(CAM0, n=1, t0=T0 + 3 * FRAME_DT, line_delay_ns=30_000, direction=BOTTOM)
+    frames = _frames(b.write())
+    near_lo, near_hi = frames[1].exposure, frames[2].exposure
+    assert (near_lo.line_delay_ns, near_lo.readout_direction) == (
+        20_000, ReadoutDirection.TOP_TO_BOTTOM)
+    assert (near_hi.line_delay_ns, near_hi.readout_direction) == (
+        30_000, ReadoutDirection.BOTTOM_TO_TOP)
 
 
-def test_absent_sensor_timing_is_none_not_zero(tmp_path):
-    """Reachable: `AiqManager::prime_stats` gives up for a whole session when
-    `queryExpResInfo` fails, and HTS/pclk then read 0 on the wire.
+def test_zero_exposure_is_rejected_loudly(tmp_path):
+    """The contract forbids 0: it is a producer bug, never a real exposure."""
+    path = _rec(tmp_path, n=3, exposures_us=[4000, 0, 4000])
+    with pytest.raises(ValueError, match="exposure_us == 0"):
+        _frames(path)
 
-    `None`, never 0.0 — a 0 ns row delay is what a *global-shutter* sensor
-    legitimately reports, so returning it would silently turn a consumer's
-    rolling-shutter model into a no-op instead of telling it the timing is
-    unknown. The rest of the exposure is still good and still attached."""
-    f = _frames(_rec(tmp_path, n=2, pclk=0.0))[0]
-    assert f.exposure is not None
-    assert f.exposure.line_time_ns is None
-    assert f.exposure.exposure_time_s == pytest.approx(0.004002193)
+
+def test_unknown_readout_direction_is_rejected_loudly(tmp_path):
+    path = _rec(tmp_path, n=2, line_delay_ns=24_510, direction=7)
+    with pytest.raises(ValueError, match="readout_direction 7"):
+        _frames(path)
+
+
+def test_retired_layout_yields_no_exposure_and_says_so(tmp_path, caplog):
+    """A recording written with the retired raw layout shares the schema NAME.
+    Parsed with the current class it would read as all-zero exposure; the embedded
+    descriptor identifies it, so the camera gets no exposure — and a warning."""
+    b = RecBuilder(tmp_path / "r.mcap")
+    b.add_camera(CAM0, indexed_frames(3))
+    b.add_retired_frame_info(CAM0, n=3)
+    with caplog.at_level(logging.WARNING, logger="visio_schema.reader.session"):
+        frames = _frames(b.write())
+    assert len(frames) == 3 and all(f.exposure is None for f in frames)
+    assert "retired CameraFrameInfo format" in caplog.text
 
 
 def test_frame_info_is_not_yielded_as_an_element(tmp_path):
@@ -150,19 +218,17 @@ def test_camera_calibration_still_parses_alongside_frame_info(tmp_path):
 def test_gap_interpolation_is_bounded_by_the_neighbours(tmp_path):
     """Property: an interpolated value never leaves its bracket, whatever the AE
     did. Guards a sign/weight slip in the blend."""
-    exps = [0.001, 0.020, 0.002, 0.030, 0.003, 0.040]
-    frames = _frames(_rec(tmp_path, n=6, exposures=exps, drop=(1, 3)))
+    exps = [1000, 20000, 2000, 30000, 3000, 40000]
+    frames = _frames(_rec(tmp_path, n=6, exposures_us=exps, drop=(1, 3)))
     for i in (1, 3):
-        lo = min(exps[i - 1], exps[i + 1])
-        hi = max(exps[i - 1], exps[i + 1])
-        assert lo <= frames[i].exposure.exposure_time_s <= hi
+        lo = min(exps[i - 1], exps[i + 1]) * 1000
+        hi = max(exps[i - 1], exps[i + 1]) * 1000
+        assert lo <= frames[i].exposure.exposure_ns <= hi
 
 
 def test_duplicate_timestamps_are_rejected_loudly(tmp_path):
-    """Schema 0.7.0 makes the stamp unique BY CONSTRUCTION, so a repeat means two
-    entries claim one frame and neither can be trusted. Pre-0.7.0 recordings carry
-    this on 4-7% of frames; silently taking the first is the exact failure the
-    producer change removed, so reading one must fail rather than guess."""
+    """The stamp is unique per stream by contract, so a repeat means two entries
+    claim one frame and neither can be trusted — fail rather than guess."""
     b = RecBuilder(tmp_path / "r.mcap")
     b.add_camera(CAM0, indexed_frames(4))
     b.add_frame_info(CAM0, n=4)
@@ -176,15 +242,15 @@ def test_exposure_unions_across_chunks(tmp_path):
     """A session is many chunks; the track spans all of them. Handed to Session in
     REVERSE order, so nothing may depend on argument order."""
     a, c = tmp_path / "a.mcap", tmp_path / "c.mcap"
-    for path, t0, exps in ((a, T0, [0.001, 0.002]),
-                           (c, T0 + 2 * FRAME_DT, [0.003, 0.004])):
+    for path, t0, exps in ((a, T0, [1000, 2000]),
+                           (c, T0 + 2 * FRAME_DT, [3000, 4000])):
         b = RecBuilder(path)
         b.add_camera(CAM0, indexed_frames(2), t0=t0)
-        b.add_frame_info(CAM0, n=2, t0=t0, exposures=exps)
+        b.add_frame_info(CAM0, n=2, t0=t0, exposures_us=exps)
         b.write()
     frames = [e for e in Session([c, a]).stream((CAM0,)) if isinstance(e, Frame)]
-    got = [f.exposure.exposure_time_s for f in frames]
-    assert got == pytest.approx([0.001, 0.002, 0.003, 0.004])
+    assert [f.exposure.exposure_ns for f in frames] == [1_000_000, 2_000_000,
+                                                         3_000_000, 4_000_000]
     assert not any(f.exposure.interpolated for f in frames)
 
 
@@ -198,7 +264,7 @@ def test_interleaved_chunks_are_sorted_before_bisect(tmp_path):
         for i in idxs:
             b.add_camera(CAM0, indexed_frames(1), t0=T0 + i * FRAME_DT)
             b.add_frame_info(CAM0, n=1, t0=T0 + i * FRAME_DT,
-                             exposures=[0.001 * (i + 1)])
+                             exposures_us=[1000 * (i + 1)])
         b.write()
     frames = [e for e in Session([odd, even]).stream((CAM0,)) if isinstance(e, Frame)]
     assert len(frames) == 6
@@ -208,7 +274,7 @@ def test_interleaved_chunks_are_sorted_before_bisect(tmp_path):
     # unordered here. The join is on timestamp, which is exactly the point.
     for f in frames:
         i = (f.t_ns - T0) // FRAME_DT
-        assert f.exposure.exposure_time_s == pytest.approx(0.001 * (i + 1))
+        assert f.exposure.exposure_ns == 1_000_000 * (i + 1)
         assert f.exposure.interpolated is False
 
 
@@ -227,13 +293,12 @@ def test_imu_only_stream_does_not_index_exposure(tmp_path):
 def test_frames_and_exposures_line_up_after_a_dropped_video_frame(tmp_path):
     """The join is on TIMESTAMP, never on index. Drop a video frame and the
     surviving frames must keep their own exposures, not shift by one."""
-    exps = [0.001, 0.002, 0.003, 0.004, 0.005, 0.006]
+    exps = [1000, 2000, 3000, 4000, 5000, 6000]
     b = RecBuilder(tmp_path / "r.mcap")
     b.add_camera(CAM0, indexed_frames(6), drop=(2,))
-    b.add_frame_info(CAM0, n=6, exposures=exps)
+    b.add_frame_info(CAM0, n=6, exposures_us=exps)
     frames = _frames(b.write())
     for f in frames:
         i = (f.t_ns - T0) // FRAME_DT
-        assert f.exposure.exposure_time_s == pytest.approx(exps[i]), \
-            f"exposure shifted at {i}"
+        assert f.exposure.exposure_ns == exps[i] * 1000, f"exposure shifted at {i}"
         assert f.exposure.interpolated is False

@@ -6,6 +6,49 @@ bump the MINOR version.
 
 ## Unreleased
 
+### BREAKING: `visio_schema.v1.sensor.CameraFrameInfo` carries producer-computed exposure timing
+
+The message now carries what a consumer needs to place a frame's exposure in
+time, computed by the producer, which alone knows the sensor's exposure
+placement, readout geometry and capture-stamp latency:
+
+| Tag | Field | Meaning |
+|---|---|---|
+| 1 | `timestamp` | unchanged — the join key, byte-identical to the video frame's |
+| 14 | `exposure_us` | exposure duration of each row; never 0 |
+| 15 | `exposure_mid_offset_us` | exposure midpoint of the image's centre row, minus `timestamp` |
+| 16 | `gain` | total linear gain (sensor analog × sensor digital × ISP digital) |
+| 17 | `line_delay_ns` | time between successive delivered rows; 0 = global shutter |
+| 18 | `readout_direction` | `CameraFrameInfo.ReadoutDirection` — row order of the delivered image |
+
+Tags 2-13 (the raw per-frame exposure, gain, counter and sensor-timing fields)
+are reserved by number and name. The proto documents the consumer formula for a
+row's midpoint.
+
+Reader (`visio_schema.reader`):
+
+- `FrameExposure` is now `exposure_ns`, `mid_ns` (absolute, same clock as
+  `Frame.t_ns`), `gain`, `line_delay_ns`, `readout_direction`, `interpolated`,
+  with `row_mid_ns(row, height)` for any row. `ReadoutDirection` is exported.
+- Gaps still interpolate: exposure, gain and midpoint offset blend; line delay and
+  direction come from the nearer entry. The offset binds to each frame's own
+  stamp, so an interpolated or held entry lands relative to its frame.
+- A recording written in the retired layout (same schema name, no
+  `exposure_us` in its embedded descriptor) yields `exposure = None` for that
+  camera with a warning, instead of all-zero values; such a file is not read a
+  second time. An entry with `exposure_us == 0`, an unknown readout direction or
+  a line delay with no direction raises `ValueError`.
+
+`tools/mcap-rate-check` drops the frame-counter corroboration (no counter on the
+wire any more), FAILs a zero exposure, an unoriented line delay or an unknown
+readout direction, flags the retired layout, and prints the timing ranges per
+stream. Its checks now have tests.
+
+A time offset estimated against the frame `timestamp` (for example a
+camera-to-IMU calibration) is relative to that stamp; re-estimate it before a
+consumer switches to the midpoint. Pre-1.0, so this is a MINOR bump: the next
+release is 0.10.0.
+
 ### The rect encoder tells the truth about its colour, and NVENC can encode from the device
 
 `make_rect_encoder(full_range=True)` used to move the VUI flag and nothing else.

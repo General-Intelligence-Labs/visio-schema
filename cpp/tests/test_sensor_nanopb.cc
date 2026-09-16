@@ -1,11 +1,11 @@
 // Device-side (nanopb) round-trip for sensor payloads.
 //
-// CameraFrameInfo is all-scalar as of 0.7.0 (`frame_id` and `vi_time_ref` were
-// removed), so it needs no nanopb.options bound and every field is FT_STATIC by
-// construction — the whole message encodes into a fixed-size buffer with no
-// callbacks. The round-trip below is what pins that: a field that ever degraded
-// to a pb_callback_t would fail to encode here rather than silently drop on the
-// wire.
+// CameraFrameInfo is all-scalar, so it needs no nanopb.options bound and every
+// field is FT_STATIC by construction — the whole message encodes into a
+// fixed-size buffer with no callbacks. The round-trip below is what pins that: a
+// field that ever degraded to a pb_callback_t would fail to encode here rather
+// than silently drop on the wire. It also pins the signed midpoint offset (a
+// zigzag sint32, usually negative) and the nested readout-direction enum.
 #include <gtest/gtest.h>
 
 #include <pb_decode.h>
@@ -45,16 +45,12 @@ TEST(SensorNanopb, CameraFrameInfoRoundTrip) {
   // Non-round ns split across the Timestamp fields.
   m.timestamp.seconds = 482;
   m.timestamp.nanos = 526755001;
-  m.isp_frame_id = 14113;
-  m.exposure_time_s = 0.00425676582f;
-  m.analog_gain = 6.0f;
-  m.digital_gain = 1.0f;
-  m.isp_digital_gain = 1.5f;
-  m.iso = 400;
-  m.coarse_integration_time_lines = 313;
-  m.line_length_pixels = 612;
-  m.frame_length_lines = 2451;
-  m.pixel_clock_mhz = 45.0f;
+  m.exposure_us = 29832;
+  m.exposure_mid_offset_us = -15147;
+  m.gain = 6.5f;
+  m.line_delay_ns = 24510;
+  m.readout_direction =
+      visio_schema_v1_sensor_CameraFrameInfo_ReadoutDirection_READOUT_DIRECTION_BOTTOM_TO_TOP;
 
   std::string buf = Encode(visio_schema_v1_sensor_CameraFrameInfo_fields, m);
   Msg out = visio_schema_v1_sensor_CameraFrameInfo_init_zero;
@@ -63,14 +59,10 @@ TEST(SensorNanopb, CameraFrameInfoRoundTrip) {
   ASSERT_TRUE(out.has_timestamp);
   EXPECT_EQ(out.timestamp.seconds, 482);
   EXPECT_EQ(out.timestamp.nanos, 526755001);
-  EXPECT_EQ(out.isp_frame_id, 14113u);
-  EXPECT_FLOAT_EQ(out.exposure_time_s, 0.00425676582f);
-  EXPECT_FLOAT_EQ(out.analog_gain, 6.0f);
-  EXPECT_FLOAT_EQ(out.digital_gain, 1.0f);
-  EXPECT_FLOAT_EQ(out.isp_digital_gain, 1.5f);
-  EXPECT_EQ(out.iso, 400u);
-  EXPECT_EQ(out.coarse_integration_time_lines, 313u);
-  EXPECT_EQ(out.line_length_pixels, 612u);
-  EXPECT_EQ(out.frame_length_lines, 2451u);
-  EXPECT_FLOAT_EQ(out.pixel_clock_mhz, 45.0f);
+  EXPECT_EQ(out.exposure_us, 29832u);
+  EXPECT_EQ(out.exposure_mid_offset_us, -15147);
+  EXPECT_FLOAT_EQ(out.gain, 6.5f);
+  EXPECT_EQ(out.line_delay_ns, 24510u);
+  EXPECT_EQ(out.readout_direction,
+            visio_schema_v1_sensor_CameraFrameInfo_ReadoutDirection_READOUT_DIRECTION_BOTTOM_TO_TOP);
 }

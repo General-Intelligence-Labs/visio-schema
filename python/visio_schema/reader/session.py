@@ -41,11 +41,12 @@ import heapq
 import logging
 import struct
 from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from functools import cache
 from pathlib import Path
 
 import numpy as np
+from google.protobuf.descriptor_pb2 import FileDescriptorSet
 from mcap.exceptions import (
     DecoderNotFoundError,
     McapError,
@@ -77,6 +78,7 @@ from .domain import (
     FrameExposure,
     KeyframeCadence,
     Ns,
+    ReadoutDirection,
     Record,
     SessionMeta,
     StreamSummary,
@@ -856,19 +858,18 @@ class Session:
         this on actually streaming a camera. It is a real second pass over the
         bytes — "never a decode pass" is true only of HEVC.
 
-        Memory is metadata-scale but not free: measured 415 B retained per entry
-        (565 B peak), so ~45 MB for a 30-minute stereo recording. The "never load
-        the episode" rule (``docs/alignment.md`` §0.2) is about decoded frames,
-        which stay streaming.
+        Memory is metadata-scale: one small slotted entry per frame per camera.
+        The "never load the episode" rule (``docs/alignment.md`` §0.2) is about
+        decoded frames, which stay streaming.
         """
         if self._exposure is not None:
             return self._exposure
-        want = [t for idx in self._index for (t, s, _n) in idx.topics()
-                if s == FRAME_INFO_SCHEMA and t.endswith(FRAME_INFO_SUFFIX)]
+        want = [t for idx in self._index if _frame_info_is_current(idx)
+                for t in _frame_info_topics(idx)]
         if not want:
             self._exposure = {}
             return self._exposure
-        by_cam: dict[str, tuple[list[Ns], list[FrameExposure]]] = {}
+        by_cam: dict[str, tuple[list[Ns], list[_ExposureEntry]]] = {}
         # Its OWN read, deliberately not the streaming one: an entry must be in
         # hand before the `Frame` it attaches to is constructed, so it cannot come
         # from the stream it is feeding, and interpolating a gap needs the entry
@@ -877,19 +878,21 @@ class Session:
         proto = message_class(FRAME_INFO_SCHEMA)()
         want = sorted(set(want))
         for path, idx in zip(self._files, self._index, strict=True):
-            if not any(s == FRAME_INFO_SCHEMA for (_t, s, _n) in idx.topics()):
-                continue  # a sidecar, or a chunk recorded before the stream was on
+            # Not current: a sidecar, a chunk recorded before the stream was on, or
+            # the retired layout (warned about in `_exposure_cams`).
+            if not _frame_info_is_current(idx):
+                continue
             for schema, ch, msg in self._read_messages(path, topics=want):
                 if schema is None or schema.name != FRAME_INFO_SCHEMA:
                     continue
                 canon = strip_device_topic_prefix(ch.topic, self._device)
                 if canon is None:
                     continue
+                cam = _strip_suffix(canon, FRAME_INFO_SUFFIX)
                 proto.ParseFromString(msg.data)
-                ts, exps = by_cam.setdefault(
-                    _strip_suffix(canon, FRAME_INFO_SUFFIX), ([], []))
+                ts, exps = by_cam.setdefault(cam, ([], []))
                 ts.append(msg.log_time)
-                exps.append(_parse_frame_info(proto))
+                exps.append(_parse_frame_info(cam, msg.log_time, proto))
         out: dict[str, _ExposureTrack] = {}
         for cam, (ts, exps) in by_cam.items():
             # Chunks are read in first-message order and entries are monotonic
@@ -1520,11 +1523,18 @@ class Session:
         off — never triggers `_exposure_tracks`' second pass over the bytes.
         """
         if self._exposure_cams_set is None:
-            self._exposure_cams_set = frozenset(
-                strip_device_topic_prefix(t, self._device)[: -len(FRAME_INFO_SUFFIX)]
-                for idx in self._index for (t, s, _n) in idx.topics()
-                if s == FRAME_INFO_SCHEMA and t.endswith(FRAME_INFO_SUFFIX)
-            )
+            cams: set[str] = set()
+            retired: set[str] = set()
+            for idx in self._index:
+                current = _frame_info_is_current(idx)
+                for t in _frame_info_topics(idx):
+                    cam = strip_device_topic_prefix(t, self._device)[: -len(FRAME_INFO_SUFFIX)]
+                    (cams if current else retired).add(cam)
+            for cam in sorted(retired):
+                _log.warning(
+                    "%s%s: retired CameraFrameInfo format (no exposure_us) — no "
+                    "exposure from those files", cam, FRAME_INFO_SUFFIX)
+            self._exposure_cams_set = frozenset(cams)
         return self._exposure_cams_set
 
     def _exposure_at(self, canon: str, t_ns: Ns) -> FrameExposure | None:
@@ -1710,26 +1720,39 @@ def _parse_imu_calib(m) -> tuple[int | None, float | None, float | None, float |
     return dt_ns, rate, accel_nd, gyro_nd
 
 
+@dataclass(frozen=True, slots=True)
+class _ExposureEntry:
+    """One ``CameraFrameInfo``, in reader units, before it is bound to a frame stamp."""
+
+    exposure_ns: Ns
+    mid_offset_ns: Ns
+    gain: float
+    line_delay_ns: int
+    readout_direction: ReadoutDirection
+
+
 class _ExposureTrack:
     """One camera's exposure timeline, with gap interpolation.
 
     Built from the recording's ``frame_info`` entries, which join their video frame
-    by exact timestamp equality (visio-schema 0.7.0 guarantees that stamp is unique
-    per stream, so the join is unambiguous). Entries can still be *missing* — the
-    producer drops any it cannot bind to a captured frame, and the ISP genuinely
-    loses stats entries — so ``at()`` never returns nothing for a frame inside the
-    track: it interpolates and flags the result.
+    by exact timestamp equality (the stamp is unique per stream, so the join is
+    unambiguous). Entries can still be *missing* — the producer drops any it cannot
+    attribute to a captured frame — so ``at()`` never returns nothing for a frame
+    inside the track: it interpolates and flags the result.
 
-    Why interpolate rather than expose the gap: a consumer applying an
-    exposure-derived timing correction would otherwise have that one frame snap back
-    to uncorrected, a step of up to ``T_exp / 2``, which is precisely the jitter the
-    correction exists to remove. AE moves slowly, so a bracketed estimate is wrong by
-    a tiny fraction of that.
+    Why interpolate rather than expose the gap: a consumer applying the exposure
+    midpoint would otherwise have that one frame snap back to its capture stamp, a
+    step of up to ``T_exp / 2``, which is precisely the jitter the midpoint exists
+    to remove. AE moves slowly, so a bracketed estimate is wrong by a tiny fraction
+    of that.
+
+    The midpoint is stored as an OFFSET and bound to the stamp asked about, so an
+    interpolated or held entry still lands relative to its own frame.
     """
 
-    def __init__(self, ts: list[Ns], exposures: list[FrameExposure]) -> None:
+    def __init__(self, ts: list[Ns], entries: list[_ExposureEntry]) -> None:
         self._ts = ts
-        self._exp = exposures
+        self._entries = entries
 
     def __len__(self) -> int:
         return len(self._ts)
@@ -1737,48 +1760,79 @@ class _ExposureTrack:
     def at(self, t_ns: Ns) -> FrameExposure:
         i = bisect.bisect_left(self._ts, t_ns)
         if i < len(self._ts) and self._ts[i] == t_ns:
-            return self._exp[i]  # exact — the common case
+            return _bind(self._entries[i], t_ns, interpolated=False)  # exact — common
         # Outside the track on either end: hold the nearest. Linear extrapolation
         # of an AE curve past its last sample is a guess with no bound.
         if i == 0:
-            return _as_interpolated(self._exp[0])
+            return _bind(self._entries[0], t_ns, interpolated=True)
         if i == len(self._ts):
-            return _as_interpolated(self._exp[-1])
+            return _bind(self._entries[-1], t_ns, interpolated=True)
         lo_t, hi_t = self._ts[i - 1], self._ts[i]
-        lo, hi = self._exp[i - 1], self._exp[i]
         w = (t_ns - lo_t) / (hi_t - lo_t)
-        return _lerp_exposure(lo, hi, w)
+        return _bind(_lerp_entry(self._entries[i - 1], self._entries[i], w), t_ns,
+                     interpolated=True)
 
 
-def _as_interpolated(e: FrameExposure) -> FrameExposure:
-    return replace(e, isp_frame_id=None, interpolated=True)
+def _bind(e: _ExposureEntry, t_ns: Ns, *, interpolated: bool) -> FrameExposure:
+    return FrameExposure(
+        exposure_ns=e.exposure_ns,
+        mid_ns=t_ns + e.mid_offset_ns,
+        gain=e.gain,
+        line_delay_ns=e.line_delay_ns,
+        readout_direction=e.readout_direction,
+        interpolated=interpolated,
+    )
 
 
-def _lerp_exposure(lo: FrameExposure, hi: FrameExposure, w: float) -> FrameExposure:
-    """Blend the AE outputs; carry sensor timing from the nearer neighbour.
+def _lerp_entry(lo: _ExposureEntry, hi: _ExposureEntry, w: float) -> _ExposureEntry:
+    """Blend the AE-driven quantities; carry readout geometry from the nearer side.
 
-    Only the continuously-varying AE quantities are interpolated. Sensor timing
-    (line time, VTS) is static per sensor mode, so a fractional value would be
-    meaningless rather than merely approximate; the same goes for the integer
-    register/ISO fields, which are taken from the nearer side so they stay
-    self-consistent with a real operating point.
+    Exposure, gain and the midpoint offset move with AE, so they are interpolated.
+    Line delay and readout direction are fixed by the sensor mode and mount, so a
+    blended value would be meaningless rather than merely approximate.
     """
     near = hi if w >= 0.5 else lo
 
     def mix(a: float, b: float) -> float:
         return a + (b - a) * w
 
-    # Built FROM `near` rather than field-by-field, so a field added later
-    # inherits a real operating point instead of silently reverting to a default.
     return replace(
         near,
-        exposure_time_s=mix(lo.exposure_time_s, hi.exposure_time_s),
-        analog_gain=mix(lo.analog_gain, hi.analog_gain),
-        digital_gain=mix(lo.digital_gain, hi.digital_gain),
-        isp_digital_gain=mix(lo.isp_digital_gain, hi.isp_digital_gain),
-        isp_frame_id=None,
-        interpolated=True,
+        exposure_ns=round(mix(lo.exposure_ns, hi.exposure_ns)),
+        mid_offset_ns=round(mix(lo.mid_offset_ns, hi.mid_offset_ns)),
+        gain=mix(lo.gain, hi.gain),
     )
+
+
+def _frame_info_topics(idx) -> list[str]:
+    """A file's ``frame_info`` topics, off its index."""
+    return [t for (t, s, _n) in idx.topics()
+            if s == FRAME_INFO_SCHEMA and t.endswith(FRAME_INFO_SUFFIX)]
+
+
+def _frame_info_is_current(idx) -> bool:
+    """Does this file carry ``frame_info`` in the current layout? False when absent."""
+    rec = idx.schema_rec.get(FRAME_INFO_SCHEMA)
+    return rec is not None and _is_current_frame_info_schema(bytes(rec.data))
+
+
+@cache
+def _is_current_frame_info_schema(schema_data: bytes) -> bool:
+    """Does a channel's embedded descriptor carry the current CameraFrameInfo?
+
+    Recordings made before the producer computed exposure timing share the schema
+    NAME but carry raw fields under numbers this reader no longer defines; parsed
+    with the current class they would read as all-zero exposure. The descriptor
+    each MCAP embeds is authoritative for what that file's producer wrote.
+    """
+    fds = FileDescriptorSet.FromString(schema_data)
+    for f in fds.file:
+        if f.package != "visio_schema.v1.sensor":
+            continue
+        for m in f.message_type:
+            if m.name == "CameraFrameInfo":
+                return any(fld.name == "exposure_us" for fld in m.field)
+    return False
 
 
 def _reject_duplicate_stamps(cam: str, ts: list[Ns]) -> None:
@@ -1796,9 +1850,7 @@ def _reject_duplicate_stamps(cam: str, ts: list[Ns]) -> None:
     if dup is not None:
         raise ValueError(
             f"{cam}{FRAME_INFO_SUFFIX}: duplicate timestamp {dup} — two exposure "
-            "entries claim one frame, so neither can be trusted. This recording "
-            "predates visio-schema 0.7.0, whose producer drops an unbindable entry "
-            "instead of stamping it with the drain frame's PTS."
+            "entries claim one frame, so neither can be trusted."
         )
 
 
@@ -1807,29 +1859,36 @@ def _strip_suffix(topic: str, suffix: str) -> str:
     return topic[: -len(suffix)] if topic.endswith(suffix) else topic
 
 
-def _parse_frame_info(m) -> FrameExposure:
-    """One ``CameraFrameInfo`` -> :class:`FrameExposure`.
+def _parse_frame_info(cam: str, t_ns: Ns, m) -> _ExposureEntry:
+    """One current-format ``CameraFrameInfo`` -> :class:`_ExposureEntry`.
 
-    ``line_time_ns = line_length_pixels / (pixel_clock_mhz * 1e6)``, per the proto.
-
-    ``None`` when the sensor timing is absent, NOT 0.0: a zero row delay is the
-    legitimate encoding of a *global-shutter* sensor, so returning it here would
-    silently turn a rolling-shutter model into a no-op. This is reachable —
-    ``AiqManager::prime_stats`` logs "HTS/pclk will read 0 on the wire" and gives
-    up for the whole session when ``queryExpResInfo`` fails at prime time.
+    A zero exposure is physically impossible and a line delay without a readout
+    direction cannot be placed; the contract forbids both, so they are producer
+    bugs — refused here rather than surfacing only when a row midpoint is asked for.
     """
-    pclk_hz = float(m.pixel_clock_mhz) * 1e6
-    line_ns = (float(m.line_length_pixels) / pclk_hz * 1e9) if pclk_hz > 0 else None
-    return FrameExposure(
-        exposure_time_s=float(m.exposure_time_s),
-        line_time_ns=line_ns,
-        frame_length_lines=int(m.frame_length_lines),
-        analog_gain=float(m.analog_gain),
-        digital_gain=float(m.digital_gain),
-        isp_digital_gain=float(m.isp_digital_gain),
-        iso=int(m.iso),
-        coarse_integration_time_lines=int(m.coarse_integration_time_lines),
-        isp_frame_id=int(m.isp_frame_id),
+    if m.exposure_us == 0:
+        raise ValueError(
+            f"{cam}{FRAME_INFO_SUFFIX}: entry at {t_ns} has exposure_us == 0, which "
+            "the CameraFrameInfo contract forbids"
+        )
+    try:
+        direction = ReadoutDirection(int(m.readout_direction))
+    except ValueError:
+        raise ValueError(
+            f"{cam}{FRAME_INFO_SUFFIX}: entry at {t_ns} has readout_direction "
+            f"{int(m.readout_direction)}, which this reader does not know — "
+            "update visio-schema"
+        ) from None
+    if m.line_delay_ns and direction == ReadoutDirection.UNSPECIFIED:
+        raise ValueError(
+            f"{cam}{FRAME_INFO_SUFFIX}: entry at {t_ns} has line_delay_ns "
+            f"{int(m.line_delay_ns)} with no readout direction, which the "
+            "CameraFrameInfo contract forbids"
+        )
+    return _ExposureEntry(
+        exposure_ns=int(m.exposure_us) * 1000,
+        mid_offset_ns=int(m.exposure_mid_offset_us) * 1000,
+        gain=float(m.gain),
+        line_delay_ns=int(m.line_delay_ns),
+        readout_direction=direction,
     )
-
-

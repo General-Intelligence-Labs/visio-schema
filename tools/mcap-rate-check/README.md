@@ -65,17 +65,19 @@ Each of these manufactures a fake fault if missed.
 - **Sensor time is not write time.** Gaps are computed on each message's own
   capture timestamp. The MCAP `log_time` feeds only the write-lag column, which
   separates "the sensor dropped it" from "the writer fell behind".
-- **A producer counter is corroboration, not the verdict.** Where a stream
-  carries one (`CameraFrameInfo.isp_frame_id`) it is reported alongside; if it
-  disagrees with the timestamps, both numbers are shown, because the
-  disagreement localises the fault rather than resolving it.
+- **`frame_info` is checked against its contract.** An entry with
+  `exposure_us == 0`, a line delay but no readout direction, or a readout
+  direction the tool does not know, is a FAIL;
+  a recording written in the retired raw layout is flagged. The exposure,
+  midpoint-offset and gain ranges, line delays and readout directions are
+  printed under the stream.
 
 ## Cross-stream checks
 
 - **Stereo pairing** — nearest-partner offset between the two eyes, and how many
   frames have no partner within half a frame period. A co-phased ego holds
   ~0.01 ms; a jump to a full frame period means the pair has slipped.
-- **Camera vs `frame_info`** — one stats entry per captured frame, so a count
+- **Camera vs `frame_info`** — one entry per captured frame, so a count
   mismatch localises where a frame was lost.
 - **IMU raw vs quat** — the two are one stream emitted twice, so identical gap
   windows point at the single shared publisher rather than at the sensor.

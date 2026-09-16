@@ -20,6 +20,8 @@ from mcap.writer import Writer
 from scipy.spatial.transform import Rotation
 
 from visio_schema import make_channel, message_class
+from visio_schema.reader.rows import _dynamic_message_class
+from visio_schema.wire.schema import file_descriptor_set
 
 FRAME_DT = 33_000_000  # ns (~30 fps)
 T0 = 1_700_000_000 * 1_000_000_000
@@ -99,6 +101,9 @@ class RecBuilder:
         self.device = device
         self.capture = capture
         self._rows = []  # (topic, schema_name, t_ns, payload_bytes)
+        # schema name -> embedded descriptor bytes that replace make_channel's —
+        # how a fixture reproduces a recording written with an older layout.
+        self._schema_data = {}
 
     def _topic(self, topic):
         return f"/{self.device}{topic}" if self.device else topic
@@ -144,14 +149,14 @@ class RecBuilder:
             self._rows.append((self._topic(topic), IMAGE, t, m.SerializeToString()))
         return self
 
-    def add_frame_info(self, cam_topic, *, n, t0=T0, dt=FRAME_DT, exposures=None,
-                       drop=(), hts=612, vts=2432, pclk=44.65):
+    def add_frame_info(self, cam_topic, *, n, t0=T0, dt=FRAME_DT, exposures_us=None,
+                       mid_offsets_us=None, gains=None, line_delay_ns=0, direction=0,
+                       drop=()):
         """`frame_info` entries on the camera's sibling topic, one per frame.
 
-        `exposures` is per-index seconds (default a flat 4.002 ms, which is what a
-        real static-scene ego capture carries); `drop` omits indices to model the
-        producer dropping an unbindable entry or the ISP losing one. Defaults are
-        the AR0234's measured HTS/VTS/pclk, so line time works out to 13.706 us.
+        Per-index lists override the defaults (a flat 4 ms exposure at gain 2.0,
+        midpoint 2.231 ms before the stamp, global shutter). `drop` omits indices to
+        model the producer dropping an entry it could not attribute to a frame.
         """
         for i in range(n):
             if i in drop:
@@ -159,17 +164,33 @@ class RecBuilder:
             t = t0 + i * dt
             m = message_class(FRAME_INFO)()
             m.timestamp.FromNanoseconds(t)
+            m.exposure_us = exposures_us[i] if exposures_us is not None else 4000
+            m.exposure_mid_offset_us = (mid_offsets_us[i] if mid_offsets_us is not None
+                                        else -(m.exposure_us // 2) - 231)
+            m.gain = gains[i] if gains is not None else 2.0
+            m.line_delay_ns = line_delay_ns
+            m.readout_direction = direction
+            self._rows.append((self._topic(cam_topic + "/frame_info"), FRAME_INFO,
+                               t, m.SerializeToString()))
+        return self
+
+    def add_retired_frame_info(self, cam_topic, *, n, t0=T0, dt=FRAME_DT):
+        """Entries in the retired raw layout (fields 3, 5-13), embedded with that
+        layout's OWN descriptor — what a recording from before the producer computed
+        exposure timing carries under the same schema name."""
+        klass, fds = _retired_frame_info()
+        self._schema_data[FRAME_INFO] = fds
+        for i in range(n):
+            t = t0 + i * dt
+            m = klass()
+            m.timestamp.FromNanoseconds(t)
             m.isp_frame_id = i
-            m.exposure_time_s = (exposures[i] if exposures is not None
-                                 else 0.004002192988991737)
-            m.analog_gain = 4.515625
-            m.digital_gain = 1.0
-            m.isp_digital_gain = 1.0
-            m.iso = 0
+            m.exposure_time_s = 0.004
+            m.analog_gain = 4.5
             m.coarse_integration_time_lines = 292
-            m.line_length_pixels = hts
-            m.frame_length_lines = vts
-            m.pixel_clock_mhz = pclk
+            m.line_length_pixels = 612
+            m.frame_length_lines = 2432
+            m.pixel_clock_mhz = 44.65
             self._rows.append((self._topic(cam_topic + "/frame_info"), FRAME_INFO,
                                t, m.SerializeToString()))
         return self
@@ -296,7 +317,8 @@ class RecBuilder:
                 if schema_name not in schema_ids:
                     ch = make_channel(topic, schema_name, stream_id=0)
                     schema_ids[schema_name] = w.register_schema(
-                        name=schema_name, encoding="protobuf", data=ch.schema
+                        name=schema_name, encoding="protobuf",
+                        data=self._schema_data.get(schema_name, ch.schema),
                     )
                 if topic not in chan_ids:
                     chan_ids[topic] = w.register_channel(
@@ -311,6 +333,35 @@ class RecBuilder:
                 seqs[topic] += 1
             w.finish()
         return self.path
+
+
+def _retired_frame_info():
+    """(message class, FileDescriptorSet bytes) for the retired CameraFrameInfo layout.
+
+    Built by rewriting the CURRENT descriptor set (so its imports, e.g.
+    google/protobuf/timestamp.proto, come along) with the old field list.
+    """
+    from google.protobuf import descriptor_pb2
+
+    F = descriptor_pb2.FieldDescriptorProto
+    fds = descriptor_pb2.FileDescriptorSet.FromString(file_descriptor_set(FRAME_INFO))
+    msg = next(m for f in fds.file for m in f.message_type if m.name == "CameraFrameInfo")
+    del msg.field[:]
+    del msg.enum_type[:]
+    del msg.reserved_range[:]
+    del msg.reserved_name[:]
+    old = [("timestamp", 1, F.TYPE_MESSAGE), ("isp_frame_id", 3, F.TYPE_UINT32),
+           ("exposure_time_s", 5, F.TYPE_FLOAT), ("analog_gain", 6, F.TYPE_FLOAT),
+           ("digital_gain", 7, F.TYPE_FLOAT), ("isp_digital_gain", 8, F.TYPE_FLOAT),
+           ("iso", 9, F.TYPE_UINT32), ("coarse_integration_time_lines", 10, F.TYPE_UINT32),
+           ("line_length_pixels", 11, F.TYPE_UINT32), ("frame_length_lines", 12, F.TYPE_UINT32),
+           ("pixel_clock_mhz", 13, F.TYPE_FLOAT)]
+    for name, number, type_ in old:
+        fld = msg.field.add(name=name, number=number, type=type_, label=F.LABEL_OPTIONAL)
+        if type_ == F.TYPE_MESSAGE:
+            fld.type_name = ".google.protobuf.Timestamp"
+    data = fds.SerializeToString()
+    return _dynamic_message_class(FRAME_INFO, data), data
 
 
 # ~178 deg about x, then a few degrees of yaw and pitch — asymmetric on purpose.
