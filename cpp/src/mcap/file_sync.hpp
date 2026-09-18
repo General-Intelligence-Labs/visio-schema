@@ -9,9 +9,10 @@
 
 #include <cerrno>
 #include <cstdint>
-#include <cstdio>
 #include <cstring>
 #include <string>
+
+#include "visio_schema/log.hpp"
 
 namespace visio_schema::mcap::file_sync {
 
@@ -105,16 +106,16 @@ inline void FsyncPathBestEffort(const std::string& path,
                                 int extra_open_flags) {
   const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | extra_open_flags);
   if (fd < 0) {
-    std::fprintf(stderr,
-                 "McapWriter: cannot open %s to fsync (data may not be "
-                 "durable): %s\n",
-                 path.c_str(), std::strerror(errno));
+    log::Write(
+        log::Severity::kWarning,
+        "McapWriter: cannot open %s to fsync (data may not be durable): %s",
+        path.c_str(), std::strerror(errno));
     return;
   }
   if (::fsync(fd) != 0) {
-    std::fprintf(stderr,
-                 "McapWriter: fsync %s failed (data may not be durable): %s\n",
-                 path.c_str(), std::strerror(errno));
+    log::Write(log::Severity::kWarning,
+               "McapWriter: fsync %s failed (data may not be durable): %s",
+               path.c_str(), std::strerror(errno));
   }
   ::close(fd);
 }

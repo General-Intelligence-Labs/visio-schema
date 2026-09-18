@@ -4,10 +4,10 @@
 #include <pb_encode.h>
 
 #include <cstring>
-#include <iostream>
 #include <stdexcept>
 #include <utility>
 
+#include "visio_schema/log.hpp"
 #include "visio_schema/v1/service/device_info/device_info.pb.h"
 #include "visio_schema/wire/schema_blobs.gen.hpp"
 #include "visio_schema/v1/wire/header.pb.h"
@@ -283,7 +283,8 @@ void ChannelRegistry::OnAnnounce(const std::string& payload) {
     try {
       Learn(c);
     } catch (const DuplicateTopicError& e) {
-      std::cerr << "visio-schema: announce: " << e.what() << "\n";
+      log::Write(log::Severity::kWarning, "visio-schema: announce: %s",
+                 e.what());
     }
   }
 }

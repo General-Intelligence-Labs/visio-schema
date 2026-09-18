@@ -161,6 +161,30 @@ def test_the_keyframe_count_runs_across_chunks(rec):
     assert _stamps(frames) == _at(0, 10, 20, 30)
 
 
+def test_the_parse_buffer_is_fresh_per_shard(rec, monkeypatch):
+    """A buffer reused across shards never frees its protobuf (upb) arena.
+
+    `ParseFromString` on a reused message retains another AU's bytes each call, so
+    one buffer held for a whole multi-shard recording climbs RSS unbounded and OOMs
+    a long read (issue #33). Each shard must get its own, released at the seam — the
+    same scoping `_iter_file` gives its adapter buffer.
+    """
+    a = rec("a.mcap")
+    a.add_camera(CAM, indexed_frames(10), keyint=KEYINT)
+    b = rec("b.mcap")
+    b.add_camera(CAM, indexed_frames(10), t0=T0 + 10 * FRAME_DT, keyint=KEYINT)
+    bufs = []  # hold refs so ids cannot be recycled under the `is` check below
+    real = Session._iter_video_aus
+    monkeypatch.setattr(
+        Session, "_iter_video_aus",
+        lambda self, path, prefixed, canon, video, **kw: (
+            bufs.append(video), real(self, path, prefixed, canon, video, **kw))[1],
+    )
+    list(Session([a.write(), b.write()]).keyframe_stream(CAM))
+    assert len(bufs) == 2  # one shard, one buffer
+    assert bufs[0] is not bufs[1], "parse buffer shared across shards — arena leaks"
+
+
 def test_fewer_keyframes_than_every_n_still_yields_the_first(gop_rec):
     """A clip that cannot fill one sample period gives one sample, never zero.
 

@@ -81,6 +81,35 @@ camera-to-IMU calibration) is relative to that stamp; re-estimate it before a
 consumer switches to the midpoint. Pre-1.0, so this is a MINOR bump: the next
 release is 0.10.0.
 
+### `keyframe_stream` no longer leaks a whole recording's access units
+
+`_keyframe_frames` built one `CompressedVideo` parse buffer before the shard loop
+and reused it for every `ParseFromString` of the read. Under protobuf's default
+upb (C) backend a reused message never frees its arena — each parse retains
+another access unit's bytes — so a single `Session` over a long multi-shard
+recording climbed RSS without bound and was OOM-killed (measured 49 MB → 1.6 GB
+over 15 real ego shards; ~13 GB on a 110-shard recording). The buffer is now
+scoped per shard, released at each seam, the same way `_iter_file` scopes its
+adapter buffer — a bounded sawtooth in place of an unbounded climb. The decoder,
+mcap reader and writer were each ruled out by isolation; the reuse was the whole
+of it (`Clear()` does not free the arena; a fresh instance per parse does).
+Fixes #33.
+
+### The C++ library reports through one hook, so an application can keep its lines
+
+Every line the C++ library printed while running (a link that stalls or
+recovers, a failed recording write, a read-back mismatch, dropped frames) went
+straight to `std::cerr` or `stderr` from its own call site, with no severity.
+An application with a log of its own had no way to capture them. They now go
+through `visio_schema/log.hpp`: `SetSink` installs a function that receives
+each line as a `Record` carrying its severity (info, warning or error) and the
+format literal of the site that reported it, which a rate-limiting sink can key
+on. With no sink the output is what it was, one line on stderr, now written in
+a single `write(2)` so lines from concurrent threads never splice. A line past
+1023 bytes is cut and ends in ` ...`.
+
+A build that lists the C++ sources by hand must add `cpp/src/log.cc`.
+
 ### The rect encoder tells the truth about its colour, and NVENC can encode from the device
 
 `make_rect_encoder(full_range=True)` used to move the VUI flag and nothing else.

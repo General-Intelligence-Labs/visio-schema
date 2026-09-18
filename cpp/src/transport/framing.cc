@@ -1,10 +1,10 @@
 #include "visio_schema/transport/framing.hpp"
 
 #include <algorithm>
-#include <iostream>
 #include <string>
 #include <string_view>
 
+#include "visio_schema/log.hpp"
 #include "visio_schema/wire/codec/cobs.hpp"
 #include "visio_schema/wire/codec/frame.hpp"
 
@@ -32,7 +32,9 @@ std::vector<Message> ExtractFrames(std::vector<std::uint8_t>& rx_buf) {
     pos = delim + 1;
     decoded.clear();
     if (!visio_schema::wire::CobsDecode(enc_view, &decoded)) {
-      std::cerr << "visio-schema: COBS decode failed (" << len << " bytes)\n";
+      log::Write(log::Severity::kWarning,
+                 "visio-schema: COBS decode failed (%zu bytes)",
+                 static_cast<std::size_t>(len));
       continue;
     }
     Message msg;
@@ -40,8 +42,9 @@ std::vector<Message> ExtractFrames(std::vector<std::uint8_t>& rx_buf) {
                                 decoded.size()};
     const auto status = visio_schema::wire::DecodeFrame(frame_view, &msg);
     if (status != visio_schema::wire::FrameStatus::kOk) {
-      std::cerr << "visio-schema: frame decode dropped: "
-                << visio_schema::wire::FrameStatusName(status) << "\n";
+      log::Write(log::Severity::kWarning,
+                 "visio-schema: frame decode dropped: %s",
+                 visio_schema::wire::FrameStatusName(status));
       continue;
     }
     out.push_back(std::move(msg));

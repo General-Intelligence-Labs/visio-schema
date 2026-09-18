@@ -1,9 +1,9 @@
 #include "visio_schema/mcap/writer_endpoint.hpp"
 
 #include <chrono>
-#include <iostream>
 #include <utility>
 
+#include "visio_schema/log.hpp"
 #include "visio_schema/transport/link.hpp"  // EnterServiceThread
 
 namespace visio_schema::mcap {
@@ -76,8 +76,11 @@ bool McapWriterEndpoint::CrossedLogThreshold(std::uint64_t prev,
 void McapWriterEndpoint::NoteDrop(std::size_t n) {
   const std::uint64_t prev = dropped_.fetch_add(n, std::memory_order_relaxed);
   if (CrossedLogThreshold(prev, n)) {
-    std::cerr << "McapWriterEndpoint: dropped " << (prev + n)
-              << " frames (storage can't keep up with the recording)\n";
+    log::Write(
+        log::Severity::kWarning,
+        "McapWriterEndpoint: dropped %llu frames (storage can't keep up with "
+        "the recording)",
+        static_cast<unsigned long long>(prev + n));
   }
 }
 
@@ -92,9 +95,11 @@ void McapWriterEndpoint::NoteDrop(std::size_t n) {
 void McapWriterEndpoint::NoteUnmapped(std::uint32_t) {
   const std::uint64_t prev = unmapped_.fetch_add(1, std::memory_order_relaxed);
   if (CrossedLogThreshold(prev, 1)) {
-    std::cerr << "McapWriterEndpoint: " << (prev + 1)
-              << " frames resolve to no channel — at least one topic is absent"
-                 " from this recording\n";
+    log::Write(
+        log::Severity::kWarning,
+        "McapWriterEndpoint: %llu frames resolve to no channel — at least one "
+        "topic is absent from this recording",
+        static_cast<unsigned long long>(prev + 1));
   }
 }
 
@@ -181,8 +186,10 @@ void McapWriterEndpoint::WriterLoop() {
 // the same bad day) and callers need only the latch.
 void McapWriterEndpoint::NoteFailure(const char* what) noexcept {
   if (!failed_.exchange(true, std::memory_order_relaxed)) {
-    std::cerr << "McapWriterEndpoint: recording stopped — storage write failed: "
-              << what << "\n";
+    log::Write(
+        log::Severity::kError,
+        "McapWriterEndpoint: recording stopped — storage write failed: %s",
+        what);
   }
 }
 
