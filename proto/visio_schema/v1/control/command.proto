@@ -61,6 +61,8 @@ message Command {
     SetHandDetection set_hand_detection = 40;
     SetGpsTagging  set_gps_tagging = 41;
     SetDiagVerbosity set_diag_verbosity = 42;
+    OpenRecordingFile open_recording_file = 43;
+    DeleteRecording delete_recording = 44;
   }
 }
 
@@ -524,9 +526,54 @@ message TestStorage {
 
 // List recorded sessions + their upload state; the CommandResult carries
 // RecordingsList. Replaces GET /recordings.
+//
+// With neither `cursor` nor `session_name` set this is the original call: the
+// newest `limit` sessions, no per-file detail. See docs/protocol/recordings_pull.md.
 message ListRecordings {
   // Max entries to return (newest first). 0 = a device-chosen default.
   uint32 limit = 1;
+
+  // "" = the first page; otherwise RecordingsList.next_cursor from the previous
+  // page, passed back verbatim. Opaque to the host.
+  string cursor = 2;
+
+  // Set = list only this session, WITH its files (RecordingEntry.files).
+  // Unset = a page of sessions without files. A session that does not exist
+  // answers ok=false, error_code "no_such_session".
+  string session_name = 3;
+}
+
+// Open one recording file for a pull. The CommandResult carries
+// RecordingFileOpen; the bytes then arrive on a bare TCP socket: the host
+// connects to the device's USB-NCM address on RecordingFileOpen.port, reads
+// until the device closes, and never writes. Exactly `length` bytes means the
+// file (from `offset`) arrived whole; fewer means open again at the bytes
+// received. The open is single-use, belongs to the requesting host's address,
+// and lapses after 10 s unused. See docs/protocol/recordings_pull.md.
+//
+// Refusals (CommandResult.error_code): "busy_recording", "writing", "busy",
+// "forbidden_link", "no_data_link", "no_sdcard", "no_such_session",
+// "no_such_file", "changed", "out_of_range", "invalid_request", "unsupported".
+message OpenRecordingFile {
+  string session_name = 1;
+  string file_name    = 2;
+  // First byte to send; resume point. == file size is valid (zero bytes follow).
+  uint64 offset       = 3;
+  // Identity from the listing (or a partial download's sidecar). Both 0 =
+  // unchecked; otherwise both must match or the open answers "changed".
+  uint64 expect_size     = 4;
+  uint64 expect_mtime_ns = 5;
+}
+
+// Delete one whole recorded session from local storage. Command.target_device
+// MUST name this unit (a broadcast delete answers "invalid_request").
+//
+// Refusals: "busy_recording", "active_session", "protected" (encrypted parts,
+// diagnostic files, or an upload of the session in flight), "busy",
+// "forbidden_link", "no_sdcard", "no_such_session", "delete_failed",
+// "invalid_request", "unsupported".
+message DeleteRecording {
+  string session_name = 1;
 }
 
 // Pull the device's operational-state snapshot; the CommandResult carries

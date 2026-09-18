@@ -53,7 +53,7 @@ Proto entry points consumers rely on: `v1.control.command_pb2` (`Command` + its 
 `StartRecording`/`StopRecording`/`Identify`/`SetAutoStart`/`ConnectWifi`/`ForgetWifi`/`SetStorage`/
 `ListRecordings`/`GetState`/`SetCalibration`/`SetAutoUpload`/`SetNoticeLang`/`SetResolution`/
 `SetAudioRecording`/`SetRecordingDestination`/`SetRecordingHeartbeat`/`SetNoticeVolume`/
-`SetRecordingKey`),
+`SetRecordingKey`/`OpenRecordingFile`/`DeleteRecording`),
 `v1.control.command_result_pb2.CommandResult`,
 `v1.wire.header_pb2` (`Header`, `ControlStream`), `v1.service.device_info.device_info_pb2`
 (`DeviceInfo`, `Channel`), `v1.sensor.*`, `v1.calibration.*`, `foxglove.*`.

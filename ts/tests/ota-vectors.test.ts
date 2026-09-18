@@ -10,29 +10,14 @@
  * the generator refuses to freeze that difference on purpose.
  */
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+
+import { loadGolden } from './golden.js';
 
 import { relay, Reason, type OtaIo } from '../src/wire/ota.js';
 
-const VECTORS = fileURLToPath(new URL('../../tests/golden/ota_vectors.txt', import.meta.url));
 
-function loadVectors(): Map<string, Uint8Array> {
-  const out = new Map<string, Uint8Array>();
-  for (const line of readFileSync(VECTORS, 'utf8').split('\n')) {
-    const t = line.trim();
-    if (!t || t.startsWith('#')) continue;
-    const eq = t.indexOf('=');
-    const hex = t.slice(eq + 1);
-    const bytes = new Uint8Array(hex.length / 2);
-    for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
-    out.set(t.slice(0, eq), bytes);
-  }
-  return out;
-}
-
-const V = loadVectors();
+const V = loadGolden('ota_vectors.txt');
 const CASES = [...new Set([...V.keys()].map((k) => k.split('.')[0]!))].sort();
 const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -42,7 +27,7 @@ const text = (k: string) => Buffer.from(V.get(k) ?? new Uint8Array()).toString('
 const imageByte = (i: number) => (i * 31 + 7) & 0xff;
 
 test('the golden corpus is present and covers the cases that matter', () => {
-  assert.ok(CASES.length > 0, `no vectors loaded from ${VECTORS}`);
+  assert.ok(CASES.length > 0, 'no vectors loaded from ota_vectors.txt');
   for (const c of ['happy_advert', 'happy_legacy', 'instant_revert', 'wrong_board',
                    'addressed_leaf', 'no_flash']) {
     assert.ok(CASES.includes(c), `the transcript quietly lost the ${c} case`);

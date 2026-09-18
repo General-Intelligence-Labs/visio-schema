@@ -47,6 +47,16 @@ visio_schema.v1.control.ConnectWifi.passphrase        max_size:64
 # ConnectWifi accepts would otherwise be truncated here, and the entry it named
 # could never be removed.
 visio_schema.v1.control.ForgetWifi.ssid               max_size:33
+# Recording pull: session and file names are device-generated
+# ("session_00042-1789017895", "ego_0003.mcap"); the cursor is the device's own
+# opaque token passed back verbatim. 64 (63 + NUL) holds all three with room,
+# and must stay equal across the four so a name the listing can report is one
+# every command can accept.
+visio_schema.v1.control.ListRecordings.cursor         max_size:64
+visio_schema.v1.control.ListRecordings.session_name   max_size:64
+visio_schema.v1.control.OpenRecordingFile.session_name max_size:64
+visio_schema.v1.control.OpenRecordingFile.file_name   max_size:64
+visio_schema.v1.control.DeleteRecording.session_name  max_size:64
 visio_schema.v1.control.SetStorage.endpoint_url       max_size:128
 visio_schema.v1.control.SetStorage.region             max_size:32
 visio_schema.v1.control.SetStorage.bucket             max_size:64
@@ -157,6 +167,9 @@ visio_schema.v1.control.RecordingEntry.task       type:FT_POINTER
 visio_schema.v1.control.RecordingEntry.location   type:FT_POINTER
 visio_schema.v1.control.RecordingEntry.message    type:FT_POINTER
 visio_schema.v1.control.RecordingEntry.capturer   type:FT_POINTER
+visio_schema.v1.control.RecordingEntry.files      type:FT_POINTER
+visio_schema.v1.control.RecordingFile.name        type:FT_POINTER
+visio_schema.v1.control.RecordingsList.next_cursor type:FT_POINTER
 
 # DeviceState.wifi_networks: the first FT_POINTER field on DeviceState, which is
 # otherwise fully inline. A fixed WifiNetwork[N] with char ssid[33] would add

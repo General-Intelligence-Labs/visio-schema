@@ -76,7 +76,8 @@ def test_access_key_id_fits_a_tencent_secret_id(sizes: dict[str, int]) -> None:
 # `bytes` field, and an unsized one would make a v2 settings QR appear to apply
 # while setting nothing at all.
 @pytest.mark.parametrize("message",
-                         ["SetStorage", "TestStorage", "SetRecordingKey"])
+                         ["SetStorage", "TestStorage", "SetRecordingKey",
+                          "ListRecordings", "OpenRecordingFile", "DeleteRecording"])
 def test_every_inbound_field_is_sized(sizes: dict[str, int], message: str) -> None:
     from visio_schema.v1.control import command_pb2
 
@@ -189,3 +190,14 @@ def test_camera_temps_bound_reached_the_generated_header() -> None:
     assert f"camera_temps[{want}]" in header
     assert "pb_size_t camera_temps_count;" in header
     assert "STATIC,   REPEATED, MESSAGE,  camera_temps" in header
+
+
+# A name the listing reports must be one every recording command accepts: a
+# smaller cap on any of them fails pb_decode, and the device drops the whole
+# Command without answering.
+def test_recording_name_caps_agree(sizes: dict[str, int]) -> None:
+    fields = ("ListRecordings.cursor", "ListRecordings.session_name",
+              "OpenRecordingFile.session_name", "OpenRecordingFile.file_name",
+              "DeleteRecording.session_name")
+    caps = {f: sizes[f] for f in fields}
+    assert len(set(caps.values())) == 1, caps

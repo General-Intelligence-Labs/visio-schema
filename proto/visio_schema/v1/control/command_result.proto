@@ -78,10 +78,56 @@ message RecordingEntry {
   // parts are never auto-uploaded (delete-after-upload would destroy the only
   // recoverable copy); recover them off-device with MCAP recovery tooling.
   bool damaged = 16;
+
+  // This session is being recorded right now.
+  bool active = 17;
+
+  // Pullable files in the session (*.mcap parts and session.json). Always set.
+  uint32 file_count = 18;
+
+  // The files themselves, only when ListRecordings.session_name named this
+  // session; empty in a page of sessions.
+  repeated RecordingFile files = 19;
+}
+
+// One file inside a recorded session.
+message RecordingFile {
+  string name     = 1;  // e.g. "ego_0003.mcap", "session.json"
+  uint64 size     = 2;
+  uint64 mtime_ns = 3;  // compared, never interpreted; pass back as expect_mtime_ns
+
+  // Open for write right now — the part being recorded, or the active
+  // session's session.json (rewritten when the recording stops). Listed but
+  // not pullable: OpenRecordingFile answers "writing".
+  bool writing = 4;
+
+  // An .mcap part carries its end magic (closed cleanly). Always true for
+  // session.json.
+  bool complete = 5;
+
+  // An .mcap part is VREC ciphertext; a pull carries it unchanged.
+  bool encrypted = 6;
 }
 
 message RecordingsList {
   repeated RecordingEntry recordings = 1;
+
+  // "" = this was the last page; otherwise pass to ListRecordings.cursor.
+  string next_cursor = 2;
+
+  // Whether this device lets a file be pulled while it is recording. When
+  // false, OpenRecordingFile answers "busy_recording" during a recording and a
+  // recording that starts mid-pull closes the transfer.
+  bool read_while_recording = 3;
+}
+
+// Answer to OpenRecordingFile: where and how much to read.
+message RecordingFileOpen {
+  uint32 port      = 1;  // TCP port on the device's USB-NCM address
+  uint64 offset    = 2;  // first byte the socket carries
+  uint64 length    = 3;  // exact byte count the socket carries: file_size - offset
+  uint64 file_size = 4;
+  uint64 mtime_ns  = 5;  // keep beside a partial download for a later resume
 }
 
 // The device's operational-state snapshot — the GET /info payload. Fields that
@@ -324,11 +370,12 @@ message CommandResult {
   string error_message = 4;  // human-readable; empty when ok
 
   // Command-specific return data. Setters + GetState return `state`; ScanWifi
-  // returns `scan`; ListRecordings returns `recordings`; start/stop/identify
-  // leave payload unset.
+  // returns `scan`; ListRecordings returns `recordings`; OpenRecordingFile
+  // returns `file_open`; start/stop/identify leave payload unset.
   oneof payload {
-    DeviceState     state      = 10;
-    WifiScanResults scan       = 11;
-    RecordingsList  recordings = 12;
+    DeviceState       state      = 10;
+    WifiScanResults   scan       = 11;
+    RecordingsList    recordings = 12;
+    RecordingFileOpen file_open  = 13;
   }
 }

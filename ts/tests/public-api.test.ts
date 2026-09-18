@@ -40,7 +40,7 @@ const FACADE_API = new Set([
 
 /** The subpaths the `exports` map promises. `./gen/*` and `./golden/*` are
  *  wildcards over generated/fixture trees, pinned by verify-pack.mjs instead. */
-const PUBLIC_SUBPATHS = new Set(['.', './wire/ota', './wire/diag', './routing/topics', './gen/*', './golden/*']);
+const PUBLIC_SUBPATHS = new Set(['.', './wire/ota', './wire/diag', './wire/recordings', './routing/topics', './gen/*', './golden/*']);
 
 const pkg = JSON.parse(
   readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'),

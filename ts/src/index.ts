@@ -19,7 +19,8 @@
  * can tell a real entry from a placeholder.
  *
  * WHY THE DRIVERS ARE NOT FLATTENED HERE: `wire/ota` and `wire/diag` each
- * define `nextSessionId` and `STALL_TIMEOUT_S`, with different values. Only
+ * define `nextSessionId` and `STALL_TIMEOUT_S`, with different values
+ * (`wire/recordings` defines `STALL_TIMEOUT_S` too). Only
  * those two collide — `listFiles`/`readFile`/`DiagError` would flatten fine —
  * but a facade carrying one driver whole and the other in part is a worse
  * contract than one that carries neither. Both are reached at

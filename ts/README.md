@@ -27,6 +27,7 @@ design:
 | demux on `wire.Header` fields 1–3 | video stays native, the rest goes to JS | 3 hand-scanned varints |
 | H.265 → MediaCodec / VideoToolbox | video never crosses the RN bridge | `CompressedVideo` field 3 only |
 | MCAP writing | phone-side recording of that video | none — a Foxglove channel in `DeviceInfo` carries its serialized `FileDescriptorSet`, which is exactly what an MCAP `Schema` record's `data` expects |
+| receiving a pulled recording file | a bare TCP socket straight to a file (`docs/protocol/recordings_pull.md`); `wire/recordings` takes it as an injected `receive` | none |
 
 So the native side needs **no protobuf library**, and this package owns payload
 decode — the only place bindings were ever needed. The gaps are explainable, not
@@ -39,6 +40,8 @@ sibling checkout. `ota_vectors.txt` pins `OtaMessage` frames and the outcome,
 never the recv call pattern — pinning that would freeze an implementation detail
 and make an async driver unwritable, which this one is (a synchronous
 `recv(timeout)` cannot exist in JS).
+
+`recordings_wire_vectors.txt` pins the recordings-pull commands and results; the byte stream after an open has no framing to pin.
 
 What the vectors **cannot** see is anything on another stream — the quiesce is a
 `Command`, and `docs/protocol/ota.md` §6 is the only thing standing between a

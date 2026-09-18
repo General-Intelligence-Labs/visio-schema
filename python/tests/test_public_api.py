@@ -60,6 +60,8 @@ REQUIRED_COMMAND_BODIES = frozenset(
         "set_notice_volume",
         "set_recording_key",
         "set_hand_detection",
+        "open_recording_file",
+        "delete_recording",
         "set_gps_tagging",
     }
 )

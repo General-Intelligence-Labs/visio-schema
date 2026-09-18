@@ -68,6 +68,27 @@ def command_message(command: _ProtoMessage) -> Message:
     return Message(stream_id=COMMAND, payload=command.SerializeToString())
 
 
+def set_stream_policy_command(topics=(), *, target_device: str = "",
+                              command_id: int = 0) -> "_ProtoMessage":
+    """A SetStreamPolicy dropping `topics` on the link it is sent over.
+
+    The policy is scoped to ONE connection and REPLACES whatever that link had,
+    so no topics means "everything at full rate again" — which is what every
+    caller sends on the way out. Both transfer paths hold a link quiet this way
+    (docs/protocol/ota.md section 6, recordings_pull.md section 7) and each used
+    to build the message itself, including the same footgun: the body must be
+    named even when it carries no rules, or the empty oneof encodes as no
+    command at all.
+    """
+    from visio_schema.v1.control import command_pb2
+
+    cmd = command_pb2.Command(command_id=command_id, target_device=target_device)
+    cmd.set_stream_policy.SetInParent()
+    cmd.set_stream_policy.rules.extend(
+        command_pb2.SetStreamPolicy.Rule(topic=t, drop=True) for t in topics)
+    return cmd
+
+
 __all__ = [
     "COMMAND",
     "DEVICE_INFO",
@@ -77,4 +98,5 @@ __all__ = [
     "LINK_LOCAL_CONTROL",
     "OTA",
     "command_message",
+    "set_stream_policy_command",
 ]

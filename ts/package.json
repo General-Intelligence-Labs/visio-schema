@@ -20,6 +20,10 @@
       "types": "./dist/wire/diag.d.ts",
       "default": "./dist/wire/diag.js"
     },
+    "./wire/recordings": {
+      "types": "./dist/wire/recordings.d.ts",
+      "default": "./dist/wire/recordings.js"
+    },
     "./routing/topics": {
       "types": "./dist/routing/topics.d.ts",
       "default": "./dist/routing/topics.js"

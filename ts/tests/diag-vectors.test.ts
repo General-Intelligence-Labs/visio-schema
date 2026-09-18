@@ -10,29 +10,14 @@
  * from mcap/crypto.py — a different layer that this driver never opens.
  */
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+
+import { loadGolden } from './golden.js';
 
 import { abortMessage, listMessage, readMessage } from '../src/wire/diag.js';
 
-const VECTORS = fileURLToPath(new URL('../../tests/golden/diag_wire_vectors.txt', import.meta.url));
 
-function loadVectors(): Map<string, Uint8Array> {
-  const out = new Map<string, Uint8Array>();
-  for (const line of readFileSync(VECTORS, 'utf8').split('\n')) {
-    const t = line.trim();
-    if (!t || t.startsWith('#')) continue;
-    const eq = t.indexOf('=');
-    const hex = t.slice(eq + 1);
-    const bytes = new Uint8Array(hex.length / 2);
-    for (let i = 0; i < bytes.length; i += 1) bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
-    out.set(t.slice(0, eq), bytes);
-  }
-  return out;
-}
-
-const V = loadVectors();
+const V = loadGolden('diag_wire_vectors.txt');
 const SID = 0x51d0n;
 
 /** Every case in the file, and the call that must reproduce it. */
