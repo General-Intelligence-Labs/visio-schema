@@ -5,11 +5,12 @@
  * The C++ half of python/visio_schema/wire/recordings.py. Control rides the
  * existing Command / CommandResult pair (ListRecordings, OpenRecordingFile,
  * DeleteRecording). The file bytes do NOT ride the bus: an open names a TCP
- * port on the device's USB-NCM address, and the host connects, reads until the
- * device closes, and never writes. Exactly `length` bytes means the range
- * arrived whole; fewer means open again at the bytes received. TCP carries
- * order, delivery and flow control, so nothing here re-implements them. The
- * contract is docs/protocol/recordings_pull.md.
+ * port, and the host connects to it on the device address it sent the open to,
+ * reads until the device closes, and never writes. Any direct IP link serves a
+ * pull (USB-NCM or Wi-Fi). Exactly `length` bytes means the range arrived
+ * whole; fewer means open again at the bytes received. TCP carries order,
+ * delivery and flow control, so nothing here re-implements them. The contract
+ * is docs/protocol/recordings_pull.md.
  *
  * SHAPE. Commands go through an injected `run` (the caller stamps command_id,
  * sends on COMMAND and decodes the matching CommandResult); `Receive` opens its
@@ -256,8 +257,9 @@ struct Received {
     bool sink_failed = false;  // the sink returned false
 };
 
-// Read one opened range. A short read is not an error here: a refused
-// connection, a reset, a stall and an early close all return what arrived.
+// Read one opened range from `address`, the device address the open was sent
+// to. A short read is not an error here: a refused connection, a reset, a stall
+// and an early close all return what arrived.
 // This reads only the data socket: keep the bus link read meanwhile, or the
 // device aborts it after 10 s (recordings_pull.md §4).
 inline Received Receive(const std::string& address, const FileOpen& open, const Sink& sink,

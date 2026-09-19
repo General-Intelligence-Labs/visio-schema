@@ -370,7 +370,7 @@ export const RecordingsListSchema: GenMessage<RecordingsList> = /*@__PURE__*/
  */
 export type RecordingFileOpen = Message<"visio_schema.v1.control.RecordingFileOpen"> & {
   /**
-   * TCP port on the device's USB-NCM address
+   * TCP port, on the device address the open was sent to
    *
    * @generated from field: uint32 port = 1;
    */

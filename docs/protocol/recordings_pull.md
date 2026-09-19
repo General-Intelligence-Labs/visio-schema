@@ -41,8 +41,11 @@ Listing is allowed on every link and while recording.
 
 The device checks, and refuses with the first failing code:
 
-1. the link: USB-NCM only — `forbidden_link` on Wi-Fi, `no_data_link` on a link with no IP path
-   (USB serial);
+1. the link: any direct IP link — USB-NCM, the device's setup hotspot, or the Wi-Fi network it
+   joined. `no_data_link` on a link with no IP path for the data socket (USB serial);
+   `forbidden_link` on a link that is not the requesting host's own — a hub's leaf link, an
+   unknown endpoint. A hub relays a command to its leaves over its own direct link, so a leaf
+   would grant the file to the HUB's address: pull a leaf's recordings by connecting to the leaf;
 2. storage present — `no_sdcard`;
 3. names — `invalid_request` for a name that is empty, over 63 bytes, contains `/` or NUL, or
    starts with `.`;
@@ -64,7 +67,11 @@ same host replaces its unused lease and ends its transfer in progress, if any.
 
 ## 3. The data socket
 
-The device listens on `port` on its USB-NCM address only.
+The device listens on `port` on all its addresses, and the host connects to the device address it
+sent the open to. A device reachable on several links at once (the cable and Wi-Fi) has one
+address per link, and whichever one carried the open also carries the bytes. Listening on every
+address admits no one by itself: the device serves a connection only from the address an open was
+granted to.
 
 - The host connects, reads, and **never writes**.
 - On accept, the device looks for a live lease belonging to the peer's address. With none, it
@@ -96,10 +103,11 @@ away bytes still in flight.
 ## 5. Deleting a session
 
 `DeleteRecording` (Command body 44) deletes one whole session. `Command.target_device` MUST name
-the unit; a broadcast delete answers `invalid_request`. Refusals: `forbidden_link`, `no_sdcard`,
-`no_such_session`, `busy_recording`, `active_session`, `busy`, `protected` (encrypted parts,
-diagnostic files, or an upload of the session in progress), `delete_failed`. A session is deleted
-whole or not at all as far as any listing can see.
+the unit; a broadcast delete answers `invalid_request`. A delete needs no data socket, so it is
+allowed on every direct link, USB serial included. Refusals: `forbidden_link` (a hub's leaf link or an
+unknown endpoint), `no_sdcard`, `no_such_session`, `busy_recording`, `active_session`, `busy`, `protected`
+(encrypted parts, diagnostic files, or an upload of the session in progress), `delete_failed`. A
+session is deleted whole or not at all as far as any listing can see.
 
 ## 6. Recording policy
 
@@ -131,6 +139,15 @@ affected by a link policy.
 | Opens without progress before giving up | 5 |
 | Host receive buffer | 1 MiB |
 
+Every direct IP link serves a pull, at very different speeds. Measured board → phone TCP on
+audio_ego_v3 (RTL8821CS Wi-Fi):
+
+| Link | Throughput |
+|---|---|
+| USB-NCM | ~17 MB/s |
+| 5 GHz setup hotspot | ~7 MB/s (~12.5 MB/s with the cameras off) |
+| 2.4 GHz setup hotspot | ~4.4–4.8 MB/s |
+
 ## Error codes
 
 | Code | Meaning |
@@ -138,9 +155,9 @@ affected by a link policy.
 | `busy_recording` | Refused because the device is recording (policy, or any delete) |
 | `writing` | The file is open for write |
 | `active_session` | Delete of the session being recorded |
-| `busy` | Another host is pulling, or OTA / format / storage recovery is running |
-| `forbidden_link` | Not allowed on this link (Wi-Fi) |
-| `no_data_link` | This link has no IP path for the data socket (USB serial) |
+| `busy` | Another host is pulling, OTA / format / storage recovery is running, or the file socket could not be opened |
+| `forbidden_link` | The link is not the host's own: a hub's leaf link, an unknown endpoint |
+| `no_data_link` | Open over a link with no IP path for the data socket (USB serial) |
 | `no_sdcard` | No usable storage |
 | `no_such_session`, `no_such_file` | Not there (deleted, uploaded and removed, or a stale listing) |
 | `changed` | The file differs from `expect_size`/`expect_mtime_ns`, or is being repaired |

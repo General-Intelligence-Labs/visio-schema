@@ -2,12 +2,12 @@
 
 Control rides the existing Command / CommandResult pair (``ListRecordings``,
 ``OpenRecordingFile``, ``DeleteRecording``). The file bytes do NOT ride the bus:
-an ``OpenRecordingFile`` answer names a TCP port on the device's USB-NCM
-address, and the host connects, reads until the device closes, and never
-writes. Exactly ``length`` bytes means the range arrived whole; fewer means
-open again at the bytes received. TCP carries order, delivery and flow control,
-so nothing here re-implements them. The contract is
-docs/protocol/recordings_pull.md.
+an ``OpenRecordingFile`` answer names a TCP port, and the host connects to it on
+the device address it sent the open to, reads until the device closes, and
+never writes. Any direct IP link serves a pull (USB-NCM or Wi-Fi). Exactly
+``length`` bytes means the range arrived whole; fewer means open again at the
+bytes received. TCP carries order, delivery and flow control, so nothing here
+re-implements them. The contract is docs/protocol/recordings_pull.md.
 
 Commands are transport-agnostic: every call takes ``run(command, timeout) ->
 CommandResult``. The caller stamps ``command_id``, sends on COMMAND and returns
@@ -43,8 +43,9 @@ __all__ = [
     "receive",
 ]
 
-#: Where the device's file sender listens, on its USB-NCM address only. The
-#: open reports the port; this is the value current firmware uses.
+#: Where the device's file sender listens, on all its addresses; dial the one
+#: the open was sent to. The open reports the port; this is the value current
+#: firmware uses.
 DEFAULT_PORT = 50002
 
 #: How long to wait for one CommandResult.
@@ -216,10 +217,11 @@ def receive(address: str, opened: command_result_pb2.RecordingFileOpen, sink: Si
             stall_timeout: float = STALL_TIMEOUT_S) -> Received:
     """Read one opened range from the device into ``sink(offset, data)``.
 
-    Connects, reads until the device closes or ``opened.length`` bytes have
-    arrived, and never writes. A short read is not an error here — a refused
-    connection, a reset, a stall and an early close all return what arrived,
-    with the reason in ``error``; the caller opens again at the bytes received.
+    Connects to ``address`` (the device address the open was sent to), reads
+    until the device closes or ``opened.length`` bytes have arrived, and never
+    writes. A short read is not an error here — a refused connection, a reset,
+    a stall and an early close all return what arrived, with the reason in
+    ``error``; the caller opens again at the bytes received.
     Exceptions from ``sink`` propagate: a full disk is not a reason to retry.
 
     This reads only the data socket. The caller keeps its bus link read for the

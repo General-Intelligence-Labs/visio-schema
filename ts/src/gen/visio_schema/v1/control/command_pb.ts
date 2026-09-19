@@ -1353,15 +1353,18 @@ export const ListRecordingsSchema: GenMessage<ListRecordings> = /*@__PURE__*/
 /**
  * Open one recording file for a pull. The CommandResult carries
  * RecordingFileOpen; the bytes then arrive on a bare TCP socket: the host
- * connects to the device's USB-NCM address on RecordingFileOpen.port, reads
- * until the device closes, and never writes. Exactly `length` bytes means the
- * file (from `offset`) arrived whole; fewer means open again at the bytes
- * received. The open is single-use, belongs to the requesting host's address,
- * and lapses after 10 s unused. See docs/protocol/recordings_pull.md.
+ * connects to RecordingFileOpen.port on the device address it sent this open
+ * to, reads until the device closes, and never writes. Exactly `length` bytes
+ * means the file (from `offset`) arrived whole; fewer means open again at the
+ * bytes received. The open is single-use, belongs to the requesting host's
+ * address, and lapses after 10 s unused. Allowed over any direct IP link
+ * (USB-NCM, the setup hotspot, a joined Wi-Fi network). See
+ * docs/protocol/recordings_pull.md.
  *
  * Refusals (CommandResult.error_code): "busy_recording", "writing", "busy",
- * "forbidden_link", "no_data_link", "no_sdcard", "no_such_session",
- * "no_such_file", "changed", "out_of_range", "invalid_request", "unsupported".
+ * "forbidden_link" (a hub's leaf link, an unknown endpoint), "no_data_link" (USB serial: no
+ * IP path for the socket), "no_sdcard", "no_such_session", "no_such_file",
+ * "changed", "out_of_range", "invalid_request", "unsupported".
  *
  * @generated from message visio_schema.v1.control.OpenRecordingFile
  */
@@ -1406,12 +1409,13 @@ export const OpenRecordingFileSchema: GenMessage<OpenRecordingFile> = /*@__PURE_
 
 /**
  * Delete one whole recorded session from local storage. Command.target_device
- * MUST name this unit (a broadcast delete answers "invalid_request").
+ * MUST name this unit (a broadcast delete answers "invalid_request"). Allowed
+ * on every direct link, USB serial included.
  *
  * Refusals: "busy_recording", "active_session", "protected" (encrypted parts,
  * diagnostic files, or an upload of the session in flight), "busy",
- * "forbidden_link", "no_sdcard", "no_such_session", "delete_failed",
- * "invalid_request", "unsupported".
+ * "forbidden_link" (a hub's leaf link, an unknown endpoint), "no_sdcard", "no_such_session",
+ * "delete_failed", "invalid_request", "unsupported".
  *
  * @generated from message visio_schema.v1.control.DeleteRecording
  */

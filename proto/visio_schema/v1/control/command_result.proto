@@ -123,7 +123,7 @@ message RecordingsList {
 
 // Answer to OpenRecordingFile: where and how much to read.
 message RecordingFileOpen {
-  uint32 port      = 1;  // TCP port on the device's USB-NCM address
+  uint32 port      = 1;  // TCP port, on the device address the open was sent to
   uint64 offset    = 2;  // first byte the socket carries
   uint64 length    = 3;  // exact byte count the socket carries: file_size - offset
   uint64 file_size = 4;

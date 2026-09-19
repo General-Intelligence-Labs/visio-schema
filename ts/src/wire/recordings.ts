@@ -5,9 +5,10 @@
  * The TypeScript twin of `visio_schema/wire/recordings.py`. Control rides the
  * existing Command / CommandResult pair (ListRecordings, OpenRecordingFile,
  * DeleteRecording). The file bytes do NOT ride the bus: an open names a TCP
- * port on the device's USB-NCM address, and the host connects, reads until the
- * device closes, and never writes. Exactly `length` bytes means the range
- * arrived whole; fewer means open again at the bytes received. The contract is
+ * port, and the host connects to it on the device address it sent the open to,
+ * reads until the device closes, and never writes. Any direct IP link serves a
+ * pull (USB-NCM or Wi-Fi). Exactly `length` bytes means the range arrived
+ * whole; fewer means open again at the bytes received. The contract is
  * docs/protocol/recordings_pull.md.
  *
  * Both seams are injected. `run` sends one Command and resolves with its
@@ -72,8 +73,8 @@ export interface Received {
 }
 
 /**
- * Read one opened range: connect to the device's USB-NCM address on
- * `open.port`, store bytes from `open.offset` in order, stop at `open.length`
+ * Read one opened range: connect to `open.port` on the device address the open
+ * was sent to, store bytes from `open.offset` in order, stop at `open.length`
  * or when the device closes. A short read is a value, not a throw. Throw only
  * for a failure retrying cannot fix (a full disk), and that ends the pull.
  * The bus link must keep being read meanwhile (recordings_pull.md §4).
