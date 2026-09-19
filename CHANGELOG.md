@@ -99,6 +99,15 @@ mcap reader and writer were each ruled out by isolation; the reuse was the whole
 of it (`Clear()` does not free the arena; a fresh instance per parse does).
 Fixes #33.
 
+### An endpoint says whether it wants a stream: `Endpoint::WantsStream`
+
+A producer that can stop a costly source when nothing consumes it (a device parking its cameras)
+needs to ask its sinks, not enumerate them. `Endpoint::WantsStream(stream_id)` answers it: the
+default is "wants it while not `Stalled()`", so an endpoint that says nothing still counts as a
+consumer, and `FramedFdEndpoint` answers from the same `SetStreamPolicy` rule `Send()` drops by — a
+dropped stream is not wanted, a rate-capped one still is. Additive; no existing endpoint changes
+behaviour.
+
 ### The C++ library reports through one hook, so an application can keep its lines
 
 Every line the C++ library printed while running (a link that stalls or

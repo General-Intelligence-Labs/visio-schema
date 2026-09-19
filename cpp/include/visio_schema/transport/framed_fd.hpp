@@ -105,6 +105,15 @@ class FramedFdEndpoint : public Endpoint {
   bool Stalled() const override {
     return link_stalled_.load(std::memory_order_relaxed);
   }
+  // Not stalled, and not a stream this client's policy drops: the same two
+  // gates Send() applies, so "wanted" cannot disagree with "delivered". A
+  // rate cap still delivers, so it still wants. Serialized with Send() by the
+  // bus dispatch mutex — policy_'s contract.
+  bool WantsStream(std::uint32_t stream_id) const override {
+    if (Stalled()) return false;
+    const StreamRule* rule = RuleFor(stream_id);
+    return rule == nullptr || !rule->drop;
+  }
 
  protected:
   // Called from the I/O thread each loop iteration (~kTickMs). Base: reopen a

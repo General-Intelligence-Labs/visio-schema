@@ -157,6 +157,22 @@ TEST(StreamPolicyDecimation, DropsWhatTheRuleDrops) {
   rx.Stop();
 }
 
+// WantsStream answers from the rule Send() delivers by: no policy wants
+// everything, a dropped stream is not wanted, a rate-capped one still is.
+TEST(StreamPolicyDecimation, WantsStreamFollowsTheDeliveryRule) {
+  auto [a, b] = MakeFdPair();
+  SerialEndpoint tx(a), rx(b);
+  const visio_schema::transport::Endpoint& ep = tx;
+  EXPECT_TRUE(ep.WantsStream(30)) << "no policy delivers everything";
+  tx.SetStreamPolicy(Policy({{30, StreamRule{true, 0}},
+                             {31, StreamRule{false, 1'000'000}}}));
+  EXPECT_FALSE(ep.WantsStream(30)) << "a dropped stream is never delivered";
+  EXPECT_TRUE(ep.WantsStream(31)) << "a capped stream is still delivered";
+  EXPECT_TRUE(ep.WantsStream(32)) << "an unnamed stream is delivered";
+  tx.SetStreamPolicy(nullptr);
+  EXPECT_TRUE(ep.WantsStream(30));
+}
+
 // Video is keep-or-drop: a cap on a bulk stream must be ignored, because
 // shedding P-frames costs the decoder its reference chain for a whole GOP.
 TEST(StreamPolicyDecimation, RateCapIsIgnoredForBulkVideo) {

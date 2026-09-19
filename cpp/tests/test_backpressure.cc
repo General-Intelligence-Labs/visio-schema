@@ -311,6 +311,9 @@ TEST(Backpressure, StalledLinkShedsDecimatableKeepsControlAndEvents) {
   // the latch).
   EXPECT_TRUE(static_cast<visio_schema::transport::Endpoint&>(tx).Stalled())
       << "Stalled() must reflect the latch through the Endpoint interface";
+  // A leg nobody reads consumes nothing, whatever its policy says.
+  EXPECT_FALSE(static_cast<visio_schema::transport::Endpoint&>(tx).WantsStream(16))
+      << "a stalled sink must not count as wanting a stream";
 
   // At the door while stalled: bulk and decimatable are refused before any
   // queue is touched; control and one-shot data enqueue. The decimatable
