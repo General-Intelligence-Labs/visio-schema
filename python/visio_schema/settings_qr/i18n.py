@@ -122,6 +122,87 @@ _STRINGS: dict[str, dict[str, str]] = {
     },
     "qrWritten": {"en": "QR version {version} -> {path}",
                   "zh": "二维码版本 {version} -> {path}"},
+    # -- validation notices (validate(); the field path stays English) -- #
+    # The reason half of every "<field>: <reason>" problem. The device sizes
+    # its decode buffers in BYTES, so an over-long value is refused here rather
+    # than left to time out silently on the rig.
+    "badType": {"en": 'must be "{type}"', "zh": '必须为 "{type}"'},
+    "badVersion": {
+        "en": "must be {plaintext} or {sealed}",
+        "zh": "必须为 {plaintext} 或 {sealed}",
+    },
+    "unknownKey": {
+        "en": "unknown key (the app would ignore it)",
+        "zh": "未知键（应用会忽略它）",
+    },
+    "unknownField": {"en": "unknown field", "zh": "未知字段"},
+    "noSections": {
+        "en": "no settings sections present", "zh": "未包含任何设置项"},
+    "mustBeObject": {"en": "must be an object", "zh": "必须为对象"},
+    "mustBeString": {"en": "must be a string", "zh": "必须为字符串"},
+    "mustBeBoolean": {"en": "must be a boolean", "zh": "必须为布尔值"},
+    "mustBeInteger": {"en": "must be an integer", "zh": "必须为整数"},
+    "required": {"en": "required", "zh": "必填"},
+    "intRange": {"en": "must be {lo}-{hi}", "zh": "必须在 {lo}-{hi} 之间"},
+    "tooLongChars": {
+        "en": "longer than {max} characters", "zh": "超过 {max} 个字符"},
+    "tooLongBytes": {
+        "en": "{bytes} bytes, but the device limit is {max} bytes",
+        "zh": "{bytes} 字节，超过设备上限 {max} 字节",
+    },
+    "mustBeHttpUrl": {
+        "en": "must be an http(s) URL", "zh": "必须为 http(s) URL"},
+    "regionNotDerivable": {
+        "en": "required (not derivable from the endpoint)",
+        "zh": "必填（无法从 endpoint 推断）",
+    },
+    "secretNotAllowedSealed": {
+        "en": ("not allowed in a v{version} payload — the secret goes in the "
+               "sealed envelope"),
+        "zh": "不允许出现在 v{version} 载荷中——密钥应放入 sealed 封套",
+    },
+    "kidFormat": {
+        "en": "must be 8 lowercase hex characters",
+        "zh": "必须为 8 位小写十六进制字符",
+    },
+    "hasList": {
+        "en": "must be a list of strings", "zh": "必须为字符串列表"},
+    "hasEmpty": {
+        "en": "empty — the envelope sets nothing",
+        "zh": "为空——该封套未设置任何内容",
+    },
+    "hasUnknown": {
+        "en": "unknown entry {entry} (expected one of {expected})",
+        "zh": "未知项 {entry}（应为 {expected} 之一）",
+    },
+    "wifiPassphraseLength": {
+        "en": "must be 8-63 characters (or empty for an open network)",
+        "zh": "必须为 8-63 个字符（留空表示开放网络）",
+    },
+    # -- cli: size + partial-meta notices -------------------------------- #
+    "notePartialMeta": {
+        "en": ("note: meta fields {fields} are absent — the app will CLEAR "
+               "them on the device"),
+        "zh": "注意：缺少 meta 字段 {fields}——应用会在设备上清除它们",
+    },
+    "invalidPayload": {
+        "en": "invalid settings payload:", "zh": "设置载荷无效："},
+    "payloadTooDense": {
+        "en": ("payload is {size} B (> {max} B) — too dense to scan reliably; "
+               "trim optional fields"),
+        "zh": "载荷为 {size} 字节（> {max} 字节）——过于密集，扫描不可靠；请精简可选字段",
+    },
+    "payloadLarge": {
+        "en": ("warning: payload is {size} B — large codes scan slowly from "
+               "small prints"),
+        "zh": "警告：载荷为 {size} 字节——码越大，小尺寸打印扫描越慢",
+    },
+    # -- interactive: numeric re-prompt ---------------------------------- #
+    "notANumber": {"en": "not a number: {raw}", "zh": "不是数字：{raw}"},
+    "outOfRange": {
+        "en": "out of range ({lo}-{hi}): {val}",
+        "zh": "超出范围（{lo}-{hi}）：{val}",
+    },
 }
 
 

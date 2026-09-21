@@ -17,11 +17,15 @@ from .payload import (
     DEFAULT_STORAGE_PREFIX,
     FALLBACK_PROVIDER,
     META_FIELDS,
+    META_MAX_BYTES,
     PAYLOAD_TYPE,
     PLAINTEXT_VERSION,
     PROVIDERS,
     RESOLUTION_PX,
+    STORAGE_MAX_BYTES,
+    WIFI_MAX_BYTES,
     Provider,
+    over_byte_limit,
     provider_from_endpoint,
     region_from_endpoint,
     region_must_be_typed,
@@ -48,11 +52,41 @@ def _ask_int(prompt: str, default: str, lo: int, hi: int) -> int:
         try:
             val = int(raw)
         except ValueError:
-            print(f"  not a number: {raw!r}", file=sys.stderr)
+            print("  " + tr("notANumber", raw=repr(raw)), file=sys.stderr)
             continue
         if lo <= val <= hi:
             return val
-        print(f"  out of range ({lo}-{hi}): {val}", file=sys.stderr)
+        print("  " + tr("outOfRange", lo=lo, hi=hi, val=val), file=sys.stderr)
+
+
+def _warn_if_too_long(value: str, max_bytes: int) -> bool:
+    """Print a translated notice and return True when `value` overruns the
+    device byte buffer (a fix-it-now prompt instead of a scan-time timeout on
+    the rig — see payload.DEVICE_MAX_SIZE)."""
+    over = over_byte_limit(value, max_bytes)
+    if over is None:
+        return False
+    print("  " + tr("tooLongBytes", bytes=over, max=max_bytes), file=sys.stderr)
+    return True
+
+
+def _read_bounded(read, max_bytes: int) -> str:
+    """Re-prompt `read()` until its answer fits the device byte limit. Empty is
+    always allowed (it means "skip"); validate() has the final say on required
+    fields."""
+    while True:
+        val = read()
+        if not val or not _warn_if_too_long(val, max_bytes):
+            return val
+
+
+def _ask_bounded(prompt: str, max_bytes: int, default: str = "") -> str:
+    return _read_bounded(lambda: _ask(prompt, default), max_bytes)
+
+
+def _getpass_bounded(prompt: str, max_bytes: int) -> str:
+    # getpass, not _ask: a secret must never echo, so it cannot re-prompt visibly.
+    return _read_bounded(lambda: getpass.getpass(prompt), max_bytes)
 
 
 #: What each language calls itself. Never translated — a speaker recognises
@@ -161,7 +195,7 @@ def interactive() -> dict:
     print(tr("skipHint") + "\n", file=sys.stderr)
 
     if _ask_yn(tr("askMeta")):
-        meta = {f: _ask(f) for f in META_FIELDS}
+        meta = {f: _ask_bounded(f, META_MAX_BYTES[f]) for f in META_FIELDS}
         # Skipped fields are omitted; the CLI prints the will-be-cleared note.
         cfg["meta"] = {k: v for k, v in meta.items() if v}
 
@@ -171,7 +205,8 @@ def interactive() -> dict:
             provider = PROVIDERS[choice]
             endpoint, region = _ask_endpoint_and_region(provider)
         else:
-            endpoint = _ask(tr("endpointUrl"))
+            endpoint = _ask_bounded(tr("endpointUrl"),
+                                    STORAGE_MAX_BYTES["endpoint_url"])
             # A hand-typed endpoint is not provider-less: the device resolves
             # it by host like any other, so ask the rest in whichever row it
             # actually resolved to. `provider_from_endpoint` answers None only
@@ -183,11 +218,15 @@ def interactive() -> dict:
         storage = {
             "endpoint_url": endpoint,
             "region": region,
-            "bucket": _ask(provider.bucket_prompt),
-            "access_key_id": _ask(provider.key_id_prompt),
-            "secret_access_key": getpass.getpass(
-                f"  {provider.secret_prompt}{tr('secretSuffix')}: "),
-            "prefix": _ask(tr("prefix"), DEFAULT_STORAGE_PREFIX),
+            "bucket": _ask_bounded(provider.bucket_prompt,
+                                   STORAGE_MAX_BYTES["bucket"]),
+            "access_key_id": _ask_bounded(provider.key_id_prompt,
+                                          STORAGE_MAX_BYTES["access_key_id"]),
+            "secret_access_key": _getpass_bounded(
+                f"  {provider.secret_prompt}{tr('secretSuffix')}: ",
+                STORAGE_MAX_BYTES["secret_access_key"]),
+            "prefix": _ask_bounded(tr("prefix"), STORAGE_MAX_BYTES["prefix"],
+                                   DEFAULT_STORAGE_PREFIX),
         }
         cfg["storage"] = {k: v for k, v in storage.items() if v}
         cfg["auto_upload"] = _ask_yn(tr("askAutoUpload"))
@@ -202,8 +241,8 @@ def interactive() -> dict:
         }
 
     if _ask_yn(tr("askWifi")):
-        wifi = {"ssid": _ask(tr("ssid"))}
-        psk = getpass.getpass(tr("wifiPass"))
+        wifi = {"ssid": _ask_bounded(tr("ssid"), WIFI_MAX_BYTES["ssid"])}
+        psk = _getpass_bounded(tr("wifiPass"), WIFI_MAX_BYTES["passphrase"])
         if psk:
             wifi["passphrase"] = psk
         cfg["wifi"] = wifi

@@ -64,6 +64,19 @@ BASE_CONFIG = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _english_notices(monkeypatch) -> None:
+    """validate() and the CLI translate their notices now, and this box may be
+    a zh locale. Pin English so the substring assertions below read the text
+    they expect regardless of $LANG (and of any CLI run that re-detects it)."""
+    from visio_schema.settings_qr.i18n import set_language
+    for var in ("VISIO_LANG", "LC_ALL", "LC_MESSAGES", "LANG"):
+        monkeypatch.delenv(var, raising=False)
+    set_language("en")
+    yield
+    set_language("en")
+
+
 @pytest.fixture
 def config() -> dict:
     return json.loads(json.dumps(BASE_CONFIG))    # a deep copy per test
@@ -578,9 +591,69 @@ class TestFieldRules:
         config["wifi"] = {"ssid": "é" * 17}      # 34 utf-8 bytes
         assert any("32 bytes" in p for p in validate(config))
 
-    def test_an_overlong_meta_field_is_rejected(self, config) -> None:
-        config["meta"]["task"] = "x" * 257
-        assert any("meta.task" in p for p in validate(config))
+    def test_a_meta_field_at_the_byte_limit_is_accepted(self, config) -> None:
+        config["meta"]["capturer"] = "x" * 63     # 63 usable bytes (cap 64)
+        assert validate(config) == []
+
+    def test_a_meta_field_one_byte_over_is_rejected(self, config) -> None:
+        # The bug that motivated this whole check: a 64-byte capturer overflows
+        # the 64-byte buffer (63 usable), nanopb drops the whole Command, and
+        # the app times out with nothing to show.
+        config["meta"]["capturer"] = "x" * 64
+        problems = validate(config)
+        assert any("meta.capturer" in p and "64 bytes" in p for p in problems)
+
+    def test_a_meta_field_counts_bytes_not_characters(self, config) -> None:
+        config["meta"]["capturer"] = "宠" * 21     # 21 chars, 63 bytes: fits
+        assert validate(config) == []
+        config["meta"]["capturer"] = "宠" * 22     # 22 chars, 66 bytes: over
+        assert any("meta.capturer" in p for p in validate(config))
+
+    def test_an_overlong_storage_field_is_rejected(self, config) -> None:
+        config["storage"]["bucket"] = "b" * 64    # cap 64 -> 63 usable
+        assert any("storage.bucket" in p for p in validate(config))
+
+    def test_a_length_notice_is_translated(self, config) -> None:
+        from visio_schema.settings_qr.i18n import set_language
+        config["meta"]["capturer"] = "x" * 64
+        set_language("zh")
+        try:
+            problems = validate(config)
+        finally:
+            set_language("en")
+        # The field path stays English; the reason is translated.
+        assert any("meta.capturer" in p and "字节" in p for p in problems)
+
+    # Per-field byte-cap WIRING: each typed field must pass its OWN max_bytes to
+    # _string. A dropped or mis-keyed cap would ship an over-long value the
+    # device then drops whole. Caps differ per field (31/63/127/255), so one
+    # field's boundary test does not cover another — check every wire-up.
+    @pytest.mark.parametrize("path,value", [
+        ("meta.task", "x" * 64),
+        ("meta.location", "x" * 128),
+        ("meta.message", "x" * 256),
+        ("meta.capturer", "x" * 64),
+        ("storage.region", "r" * 32),
+        ("storage.bucket", "b" * 64),
+        ("storage.access_key_id", "k" * 64),
+        ("storage.secret_access_key", "s" * 64),
+        ("storage.prefix", "p" * 128),
+        ("wifi.ssid", "i" * 33),
+        ("wifi.passphrase", "宠" * 22),   # 66 bytes, 22 chars: trips only the byte rule
+    ])
+    def test_every_typed_field_is_byte_capped(self, config, path, value) -> None:
+        config["wifi"] = {"ssid": "Net"}          # a valid wifi section for wifi.*
+        section, field = path.split(".")
+        config[section][field] = value
+        assert any(path in p and "bytes" in p for p in validate(config)), \
+            f"{path} was not byte-capped"
+
+    def test_the_endpoint_url_is_byte_capped(self, config) -> None:
+        # Separate case: it must stay a valid, region-derivable URL while >127 B.
+        config["storage"]["endpoint_url"] = (
+            "https://oss-" + "a" * 103 + ".aliyuncs.com")   # 128 bytes
+        assert any("storage.endpoint_url" in p and "bytes" in p
+                   for p in validate(config))
 
     def test_unknown_keys_are_flagged(self, config) -> None:
         config["typo"] = 1
@@ -703,6 +776,40 @@ class TestInteractive:
 
         monkeypatch.setattr("builtins.input", _input)
         monkeypatch.setattr("getpass.getpass", _getpass)
+
+    def test_an_overlong_meta_answer_reprompts_instead_of_printing_it(
+            self, monkeypatch, capsys) -> None:
+        """A field one byte over the device buffer would time out on the rig,
+        so the prompt re-asks in place rather than baking it into the code —
+        the same in-place recovery `_ask_int` gives a bad number."""
+        self._script(monkeypatch, [
+            "y",                          # metadata?
+            "x" * 64, "pick-and-place",   # task: over the 63-byte cap, then ok
+            "", "", "",                   # location, message, capturer skipped
+            "n", "n", "n", "n",           # storage, bitrate, resolution, wifi
+        ], [])
+        cfg = interactive()
+        assert cfg["meta"]["task"] == "pick-and-place"
+        assert "bytes" in capsys.readouterr().err     # the notice fired
+        assert validate(cfg) == []
+
+    def test_an_overlong_getpass_secret_reprompts_without_echoing_it(
+            self, monkeypatch, capsys) -> None:
+        """The secret re-prompts like a visible field, but the rejected value
+        must never reach the terminal — hence its own getpass path."""
+        long_secret = "s" * 64        # storage.secret_access_key cap is 63 bytes
+        self._script(monkeypatch, [
+            "n",                                        # metadata?
+            "y", "Aliyun OSS", "cn-hangzhou",           # storage: provider + region
+            "gilabs-captures", "LTAI5tExampleKeyId00",  # bucket, access key
+            "recordings/", "n",                         # prefix, auto-upload
+            "n", "n", "n",                              # bitrate, resolution, wifi
+        ], [long_secret, "s3cr3t-ok"])                  # getpass: over-long, then ok
+        cfg = interactive()
+        assert cfg["storage"]["secret_access_key"] == "s3cr3t-ok"
+        err = capsys.readouterr().err
+        assert "bytes" in err                 # the notice fired
+        assert long_secret not in err         # the rejected secret never echoed
 
     def test_it_builds_a_valid_v1_config(self, monkeypatch) -> None:
         self._script(monkeypatch, [
@@ -853,17 +960,22 @@ class TestCliRemainingBranches:
         assert main(["--check-only"]) == 2
         assert "needs --config" in capsys.readouterr().err
 
-    def test_an_oversized_payload_is_refused_before_rendering(
+    def test_overlong_fields_are_refused_before_rendering(
             self, tmp_path, config, capsys) -> None:
-        for f in ("message", "task", "location", "capturer"):
-            config["meta"][f] = "x" * 255
-        config["storage"]["prefix"] = "p" * 254 + "/"
-        config["storage"]["bucket"] = "b" * 255
-        config["storage"]["access_key_id"] = "k" * 255
+        # Per-field device byte caps refuse the code before any PNG is written,
+        # naming each offending field — so an operator learns at their laptop
+        # instead of at a timed-out scan on the rig. (These caps also keep a
+        # valid payload well under MAX_BYTES, so the total-size gate is now a
+        # backstop rather than the thing that catches an over-long field.)
+        config["meta"]["capturer"] = "x" * 200
+        config["storage"]["bucket"] = "b" * 200
         rc = main(["--config", self._write(tmp_path, config),
                    "--out", str(tmp_path / "x.png")])
         assert rc == 2
-        assert "too dense to scan" in capsys.readouterr().err.replace("\n", " ")
+        err = capsys.readouterr().err.replace("\n", " ")
+        assert "meta.capturer" in err and "storage.bucket" in err
+        assert "device limit" in err
+        assert not (tmp_path / "x.png").exists()
 
     def test_rendering_without_qrcode_fails_with_the_install_hint(
             self, tmp_path, config, monkeypatch, capsys) -> None:

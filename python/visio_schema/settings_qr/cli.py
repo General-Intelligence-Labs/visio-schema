@@ -227,8 +227,7 @@ def _warn_partial_meta(cfg: dict) -> None:
         # (unlike its fleet ids, which this payload does not set), so a
         # partial meta section clears the rest.
         missing = [f for f in META_FIELDS if f not in meta]
-        print(f"note: meta fields {missing} are absent — the app will "
-              "CLEAR them on the device", file=sys.stderr)
+        print(tr("notePartialMeta", fields=missing), file=sys.stderr)
 
 
 def _warn_unsealed_wifi(cfg: dict) -> None:
@@ -353,7 +352,7 @@ def cmd_qr(args: argparse.Namespace) -> int:
 
     problems = validate(payload_cfg)
     if problems:
-        raise CliError("invalid settings payload:\n"
+        raise CliError(tr("invalidPayload") + "\n"
                        + "\n".join(f"  - {p}" for p in problems), code=2)
     if args.check_only:
         print("ok", file=sys.stderr)
@@ -367,12 +366,14 @@ def cmd_qr(args: argparse.Namespace) -> int:
         print(payload)
         print(f"{size} bytes", file=sys.stderr)
         return 0
+    # A backstop on total density: the per-field device byte caps validate()
+    # enforces already hold a valid payload well under MAX_BYTES, so this fires
+    # only if a future field escapes those caps. WARN_BYTES still trips on a
+    # large-but-legal code (many fields near their caps).
     if size > MAX_BYTES:
-        raise CliError(f"payload is {size} B (> {MAX_BYTES} B) — too dense "
-                       "to scan reliably; trim optional fields", code=2)
+        raise CliError(tr("payloadTooDense", size=size, max=MAX_BYTES), code=2)
     if size > WARN_BYTES:
-        print(f"warning: payload is {size} B — large codes scan slowly "
-              "from small prints", file=sys.stderr)
+        print(tr("payloadLarge", size=size), file=sys.stderr)
 
     if secrets.sets_recording_key:
         print(f"recording key fingerprint: "
