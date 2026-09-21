@@ -149,6 +149,17 @@ struct Message {
   // recorder.
   bool no_degrade = false;
 
+  // In-memory only (NOT serialized): this message's `timestamp` is on the local
+  // receiver's clock. True for everything a device produces itself. For a
+  // message a hub RELAYS from a leaf, the bus's timesync layer sets it to
+  // whether that leaf's clock has converged onto ours yet — i.e. whether the
+  // `timestamp` rewrite (this file's header note) actually fired. A recorder
+  // that must keep one aligned timeline drops a relayed frame while this is
+  // false, so no frame on a leaf's un-converged raw clock is ever written; a
+  // live sink ignores it. Defaults true so a locally produced frame, which
+  // never passes through that layer, is always kept.
+  bool source_aligned = true;
+
   // In-memory only (NOT serialized): cache of EncodeFramed(*this), filled by
   // the FIRST framed sink to send this message and reused by every other one.
   // Outbound framed bytes are byte-identical across sinks (the header is
