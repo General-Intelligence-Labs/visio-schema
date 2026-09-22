@@ -73,9 +73,11 @@ Fields the device didn't record (no GPS fix, no task typed in) come back as the 
 blanks the sidecar always carried: `""`, `0`, `0.0000000`.
 
 Fields that came *later* than the frozen layout — `operator_id`, `environment_id`,
-`recording_key_fingerprint` — are written at the end, so a session from before they
-existed rebuilds to the old file plus those blank keys. Everything ahead of them is
-unchanged.
+`recording_key_fingerprint`, `stop_cause`, and `duration_s` — are written at the end,
+so a session from before they existed rebuilds to the old file plus those blank/zero
+keys. Everything ahead of them is unchanged. `stop_cause` and `duration_s` are written
+by the device only when it closes the session; the opening MCAP metadata cannot recover
+them, so a rebuilt sidecar reports their explicit unknown values (`""` and `0`).
 
 `recording_key_fingerprint` names the key that opens the session's parts, and is
 empty when they are plaintext. There is deliberately no separate `encrypted` flag:
