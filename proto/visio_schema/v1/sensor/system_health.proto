@@ -69,4 +69,38 @@ message SystemHealth {
     float sensor_temp_c = 2;
   }
   repeated CameraTemp camera_temps = 11;
+
+  // How far the device has gone to keep itself inside its thermal limits.
+  //
+  // A device that runs hot gives up optional work before it loses the work
+  // that matters, and a consumer cannot tell that apart from a fault unless
+  // the device says so: an absent live preview is otherwise indistinguishable
+  // from a subscription worth re-establishing. The values are ordered — a
+  // higher one means everything the lower ones gave up, and its own on top.
+  //
+  // Absent means this device does not report thermal mitigation at all (it may
+  // still have limits it enforces); NONE means it does report, and currently
+  // has nothing to report. A recording is never what gets given up.
+  enum ThermalMitigation {
+    THERMAL_MITIGATION_UNSPECIFIED = 0;
+
+    // Nothing given up.
+    THERMAL_MITIGATION_NONE = 1;
+
+    // Clock headroom, and work only the device can see: it has slowed itself
+    // down and stopped its own background traffic — periodic off-device
+    // reports, deferred transfers. No stream a subscriber asked for is
+    // affected, so there is nothing for a consumer to explain.
+    THERMAL_MITIGATION_CLOCK = 2;
+
+    // Live video is withheld from every subscriber. A recording in progress
+    // is unaffected and keeps every frame; only the live copy is gone.
+    THERMAL_MITIGATION_VIDEO_WITHHELD = 3;
+
+    // Live video withheld, and what remains of the live streams thinned: the
+    // per-sample streams (pose and the like) arrive at a lower rate than the
+    // device can otherwise produce. A recording in progress is still intact.
+    THERMAL_MITIGATION_LIVE_REDUCED = 4;
+  }
+  optional ThermalMitigation thermal_mitigation = 12;
 }

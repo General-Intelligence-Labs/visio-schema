@@ -14,8 +14,8 @@
 // @generated from file visio_schema/v1/sensor/system_health.proto (package visio_schema.v1.sensor, syntax proto3)
 /* eslint-disable */
 
-import type { GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
-import { fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
+import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
+import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
 import type { Message } from "@bufbuild/protobuf";
@@ -24,7 +24,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file visio_schema/v1/sensor/system_health.proto.
  */
 export const file_visio_schema_v1_sensor_system_health: GenFile = /*@__PURE__*/
-  fileDesc("Cip2aXNpb19zY2hlbWEvdjEvc2Vuc29yL3N5c3RlbV9oZWFsdGgucHJvdG8SFnZpc2lvX3NjaGVtYS52MS5zZW5zb3Ii0gQKDFN5c3RlbUhlYWx0aBItCgl0aW1lc3RhbXAYASABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhcKCmNwdV90ZW1wX2MYAiABKAJIAIgBARIaCg1jcHVfdXNhZ2VfcGN0GAMgASgCSAGIAQESGwoObWVtX2ZyZWVfYnl0ZXMYBCABKARIAogBARIYCgtiYXR0ZXJ5X3BjdBgFIAEoAkgDiAEBEhwKD2Rpc2tfZnJlZV9ieXRlcxgGIAEoBEgEiAEBEh0KEGRpc2tfdG90YWxfYnl0ZXMYCiABKARIBYgBARIWCglyZWNvcmRpbmcYByABKAhIBogBARIbCg5zdHJlYW1fY2xpZW50cxgIIAEoDUgHiAEBEiwKCHJlYWx0aW1lGAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBJFCgxjYW1lcmFfdGVtcHMYCyADKAsyLy52aXNpb19zY2hlbWEudjEuc2Vuc29yLlN5c3RlbUhlYWx0aC5DYW1lcmFUZW1wGjIKCkNhbWVyYVRlbXASDQoFaW5kZXgYASABKA0SFQoNc2Vuc29yX3RlbXBfYxgCIAEoAkINCgtfY3B1X3RlbXBfY0IQCg5fY3B1X3VzYWdlX3BjdEIRCg9fbWVtX2ZyZWVfYnl0ZXNCDgoMX2JhdHRlcnlfcGN0QhIKEF9kaXNrX2ZyZWVfYnl0ZXNCEwoRX2Rpc2tfdG90YWxfYnl0ZXNCDAoKX3JlY29yZGluZ0IRCg9fc3RyZWFtX2NsaWVudHNiBnByb3RvMw", [file_google_protobuf_timestamp]);
+  fileDesc("Cip2aXNpb19zY2hlbWEvdjEvc2Vuc29yL3N5c3RlbV9oZWFsdGgucHJvdG8SFnZpc2lvX3NjaGVtYS52MS5zZW5zb3IigwcKDFN5c3RlbUhlYWx0aBItCgl0aW1lc3RhbXAYASABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhcKCmNwdV90ZW1wX2MYAiABKAJIAIgBARIaCg1jcHVfdXNhZ2VfcGN0GAMgASgCSAGIAQESGwoObWVtX2ZyZWVfYnl0ZXMYBCABKARIAogBARIYCgtiYXR0ZXJ5X3BjdBgFIAEoAkgDiAEBEhwKD2Rpc2tfZnJlZV9ieXRlcxgGIAEoBEgEiAEBEh0KEGRpc2tfdG90YWxfYnl0ZXMYCiABKARIBYgBARIWCglyZWNvcmRpbmcYByABKAhIBogBARIbCg5zdHJlYW1fY2xpZW50cxgIIAEoDUgHiAEBEiwKCHJlYWx0aW1lGAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBJFCgxjYW1lcmFfdGVtcHMYCyADKAsyLy52aXNpb19zY2hlbWEudjEuc2Vuc29yLlN5c3RlbUhlYWx0aC5DYW1lcmFUZW1wElcKEnRoZXJtYWxfbWl0aWdhdGlvbhgMIAEoDjI2LnZpc2lvX3NjaGVtYS52MS5zZW5zb3IuU3lzdGVtSGVhbHRoLlRoZXJtYWxNaXRpZ2F0aW9uSAiIAQEaMgoKQ2FtZXJhVGVtcBINCgVpbmRleBgBIAEoDRIVCg1zZW5zb3JfdGVtcF9jGAIgASgCIr4BChFUaGVybWFsTWl0aWdhdGlvbhIiCh5USEVSTUFMX01JVElHQVRJT05fVU5TUEVDSUZJRUQQABIbChdUSEVSTUFMX01JVElHQVRJT05fTk9ORRABEhwKGFRIRVJNQUxfTUlUSUdBVElPTl9DTE9DSxACEiUKIVRIRVJNQUxfTUlUSUdBVElPTl9WSURFT19XSVRISEVMRBADEiMKH1RIRVJNQUxfTUlUSUdBVElPTl9MSVZFX1JFRFVDRUQQBEINCgtfY3B1X3RlbXBfY0IQCg5fY3B1X3VzYWdlX3BjdEIRCg9fbWVtX2ZyZWVfYnl0ZXNCDgoMX2JhdHRlcnlfcGN0QhIKEF9kaXNrX2ZyZWVfYnl0ZXNCEwoRX2Rpc2tfdG90YWxfYnl0ZXNCDAoKX3JlY29yZGluZ0IRCg9fc3RyZWFtX2NsaWVudHNCFQoTX3RoZXJtYWxfbWl0aWdhdGlvbmIGcHJvdG8z", [file_google_protobuf_timestamp]);
 
 /**
  * @generated from message visio_schema.v1.sensor.SystemHealth
@@ -111,6 +111,11 @@ export type SystemHealth = Message<"visio_schema.v1.sensor.SystemHealth"> & {
    * @generated from field: repeated visio_schema.v1.sensor.SystemHealth.CameraTemp camera_temps = 11;
    */
   cameraTemps: SystemHealth_CameraTemp[];
+
+  /**
+   * @generated from field: optional visio_schema.v1.sensor.SystemHealth.ThermalMitigation thermal_mitigation = 12;
+   */
+  thermalMitigation?: SystemHealth_ThermalMitigation | undefined;
 };
 
 /**
@@ -152,4 +157,64 @@ export type SystemHealth_CameraTemp = Message<"visio_schema.v1.sensor.SystemHeal
  */
 export const SystemHealth_CameraTempSchema: GenMessage<SystemHealth_CameraTemp> = /*@__PURE__*/
   messageDesc(file_visio_schema_v1_sensor_system_health, 0, 0);
+
+/**
+ * How far the device has gone to keep itself inside its thermal limits.
+ *
+ * A device that runs hot gives up optional work before it loses the work
+ * that matters, and a consumer cannot tell that apart from a fault unless
+ * the device says so: an absent live preview is otherwise indistinguishable
+ * from a subscription worth re-establishing. The values are ordered — a
+ * higher one means everything the lower ones gave up, and its own on top.
+ *
+ * Absent means this device does not report thermal mitigation at all (it may
+ * still have limits it enforces); NONE means it does report, and currently
+ * has nothing to report. A recording is never what gets given up.
+ *
+ * @generated from enum visio_schema.v1.sensor.SystemHealth.ThermalMitigation
+ */
+export enum SystemHealth_ThermalMitigation {
+  /**
+   * @generated from enum value: THERMAL_MITIGATION_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * Nothing given up.
+   *
+   * @generated from enum value: THERMAL_MITIGATION_NONE = 1;
+   */
+  NONE = 1,
+
+  /**
+   * Clock headroom only: the device has slowed itself down. No stream is
+   * affected, so there is nothing for a consumer to explain.
+   *
+   * @generated from enum value: THERMAL_MITIGATION_CLOCK = 2;
+   */
+  CLOCK = 2,
+
+  /**
+   * Live video is withheld from every subscriber. A recording in progress
+   * is unaffected and keeps every frame; only the live copy is gone.
+   *
+   * @generated from enum value: THERMAL_MITIGATION_VIDEO_WITHHELD = 3;
+   */
+  VIDEO_WITHHELD = 3,
+
+  /**
+   * Live video withheld, and what remains of the live streams thinned:
+   * lower sample rates, periodic off-device reports suspended. A recording
+   * in progress is still intact.
+   *
+   * @generated from enum value: THERMAL_MITIGATION_LIVE_REDUCED = 4;
+   */
+  LIVE_REDUCED = 4,
+}
+
+/**
+ * Describes the enum visio_schema.v1.sensor.SystemHealth.ThermalMitigation.
+ */
+export const SystemHealth_ThermalMitigationSchema: GenEnum<SystemHealth_ThermalMitigation> = /*@__PURE__*/
+  enumDesc(file_visio_schema_v1_sensor_system_health, 0, 0);
 
