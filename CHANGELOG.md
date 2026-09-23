@@ -6,6 +6,16 @@ bump the MINOR version.
 
 ## Unreleased
 
+### VIVE tracker status for native lighthouse capture
+
+Adds `visio_schema.v1.sensor.ViveTrackerStatus` and `ViveSystemStatus`. VIVE
+tracker poses use the existing `foxglove.PoseInFrame` schema and the solved base
+station map uses `foxglove.FrameTransforms`; the new messages cover receiver
+presence, sleeping/stale trackers, per-tracker clock-fit health and the
+boot-scoped two-lighthouse map readiness. Later libsurvive station-map updates
+are published alongside tracker poses. Their strings are bounded in
+`nanopb.options` for allocation-free embedded publishing.
+
 ### Recordings pull: list a session's files, open one, read it over a bare TCP socket
 
 A host can now copy recorded sessions off a device without MTP. Control extends the existing

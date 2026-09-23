@@ -37,6 +37,7 @@ _PAYLOAD_MODULES = (
     "visio_schema.v1.sensor.camera_frame_info_pb2",
     "visio_schema.v1.sensor.tactile_raw_pb2",
     "visio_schema.v1.sensor.diag_log_pb2",
+    "visio_schema.v1.sensor.vive_tracker_pb2",
     "visio_schema.v1.calibration.imu_pb2",
     "visio_schema.v1.calibration.encoder_pb2",
     "visio_schema.v1.calibration.tactile_pb2",

@@ -326,3 +326,11 @@ visio_schema.v1.sensor.DiagLog.blob                     max_size:1024
 # here (the device ENCODES this message) but the publisher still clamps, so a
 # board wider than the bound reports the first N instead of corrupting.
 visio_schema.v1.sensor.SystemHealth.camera_temps        max_count:8
+
+# ── VIVE tracker subsystem status (sensor/vive_tracker.proto) ────────────────
+# Status is low-rate and fixed-shape. Bound the diagnostic strings so the
+# firmware can build every message on the stack with no encode callbacks.
+visio_schema.v1.sensor.ViveTrackerStatus.tracker_serial  max_size:24
+visio_schema.v1.sensor.ViveTrackerStatus.detail          max_size:128
+visio_schema.v1.sensor.ViveSystemStatus.station_map_id   max_size:40
+visio_schema.v1.sensor.ViveSystemStatus.detail           max_size:160

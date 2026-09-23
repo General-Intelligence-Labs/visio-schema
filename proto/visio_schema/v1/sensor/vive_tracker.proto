@@ -1,0 +1,103 @@
+// visio_schema/v1/sensor/vive_tracker.proto
+//
+// Operational state for a set of HTC VIVE trackers received through Watchman
+// USB dongles. Tracker poses themselves use foxglove.PoseInFrame and the solved
+// lighthouse map uses foxglove.FrameTransforms; these messages report the
+// states which those generic geometry schemas cannot express.
+//
+// A Watchman receiver can be present while its paired tracker is asleep. That
+// is a first-class state, not a USB error. Producers publish one TrackerStatus
+// for each configured slot and one SystemStatus for the tracker subsystem.
+
+syntax = "proto3";
+
+package visio_schema.v1.sensor;
+
+import "google/protobuf/timestamp.proto";
+
+message ViveTrackerStatus {
+  enum State {
+    STATE_UNSPECIFIED = 0;
+    // The configured receiver set is present, but this tracker has not announced.
+    STATE_SLEEPING = 1;
+    // The tracker is live, but the map, clock, or recent solved pose is not ready.
+    STATE_CALIBRATING = 2;
+    // Fresh solved poses are being produced.
+    STATE_TRACKING = 3;
+    // The tracker announced previously, but no recent device data arrived.
+    STATE_STALE = 4;
+    // No Watchman receiver is attached. Receiver-to-slot pairing is unknown.
+    STATE_RECEIVER_MISSING = 5;
+    // This slot cannot be used; `detail` explains why.
+    STATE_ERROR = 6;
+  }
+
+  // Status observation time on the producer's local monotonic clock.
+  google.protobuf.Timestamp timestamp = 1;
+
+  // Stable for this process/boot: 0..expected_tracker_count-1 in first-announcement order.
+  uint32 slot = 2;
+
+  // Empty until libsurvive has received and decoded the tracker's config.
+  string tracker_serial = 3;
+
+  State state = 4;
+
+  // Last observed tracker timecode, extended across the 32-bit wrap. VIVE
+  // tracker timecodes tick at 48 MHz. Zero means no device sample was seen.
+  uint64 device_ticks = 5;
+
+  // Age of the latest emitted pose at `timestamp`. Absent before the first
+  // pose; consumers should use state rather than inventing a sentinel value.
+  optional uint64 pose_age_ns = 6;
+
+  // True once enough USB-arrival observations exist to map this tracker's
+  // independent 48 MHz clock onto the producer's CLOCK_MONOTONIC domain.
+  bool clock_synchronized = 7;
+
+  // Robust fit residual. Useful for validating inter-tracker timing; absent
+  // until clock_synchronized is true.
+  optional float clock_rms_us = 8;
+
+  // Battery telemetry comes from the tracker when supported.
+  optional float battery_pct = 9;
+  optional bool charging = 10;
+
+  // Human-readable diagnosis for logs/UIs. Machine decisions use `state`.
+  string detail = 11;
+}
+
+message ViveSystemStatus {
+  enum State {
+    STATE_UNSPECIFIED = 0;
+    STATE_STARTING = 1;
+    STATE_WAITING_FOR_TRACKERS = 2;
+    STATE_CALIBRATING = 3;
+    STATE_TRACKING = 4;
+    // At least one tracker lacks a recent solved pose after the map became
+    // ready. Poses from the remaining trackers continue; recording is not gated.
+    STATE_DEGRADED = 5;
+    STATE_ERROR = 6;
+  }
+
+  // Status observation time on the producer's local monotonic clock.
+  google.protobuf.Timestamp timestamp = 1;
+  State state = 2;
+
+  uint32 expected_tracker_count = 3;
+  uint32 receiver_count = 4;
+  uint32 live_tracker_count = 5;
+  uint32 lighthouse_count = 6;
+
+  // True after a two-lighthouse solution is available for this OS boot.
+  // Station poses may be refined later; /vive/stations publishes the latest map.
+  bool station_map_ready = 7;
+
+  // Boot-scoped identifier for the tracking session (the Linux boot UUID in
+  // the embedded bridge). Empty until the first solution is available.
+  string station_map_id = 8;
+
+  // Human-readable diagnosis for logs/UIs. Machine decisions use `state` and
+  // the explicit counts above.
+  string detail = 9;
+}
