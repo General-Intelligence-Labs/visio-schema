@@ -47,6 +47,13 @@ namespace {
   return opts;
 }
 
+// The part file's stdio buffer. Small on purpose, and the cipher staging
+// buffer below must stay STRICTLY larger than it — both reasons are in
+// CloexecFileWriter::open() and ::handleWrite(); the invariant is asserted
+// under the class.
+constexpr std::size_t kStdioBufferBytes = 16 * 1024;
+constexpr std::size_t kCipherScratchBytes = 64 * 1024;
+
 // The protobuf full name Foxglove uses for H.265 video (a camera channel's
 // Channel::schema_name). Only these channels are keyframe-gated; audio
 // ("foxglove.RawAudio"), IMU, encoder and control are written unconditionally.
@@ -106,17 +113,45 @@ class CloexecFileWriter final : public ::mcap::IWritable {
       return ::mcap::Status(::mcap::StatusCode::OpenFailed, msg);
     }
     fd_ = fd;
-    // 256 KiB stdio buffer instead of the default (st_blksize, ~4 KiB): the
-    // recorder streams ~1 MB/s to SD through fwrite, and 4 KiB buffering
-    // makes every chunk hundreds of small write(2)s on a saturated single
-    // core. One part is open at a time, so this is a bounded one-buffer
-    // cost. Loss window on power cut grows to ≤256 KiB of tail — the torn
-    // part is already mcap_repair territory either way. Failure only costs
-    // the optimization (default buffering stands), but say so — a silently
-    // absent buffer looks exactly like the fix not working.
-    if (::setvbuf(file_, nullptr, _IOFBF, 256 * 1024) != 0) {
+    // A SMALL full buffer, sized to the only writes that ever reach it.
+    //
+    // What the shipping libc does (uClibc-ng 1.0.31, __stdio_fwrite,
+    // arm-rockchip830 — read out of the .so): a request that fits in the
+    // buffer's REMAINING space is memcpy'd into it; a request larger than
+    // that space commits the buffer and tail-calls write(2) on the CALLER's
+    // pointer, no copy. glibc's _IO_new_file_xsputn does the same for
+    // over-size requests, so the host build agrees.
+    //
+    // So a big buffer cannot help the bulk of a recording and does not: mcap
+    // emits a chunk as ~45 B of record fields plus ONE ~768 KiB blob
+    // (writer.inl write(Chunk)), then 16 B per message of MessageIndex. The
+    // blob dwarfs any buffer and always goes straight to write(2); what is
+    // left to buffer is ~45 B + 16 B × messages-in-chunk, a few KiB at these
+    // rates, and SyncSpan() fflushes at least once per chunk blob anyway. A
+    // chunk's small writes therefore cannot fill 16 KiB, so they still
+    // coalesce into the same one write(2) per chunk that 256 KiB gave.
+    //
+    // 256 KiB was worse than neutral on an encrypted part: handleWrite slices
+    // through a kCipherScratchBytes staging buffer, and a 64 KiB request fits
+    // in a 256 KiB one, so four of every five slices were memcpy'd into stdio
+    // and then copied out of it again by the kernel — three userspace copies
+    // per recorded byte. Under 16 KiB every slice is over-size and goes
+    // direct, leaving encryption exactly one copy (the XOR into the scratch).
+    //
+    // That trade is not free and the direction matters: an encrypted chunk goes
+    // from ~5-6 write(2) to ~13 (12 slices plus a flush), about +10 write(2) a
+    // second at this rate — call it 0.005 % of the core — to stop copying
+    // ~2 MB/s twice over, which is 0.4-0.7 % of it. Roughly 50:1 in favour.
+    // A PLAINTEXT part is genuinely unchanged at 2 write(2) per chunk.
+    //
+    // The power-cut loss window only shrinks with it: ≤16 KiB of unflushed
+    // tail instead of ≤256 KiB. Failure only costs the optimization (default
+    // buffering stands), but say so — a silently absent buffer looks exactly
+    // like the fix not working.
+    if (::setvbuf(file_, nullptr, _IOFBF, kStdioBufferBytes) != 0) {
       log::Write(log::Severity::kWarning,
-                 "mcap: setvbuf(256KiB) failed — default buffering");
+                 "mcap: setvbuf(%zuKiB) failed — default buffering",
+                 kStdioBufferBytes / 1024);
     }
     if (encrypting_) {
       const ::mcap::Status st = BeginVrec(filename);
@@ -134,15 +169,18 @@ class CloexecFileWriter final : public ::mcap::IWritable {
       WriteBytes(data, size);
       return;
     }
-    // Encrypt through a fixed scratch buffer rather than in place: `data` is
-    // the caller's, and mcap hands us spans larger than one buffer, so slice.
+    // Encrypt through a staging buffer rather than in place: `data` is the
+    // caller's, and mcap hands us spans larger than one buffer, so slice. The
+    // slice size is over the stdio buffer by construction, so each fwrite
+    // below goes straight to write(2) — this XOR is the only copy encryption
+    // adds (see open()).
     const auto* src = reinterpret_cast<const std::uint8_t*>(data);
     for (uint64_t done = 0; done < size;) {
-      const size_t n =
-          static_cast<size_t>(std::min<uint64_t>(size - done, scratch_.size()));
+      const size_t n = static_cast<size_t>(
+          std::min<uint64_t>(size - done, kCipherScratchBytes));
       // Keystream position is the PLAINTEXT offset, which is size_ — so a
       // short write leaves the next call correctly positioned.
-      if (!cipher_->XorAt(size_, src + done, n, scratch_.data())) {
+      if (!cipher_->XorAt(size_, src + done, n, scratch_.get())) {
         if (!write_err_logged_) {
           write_err_logged_ = true;
           log::Write(log::Severity::kError,
@@ -152,7 +190,7 @@ class CloexecFileWriter final : public ::mcap::IWritable {
         return;
       }
       const size_t landed =
-          WriteBytes(reinterpret_cast<const std::byte*>(scratch_.data()), n);
+          WriteBytes(reinterpret_cast<const std::byte*>(scratch_.get()), n);
       done += landed;
       if (landed != n) return;  // short write already reported
     }
@@ -195,6 +233,7 @@ class CloexecFileWriter final : public ::mcap::IWritable {
     }
     fd_ = -1;
     cipher_.reset();
+    scratch_.reset();  // nothing between parts holds a part's staging buffer
     header_bytes_ = 0;
     size_ = 0;
     synced_off_ = 0;
@@ -246,6 +285,9 @@ class CloexecFileWriter final : public ::mcap::IWritable {
           ::mcap::StatusCode::OpenFailed,
           "VREC: cipher init failed for \"" + filename + "\"");
     }
+    // Staged before the cipher is armed, so `cipher_ != nullptr` (what
+    // handleWrite branches on) can never outrun the buffer it writes into.
+    scratch_ = std::make_unique<std::uint8_t[]>(kCipherScratchBytes);
     cipher_ = std::move(cipher);
     return ::mcap::StatusCode::Success;
   }
@@ -257,9 +299,13 @@ class CloexecFileWriter final : public ::mcap::IWritable {
   RecordingKey key_{};
   std::unique_ptr<RecordingCipher> cipher_;
   uint64_t header_bytes_ = 0;
-  // Fixed, so encryption never adds an allocation to the recorder's write
-  // path. 64 KiB covers a typical chunk in one pass; larger spans just loop.
-  std::array<std::uint8_t, 64 * 1024> scratch_{};
+  // Cipher staging. Allocated once per part in BeginVrec() and only there, so
+  // a plaintext recording carries none of it — as a member it was 64 KiB that
+  // every plaintext part allocated AND zeroed (16 dirty pages) to never touch.
+  // Non-null exactly while cipher_ is, and never allocated per write. Its size
+  // is kCipherScratchBytes, which must stay above kStdioBufferBytes (see
+  // open()); 64 KiB also keeps one chunk blob at a dozen write(2)s.
+  std::unique_ptr<std::uint8_t[]> scratch_;
 
   // Hand the span written since the last call to kernel writeback, and wait
   // out + evict the span before it, so the file's dirty set stays bounded
@@ -351,6 +397,16 @@ class CloexecFileWriter final : public ::mcap::IWritable {
   bool sync_disabled_ = false;
   bool write_err_logged_ = false;
 };
+
+// The two sizing invariants this writable rests on, pinned where they cannot
+// drift: a slice must be an over-size request against the stdio buffer (or
+// every encrypted byte is copied into it), and no staging buffer may live
+// INLINE here — a plaintext part must carry none at all, which a member array
+// would silently undo without allocating anything for a test to notice.
+static_assert(kCipherScratchBytes > kStdioBufferBytes,
+              "cipher slices must exceed the stdio buffer to bypass it");
+static_assert(sizeof(CloexecFileWriter) < 1024,
+              "the part writable must stay small: no inline staging buffer");
 
 // Insert "_NNNN" before the file extension: run.mcap -> run_0000.mcap.
 // 4-digit zero-pad: parts stay lexicographically ordered through 9999. (At 3
