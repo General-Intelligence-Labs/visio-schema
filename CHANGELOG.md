@@ -6,15 +6,15 @@ bump the MINOR version.
 
 ## Unreleased
 
-### VIVE tracker status for native lighthouse capture
+### Batched VIVE tracking
 
-Adds `visio_schema.v1.sensor.ViveTrackerStatus` and `ViveSystemStatus`. VIVE
-tracker poses use the existing `foxglove.PoseInFrame` schema and the solved base
-station map uses `foxglove.FrameTransforms`; the new messages cover receiver
-presence, sleeping/stale trackers, per-tracker clock-fit health and the
-boot-scoped two-lighthouse map readiness. Later libsurvive station-map updates
-are published alongside tracker poses. Their strings are bounded in
-`nanopb.options` for allocation-free embedded publishing.
+Adds `visio_schema.v1.sensor.VivePoseBatch` and `ViveStatus`, replacing the
+unshipped prototype schema. Three fixed topics carry time-batched poses,
+aggregate status, and the latest Foxglove `FrameTransforms` station map.
+Physical tracker serials identify payload groups; there are no slot identities
+or per-tracker topics. Every pose retains its own timestamp offset from the
+batch's header anchor. Status includes clock-fit health, optional battery
+telemetry, separate dongle/wired/live counts, and boot-scoped station-map readiness.
 
 ### Recordings pull: list a session's files, open one, read it over a bare TCP socket
 

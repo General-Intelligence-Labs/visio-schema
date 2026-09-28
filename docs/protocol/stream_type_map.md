@@ -29,6 +29,19 @@ fleet reflash to add a stream.
 `/<root>/<sensor-group>/<index>/<sub-field>` — e.g. `/glove_left/imu/3/raw`,
 `/glove_left/imu/3/quat`, `/gripper_left/camera/0`, `/ego/camera/0`.
 
+VIVE uses three fixed topics regardless of tracker count:
+`/<root>/vive/poses` (`VivePoseBatch`), `/<root>/vive/status` (`ViveStatus`),
+and `/<root>/vive/stations` (`foxglove.FrameTransforms`). Poses are bundled
+across trackers and time (33 ms nominal cadence). Each group identifies its
+physical tracker by the config's `LHR-...` serial, not a USB dongle serial or
+array position. Each sample time is the received header timestamp plus its
+`t_offset_ns`; the payload's `first_sample_time` remains in the producer clock.
+Status aggregates all known trackers and reports unidentified sleeping devices
+through subsystem counts. `dongle_count` and `wired_tracker_count` distinguish
+radio receivers from directly wired trackers; `live_tracker_count` requires
+actual tracker data. Stations publishes the latest solved map, including
+libsurvive's subsequent refinements.
+
 The root is **always exactly one path segment** — it never contains a `/`. It is
 *derived from*, but not identical to, the device's `equipment_type` (its logical
 role: `gripper`, `glove`, `ego`, `suit`):

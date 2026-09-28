@@ -1,0 +1,92 @@
+// Batched Lighthouse poses and aggregate operational status. Tracker identity
+// is the physical tracker's LHR-... serial, never a USB receiver or array index.
+syntax = "proto3";
+
+package visio_schema.v1.sensor;
+
+import "foxglove/Pose.proto";
+import "google/protobuf/timestamp.proto";
+
+// /<root>/vive/poses. One message spans multiple trackers AND multiple times.
+// No resampling: every solved pose retains its individual acquisition time.
+message VivePoseBatch {
+  message Sample {
+    // Offset from the batch anchor, not from this tracker's first sample.
+    uint64 t_offset_ns = 1;
+    foxglove.Pose pose = 2;
+  }
+  message Tracker {
+    string tracker_serial = 1;
+    // Nondecreasing offsets within this tracker; no alignment across trackers
+    // is implied. Group order is not identity and may change between batches.
+    repeated Sample samples = 2;
+  }
+
+  // Earliest included sample in the producer's CLOCK_MONOTONIC domain.
+  // Header.timestamp MUST equal this before receive-side clock translation.
+  // Consumers use received Header.timestamp + t_offset_ns, NOT this original
+  // producer-clock timestamp, to align samples with other bus streams.
+  google.protobuf.Timestamp first_sample_time = 1;
+  string frame_id = 2;
+  // Boot-scoped tracking session identifier, not a frozen map revision.
+  string station_map_id = 3;
+  // At least one group and sample. Nominal batching window: 33 ms.
+  repeated Tracker trackers = 4;
+}
+
+// /<root>/vive/status. One coherent snapshot for the entire subsystem.
+message ViveStatus {
+  enum State {
+    STATE_UNSPECIFIED = 0;
+    STATE_STARTING = 1;
+    STATE_WAITING_FOR_TRACKERS = 2;
+    STATE_CALIBRATING = 3;
+    STATE_TRACKING = 4;
+    STATE_DEGRADED = 5;
+    STATE_ERROR = 6;
+  }
+
+  message Tracker {
+    enum State {
+      STATE_UNSPECIFIED = 0;
+      STATE_SLEEPING = 1;
+      STATE_CALIBRATING = 2;
+      STATE_TRACKING = 3;
+      STATE_STALE = 4;
+      STATE_DEVICE_MISSING = 5;
+      STATE_ERROR = 6;
+    }
+    // Nonempty physical tracker serial. Unknown sleeping trackers cannot be
+    // identified from USB enumeration; they are covered by subsystem counts.
+    string tracker_serial = 1;
+    State state = 2;
+    // Last observed 48 MHz timecode extended across the 32-bit wrap.
+    uint64 device_ticks = 3;
+    // Age at the snapshot timestamp; absent before the first emitted pose.
+    optional uint64 pose_age_ns = 4;
+    bool clock_synchronized = 5;
+    // Fit residual, NOT a bound on absolute timing accuracy.
+    optional float clock_rms_us = 6;
+    optional float battery_pct = 7;
+    optional bool charging = 8;
+    string detail = 9;
+  }
+
+  google.protobuf.Timestamp timestamp = 1;
+  State state = 2;
+  uint32 expected_tracker_count = 3;
+  // USB Watchman dongles; enumeration does not imply a paired tracker is awake.
+  uint32 dongle_count = 4;
+  uint32 live_tracker_count = 5;
+  uint32 lighthouse_count = 6;
+  bool station_map_ready = 7;
+  // Empty before the first accepted solution. /vive/stations keeps publishing
+  // libsurvive's latest map; this ID identifies the session, not a locked map.
+  string station_map_id = 8;
+  string detail = 9;
+  // Known trackers only, including known but stale/disconnected trackers.
+  repeated Tracker trackers = 10;
+  // Trackers connected by a USB data cable (not through their radio dongle).
+  // Startup waits for dongle_count + wired_tracker_count >= expected count.
+  uint32 wired_tracker_count = 11;
+}

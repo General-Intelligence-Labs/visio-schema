@@ -35,8 +35,8 @@ def test_emitted_header_has_lookup_and_ego_types(tmp_path) -> None:
                 "visio_schema.v1.ros.geometry_msgs.Quaternion",
                 "foxglove.CompressedVideo",
                 "visio_schema.v1.sensor.SystemHealth",
-                "visio_schema.v1.sensor.ViveTrackerStatus",
-                "visio_schema.v1.sensor.ViveSystemStatus"):
+                "visio_schema.v1.sensor.VivePoseBatch",
+                "visio_schema.v1.sensor.ViveStatus"):
         assert f'proto_type == "{fqn}"' in text, fqn
 
 
