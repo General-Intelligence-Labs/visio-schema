@@ -6,6 +6,22 @@ bump the MINOR version.
 
 ## Unreleased
 
+### SystemHealth says how a hot device protects itself
+
+Two ordered enums, both additive and optional (absent = not reported):
+
+- `SystemHealth.thermal_mitigation` (12), `ThermalMitigation`: optional work a hot device has
+  given up — `CLOCK`, then `VIDEO_WITHHELD`, then `LIVE_REDUCED`. Never a recording.
+- `SystemHealth.thermal_recording_guard` (13), `ThermalRecordingGuard`: what heat does to
+  recording — `STOP_ADVISED` (the device asks the user to stop), `RECORDING_BLOCKED` (it ended
+  the recording and refuses a new one until it cools). An unknown value counts as at least
+  `RECORDING_BLOCKED`.
+- `StartRecording` documents its refusal codes `thermal_too_hot` and `ota_in_progress`.
+
+Wire-compatible, but not silent for old consumers: a device that sets field 13 can end a
+recording on its own, and a consumer that does not read the field sees `recording` go false,
+and a start refused, with no reason it understands.
+
 ### Recordings pull: list a session's files, open one, read it over a bare TCP socket
 
 A host can now copy recorded sessions off a device without MTP. Control extends the existing

@@ -24,7 +24,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file visio_schema/v1/sensor/system_health.proto.
  */
 export const file_visio_schema_v1_sensor_system_health: GenFile = /*@__PURE__*/
-  fileDesc("Cip2aXNpb19zY2hlbWEvdjEvc2Vuc29yL3N5c3RlbV9oZWFsdGgucHJvdG8SFnZpc2lvX3NjaGVtYS52MS5zZW5zb3IigwcKDFN5c3RlbUhlYWx0aBItCgl0aW1lc3RhbXAYASABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhcKCmNwdV90ZW1wX2MYAiABKAJIAIgBARIaCg1jcHVfdXNhZ2VfcGN0GAMgASgCSAGIAQESGwoObWVtX2ZyZWVfYnl0ZXMYBCABKARIAogBARIYCgtiYXR0ZXJ5X3BjdBgFIAEoAkgDiAEBEhwKD2Rpc2tfZnJlZV9ieXRlcxgGIAEoBEgEiAEBEh0KEGRpc2tfdG90YWxfYnl0ZXMYCiABKARIBYgBARIWCglyZWNvcmRpbmcYByABKAhIBogBARIbCg5zdHJlYW1fY2xpZW50cxgIIAEoDUgHiAEBEiwKCHJlYWx0aW1lGAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBJFCgxjYW1lcmFfdGVtcHMYCyADKAsyLy52aXNpb19zY2hlbWEudjEuc2Vuc29yLlN5c3RlbUhlYWx0aC5DYW1lcmFUZW1wElcKEnRoZXJtYWxfbWl0aWdhdGlvbhgMIAEoDjI2LnZpc2lvX3NjaGVtYS52MS5zZW5zb3IuU3lzdGVtSGVhbHRoLlRoZXJtYWxNaXRpZ2F0aW9uSAiIAQEaMgoKQ2FtZXJhVGVtcBINCgVpbmRleBgBIAEoDRIVCg1zZW5zb3JfdGVtcF9jGAIgASgCIr4BChFUaGVybWFsTWl0aWdhdGlvbhIiCh5USEVSTUFMX01JVElHQVRJT05fVU5TUEVDSUZJRUQQABIbChdUSEVSTUFMX01JVElHQVRJT05fTk9ORRABEhwKGFRIRVJNQUxfTUlUSUdBVElPTl9DTE9DSxACEiUKIVRIRVJNQUxfTUlUSUdBVElPTl9WSURFT19XSVRISEVMRBADEiMKH1RIRVJNQUxfTUlUSUdBVElPTl9MSVZFX1JFRFVDRUQQBEINCgtfY3B1X3RlbXBfY0IQCg5fY3B1X3VzYWdlX3BjdEIRCg9fbWVtX2ZyZWVfYnl0ZXNCDgoMX2JhdHRlcnlfcGN0QhIKEF9kaXNrX2ZyZWVfYnl0ZXNCEwoRX2Rpc2tfdG90YWxfYnl0ZXNCDAoKX3JlY29yZGluZ0IRCg9fc3RyZWFtX2NsaWVudHNCFQoTX3RoZXJtYWxfbWl0aWdhdGlvbmIGcHJvdG8z", [file_google_protobuf_timestamp]);
+  fileDesc("Cip2aXNpb19zY2hlbWEvdjEvc2Vuc29yL3N5c3RlbV9oZWFsdGgucHJvdG8SFnZpc2lvX3NjaGVtYS52MS5zZW5zb3IivwkKDFN5c3RlbUhlYWx0aBItCgl0aW1lc3RhbXAYASABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhcKCmNwdV90ZW1wX2MYAiABKAJIAIgBARIaCg1jcHVfdXNhZ2VfcGN0GAMgASgCSAGIAQESGwoObWVtX2ZyZWVfYnl0ZXMYBCABKARIAogBARIYCgtiYXR0ZXJ5X3BjdBgFIAEoAkgDiAEBEhwKD2Rpc2tfZnJlZV9ieXRlcxgGIAEoBEgEiAEBEh0KEGRpc2tfdG90YWxfYnl0ZXMYCiABKARIBYgBARIWCglyZWNvcmRpbmcYByABKAhIBogBARIbCg5zdHJlYW1fY2xpZW50cxgIIAEoDUgHiAEBEiwKCHJlYWx0aW1lGAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBJFCgxjYW1lcmFfdGVtcHMYCyADKAsyLy52aXNpb19zY2hlbWEudjEuc2Vuc29yLlN5c3RlbUhlYWx0aC5DYW1lcmFUZW1wElcKEnRoZXJtYWxfbWl0aWdhdGlvbhgMIAEoDjI2LnZpc2lvX3NjaGVtYS52MS5zZW5zb3IuU3lzdGVtSGVhbHRoLlRoZXJtYWxNaXRpZ2F0aW9uSAiIAQESYAoXdGhlcm1hbF9yZWNvcmRpbmdfZ3VhcmQYDSABKA4yOi52aXNpb19zY2hlbWEudjEuc2Vuc29yLlN5c3RlbUhlYWx0aC5UaGVybWFsUmVjb3JkaW5nR3VhcmRICYgBARoyCgpDYW1lcmFUZW1wEg0KBWluZGV4GAEgASgNEhUKDXNlbnNvcl90ZW1wX2MYAiABKAIivgEKEVRoZXJtYWxNaXRpZ2F0aW9uEiIKHlRIRVJNQUxfTUlUSUdBVElPTl9VTlNQRUNJRklFRBAAEhsKF1RIRVJNQUxfTUlUSUdBVElPTl9OT05FEAESHAoYVEhFUk1BTF9NSVRJR0FUSU9OX0NMT0NLEAISJQohVEhFUk1BTF9NSVRJR0FUSU9OX1ZJREVPX1dJVEhIRUxEEAMSIwofVEhFUk1BTF9NSVRJR0FUSU9OX0xJVkVfUkVEVUNFRBAEIrsBChVUaGVybWFsUmVjb3JkaW5nR3VhcmQSJwojVEhFUk1BTF9SRUNPUkRJTkdfR1VBUkRfVU5TUEVDSUZJRUQQABIgChxUSEVSTUFMX1JFQ09SRElOR19HVUFSRF9OT05FEAESKAokVEhFUk1BTF9SRUNPUkRJTkdfR1VBUkRfU1RPUF9BRFZJU0VEEAISLQopVEhFUk1BTF9SRUNPUkRJTkdfR1VBUkRfUkVDT1JESU5HX0JMT0NLRUQQA0INCgtfY3B1X3RlbXBfY0IQCg5fY3B1X3VzYWdlX3BjdEIRCg9fbWVtX2ZyZWVfYnl0ZXNCDgoMX2JhdHRlcnlfcGN0QhIKEF9kaXNrX2ZyZWVfYnl0ZXNCEwoRX2Rpc2tfdG90YWxfYnl0ZXNCDAoKX3JlY29yZGluZ0IRCg9fc3RyZWFtX2NsaWVudHNCFQoTX3RoZXJtYWxfbWl0aWdhdGlvbkIaChhfdGhlcm1hbF9yZWNvcmRpbmdfZ3VhcmRiBnByb3RvMw", [file_google_protobuf_timestamp]);
 
 /**
  * @generated from message visio_schema.v1.sensor.SystemHealth
@@ -116,6 +116,11 @@ export type SystemHealth = Message<"visio_schema.v1.sensor.SystemHealth"> & {
    * @generated from field: optional visio_schema.v1.sensor.SystemHealth.ThermalMitigation thermal_mitigation = 12;
    */
   thermalMitigation?: SystemHealth_ThermalMitigation | undefined;
+
+  /**
+   * @generated from field: optional visio_schema.v1.sensor.SystemHealth.ThermalRecordingGuard thermal_recording_guard = 13;
+   */
+  thermalRecordingGuard?: SystemHealth_ThermalRecordingGuard | undefined;
 };
 
 /**
@@ -169,7 +174,8 @@ export const SystemHealth_CameraTempSchema: GenMessage<SystemHealth_CameraTemp> 
  *
  * Absent means this device does not report thermal mitigation at all (it may
  * still have limits it enforces); NONE means it does report, and currently
- * has nothing to report. A recording is never what gets given up.
+ * has nothing to report. No value here gives up a recording: what heat does
+ * to a recording is reported separately, in thermal_recording_guard.
  *
  * @generated from enum visio_schema.v1.sensor.SystemHealth.ThermalMitigation
  */
@@ -187,7 +193,9 @@ export enum SystemHealth_ThermalMitigation {
   NONE = 1,
 
   /**
-   * Clock headroom only: the device has slowed itself down. No stream is
+   * Clock headroom, and work only the device can see: it has slowed itself
+   * down and stopped its own background traffic — periodic off-device
+   * reports, deferred transfers. No stream a subscriber asked for is
    * affected, so there is nothing for a consumer to explain.
    *
    * @generated from enum value: THERMAL_MITIGATION_CLOCK = 2;
@@ -203,9 +211,9 @@ export enum SystemHealth_ThermalMitigation {
   VIDEO_WITHHELD = 3,
 
   /**
-   * Live video withheld, and what remains of the live streams thinned:
-   * lower sample rates, periodic off-device reports suspended. A recording
-   * in progress is still intact.
+   * Live video withheld, and what remains of the live streams thinned: the
+   * per-sample streams (pose and the like) arrive at a lower rate than the
+   * device can otherwise produce. A recording in progress is still intact.
    *
    * @generated from enum value: THERMAL_MITIGATION_LIVE_REDUCED = 4;
    */
@@ -217,4 +225,64 @@ export enum SystemHealth_ThermalMitigation {
  */
 export const SystemHealth_ThermalMitigationSchema: GenEnum<SystemHealth_ThermalMitigation> = /*@__PURE__*/
   enumDesc(file_visio_schema_v1_sensor_system_health, 0, 0);
+
+/**
+ * What heat is doing to recording, as opposed to the live streams above.
+ *
+ * Past the point where shedding optional work is enough, a device protects
+ * its hardware by ending the recording itself. It asks first — the user can
+ * stop on their own terms — and once it has stopped, it refuses a new
+ * recording until it has cooled. A consumer shows the ask, and explains the
+ * refusal instead of offering a record button that cannot work.
+ *
+ * Independent of thermal_mitigation: each is judged on its own limits, so
+ * any combination of the two can be reported.
+ *
+ * The values are ordered, a higher one being the more severe. A value this
+ * consumer does not know is treated as at least RECORDING_BLOCKED: a newer
+ * device may have more to say, never less.
+ *
+ * Absent — or UNSPECIFIED, if present — means this device does not guard
+ * recording on temperature; NONE means it does, and recording is currently
+ * unaffected.
+ *
+ * @generated from enum visio_schema.v1.sensor.SystemHealth.ThermalRecordingGuard
+ */
+export enum SystemHealth_ThermalRecordingGuard {
+  /**
+   * @generated from enum value: THERMAL_RECORDING_GUARD_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * Recording is unaffected.
+   *
+   * @generated from enum value: THERMAL_RECORDING_GUARD_NONE = 1;
+   */
+  NONE = 1,
+
+  /**
+   * Hot enough that the device asks the user to stop recording. A recording
+   * in progress keeps every frame; if the device keeps heating it will end
+   * the recording itself.
+   *
+   * @generated from enum value: THERMAL_RECORDING_GUARD_STOP_ADVISED = 2;
+   */
+  STOP_ADVISED = 2,
+
+  /**
+   * Too hot to record. Any recording in progress has been ended cleanly,
+   * and a new one is refused (StartRecording's "thermal_too_hot") until the
+   * device has cooled.
+   *
+   * @generated from enum value: THERMAL_RECORDING_GUARD_RECORDING_BLOCKED = 3;
+   */
+  RECORDING_BLOCKED = 3,
+}
+
+/**
+ * Describes the enum visio_schema.v1.sensor.SystemHealth.ThermalRecordingGuard.
+ */
+export const SystemHealth_ThermalRecordingGuardSchema: GenEnum<SystemHealth_ThermalRecordingGuard> = /*@__PURE__*/
+  enumDesc(file_visio_schema_v1_sensor_system_health, 0, 1);
 

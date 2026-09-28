@@ -80,7 +80,8 @@ message SystemHealth {
   //
   // Absent means this device does not report thermal mitigation at all (it may
   // still have limits it enforces); NONE means it does report, and currently
-  // has nothing to report. A recording is never what gets given up.
+  // has nothing to report. No value here gives up a recording: what heat does
+  // to a recording is reported separately, in thermal_recording_guard.
   enum ThermalMitigation {
     THERMAL_MITIGATION_UNSPECIFIED = 0;
 
@@ -103,4 +104,40 @@ message SystemHealth {
     THERMAL_MITIGATION_LIVE_REDUCED = 4;
   }
   optional ThermalMitigation thermal_mitigation = 12;
+
+  // What heat is doing to recording, as opposed to the live streams above.
+  //
+  // Past the point where shedding optional work is enough, a device protects
+  // its hardware by ending the recording itself. It asks first — the user can
+  // stop on their own terms — and once it has stopped, it refuses a new
+  // recording until it has cooled. A consumer shows the ask, and explains the
+  // refusal instead of offering a record button that cannot work.
+  //
+  // Independent of thermal_mitigation: each is judged on its own limits, so
+  // any combination of the two can be reported.
+  //
+  // The values are ordered, a higher one being the more severe. A value this
+  // consumer does not know is treated as at least RECORDING_BLOCKED: a newer
+  // device may have more to say, never less.
+  //
+  // Absent — or UNSPECIFIED, if present — means this device does not guard
+  // recording on temperature; NONE means it does, and recording is currently
+  // unaffected.
+  enum ThermalRecordingGuard {
+    THERMAL_RECORDING_GUARD_UNSPECIFIED = 0;
+
+    // Recording is unaffected.
+    THERMAL_RECORDING_GUARD_NONE = 1;
+
+    // Hot enough that the device asks the user to stop recording. A recording
+    // in progress keeps every frame; if the device keeps heating it will end
+    // the recording itself.
+    THERMAL_RECORDING_GUARD_STOP_ADVISED = 2;
+
+    // Too hot to record. Any recording in progress has been ended cleanly,
+    // and a new one is refused (StartRecording's "thermal_too_hot") until the
+    // device has cooled.
+    THERMAL_RECORDING_GUARD_RECORDING_BLOCKED = 3;
+  }
+  optional ThermalRecordingGuard thermal_recording_guard = 13;
 }

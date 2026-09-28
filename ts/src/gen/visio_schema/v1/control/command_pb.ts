@@ -366,6 +366,11 @@ export const SetRecordingDestination_DestinationSchema: GenEnum<SetRecordingDest
 /**
  * Begin a recording session on the target.
  *
+ * Refusals a host can act on (CommandResult.error_code): "thermal_too_hot" —
+ * the device is too hot to record (SystemHealth.thermal_recording_guard is
+ * RECORDING_BLOCKED), retry once it has cooled; "ota_in_progress" — a firmware
+ * update is being received and will restart the device, retry once it is done.
+ *
  * @generated from message visio_schema.v1.control.StartRecording
  */
 export type StartRecording = Message<"visio_schema.v1.control.StartRecording"> & {
