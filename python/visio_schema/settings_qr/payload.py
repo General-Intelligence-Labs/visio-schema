@@ -127,10 +127,10 @@ DEFAULT_STORAGE_PREFIX = "recordings/"
 # pins these against the options file; the app keeps the same caps in
 # settings-payload.ts.
 DEVICE_MAX_SIZE = {
-    "SetRecordingMeta.task": 64,
-    "SetRecordingMeta.location": 128,
-    "SetRecordingMeta.message": 256,
-    "SetRecordingMeta.capturer": 64,
+    "SetRecordingMeta.task": 256,
+    "SetRecordingMeta.location": 512,
+    "SetRecordingMeta.message": 1024,
+    "SetRecordingMeta.capturer": 256,
     "SetStorage.endpoint_url": 128,
     "SetStorage.region": 32,
     "SetStorage.bucket": 64,

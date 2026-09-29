@@ -592,21 +592,21 @@ class TestFieldRules:
         assert any("32 bytes" in p for p in validate(config))
 
     def test_a_meta_field_at_the_byte_limit_is_accepted(self, config) -> None:
-        config["meta"]["capturer"] = "x" * 63     # 63 usable bytes (cap 64)
+        config["meta"]["capturer"] = "x" * 255    # 255 usable bytes (cap 256)
         assert validate(config) == []
 
     def test_a_meta_field_one_byte_over_is_rejected(self, config) -> None:
-        # The bug that motivated this whole check: a 64-byte capturer overflows
-        # the 64-byte buffer (63 usable), nanopb drops the whole Command, and
+        # The bug that motivated this whole check: a 256-byte capturer overflows
+        # the 256-byte buffer (255 usable), nanopb drops the whole Command, and
         # the app times out with nothing to show.
-        config["meta"]["capturer"] = "x" * 64
+        config["meta"]["capturer"] = "x" * 256
         problems = validate(config)
-        assert any("meta.capturer" in p and "64 bytes" in p for p in problems)
+        assert any("meta.capturer" in p and "256 bytes" in p for p in problems)
 
     def test_a_meta_field_counts_bytes_not_characters(self, config) -> None:
-        config["meta"]["capturer"] = "宠" * 21     # 21 chars, 63 bytes: fits
+        config["meta"]["capturer"] = "宠" * 85     # 85 chars, 255 bytes: fits
         assert validate(config) == []
-        config["meta"]["capturer"] = "宠" * 22     # 22 chars, 66 bytes: over
+        config["meta"]["capturer"] = "宠" * 86     # 86 chars, 258 bytes: over
         assert any("meta.capturer" in p for p in validate(config))
 
     def test_an_overlong_storage_field_is_rejected(self, config) -> None:
@@ -615,7 +615,7 @@ class TestFieldRules:
 
     def test_a_length_notice_is_translated(self, config) -> None:
         from visio_schema.settings_qr.i18n import set_language
-        config["meta"]["capturer"] = "x" * 64
+        config["meta"]["capturer"] = "x" * 256
         set_language("zh")
         try:
             problems = validate(config)
@@ -626,13 +626,13 @@ class TestFieldRules:
 
     # Per-field byte-cap WIRING: each typed field must pass its OWN max_bytes to
     # _string. A dropped or mis-keyed cap would ship an over-long value the
-    # device then drops whole. Caps differ per field (31/63/127/255), so one
+    # device then drops whole. Caps differ per field, so one
     # field's boundary test does not cover another — check every wire-up.
     @pytest.mark.parametrize("path,value", [
-        ("meta.task", "x" * 64),
-        ("meta.location", "x" * 128),
-        ("meta.message", "x" * 256),
-        ("meta.capturer", "x" * 64),
+        ("meta.task", "x" * 256),
+        ("meta.location", "x" * 512),
+        ("meta.message", "x" * 1024),
+        ("meta.capturer", "x" * 256),
         ("storage.region", "r" * 32),
         ("storage.bucket", "b" * 64),
         ("storage.access_key_id", "k" * 64),
@@ -784,7 +784,7 @@ class TestInteractive:
         the same in-place recovery `_ask_int` gives a bad number."""
         self._script(monkeypatch, [
             "y",                          # metadata?
-            "x" * 64, "pick-and-place",   # task: over the 63-byte cap, then ok
+            "x" * 256, "pick-and-place",  # task: over the 255-byte cap, then ok
             "", "", "",                   # location, message, capturer skipped
             "n", "n", "n", "n",           # storage, bitrate, resolution, wifi
         ], [])
@@ -967,7 +967,7 @@ class TestCliRemainingBranches:
         # instead of at a timed-out scan on the rig. (These caps also keep a
         # valid payload well under MAX_BYTES, so the total-size gate is now a
         # backstop rather than the thing that catches an over-long field.)
-        config["meta"]["capturer"] = "x" * 200
+        config["meta"]["capturer"] = "x" * 256
         config["storage"]["bucket"] = "b" * 200
         rc = main(["--config", self._write(tmp_path, config),
                    "--out", str(tmp_path / "x.png")])
