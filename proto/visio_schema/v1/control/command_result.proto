@@ -304,6 +304,24 @@ message DeviceState {
   }
   GpsTagging gps_tagging = 39;
 
+  // ── anti-flicker ──
+  // The mains anti-flicker setting (SetAntiFlicker) as the cameras run it. A
+  // command's own echo carries the value just asked for; the device applies it
+  // within one AE cycle, and if the cameras refuse it this reads OFF from then
+  // on — so a control that springs back to Off means the device could not
+  // apply it.
+  //
+  // UNSUPPORTED covers both "this device cannot run the setting" and "this
+  // firmware predates it", and lets the app HIDE the control. OFF is the
+  // camera's tuned default, not "no anti-flicker at all".
+  enum AntiFlicker {
+    ANTI_FLICKER_UNSUPPORTED = 0;
+    ANTI_FLICKER_OFF         = 1;
+    ANTI_FLICKER_50HZ        = 2;
+    ANTI_FLICKER_60HZ        = 3;
+  }
+  AntiFlicker anti_flicker = 40;
+
   // ── notice volume ──
   // Voice-notice loudness, 0-100 (SetNoticeVolume; 0 = muted).
   //

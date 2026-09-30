@@ -63,7 +63,37 @@ message Command {
     SetDiagVerbosity set_diag_verbosity = 42;
     OpenRecordingFile open_recording_file = 43;
     DeleteRecording delete_recording = 44;
+    SetAntiFlicker set_anti_flicker = 45;
   }
+}
+
+// Mains anti-flicker for every camera on this device: the switch a wearer turns
+// on when lamps on AC mains (LED, fluorescent) flicker in the video.
+//
+// Every tuned camera already runs the ISP's AUTO anti-flicker, which lets the
+// exposure fall below one flicker period in a bright scene — exactly when
+// indoor lamps beat through. Switched ON, the device holds every exposure to a
+// whole number of flicker periods (1/100 s at 50 Hz, 1/120 s at 60 Hz), so each
+// frame integrates whole cycles of the lamp and the beat is gone. The cost is
+// why it is a switch and not the default: the exposure can no longer drop below
+// one period, so fast motion blurs more and a bright scene (outdoors, a window)
+// clips. OFF restores the camera's tuned behaviour.
+//
+// The mains frequency is the host's to supply — a device cannot know which
+// country it is in, and the wrong one only partly helps, so the user picks it.
+//
+// Persisted to a device-side sidecar and applied LIVE (the next AE cycle) — no
+// reboot, and an in-flight recording takes it mid-session. A device that cannot
+// run the setting rejects it ("unsupported"), which is EXPECTED. The value in
+// force is reported in DeviceState.anti_flicker, which also tells the app
+// whether to offer the control at all.
+message SetAntiFlicker {
+  enum Mains {
+    MAINS_OFF  = 0;  // the camera's tuned default
+    MAINS_50HZ = 1;
+    MAINS_60HZ = 2;
+  }
+  Mains mains = 1;
 }
 
 // Enable/disable the periodic tick-tock voice heartbeat a speaker-equipped

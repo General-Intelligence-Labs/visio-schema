@@ -63,6 +63,7 @@ REQUIRED_COMMAND_BODIES = frozenset(
         "open_recording_file",
         "delete_recording",
         "set_gps_tagging",
+        "set_anti_flicker",
     }
 )
 
@@ -183,6 +184,15 @@ def test_proto_command_schema_present():
     assert body_to_type["set_gps_tagging"] == gps.DESCRIPTOR.name
     assert command_pb2.Command.DESCRIPTOR.fields_by_name["set_gps_tagging"].number == 41
 
+    flicker = command_pb2.SetAntiFlicker
+    assert body_to_type["set_anti_flicker"] == flicker.DESCRIPTOR.name
+    assert command_pb2.Command.DESCRIPTOR.fields_by_name["set_anti_flicker"].number == 45
+    # The mains values are what a device persists and an app sends: OFF must
+    # stay the proto3 default so an empty SetAntiFlicker restores the tuned AE.
+    assert flicker.MAINS_OFF == 0
+    assert flicker.MAINS_50HZ == 1
+    assert flicker.MAINS_60HZ == 2
+
     volume = command_pb2.SetNoticeVolume
     assert body_to_type["set_notice_volume"] == volume.DESCRIPTOR.name
     assert command_pb2.Command.DESCRIPTOR.fields_by_name["set_notice_volume"].number == 38
@@ -218,6 +228,14 @@ def test_proto_command_schema_present():
     assert state.GPS_TAGGING_ENABLED == 1
     assert state.GPS_TAGGING_DISABLED == 2
     assert state.DESCRIPTOR.fields_by_name["gps_tagging"].number == 39
+
+    # UNSUPPORTED is 0 so a device that predates the switch hides it; OFF is a
+    # reported state of its own, not the absence of one.
+    assert state.ANTI_FLICKER_UNSUPPORTED == 0
+    assert state.ANTI_FLICKER_OFF == 1
+    assert state.ANTI_FLICKER_50HZ == 2
+    assert state.ANTI_FLICKER_60HZ == 3
+    assert state.DESCRIPTOR.fields_by_name["anti_flicker"].number == 40
 
     # notice_volume carries explicit presence: absence means "no speaker or
     # pre-volume firmware" and hides the app control, which a plain uint32
