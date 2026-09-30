@@ -63,6 +63,7 @@ message Command {
     SetDiagVerbosity set_diag_verbosity = 42;
     OpenRecordingFile open_recording_file = 43;
     DeleteRecording delete_recording = 44;
+    SetBle set_ble = 45;
   }
 }
 
@@ -306,6 +307,26 @@ message SetAudioRecording {
 // ALWAYS address this to a specific device: an empty Command.target_device is
 // a broadcast, which on a suit would flip every detector-capable board at once.
 message SetHandDetection {
+  bool enabled = 1;
+}
+
+// Enable/disable the BLE control transport on this device.
+//
+// A capable device defaults to disabled, and disabled costs nothing: the
+// Bluetooth controller is never brought up, so there is no radio time and no
+// advertising.
+// Enabled, the device advertises and accepts a control connection over BLE.
+// That link carries control commands only; bulk transfers (recording copy,
+// OTA) stay on the IP links.
+//
+// Persisted per unit and applied without a reboot. Only a board whose image
+// carries Bluetooth accepts it; every other device rejects it, which is
+// EXPECTED. The current value is reported in DeviceState.ble, which also tells
+// the app whether to offer the control at all.
+//
+// ALWAYS address this to a specific device: an empty Command.target_device is
+// a broadcast, which on a suit would flip every capable board at once.
+message SetBle {
   bool enabled = 1;
 }
 

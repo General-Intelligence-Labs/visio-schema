@@ -6,6 +6,14 @@ bump the MINOR version.
 
 ## Unreleased
 
+### SetBle — the BLE control transport becomes a per-unit switch
+
+`Command.set_ble` (tag 45) and `DeviceState.ble` (field 40, `Ble`: `UNSUPPORTED` /
+`ENABLED` / `DISABLED`). A board whose image carries Bluetooth keeps the radio fully off
+until this turns it on, so the default costs nothing. `UNSUPPORTED` means the image
+carries no Bluetooth or the firmware predates the switch, and the app hides the control.
+Additive: an old consumer never sends it and reads `UNSUPPORTED`.
+
 ### SystemHealth says how a hot device protects itself
 
 Two ordered enums, both additive and optional (absent = not reported):
