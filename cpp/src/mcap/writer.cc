@@ -463,6 +463,7 @@ void McapWriter::OpenPart() {
   primed_video_channels_.clear();
   part_max_video_ts_ = INT64_MIN;
   part_bytes_ = 0;
+  part_write_failure_logged_ = false;
   part_start_ = std::chrono::steady_clock::now();
   const std::string p = PartPath();
 
@@ -653,7 +654,22 @@ void McapWriter::Write(const Channel& channel, const Message& msg) {
   out.publishTime = ts;
   out.dataSize = msg.payload.size();
   out.data = reinterpret_cast<const std::byte*>(msg.payload.data());
-  writer_->write(out);
+  // mcap refuses a message only on its own bookkeeping (not open, unknown
+  // channel or schema) — disk errors surface through the file, not here. So a
+  // refusal is a bug in this writer: report it, never abort the recording,
+  // and count none of its bytes, or an all-refused part escapes the empty-part
+  // drop in CloseCurrentPart and drives ShouldRoll with bytes never written.
+  const ::mcap::Status st = writer_->write(out);
+  if (!st.ok()) {
+    if (!part_write_failure_logged_) {
+      part_write_failure_logged_ = true;
+      log::Write(log::Severity::kError,
+                 "McapWriter: message refused (later refusals in this part "
+                 "not logged): %s",
+                 st.message.c_str());
+    }
+    return;
+  }
   part_bytes_ += msg.payload.size();
   // Track the newest video capture time WRITTEN this part — the rotate-on-keyframe
   // "starts a new pair" test compares against it (P-frames included, so the next
