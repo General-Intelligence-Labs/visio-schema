@@ -31,6 +31,7 @@ from visio_schema.reader import (
     Frame,
     ImuSample,
     JointState,
+    Orientation,
     Pose,
     Record,
     Session,
@@ -120,12 +121,27 @@ def test_pose_and_joint_states_arrive_typed(tmp_path):
 
 def test_unregistered_schema_falls_back_to_record(tmp_path):
     path = tmp_path / "rec.mcap"
-    RecBuilder(path).add_quat("/imu/quat", n=3).write()
+    RecBuilder(path).add_imu_calib("/imu/info").write()
 
     got = list(elements(_rows_of(path)))
 
-    assert [type(e) for e in got] == [Record] * 3
-    assert {e.schema_name for e in got} == {QUAT}
+    assert [type(e) for e in got] == [Record]
+    assert {e.schema_name for e in got} == {"visio_schema.v1.calibration.ImuCalibration"}
+
+
+def test_imu_quaternions_arrive_typed_on_the_wire_stamp():
+    """`/imu/<n>/quat` is an `Orientation`, so `sync` can SLERP it to another
+    sensor's instant instead of only ever picking the nearest sample."""
+    from visio_schema import message_class
+
+    q = message_class(QUAT)(x=0.1, y=0.2, z=0.3, w=0.9)
+    q.timestamp.FromNanoseconds(T0 - 900 * MS)
+    (got,) = elements([_row("/imu/quat", QUAT, T0, q.SerializeToString())])
+
+    assert isinstance(got, Orientation)
+    assert got.topic == "/imu/quat"
+    assert got.t_ns == T0
+    np.testing.assert_array_equal(got.q, [0.1, 0.2, 0.3, 0.9])
 
 
 # ── the live shape: MJPEG straight off the camera ──────────────────────── #

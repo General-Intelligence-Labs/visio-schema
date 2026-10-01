@@ -36,7 +36,7 @@ from dataclasses import replace
 
 import numpy as np
 
-from .domain import Element, JointState, Ns, Pose
+from .domain import Element, JointState, Ns, Orientation, Pose
 
 # (lo, hi, w) -> an element of the same type, stamped at the target time.
 Interpolator = Callable[[Element, Element, float, Ns], Element]
@@ -130,7 +130,7 @@ def slerp_xyzw(q0: np.ndarray, q1: np.ndarray, w: float) -> np.ndarray:
     # — an absent sample is `missing`, not something to interpolate through.
     for name, q in (("lo", q0), ("hi", q1)):
         norm = float(np.linalg.norm(q))
-        if abs(norm - 1.0) > 1e-3:
+        if not np.isfinite(norm) or abs(norm - 1.0) > 1e-3:
             raise ValueError(
                 f"slerp_xyzw: {name} quaternion has norm {norm:.6g}, not 1 — "
                 "that is not a rotation. An all-zero sentinel means the producer "
@@ -150,6 +150,18 @@ def slerp_xyzw(q0: np.ndarray, q1: np.ndarray, w: float) -> np.ndarray:
 
 
 # ── the built-in kinds ─────────────────────────────────────────────────── #
+
+
+@interpolator(Orientation)
+def _blend_orientation(lo: Orientation, hi: Orientation, w: float, t_ns: Ns) -> Orientation:
+    """Slerp — an IMU's fused orientation at an instant between two of its samples.
+
+    The case this exists for: another sensor's exposure falls between two IMU
+    quaternions, and the consumer needs the IMU AT that exposure. The C++ twin is
+    ``visio_schema/reader/time_history.hpp``; both are pinned to one kernel by
+    ``tests/golden/slerp_vectors.txt``.
+    """
+    return Orientation(topic=lo.topic, t_ns=t_ns, q=slerp_xyzw(lo.q, hi.q, w))
 
 
 @interpolator(Pose)

@@ -48,6 +48,7 @@ CAM_CALIB_SCHEMA = "foxglove.CameraCalibration"
 FRAME_TF_SCHEMA = "foxglove.FrameTransform"
 IMU_CALIB_SCHEMA = "visio_schema.v1.calibration.ImuCalibration"
 POSE_SCHEMA = "foxglove.PoseInFrame"
+QUATERNION_SCHEMA = "visio_schema.v1.ros.geometry_msgs.Quaternion"
 JOINT_STATES_SCHEMA = "foxglove.JointStates"
 
 
@@ -216,6 +217,30 @@ class Pose:
 
 
 @dataclass(frozen=True, eq=False)
+class Orientation:
+    """A bare orientation, parsed from ``visio_schema.v1.ros.geometry_msgs.Quaternion``
+    — every device's fused IMU output (``/…/imu/<n>/quat``).
+
+    Typed rather than left to the `Record` fallback for the same reason as `Pose`:
+    interpolation dispatches on the element type, and an orientation stream is
+    exactly what a consumer resamples at another sensor's instant ("where was this
+    IMU when that frame was exposed"). As a `Record` it could only be picked
+    nearest, which at 60 Hz is up to 8 ms of rotation silently attributed to the
+    wrong moment.
+
+    ``t_ns`` is the WIRE stamp, like every element, not the payload's own
+    ``timestamp`` field: that one stays in the producer's clock, and aligning a
+    relayed leaf against anything else must use the heartbeat-shifted header.
+
+    ``q`` is ``(x, y, z, w)``, the proto's order and scipy's.
+    """
+
+    topic: str
+    t_ns: Ns
+    q: np.ndarray  # (4,) xyzw, unit
+
+
+@dataclass(frozen=True, eq=False)
 class JointState:
     """Named joint positions at one instant, from ``foxglove.JointStates``.
 
@@ -261,7 +286,7 @@ class Tick:
 
 # What the streaming pass yields — a closed union (isinstance-routable in
 # `sync` passthrough). A new element kind (e.g. an AudioSample) extends this.
-Element = Frame | ImuSample | Record | Pose | JointState | Tick
+Element = Frame | ImuSample | Record | Pose | Orientation | JointState | Tick
 
 
 @dataclass(frozen=True, eq=False)
