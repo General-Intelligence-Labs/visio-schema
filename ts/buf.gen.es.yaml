@@ -1,0 +1,17 @@
+# TypeScript bindings for the package. Deliberately a SEPARATE template from
+# the repo's buf.gen.yaml, which emits Python and sets `clean: true` -- sharing
+# one file would wipe this tree on every `make gen`, and would put a Node
+# requirement on the lanes that build the wheel.
+#
+# `import_extension=js` because this package ships BUILT ESM that node resolves
+# directly, and node requires an explicit extension on a relative specifier.
+# `none` looks right for Metro and tsx, and is wrong the moment anything loads
+# dist/ -- see ts/scripts/verify-pack.mjs.
+version: v2
+clean: true
+plugins:
+  - local: ./node_modules/.bin/protoc-gen-es
+    out: src/gen
+    opt:
+      - target=ts
+      - import_extension=js

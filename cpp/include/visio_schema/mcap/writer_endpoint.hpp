@@ -47,6 +47,7 @@ struct McapWriterStats {
   // Enqueue-side high watermark of queued bytes: how much of the policy's
   // byte bound the storage device's stalls have ever consumed. The distance
   // to max_bytes is the recording's proven margin against loss.
+  // Peak bytes QUEUED (not including a batch in flight — see inflight_bytes_).
   std::uint64_t max_pending_bytes = 0;
   // Frames discarded because their stream id resolved to no channel. A
   // DIFFERENT failure from `dropped`, and it must not be folded into it: that
@@ -81,7 +82,14 @@ class McapWriterEndpoint : public transport::Endpoint {
   void Send(const Message& msg) override;              // resolve + enqueue
   void Stop() override;                                // stop+join, finalize
 
+  // Frames still QUEUED — the depth the policy's max_depth bounds. Frames the
+  // writer thread has already taken are not counted here (see pending_bytes
+  // for why the two differ: depth is a policy question, bytes are a memory one).
   std::size_t pending_frames() const;
+  // Payload bytes the endpoint still HOLDS: queued, plus the batch the writer
+  // thread has taken but not yet written. Counting only the queue would have
+  // read 0 for the whole time a batch is being written to storage — the very
+  // window in which the endpoint is at its fattest.
   std::size_t pending_bytes() const;
   std::uint64_t dropped_frames() const { return dropped_.load(std::memory_order_relaxed); }
   std::uint64_t unmapped_frames() const {
@@ -140,6 +148,19 @@ class McapWriterEndpoint : public transport::Endpoint {
   std::size_t queue_bytes_ = 0;
   bool stop_ = false;
   std::thread thread_;
+
+  // Bytes of the swapped-out batch still resident, i.e. taken off queue_ but
+  // not yet written. Written ONLY by the writer thread (relaxed: it is a
+  // gauge, not a handshake) and read by pending_bytes(), so honest accounting
+  // across the swap costs no lock and nothing at all on the Send() path.
+  // Deliberately NOT part of the shed decision or of max_pending_bytes. Both
+  // are the QUEUE's relationship to the policy bound: folding the batch into
+  // the shed would drop frames that today reach the disk (a change to what a
+  // recording contains, which this is not the place to make), and folding it
+  // into the watermark would make that number depend on writer timing. What it
+  // is for is pending_bytes(), the one honest answer to "how much does this
+  // endpoint hold right now".
+  std::atomic<std::uint64_t> inflight_bytes_{0};
 
   std::atomic<bool> failed_{false};   // unrecoverable storage error, latched
   std::atomic<std::uint64_t> dropped_{0};

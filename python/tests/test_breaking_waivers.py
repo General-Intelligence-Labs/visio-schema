@@ -55,14 +55,25 @@ def test_camera_frame_info_trim_is_waived() -> None:
     assert "2 error(s) waived" in r.stdout
 
 
+def test_camera_frame_info_raw_fields_retirement_is_waived() -> None:
+    """0.10.0: the raw fields 3 and 5-13 give way to producer-computed timing."""
+    errors = [_err(_FRAME_INFO, f'Previously present field "{n}" with name "f{n}" '
+                                f'on message "CameraFrameInfo" was deleted.')
+              for n in (3, 5, 6, 7, 8, 9, 10, 11, 12, 13)]
+    r = _run(errors)
+    assert r.returncode == 0
+    assert "10 error(s) waived" in r.stdout
+
+
 def test_deleting_a_kept_camera_frame_info_field_fails() -> None:
-    """The waiver is scoped to the two reviewed tags — losing `isp_frame_id`, or
-    anything else in that message, must still fail the gate."""
-    r = _run([_err(_FRAME_INFO, 'Previously present field "3" with name '
-                                '"isp_frame_id" on message "CameraFrameInfo" '
-                                'was deleted.')])
-    assert r.returncode == 1
-    assert "un-waived" in r.stderr
+    """The waivers are scoped to the reviewed tags — losing the join key or any
+    current field (14-18) must still fail the gate."""
+    for num, name in ((1, "timestamp"), (14, "exposure_us"), (18, "readout_direction")):
+        r = _run([_err(_FRAME_INFO, f'Previously present field "{num}" with name '
+                                    f'"{name}" on message "CameraFrameInfo" '
+                                    'was deleted.')])
+        assert r.returncode == 1, num
+        assert "un-waived" in r.stderr
 
 
 def test_unwaived_deletion_in_same_message_fails() -> None:

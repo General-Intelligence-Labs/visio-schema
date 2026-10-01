@@ -559,11 +559,11 @@ TEST(McapWriter, WritesChunksWithZeroCrc) {
   std::remove(path.c_str());
 }
 
-// The part file rides a 256 KiB stdio buffer (CloexecFileWriter::open). Cross
-// that buffer several times AND rotate mid-stream, then prove every part was
+// The part file rides a small stdio buffer (kStdioBufferBytes,
+// CloexecFileWriter::open — 16 KiB, sized to the only writes that ever reach
+// it). Cross it several times AND rotate mid-stream, then prove every part was
 // fully flushed: each must end with the MCAP trailing magic — a truncated
-// buffered tail would leave a torn footer that read_mcap rejects. The tiny
-// writes in the other tests never fill the buffer even once.
+// buffered tail would leave a torn footer that read_mcap rejects.
 TEST(McapWriter, LargeBufferedWritesFlushAcrossCloseAndRotation) {
   const std::string stem = "visio_schema_mcap_bigbuf";
   const std::string path = TempPath(stem + ".mcap");
@@ -647,6 +647,48 @@ TEST(McapWriterVrec, DecryptingFromByte32ReproducesThePlaintextFileExactly) {
 
   std::remove(plain.c_str());
   std::remove(enc.c_str());
+}
+
+// The fixture above never crosses one cipher staging buffer, so it never enters
+// handleWrite's slicing loop — the loop whose bound and destination both moved
+// when the scratch became a heap buffer sized against the stdio one. Drive
+// megabytes through it, across a rotation, and prove every part still decrypts
+// to exactly the plaintext writer's bytes.
+TEST(McapWriterVrec, LargeSpansSliceThroughTheScratchAndDecryptExactly) {
+  const std::string stem_plain = "visio_schema_vrec_big_plain";
+  const std::string stem_enc = "visio_schema_vrec_big_enc";
+  RemoveParts(stem_plain);
+  RemoveParts(stem_enc);
+  const RecordingKey key = TestKey(11);
+  const Channel ch = MakeChannel(kFirstDynamic, "/dev/imu/0/raw");
+  // 16 KiB records: each mcap chunk blob is ~768 KiB, i.e. a dozen slices
+  // through the 64 KiB scratch, and 1 MiB parts force several rotations (every
+  // one of which must re-arm the scratch alongside its own cipher).
+  const std::string payload(16 * 1024, 'q');
+  auto write_all = [&](McapWriter& w) {
+    for (int i = 0; i < 192; ++i) w.Write(ch, Data(kFirstDynamic, payload));
+    w.Close();
+  };
+  {
+    McapWriter w(TempPath(stem_plain + ".mcap"), /*max_bytes=*/1024 * 1024);
+    write_all(w);
+  }
+  {
+    McapWriter w(TempPath(stem_enc + ".mcap"), /*max_bytes=*/1024 * 1024, 0.0,
+                 false, 0, 0, key);
+    write_all(w);
+  }
+  ASSERT_GE(PartCount(stem_plain), 2);
+  ASSERT_EQ(PartCount(stem_enc), PartCount(stem_plain));
+  for (int part = 0; part < PartCount(stem_plain); ++part) {
+    const std::string want = SlurpFile(PartPath(stem_plain, part));
+    const std::string got = SlurpFile(PartPath(stem_enc, part));
+    ASSERT_GT(want.size(), 64u * 1024u) << "part " << part << " never sliced";
+    EXPECT_EQ(got.size(), want.size() + kVrecHeaderBytes) << "part " << part;
+    EXPECT_TRUE(DecryptPart(got, key) == want) << "part " << part;
+  }
+  RemoveParts(stem_plain);
+  RemoveParts(stem_enc);
 }
 
 TEST(McapWriterVrec, TheCiphertextDoesNotLeakThePlaintextMagic) {

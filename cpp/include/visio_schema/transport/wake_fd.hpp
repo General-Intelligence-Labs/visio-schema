@@ -63,7 +63,11 @@ class WakeFd {
     if (write_fd_ < 0) return;
     if (signalled_.exchange(true, std::memory_order_acq_rel)) return;
     const std::uint64_t one = 1;
-    (void)::write(write_fd_, &one, sizeof(one));
+    // Unchecked on purpose: the only failure worth naming, a full pipe, means
+    // a wakeup is already pending. glibc's warn_unused_result ignores a
+    // (void) cast, hence the named result.
+    const ssize_t written = ::write(write_fd_, &one, sizeof(one));
+    (void)written;
   }
 
   // Clear all pending wakeups (loop thread only). The buffer is >= 8 bytes so a

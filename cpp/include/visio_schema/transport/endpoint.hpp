@@ -103,6 +103,19 @@ class Endpoint {
   // it. Default false: an endpoint with no outbox (a recording sink) is never
   // "stalled", so it keeps counting as a consumer.
   virtual bool Stalled() const { return false; }
+
+  // Would this sink consume `stream_id` right now? The question a producer asks
+  // before deciding NOTHING needs a stream (visio's Bus::AnySinkWants — a device
+  // parks its cameras when no sink wants their video). Called under the same
+  // serialization as Send().
+  //
+  // The default answers yes while the sink is consuming. That is the fail-safe
+  // direction on purpose: a kind of sink that never answers is still counted,
+  // so a new consumer can cost a producer work it did not need, never data it
+  // did. A sink narrows it only with the rule it actually delivers by.
+  virtual bool WantsStream(std::uint32_t /*stream_id*/) const {
+    return !Stalled();
+  }
 };
 
 }  // namespace visio_schema::transport

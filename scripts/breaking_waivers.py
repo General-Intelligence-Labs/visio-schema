@@ -67,6 +67,18 @@ WAIVERS: list[dict] = [
         "reason": "0.7.0 CameraFrameInfo single-join-key trim — numbers + names "
                   "reserved; see CHANGELOG 0.7.0.",
     },
+    {
+        "rule": "FIELD_NO_DELETE",
+        "path": "proto/visio_schema/v1/sensor/camera_frame_info.proto",
+        "message": "CameraFrameInfo",
+        # 0.10.0: the raw per-frame fields (3, 5-13) are replaced by
+        # producer-computed exposure duration, midpoint offset, total gain,
+        # line delay and readout direction (fields 14-18). `timestamp` (1) and
+        # the join rule are unchanged; 2-13 are reserved by number and name.
+        "fields": {3, 5, 6, 7, 8, 9, 10, 11, 12, 13},
+        "reason": "0.10.0 CameraFrameInfo carries producer-computed exposure "
+                  "timing — numbers + names reserved; see CHANGELOG 0.10.0.",
+    },
 ]
 
 # buf's JSON error has no structured field/message keys, so scrape them from the

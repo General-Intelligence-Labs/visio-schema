@@ -1,8 +1,8 @@
 // visio_schema/v1/sensor/camera_frame_info.proto
 //
-// Per-frame camera capture metadata (exposure + sensor timing) on
+// Per-frame exposure timing for a camera stream, on
 // /<device>/camera/<idx>/frame_info — a sibling of the CompressedVideo
-// topic, one message per ISP stats entry (normally one per video frame).
+// topic, one message per video frame.
 //
 // Deliberately NOT a field on foxglove.CompressedVideo: that schema is
 // adopted as-is from the pinned foxglove-sdk submodule (see
@@ -11,29 +11,27 @@
 // official definition. A sibling topic is also independently
 // filterable via SetStreamPolicy.
 //
-// Join rule: `timestamp` is the VI capture PTS of the frame this entry
-// describes, byte-identical to that frame's CompressedVideo timestamp
-// — a plain equality join, and the ONLY join key. It is unique per
-// stream BY CONSTRUCTION: the producer drains the ISP stats queue
-// every frame and binds each entry to its frame by exact counter match
-// against recent capture history, and an entry it cannot bind is
-// DROPPED, never stamped with a substitute. So an entry that reaches
-// the wire is always stamped with its own frame's PTS.
+// Join rule: `timestamp` is byte-identical to the timestamp of the video
+// frame this entry describes — a plain equality join, and the only join
+// key. It is unique per stream. An entry can be missing for a frame (the
+// producer drops what it cannot attribute to a frame rather than guess);
+// consumers should treat that as a gap and interpolate across it.
 //
-// `isp_frame_id` is a DIAGNOSTIC, not a join key: a gap in it means an
-// ISP stats entry was genuinely lost or could not be bound, which is a
-// health signal rather than something a consumer joins on. Consumers
-// that need per-frame exposure should key on `timestamp` alone and
-// treat a missing frame as a gap to interpolate across.
+// Every value here is computed by the producer, which alone knows the
+// sensor's exposure placement, readout geometry and capture-stamp latency.
+// Consumers need no further sensor knowledge:
 //
-// An earlier revision (0.6.12) also carried `frame_id` (a coordinate
-// frame NAME — nothing geometric here to anchor) and `vi_time_ref`
-// (the drain frame's counter, published so that
-// `vi_time_ref != isp_frame_id` could flag a substitute-stamped
-// entry). Both are gone: there are no substitute-stamped entries any
-// more, and on real recordings that flag was aliased with the healthy
-// case (a one-frame drain latency is the normal majority state), so it
-// distinguished nothing.
+//   exposure midpoint of delivered image row r (0 = top), for an image
+//   H rows tall:
+//     t_mid(r) = timestamp + exposure_mid_offset_us * 1000 ns
+//                + sign * (r - (H - 1) / 2) * line_delay_ns
+//   where sign = +1 for READOUT_DIRECTION_TOP_TO_BOTTOM and -1 for
+//   READOUT_DIRECTION_BOTTOM_TO_TOP. A global-shutter stream has
+//   line_delay_ns == 0, so every row shares t_mid.
+//
+// A time offset previously estimated against the frame `timestamp` (for
+// example a camera-to-IMU offset from calibration) is relative to that
+// stamp; re-estimate it before switching a consumer to t_mid.
 
 syntax = "proto3";
 
@@ -42,35 +40,40 @@ package visio_schema.v1.sensor;
 import "google/protobuf/timestamp.proto";
 
 message CameraFrameInfo {
-  // 0.7.0 removed two fields; see the join rule above.
-  reserved 2, 4;
-  reserved "frame_id", "vi_time_ref";
+  // Order in which the rows of the DELIVERED image (after any on-device
+  // rotation) were read out.
+  enum ReadoutDirection {
+    READOUT_DIRECTION_UNSPECIFIED = 0;    // global shutter: line_delay_ns == 0
+    READOUT_DIRECTION_TOP_TO_BOTTOM = 1;  // row 0 read first
+    READOUT_DIRECTION_BOTTOM_TO_TOP = 2;  // row 0 read last
+  }
 
-  // VI capture PTS of the frame this entry describes — the join key
-  // (see the join rule above). Unique per stream.
+  // Fields 2-13 carried earlier, raw representations of the same data.
+  reserved 2 to 13;
+  reserved "frame_id", "vi_time_ref", "isp_frame_id", "exposure_time_s",
+           "analog_gain", "digital_gain", "isp_digital_gain", "iso",
+           "coarse_integration_time_lines", "line_length_pixels",
+           "frame_length_lines", "pixel_clock_mhz";
+
+  // Capture timestamp of the video frame this entry describes — the join
+  // key (see the join rule above).
   google.protobuf.Timestamp timestamp = 1;
 
-  // ISP 3A stats frame counter, verbatim. DIAGNOSTIC ONLY — never a
-  // join key. Unique per stream (the producer drops the ISP's rare
-  // redelivered stats entries), so an entry that was lost or could not
-  // be bound to its frame appears as a gap, never as a duplicate.
-  uint32 isp_frame_id = 3;
+  // Exposure (integration) duration of each row. Never 0.
+  uint32 exposure_us = 14;
 
-  // Exposure actually in effect for isp_frame_id, real domain —
-  // verbatim from the ISP's AE result, no unit conversion.
-  float exposure_time_s = 5;    // integration time in seconds
-  float analog_gain = 6;        // linear multiplier
-  float digital_gain = 7;       // sensor digital gain, linear
-  float isp_digital_gain = 8;   // ISP digital gain, linear
-  uint32 iso = 9;
+  // Exposure midpoint of the image's centre row, minus `timestamp`.
+  // Usually negative. Includes every producer-side delay between exposure
+  // and the capture stamp.
+  sint32 exposure_mid_offset_us = 15;
 
-  // Sensor register domain: integration time in lines.
-  uint32 coarse_integration_time_lines = 10;
+  // Total linear gain applied to this frame: sensor analog gain x sensor
+  // digital gain x ISP digital gain. 1.0 = unity.
+  float gain = 16;
 
-  // Sensor timing. Static per sensor mode; carried per frame so any
-  // clip is self-contained. Rolling-shutter line time =
-  // line_length_pixels / (pixel_clock_mhz * 1e6) seconds.
-  uint32 line_length_pixels = 11;  // HTS
-  uint32 frame_length_lines = 12;  // VTS
-  float pixel_clock_mhz = 13;
+  // Time between the exposures of successive rows of the delivered image.
+  // 0 for a global-shutter sensor.
+  uint32 line_delay_ns = 17;
+
+  ReadoutDirection readout_direction = 18;
 }

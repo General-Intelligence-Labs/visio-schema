@@ -28,6 +28,7 @@ This module is the bottom layer: it imports nothing else in
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import IntEnum
 from typing import Literal
 
 import numpy as np
@@ -59,42 +60,58 @@ def make_T(R: np.ndarray, t: np.ndarray) -> np.ndarray:
     return T
 
 
+class ReadoutDirection(IntEnum):
+    """Row readout order of the DELIVERED image (``CameraFrameInfo.ReadoutDirection``)."""
+
+    UNSPECIFIED = 0  # global shutter: every row shares one exposure window
+    TOP_TO_BOTTOM = 1  # row 0 read first
+    BOTTOM_TO_TOP = 2  # row 0 read last
+
+
 @dataclass(frozen=True)
 class FrameExposure:
-    """What the ISP's AE had in effect for one frame (``CameraFrameInfo``).
+    """One frame's exposure timing, as computed by the producer (``CameraFrameInfo``).
 
-    Attached to :class:`Frame` so a consumer can build its own exposure-midpoint or
-    rolling-shutter model. The SDK deliberately builds **none** — the right model
-    differs per consumer, and the sign of a midpoint term depends on a camera PTS
-    convention that is not yet measured (``docs/alignment.md`` §9.2). This type is
-    the *input*, not a correction.
+    Everything a consumer needs to place the frame's exposure in time is here; no
+    sensor knowledge is required on top. ``mid_ns`` is the exposure midpoint of the
+    image's *centre* row on the same clock as ``Frame.t_ns``; :meth:`row_mid_ns`
+    gives any other row of a rolling-shutter image.
 
-    ``line_time_ns`` is derived (``line_length_pixels / pixel_clock_mhz``) because
-    that is the form every consumer wants: the rolling-shutter delay between
-    consecutive rows. It supersedes the never-populated
-    ``Calibration.rs_line_delay_ns`` — it is per-frame and self-contained, so a clip
-    needs no side-channel calibration to model row skew. It is ``None``, never 0.0,
-    when the producer published no sensor timing: 0.0 is what a *global-shutter*
-    sensor legitimately reports, so a consumer must be able to tell the two apart.
+    A time offset estimated against ``Frame.t_ns`` (e.g. a calibrated camera-to-IMU
+    offset) is relative to that stamp — re-estimate it before switching a consumer
+    to ``mid_ns``.
     """
 
-    exposure_time_s: float
-    # rolling-shutter per-row delay (~13.7 us on AR0234); None if unknown
-    line_time_ns: float | None
-    frame_length_lines: int  # VTS
-    analog_gain: float
-    digital_gain: float
-    isp_digital_gain: float
-    iso: int
-    coarse_integration_time_lines: int
-    # The producer's counter for the entry this came from — a diagnostic, never a
-    # join key (visio-schema 0.7.0). None when this exposure was interpolated.
-    isp_frame_id: int | None = None
+    exposure_ns: Ns  # exposure duration of each row
+    mid_ns: Ns  # exposure midpoint of the centre row, on the wire clock
+    gain: float  # total linear gain (sensor analog x sensor digital x ISP)
+    # Time between successive delivered rows; 0 for a global-shutter stream.
+    line_delay_ns: int
+    readout_direction: ReadoutDirection
     # True when no entry existed for this frame and the value was reconstructed
     # from its neighbours. NEVER left absent mid-stream: a frame with no exposure
     # would make a consumer's correction snap back to zero for that frame alone,
     # a step of up to T_exp/2 — exactly the jitter such a correction removes.
     interpolated: bool = False
+
+    def row_mid_ns(self, row: float, height: int) -> Ns:
+        """Exposure midpoint of delivered row ``row`` (0 = top) of a ``height``-row image.
+
+        Integer ns like every stamp: a float64 cannot hold an epoch-ns timestamp to
+        better than ~256 ns, so only the row OFFSET is computed in floating point.
+        """
+        if self.line_delay_ns == 0:
+            return self.mid_ns
+        if self.readout_direction == ReadoutDirection.TOP_TO_BOTTOM:
+            sign = 1
+        elif self.readout_direction == ReadoutDirection.BOTTOM_TO_TOP:
+            sign = -1
+        else:
+            raise ValueError(
+                f"line_delay_ns={self.line_delay_ns} with no readout direction — "
+                "the producer published a rolling-shutter delay it did not orient"
+            )
+        return self.mid_ns + round(sign * (row - (height - 1) / 2) * self.line_delay_ns)
 
 
 @dataclass(frozen=True, eq=False)
@@ -107,9 +124,9 @@ class Frame:
     branch on it (the backend is chosen when the pipeline is built). ``event`` is
     an optional CUDA event a device consumer waits on before touching ``image``.
 
-    ``exposure`` is ``None`` **only** when the recording carries no ``frame_info``
-    stream at all (it is opt-in on the device and off by default), never because
-    one frame's entry was missing — see :class:`FrameExposure`.
+    ``exposure`` is ``None`` **only** when the recording carries no usable
+    ``frame_info`` stream for this camera, never because one frame's entry was
+    missing — see :class:`FrameExposure`.
     """
 
     topic: str

@@ -11,6 +11,7 @@
 
 #include <unistd.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
@@ -18,6 +19,7 @@
 #include <thread>
 #include <memory>
 #include <unordered_map>
+#include <vector>
 
 #include "mcap_writer_test_util.hpp"
 #include "visio_schema/routing/channel.hpp"
@@ -31,8 +33,11 @@ using namespace mcap_test;
 using visio_schema::Channel;
 using visio_schema::mcap::RecordingKey;
 using visio_schema::mcap::McapReadbackStats;
+using visio_schema::kCommand;
 using visio_schema::kDeviceInfo;
+using visio_schema::kDiag;
 using visio_schema::kFirstDynamic;
+using visio_schema::kHeartbeat;
 using visio_schema::routing::ChannelRegistry;
 using visio_schema::wire::Message;
 namespace fs = std::filesystem;
@@ -118,6 +123,81 @@ TEST(McapWriterEndpoint, StatsExposeDropsAndQueueWatermark) {
   std::remove(path.c_str());
 }
 
+// The queue's byte bound has to bound what is RESIDENT, not merely what is
+// queued. The writer thread swaps the whole queue into a batch per wake, so for
+// that batch's lifetime a bound's worth of frames is held twice over unless the
+// drain releases each entry as it writes it — on the device that was 16 MiB
+// becoming 32 MiB on a 44 MB box.
+//
+// Two things are pinned, both from OUTSIDE the endpoint. The payload buffers
+// are really freed through the drain: each message's bytes are handed over as a
+// shared buffer this test keeps its own reference to, so use_count() drops to
+// 1 exactly when the endpoint lets go — accounting alone cannot fake it. And
+// pending_bytes() stays honest across the swap, where it used to read 0 for the
+// whole time a batch was being written.
+TEST(McapWriterEndpoint, BatchIsFreedAsItDrainsNotAtTheEnd) {
+  const std::string path = TempPath("visio_mcap_test_drain_frees.mcap");
+  std::remove(path.c_str());
+  std::unordered_map<std::uint32_t, Channel> table{
+      {kFirstDynamic, MakeChannel(kFirstDynamic, "/dev/imu/0/raw")}};
+  auto resolve = [&](std::uint32_t id) -> const Channel* {
+    auto it = table.find(id);
+    return it == table.end() ? nullptr : &it->second;
+  };
+  // Big enough that the drain is real I/O the sampler below can watch (~8 MB,
+  // the scale one device part is written at), and framed as ONE batch: every
+  // frame is queued before the writer thread exists.
+  constexpr std::size_t kFrames = 64;
+  constexpr std::size_t kFrameBytes = 128 * 1024;
+  std::vector<std::shared_ptr<const std::string>> payloads;
+  {
+    McapWriterEndpoint ep(path, resolve);  // lossless: nothing is shed
+    for (std::size_t i = 0; i < kFrames; ++i) {
+      payloads.push_back(std::make_shared<const std::string>(
+          kFrameBytes, static_cast<char>('a' + i % 26)));
+      Message m;
+      m.stream_id = kFirstDynamic;
+      m.payload = visio_schema::wire::Payload(payloads.back());
+      ep.Send(m);
+    }
+    ASSERT_EQ(ep.pending_frames(), kFrames);
+    ASSERT_EQ(ep.pending_bytes(), kFrames * kFrameBytes);  // exact before a swap
+
+    std::size_t mid_drain_samples = 0;
+    std::size_t most_freed = 0;
+    std::size_t least_pending = kFrames * kFrameBytes;
+    ep.Start(nullptr, nullptr);
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    for (;;) {
+      const std::uint64_t writes = ep.stats().writes;
+      if (writes >= kFrames) break;
+      if (std::chrono::steady_clock::now() > deadline) break;
+      std::this_thread::yield();  // never starve the writer off a single core
+      if (writes == 0) continue;  // the batch has not been taken yet
+      ++mid_drain_samples;
+      std::size_t freed = 0;
+      for (const auto& p : payloads) freed += (p.use_count() == 1);
+      most_freed = std::max(most_freed, freed);
+      least_pending = std::min(least_pending, ep.pending_bytes());
+    }
+    ep.Stop();
+    ASSERT_GT(mid_drain_samples, 0u)
+        << "the drain outran the sampler — raise kFrames/kFrameBytes";
+    // Both are 0 and kFrames*kFrameBytes respectively under a drain that holds
+    // the batch to a trailing clear(): nothing is freed until the last write.
+    EXPECT_GT(most_freed, 0u) << "no payload was released mid-batch";
+    EXPECT_LT(least_pending, kFrames * kFrameBytes)
+        << "pending_bytes() does not fall as the batch drains";
+    EXPECT_EQ(ep.pending_bytes(), 0u);      // and it lands on zero
+    EXPECT_EQ(ep.stats().dropped, 0u);      // a lossless queue sheds nothing
+    EXPECT_EQ(ep.bytes_written(), kFrames * kFrameBytes);
+  }
+  for (const auto& p : payloads)
+    EXPECT_EQ(p.use_count(), 1) << "the endpoint outlived by a payload";
+  std::remove(path.c_str());
+}
+
 TEST(McapWriterEndpoint, RecordsDeviceInfoViaWellKnownChannel) {
   // A DeviceInfo message resolves (via a real ChannelRegistry) to the well-known
   // /device_info channel and is recorded. No C++ MCAP reader exists, so this
@@ -132,6 +212,8 @@ TEST(McapWriterEndpoint, RecordsDeviceInfoViaWellKnownChannel) {
     ep.Start(nullptr, nullptr);
     ep.Send(Data(kDeviceInfo, "announce-bytes"));  // resolves to /device_info
     ep.Stop();
+    // Written, not merely accepted: an empty MCAP is also non-empty on disk.
+    EXPECT_EQ(ep.bytes_written(), 14u);
   }
   ASSERT_TRUE(fs::exists(path));
   EXPECT_GT(fs::file_size(path), 0u);
@@ -156,6 +238,27 @@ TEST(McapWriterEndpoint, DropsUntilMapped) {
     EXPECT_EQ(ep.stats().dropped, 0u);
   }
   EXPECT_TRUE(fs::exists(path));  // a valid (empty) MCAP is still written
+  std::remove(path.c_str());
+}
+
+TEST(McapWriterEndpoint, ControlStreamsAreNotCountedUnmapped) {
+  // A bus fans its heartbeat to every peer, sinks included. Control ids must
+  // not count as unmapped, or the missing-topic warning fires on every
+  // recording and hides a real one.
+  const std::string path = TempPath("visio_mcap_test_control.mcap");
+  std::remove(path.c_str());
+  auto resolve = [](std::uint32_t) -> const Channel* { return nullptr; };
+  {
+    McapWriterEndpoint ep(path, resolve);
+    ep.Start(nullptr, nullptr);
+    for (int i = 0; i < 3; ++i) ep.Send(Data(kHeartbeat, "beat"));
+    ep.Send(Data(kCommand, "cmd"));
+    ep.Send(Data(kDiag, "diag"));
+    ep.Send(Data(kFirstDynamic + 5, "x"));  // a data topic that IS missing
+    ep.Stop();
+    EXPECT_EQ(ep.stats().unmapped, 1u);
+    EXPECT_EQ(ep.stats().dropped, 0u);
+  }
   std::remove(path.c_str());
 }
 

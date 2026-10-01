@@ -157,6 +157,30 @@ Three paths, and the decoder is the same for all of them:
    container per message, inside every MCAP the device writes.
 3. **Card** — copy the files.
 
+### A hub serves its leaves' logs
+
+A client reaches one device, and on a rig that device is the hub. So a hub's
+`DiagListing` carries every attached leaf's files after its own, under the
+names the leaf gave them — which already start with the leaf's label (§3), so a
+pulled set says whose each file is. A `DiagRead` of a leaf's file is served
+by the hub reading it from that leaf and answering on its own `/<root>/diag`
+under the requester's session. The client does nothing different.
+
+Three rules make that work, and a peer implementing either end MUST follow
+them:
+
+- **A leaf ignores a request addressed to another device.** A hub relays an
+  addressed `DiagRequest` down every leaf link; without this rule every leaf
+  serves every request.
+- **Session ids with the top bit set belong to a hub's own requests** to its
+  leaves. A hub consumes the replies to them instead of relaying them upward,
+  where they would reach the host twice and land in the recording. Hosts pick
+  session ids below 2^63.
+- **A leaf that does not list in time is left out** of the hub's listing rather
+  than failing it; its timeouts sit under the host's stall timer
+  (`visio_schema.wire.diag.STALL_TIMEOUT_S`). A leaf that fails mid-read fails
+  that read, with the leaf's own error code.
+
 ## 5. Reading
 
 ```python
