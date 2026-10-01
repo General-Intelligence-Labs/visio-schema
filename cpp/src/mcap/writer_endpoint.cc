@@ -132,6 +132,12 @@ void McapWriterEndpoint::Send(const Message& msg) {
     if (const std::size_t evicted = before - queue_.size()) NoteDrop(evicted);
     queue_.push_back(Entry{std::move(ch), msg});
     queue_bytes_ += len;
+    // The QUEUE's high-water mark, deliberately not queue+in-flight: this stat
+    // is the queue's relationship to the policy bound (the firmware prints it
+    // beside the drop count), and folding in a batch the writer thread happens
+    // to be holding would make it depend on writer timing — it would read up to
+    // 2x the bound on a healthy board. Peak RESIDENCY is a different question
+    // and pending_bytes() is where it is answered honestly.
     if (queue_bytes_ > stat_max_pending_bytes_.load(std::memory_order_relaxed))
       stat_max_pending_bytes_.store(queue_bytes_, std::memory_order_relaxed);
     was_empty = before == 0;
@@ -154,6 +160,10 @@ void McapWriterEndpoint::WriterLoop() {
       std::unique_lock<std::mutex> lk(mu_);
       cv_.wait(lk, [this] { return stop_ || !queue_.empty(); });
       batch.swap(queue_);
+      // The bytes just taken are exactly what the queue was holding; they stay
+      // counted (as in-flight) until each one is written and freed, so
+      // pending_bytes() never pretends the endpoint got lighter at the swap.
+      inflight_bytes_.store(queue_bytes_, std::memory_order_relaxed);
       queue_bytes_ = 0;
       if (batch.empty() && stop_) return;  // stopped + fully drained
     }
@@ -165,18 +175,20 @@ void McapWriterEndpoint::WriterLoop() {
     // write_failed() and stops the recording.
     if (failed_.load(std::memory_order_relaxed)) {
       NoteDrop(batch.size());
-      batch.clear();
-      continue;
+    } else {
+      try {
+        DrainBatch(batch);
+      } catch (const std::exception& e) {
+        NoteFailure(e.what());
+      } catch (...) {   // nothing may escape this frame; see above
+        NoteFailure("unknown exception");
+      }
     }
-    try {
-      DrainBatch(batch);
-    } catch (const std::exception& e) {
-      NoteFailure(e.what());
-      batch.clear();
-    } catch (...) {   // nothing may escape this frame; see above
-      NoteFailure("unknown exception");
-      batch.clear();
-    }
+    // One release point for every path out of the batch (drained, shed by the
+    // latch, or abandoned mid-write): free whatever it still holds FIRST, then
+    // zero the accounting, so the gauge never reads lighter than the process is.
+    batch.clear();
+    inflight_bytes_.store(0, std::memory_order_relaxed);
   }
 }
 
@@ -193,21 +205,33 @@ void McapWriterEndpoint::NoteFailure(const char* what) noexcept {
   }
 }
 
+// POP as we go, rather than iterating and clearing at the end: an entry's
+// payload is released the instant it has been written, so the batch's resident
+// bytes fall through the drain. Holding all of them to a trailing clear() made
+// the queue's byte bound effectively DOUBLE — Send() may refill the queue to
+// the full bound (16 MiB on the device) while the batch just swapped out is
+// still resident, and the COBS `framed` cache each Message may carry from the
+// fanout (wire/message.hpp) rides along on top, uncounted. On a 44 MB box that
+// was the difference between a bound and a wish.
 void McapWriterEndpoint::DrainBatch(std::deque<Entry>& batch) {
-  for (auto& e : batch) {
-    if (!e.channel) continue;
-    const std::uint64_t t0 = SteadyNs();
-    writer_->Write(*e.channel, e.msg);
-    const std::uint64_t dt = SteadyNs() - t0;
-    stat_writes_.fetch_add(1, std::memory_order_relaxed);
-    stat_blocked_ns_.fetch_add(dt, std::memory_order_relaxed);
-    std::uint64_t cur = stat_max_block_ns_.load(std::memory_order_relaxed);
-    while (dt > cur && !stat_max_block_ns_.compare_exchange_weak(
-                           cur, dt, std::memory_order_relaxed)) {
+  while (!batch.empty()) {
+    const Entry& e = batch.front();
+    const std::size_t bytes = e.msg.payload.size();
+    if (e.channel) {
+      const std::uint64_t t0 = SteadyNs();
+      writer_->Write(*e.channel, e.msg);
+      const std::uint64_t dt = SteadyNs() - t0;
+      stat_writes_.fetch_add(1, std::memory_order_relaxed);
+      stat_blocked_ns_.fetch_add(dt, std::memory_order_relaxed);
+      std::uint64_t cur = stat_max_block_ns_.load(std::memory_order_relaxed);
+      while (dt > cur && !stat_max_block_ns_.compare_exchange_weak(
+                             cur, dt, std::memory_order_relaxed)) {
+      }
+      if (dt > kSlowWriteNs) stat_slow_writes_.fetch_add(1, std::memory_order_relaxed);
     }
-    if (dt > kSlowWriteNs) stat_slow_writes_.fetch_add(1, std::memory_order_relaxed);
+    batch.pop_front();  // frees this payload HERE, not at the end of the batch
+    inflight_bytes_.fetch_sub(bytes, std::memory_order_relaxed);
   }
-  batch.clear();
 }
 
 std::size_t McapWriterEndpoint::pending_frames() const {
@@ -217,7 +241,9 @@ std::size_t McapWriterEndpoint::pending_frames() const {
 
 std::size_t McapWriterEndpoint::pending_bytes() const {
   std::lock_guard<std::mutex> lk(mu_);
-  return queue_bytes_;
+  return queue_bytes_ +
+         static_cast<std::size_t>(
+             inflight_bytes_.load(std::memory_order_relaxed));
 }
 
 std::uint64_t McapWriterEndpoint::bytes_written() const {

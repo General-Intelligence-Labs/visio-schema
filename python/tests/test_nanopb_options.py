@@ -70,6 +70,20 @@ def test_access_key_id_fits_a_tencent_secret_id(sizes: dict[str, int]) -> None:
     assert sizes["SetStorage.access_key_id"] - 1 >= _TENCENT_SECRET_ID_LEN
 
 
+# The QR generator refuses to print a field longer than the device can decode,
+# using its own copy of these caps (DEVICE_MAX_SIZE). It is the same number in
+# two files, and only this test stops them drifting — at which point the
+# generator would print a code every device silently discards, exactly the
+# capturer=64-bytes bug that motivated the check.
+def test_generator_field_caps_match_the_options(sizes: dict[str, int]) -> None:
+    from visio_schema.settings_qr.payload import DEVICE_MAX_SIZE
+
+    for field, cap in DEVICE_MAX_SIZE.items():
+        assert sizes[field] == cap, (
+            f"{field} max_size:{sizes.get(field)} != DEVICE_MAX_SIZE ({cap})"
+        )
+
+
 # A string OR bytes field with no max_size becomes a pb_callback_t, which the
 # firmware's static decode path cannot use — the field silently never arrives.
 # Bytes matter as much as strings here: the sealed provisioning envelope is a

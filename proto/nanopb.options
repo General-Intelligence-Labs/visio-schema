@@ -96,15 +96,28 @@ visio_schema.v1.control.SetRecordingKey.sealed        max_size:384
 
 # StartRecording capture metadata: bounded so they decode into the static
 # struct (session_name stays the nanopb default callback — firmware ignores it).
-visio_schema.v1.control.StartRecording.task           max_size:64
-visio_schema.v1.control.StartRecording.location       max_size:128
+# Sizes MUST match SetRecordingMeta.{task,location} below — the same operator
+# text reaches the board through either command, so a smaller cap here would
+# drop a StartRecording that SetRecordingMeta had just accepted.
+visio_schema.v1.control.StartRecording.task           max_size:256
+visio_schema.v1.control.StartRecording.location       max_size:512
 
-# SetRecordingMeta: persisted recording-metadata defaults (same bounds as
-# StartRecording; message is a longer free-text note).
-visio_schema.v1.control.SetRecordingMeta.task         max_size:64
-visio_schema.v1.control.SetRecordingMeta.location     max_size:128
-visio_schema.v1.control.SetRecordingMeta.message      max_size:256
-visio_schema.v1.control.SetRecordingMeta.capturer     max_size:64
+# SetRecordingMeta: persisted recording-metadata defaults, typed by the operator
+# in the app and free-text. The caps were raised 4x at a customer's request for
+# longer entries (task 64->256, location 128->512, message 256->1024,
+# capturer 64->256); message is the longest note.
+#   - max_size counts the NUL, so the usable length is one less.
+#   - The buffers are BYTE budgets. CJK is 3 bytes/char, so the app measures
+#     UTF-8 bytes before sending: an oversized field is NOT truncated — nanopb
+#     fails pb_decode and the device discards the WHOLE Command.
+#   - This makes SetRecordingMeta the largest arm of the Command oneof; the
+#     ~2 KB is a C union, paid once, not per field.
+#   - The DeviceState echo below keeps identical sizes so the board can report
+#     back a value it has just accepted.
+visio_schema.v1.control.SetRecordingMeta.task         max_size:256
+visio_schema.v1.control.SetRecordingMeta.location     max_size:512
+visio_schema.v1.control.SetRecordingMeta.message      max_size:1024
+visio_schema.v1.control.SetRecordingMeta.capturer     max_size:256
 visio_schema.v1.control.SetRecordingMeta.operator_id    max_size:64
 visio_schema.v1.control.SetRecordingMeta.environment_id max_size:64
 
@@ -130,11 +143,14 @@ visio_schema.v1.control.SetStreamPolicy.Rule.topic    max_size:64
 visio_schema.v1.control.CommandResult.error_code               max_size:32
 visio_schema.v1.control.CommandResult.error_message            max_size:128
 visio_schema.v1.control.DeviceState.recording_session_name     max_size:64
-visio_schema.v1.control.DeviceState.recording_task             max_size:64
-visio_schema.v1.control.DeviceState.recording_meta_task        max_size:64
-visio_schema.v1.control.DeviceState.recording_meta_location    max_size:128
-visio_schema.v1.control.DeviceState.recording_meta_message     max_size:256
-visio_schema.v1.control.DeviceState.recording_meta_capturer    max_size:64
+# recording_* / recording_meta_* mirror StartRecording + SetRecordingMeta above
+# (the board echoes what it accepted); keep the sizes equal or the echo would
+# truncate a value the setter had just taken.
+visio_schema.v1.control.DeviceState.recording_task             max_size:256
+visio_schema.v1.control.DeviceState.recording_meta_task        max_size:256
+visio_schema.v1.control.DeviceState.recording_meta_location    max_size:512
+visio_schema.v1.control.DeviceState.recording_meta_message     max_size:1024
+visio_schema.v1.control.DeviceState.recording_meta_capturer    max_size:256
 visio_schema.v1.control.DeviceState.wifi_ssid                  max_size:33
 visio_schema.v1.control.DeviceState.wifi_ip                    max_size:46
 visio_schema.v1.control.DeviceState.wifi_last_error            max_size:128

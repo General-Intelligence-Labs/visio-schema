@@ -304,6 +304,20 @@ message DeviceState {
   }
   GpsTagging gps_tagging = 39;
 
+  // ── BLE ──
+  // Whether the BLE control transport is on (SetBle). UNSUPPORTED covers both
+  // "this board's image carries no Bluetooth" and "this firmware predates the
+  // switch", so the app can HIDE a control it could not move.
+  // ENABLED/DISABLED is the unit's stored choice, which the device applies
+  // within seconds of the command, so it also describes whether the device is
+  // advertising.
+  enum Ble {
+    BLE_UNSUPPORTED = 0;
+    BLE_ENABLED     = 1;
+    BLE_DISABLED    = 2;
+  }
+  Ble ble = 40;
+
   // ── notice volume ──
   // Voice-notice loudness, 0-100 (SetNoticeVolume; 0 = muted).
   //

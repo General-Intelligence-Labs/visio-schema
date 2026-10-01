@@ -60,11 +60,14 @@ import sys
 
 import numpy as np
 
+# Raise, not sys.exit: an exit at import time aborts a whole pytest session
+# (INTERNALERROR) instead of failing the one file that imported this.
 try:
     from mcap.reader import make_reader
     from mcap_protobuf.decoder import DecoderFactory
-except ImportError:
-    sys.exit("needs: pip install mcap mcap-protobuf-support numpy")
+except ImportError as e:
+    raise ImportError(
+        "needs: pip install mcap mcap-protobuf-support numpy") from e
 
 NS = 1_000_000_000
 

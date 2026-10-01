@@ -32,6 +32,29 @@ Physical tracker serials identify payload groups; there are no slot identities
 or per-tracker topics. Every pose retains its own timestamp offset from the
 batch's header anchor. Status includes clock-fit health, optional battery
 telemetry, separate dongle/wired/live counts, and boot-scoped station-map readiness.
+### SetBle — the BLE control transport becomes a per-unit switch
+
+`Command.set_ble` (tag 45) and `DeviceState.ble` (field 40, `Ble`: `UNSUPPORTED` /
+`ENABLED` / `DISABLED`). A board whose image carries Bluetooth keeps the radio fully off
+until this turns it on, so the default costs nothing. `UNSUPPORTED` means the image
+carries no Bluetooth or the firmware predates the switch, and the app hides the control.
+Additive: an old consumer never sends it and reads `UNSUPPORTED`.
+
+### SystemHealth says how a hot device protects itself
+
+Two ordered enums, both additive and optional (absent = not reported):
+
+- `SystemHealth.thermal_mitigation` (12), `ThermalMitigation`: optional work a hot device has
+  given up — `CLOCK`, then `VIDEO_WITHHELD`, then `LIVE_REDUCED`. Never a recording.
+- `SystemHealth.thermal_recording_guard` (13), `ThermalRecordingGuard`: what heat does to
+  recording — `STOP_ADVISED` (the device asks the user to stop), `RECORDING_BLOCKED` (it ended
+  the recording and refuses a new one until it cools). An unknown value counts as at least
+  `RECORDING_BLOCKED`.
+- `StartRecording` documents its refusal codes `thermal_too_hot` and `ota_in_progress`.
+
+Wire-compatible, but not silent for old consumers: a device that sets field 13 can end a
+recording on its own, and a consumer that does not read the field sees `recording` go false,
+and a start refused, with no reason it understands.
 
 ### Recordings pull: list a session's files, open one, read it over a bare TCP socket
 

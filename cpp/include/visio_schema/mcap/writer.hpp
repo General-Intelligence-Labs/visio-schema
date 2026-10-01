@@ -170,6 +170,9 @@ class McapWriter {
   bool closed_ = false;
   std::size_t part_index_ = 0;
   std::uint64_t part_bytes_ = 0;
+  // A message write that failed in the current part has been reported. Once
+  // per part: this is the per-message path, and a failing sink fails them all.
+  bool part_write_failure_logged_ = false;
   // Lifetime total (never reset on rotation); see bytes_written().
   std::atomic<std::uint64_t> bytes_written_{0};
   std::chrono::steady_clock::time_point part_start_;
