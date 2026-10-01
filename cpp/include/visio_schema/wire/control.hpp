@@ -41,4 +41,10 @@ inline constexpr bool IsLinkLocalControl(std::uint32_t id) {
   return id == kHeartbeat;
 }
 
+// True for the reserved control-plane block, false for dynamic data streams.
+// The one spelling of the control/data split.
+inline constexpr bool IsControlStream(std::uint32_t id) {
+  return id < kFirstDynamic;
+}
+
 }  // namespace visio_schema

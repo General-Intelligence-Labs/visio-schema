@@ -252,7 +252,7 @@ Routed ChannelRegistry::Accept(Message msg) {
     OnAnnounce(msg.payload);
     return {};
   }
-  if (sid < kFirstDynamic) {
+  if (IsControlStream(sid)) {
     return {std::move(msg), nullptr};
   }
   const Channel* ch = Resolve(sid);
