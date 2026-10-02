@@ -9,6 +9,9 @@ modules:
 lint:
   use:
     - STANDARD
+  ignore_only:
+    FIELD_LOWER_SNAKE_CASE:
+      - proto/visio_schema/v1/calibration/fiducial.proto
   except:
     # We use version-first proto packages like `visio_schema.v1.sensor`,
     # `visio_schema.v1.ros.geometry_msgs`, etc. The standard rule wants the *file*

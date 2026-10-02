@@ -211,6 +211,8 @@ foxglove.CameraCalibration.R                   max_count:9
 foxglove.CameraCalibration.P                   max_count:12
 foxglove.FrameTransform.parent_frame_id       max_size:16
 foxglove.FrameTransform.child_frame_id        max_size:16
+visio_schema.v1.calibration.FiducialCalibration.fiducials max_count:32
+visio_schema.v1.calibration.Fiducial.dictionary max_size:64
 # TactileLayout (glove taxel->hand map): bound the repeated + label fields so the
 # whole message is FT_STATIC (no malloc). points headroom 160 > the glove's 137 taxels.
 # precision is an enum (no options). Group.fields reuses foxglove.PackedElementField;

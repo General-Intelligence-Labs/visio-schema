@@ -455,6 +455,7 @@ class Session:
         reorder_ns: Ns = 50_000_000,
         adapters: Mapping[str, AdapterFactory] | None = None,
         require_index: bool = False,
+        topic_mode: str = "auto",
     ) -> None:
         """Each positional argument is one **stream**; they share a timeline.
 
@@ -525,7 +526,13 @@ class Session:
             p for p, ix in zip(self._files, self._index, strict=True) if ix.truncated
         )
         self._reorder_ns = reorder_ns + self._seam_slack()
-        self._device = device if device is not None else self._auto_device()
+        if topic_mode not in ("auto", "preserve"):
+            raise ValueError("topic_mode must be 'auto' or 'preserve'")
+        if topic_mode == "preserve" and device is not None:
+            raise ValueError("topic_mode='preserve' cannot filter a device")
+        self._device = (None if topic_mode == "preserve" else
+                        device if device is not None else self._auto_device())
+        self._calibrations = None
         self._calibration: Calibration | None = None
         self._metadata: SessionMeta | None = None
         self._exposure: dict[str, _ExposureTrack] | None = None
@@ -638,6 +645,7 @@ class Session:
         device: str | None = None,
         reorder_ns: Ns = 50_000_000,
         adapters: Mapping[str, AdapterFactory] | None = None,
+        topic_mode: str = "auto",
     ) -> Session:
         """A read-only recording plus sidecars from any (writable) root.
 
@@ -647,7 +655,7 @@ class Session:
         # Each sidecar is its OWN stream: it spans the recording rather than
         # following it, so it must merge against the chunks, not append to them.
         return cls(recording, *sidecars, device=device, reorder_ns=reorder_ns,
-                   adapters=adapters)
+                   adapters=adapters, topic_mode=topic_mode)
 
     # --- device ---------------------------------------------------------- #
     def _auto_device(self) -> str | None:
@@ -761,6 +769,21 @@ class Session:
         if self._calibration is None:
             self._calibration = self._read_calibration()
         return self._calibration
+
+    @property
+    def calibrations(self):
+        """Physical calibration maps keyed by the retained topic root."""
+        from .calibration import read_calibrations
+
+        if self._calibrations is None:
+            topics = self._calib_topics()
+            topics.extend(t for idx in self._index for t, schema, _n in idx.topics()
+                          if schema == "visio_schema.v1.calibration.FiducialCalibration"
+                          and t.endswith("/fiducials"))
+            rows = ((schema, strip_device_topic_prefix(topic, self._device), msg)
+                    for schema, topic, msg in self._iter_calib(sorted(set(topics))))
+            self._calibrations = read_calibrations(rows)
+        return self._calibrations
 
     @property
     def metadata(self) -> SessionMeta:
@@ -1107,18 +1130,31 @@ class Session:
                 )
         # `raw` decodes nothing, so binding a backend would raise on a combination
         # the check above has already excused.
-        make_decoders = None if raw_all else self._decoder_binder(gray, gpu, "stream")
+        exposure_cameras = frozenset()
+        explicit_info = set()
+        if not raw_all:
+            selected = (want if want is not None else
+                        {t.topic for t in self.topics() if t.schema_name in _DECODABLE})
+            exposure_cameras = self._exposure_cams() & (selected - raw_set)
+            if exposure_cameras:
+                explicit_info = {cam + FRAME_INFO_SUFFIX for cam in exposure_cameras} & selected
+                want = selected | {cam + FRAME_INFO_SUFFIX for cam in exposure_cameras}
+        make_decoders = (None if raw_all else
+                         self._decoder_binder(gray, gpu, "stream", attach_exposure=False))
         # Eager checks, lazy body — the shape `keyframe_stream` uses, and why every
         # check above fires at the CALL rather than on the first `next()`.
         return self._stream_elements(
             want, start_ns=start_ns, end_ns=end_ns,
             make_decoders=make_decoders, raw_all=raw_all, raw_set=raw_set,
-            reorder_ns=self._reorder_ns + (_NVDEC_LAG_NS if gpu else 0))
+            reorder_ns=self._reorder_ns + (_NVDEC_LAG_NS if gpu else 0),
+            exposure_cameras=exposure_cameras, explicit_info=explicit_info)
 
     def _stream_elements(
         self, want: set[str] | None, *, start_ns: Ns | None, end_ns: Ns | None,
         make_decoders, raw_all: bool, reorder_ns: Ns,
         raw_set: frozenset[str] = frozenset(),
+        exposure_cameras: frozenset[str] = frozenset(),
+        explicit_info: frozenset[str] = frozenset(),
     ) -> Iterator[Element]:
         # Early-stop bound pushed into the reader. `end_ns` alone would be correct
         # (mcap's `end_time` is exclusive, exactly `_in_window`'s `t < end_ns`), but
@@ -1159,7 +1195,12 @@ class Session:
 
         # start/end and `t_ns` are the same clock — both are log_time (the bounds
         # come from SessionMeta's summary message_start_time/message_end_time).
-        for el in _reorder(_raw(), reorder_ns):
+        ordered = _reorder(_raw(), reorder_ns)
+        if exposure_cameras:
+            from .exposure import join_exposure
+            ordered = join_exposure(ordered, exposure_cameras, emit_topics=explicit_info,
+                                    max_gap_ns=max(1_000_000_000, reorder_ns))
+        for el in ordered:
             if _in_window(el.t_ns, start_ns, end_ns):
                 yield el
 
@@ -1556,7 +1597,7 @@ class Session:
         track = self._exposure_tracks().get(canon)
         return track.at(t_ns) if track else None
 
-    def _decoder_binder(self, gray: bool, gpu: bool, what: str):
+    def _decoder_binder(self, gray: bool, gpu: bool, what: str, *, attach_exposure=True):
         """Resolve the decode backend ONCE -> a ``video`` proto -> ``(emit, flush)``.
 
         Both read paths bind a per-chunk decoder pair from the same two flags, and
@@ -1567,13 +1608,15 @@ class Session:
         if gpu and gray:
             raise ValueError(f"{what}(gpu=True) decodes RGB only; gray is CPU-path")
         if gpu:
-            return self._gpu_video_decoders
+            if attach_exposure or not self._exposure_cams():
+                return self._gpu_video_decoders
+            return lambda proto: self._gpu_video_decoders(proto, attach_exposure=attach_exposure)
         pixel_format = "gray" if gray else "rgb24"
         return lambda proto: cpu_video_decoders(
-            proto, pixel_format, self._exposure_at
+            proto, pixel_format, self._exposure_at if attach_exposure else None
         )
 
-    def _gpu_video_decoders(self, video):
+    def _gpu_video_decoders(self, video, *, attach_exposure=True):
         """Per-camera NVDEC decoders: device RGB frames self-timestamped by PTS."""
         from ._gpu_decode import NvDecoder
 
@@ -1589,17 +1632,18 @@ class Session:
             # EARLIER one than the AU going in: `pts` is its own stamp, `t` the
             # current AU's arrival.
             for pts, img, ev in dec.decode(video.data, t):
-                yield pts, t, Frame(canon, pts, img, frame_ids[canon], event=ev,
-                                    exposure=self._exposure_at(canon, pts))
+                exposure = self._exposure_at(canon, pts) if attach_exposure else None
+                yield pts, t, Frame(canon, pts, img, frame_ids[canon],
+                                    event=ev, exposure=exposure)
 
         def flush() -> Iterator[tuple[Ns, Ns, Element]]:
             for canon, dec in decoders.items():
                 for pts, img, ev in dec.flush():
                     # These are the last frames of the chunk; arrival = their own
                     # t is monotone-safe and they release in the reorder tail.
+                    exposure = self._exposure_at(canon, pts) if attach_exposure else None
                     yield pts, pts, Frame(canon, pts, img, frame_ids.get(canon, ""),
-                                          event=ev,
-                                          exposure=self._exposure_at(canon, pts))
+                                          event=ev, exposure=exposure)
 
         return emit, flush
 
