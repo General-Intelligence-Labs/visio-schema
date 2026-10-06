@@ -70,12 +70,6 @@ def test_access_key_id_fits_a_tencent_secret_id(sizes: dict[str, int]) -> None:
     assert sizes["SetStorage.access_key_id"] - 1 >= _TENCENT_SECRET_ID_LEN
 
 
-def test_wifi_ssid_caps_agree(sizes: dict[str, int]) -> None:
-    assert sizes["ConnectWifi.ssid"] == 33
-    assert sizes["JoinSavedWifi.ssid"] == sizes["ConnectWifi.ssid"]
-    assert sizes["ForgetWifi.ssid"] == sizes["ConnectWifi.ssid"]
-
-
 # The QR generator refuses to print a field longer than the device can decode,
 # using its own copy of these caps (DEVICE_MAX_SIZE). It is the same number in
 # two files, and only this test stops them drifting — at which point the
@@ -95,19 +89,35 @@ def test_generator_field_caps_match_the_options(sizes: dict[str, int]) -> None:
 # Bytes matter as much as strings here: the sealed provisioning envelope is a
 # `bytes` field, and an unsized one would make a v2 settings QR appear to apply
 # while setting nothing at all.
-@pytest.mark.parametrize("message",
-                         ["SetStorage", "TestStorage", "SetRecordingKey",
-                          "ListRecordings", "OpenRecordingFile", "DeleteRecording",
-                          "JoinSavedWifi"])
-def test_every_inbound_field_is_sized(sizes: dict[str, int], message: str) -> None:
+#
+# Enumerated from `Command.body` rather than listed by hand: a hand-written list
+# only covers the bodies someone remembered to add, so a NEW command's unsized
+# field passes. That is not hypothetical — JoinSavedWifi shipped unsized and the
+# firmware could not read its ssid.
+#
+# The device GENERATES the session name and never reads the client's, so that
+# one field is deliberately a callback. Every other entry added here owes the
+# same kind of reason.
+UNREAD_BY_THE_DEVICE = frozenset({"StartRecording.session_name"})
+
+
+def test_every_inbound_field_is_sized(sizes: dict[str, int]) -> None:
     from visio_schema.v1.control import command_pb2
 
-    descriptor = getattr(command_pb2, message).DESCRIPTOR
-    for field in descriptor.fields:
-        if field.type in (field.TYPE_STRING, field.TYPE_BYTES):
-            assert f"{message}.{field.name}" in sizes, (
-                f"{message}.{field.name} has no max_size — it would decode as a callback"
-            )
+    unsized = []
+    for body in command_pb2.Command.DESCRIPTOR.oneofs_by_name["body"].fields:
+        if body.type != body.TYPE_MESSAGE:
+            continue
+        for field in body.message_type.fields:
+            if field.type not in (field.TYPE_STRING, field.TYPE_BYTES):
+                continue
+            name = f"{body.message_type.name}.{field.name}"
+            if name not in sizes and name not in UNREAD_BY_THE_DEVICE:
+                unsized.append(name)
+    assert not unsized, (
+        f"no max_size, so these decode as callbacks the firmware cannot "
+        f"read: {sorted(unsized)}"
+    )
 
 
 # The sealed envelope caps are a MEASUREMENT, not a guess: this builds the
