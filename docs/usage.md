@@ -134,7 +134,8 @@ ep.send(command_message(cmd))
 > filter on `msg.stream_id == COMMAND` to catch results.
 
 Other commands set on the `Command` oneof: `stop_recording`, `identify`, `get_state`,
-`list_recordings`, `set_auto_start`, `connect_wifi`, `scan_wifi`, `forget_wifi`, `set_storage`,
+`list_recordings`, `set_auto_start`, `connect_wifi`, `join_saved_wifi`,
+`scan_wifi`, `forget_wifi`, `set_storage`,
 `test_storage`, and `set_calibration` (camera intrinsics/extrinsics, a gripper's cam-TCP
 extrinsic, IMU, encoder). See
 [`proto/visio_schema/v1/control/command.proto`](../proto/visio_schema/v1/control/command.proto)
