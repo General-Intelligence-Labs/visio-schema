@@ -33,8 +33,11 @@ using namespace mcap_test;
 using visio_schema::Channel;
 using visio_schema::mcap::RecordingKey;
 using visio_schema::mcap::McapReadbackStats;
+using visio_schema::kCommand;
 using visio_schema::kDeviceInfo;
+using visio_schema::kDiag;
 using visio_schema::kFirstDynamic;
+using visio_schema::kHeartbeat;
 using visio_schema::routing::ChannelRegistry;
 using visio_schema::wire::Message;
 namespace fs = std::filesystem;
@@ -209,6 +212,8 @@ TEST(McapWriterEndpoint, RecordsDeviceInfoViaWellKnownChannel) {
     ep.Start(nullptr, nullptr);
     ep.Send(Data(kDeviceInfo, "announce-bytes"));  // resolves to /device_info
     ep.Stop();
+    // Written, not merely accepted: an empty MCAP is also non-empty on disk.
+    EXPECT_EQ(ep.bytes_written(), 14u);
   }
   ASSERT_TRUE(fs::exists(path));
   EXPECT_GT(fs::file_size(path), 0u);
@@ -233,6 +238,27 @@ TEST(McapWriterEndpoint, DropsUntilMapped) {
     EXPECT_EQ(ep.stats().dropped, 0u);
   }
   EXPECT_TRUE(fs::exists(path));  // a valid (empty) MCAP is still written
+  std::remove(path.c_str());
+}
+
+TEST(McapWriterEndpoint, ControlStreamsAreNotCountedUnmapped) {
+  // A bus fans its heartbeat to every peer, sinks included. Control ids must
+  // not count as unmapped, or the missing-topic warning fires on every
+  // recording and hides a real one.
+  const std::string path = TempPath("visio_mcap_test_control.mcap");
+  std::remove(path.c_str());
+  auto resolve = [](std::uint32_t) -> const Channel* { return nullptr; };
+  {
+    McapWriterEndpoint ep(path, resolve);
+    ep.Start(nullptr, nullptr);
+    for (int i = 0; i < 3; ++i) ep.Send(Data(kHeartbeat, "beat"));
+    ep.Send(Data(kCommand, "cmd"));
+    ep.Send(Data(kDiag, "diag"));
+    ep.Send(Data(kFirstDynamic + 5, "x"));  // a data topic that IS missing
+    ep.Stop();
+    EXPECT_EQ(ep.stats().unmapped, 1u);
+    EXPECT_EQ(ep.stats().dropped, 0u);
+  }
   std::remove(path.c_str());
 }
 

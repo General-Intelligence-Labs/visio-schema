@@ -5,6 +5,7 @@
 
 #include "visio_schema/log.hpp"
 #include "visio_schema/transport/link.hpp"  // EnterServiceThread
+#include "visio_schema/wire/control.hpp"    // IsControlStream
 
 namespace visio_schema::mcap {
 
@@ -88,6 +89,8 @@ void McapWriterEndpoint::NoteDrop(std::size_t n) {
 // maps loses its ENTIRE topic for the whole recording, and unlike a queue drop
 // no amount of faster storage helps. Deliberately NOT folded into `dropped` —
 // that one means storage is too slow, this one means a topic is missing.
+// Only data ids reach here; Send() keeps the control plane out, as it has no
+// topic to lose.
 //
 // The id is not named: this counter is global to the endpoint, so with two
 // unmapped ids interleaving the message would name whichever arrived first and
@@ -112,8 +115,12 @@ void McapWriterEndpoint::Send(const Message& msg) {
   } else {
     const Channel* resolved = resolve_ ? resolve_(msg.stream_id) : nullptr;
     if (resolved == nullptr) {
-      NoteUnmapped(msg.stream_id);  // drop-until-mapped
-      return;
+      // A control id that does not resolve has no topic to lose: a bus fans
+      // its heartbeat to every peer, sinks included, and counting it would
+      // raise the missing-topic warning on every recording and mask a real
+      // one. The registry alone decides which control ids are recorded.
+      if (!IsControlStream(msg.stream_id)) NoteUnmapped(msg.stream_id);
+      return;  // drop-until-mapped
     }
     ch = std::make_shared<const Channel>(*resolved);
     channel_cache_.emplace(msg.stream_id, ch);

@@ -32,6 +32,17 @@ Physical tracker serials identify payload groups; there are no slot identities
 or per-tracker topics. Every pose retains its own timestamp offset from the
 batch's header anchor. Status includes clock-fit health, optional battery
 telemetry, separate dongle/wired/live counts, and boot-scoped station-map readiness.
+
+### `McapWriterEndpoint` no longer counts the control plane as missing topics
+
+A bus fans its heartbeat to every peer, recording sinks included, so
+`McapWriterStats::unmapped` grew once a second on every recording and its
+"topic is absent" warning fired on every take, masking a genuinely missing
+topic. Control-plane ids (heartbeat, command, OTA, diag) that do not resolve
+are now dropped without being counted; what gets recorded is unchanged —
+the registry still maps DeviceInfo to `/device_info`. New
+`IsControlStream(id)` in `wire/control.hpp` names the control/data split.
+
 ### SetBle — the BLE control transport becomes a per-unit switch
 
 `Command.set_ble` (tag 45) and `DeviceState.ble` (field 40, `Ble`: `UNSUPPORTED` /
