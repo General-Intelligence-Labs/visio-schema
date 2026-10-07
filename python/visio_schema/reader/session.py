@@ -324,6 +324,21 @@ def _detect_device(topics: Iterable[str]) -> str | None:
     return next(iter(devs)) if len(devs) == 1 else None
 
 
+class _CountedRead:
+    """Seekable file proxy counting sparse-query bytes without buffering."""
+
+    def __init__(self, file, stats):
+        self.file, self.stats = file, stats
+
+    def read(self, size=-1):
+        data = self.file.read(size)
+        self.stats["bytes_read"] += len(data)
+        return data
+
+    def __getattr__(self, name):
+        return getattr(self.file, name)
+
+
 class _FileIndex:
     """Cheap per-file index from the MCAP summary (no message scan)."""
 
@@ -339,6 +354,7 @@ class _FileIndex:
         # schema inline.
         self.schema_rec: dict[str, object] = {}
         self.truncated = False
+        self.chunk_indexed = False
         # The metadata-record NAMES this file carries, read for free off the
         # summary's metadata index — descriptive only, no interpretation. None
         # when the file was indexed by scan (truncated/summary-less): the names
@@ -393,6 +409,7 @@ class _FileIndex:
             self._scan()
             return
         self.metadata_names = tuple(mi.name for mi in summary.metadata_indexes)
+        self.chunk_indexed = bool(summary.chunk_indexes)
         schemas = {sid: s.name for sid, s in summary.schemas.items()}
         self.schema_rec = {s.name: s for s in summary.schemas.values()}
         for cid, c in summary.channels.items():
@@ -646,6 +663,7 @@ class Session:
         reorder_ns: Ns = 50_000_000,
         adapters: Mapping[str, AdapterFactory] | None = None,
         topic_mode: str = "auto",
+        require_index: bool = False,
     ) -> Session:
         """A read-only recording plus sidecars from any (writable) root.
 
@@ -655,7 +673,8 @@ class Session:
         # Each sidecar is its OWN stream: it spans the recording rather than
         # following it, so it must merge against the chunks, not append to them.
         return cls(recording, *sidecars, device=device, reorder_ns=reorder_ns,
-                   adapters=adapters, topic_mode=topic_mode)
+                   adapters=adapters, topic_mode=topic_mode,
+                   require_index=require_index)
 
     # --- device ---------------------------------------------------------- #
     def _auto_device(self) -> str | None:
@@ -1432,6 +1451,104 @@ class Session:
                     f"no keyframe knowledge."
                 )
             yield msg.log_time, key
+
+    def require_chunk_indexes(self) -> None:
+        """Refuse non-seekable input before topic-filtered message reads.
+
+        Checks cached summaries without reading messages. A summary alone does
+        not prevent the MCAP reader's linear fallback during calibration lookup.
+        Open with ``require_index=True`` to also prevent construction-time scans.
+        """
+        for path, idx in zip(self._files, self._index, strict=True):
+            if not idx.chunk_indexed:
+                raise ValueError(f"{path}: sparse reads require MCAP chunk indexes")
+
+    def keyframe_records(
+        self,
+        topics: Sequence[str],
+        *,
+        start_ns: Ns,
+        end_ns: Ns,
+    ) -> Iterator[Record]:
+        """Compressed keyframes in an indexed window, ordered on the wire clock.
+
+        No image decode or exposure lookup. Use ``sync`` on these records to
+        select a stereo pair before decoding it. Only overlapping MCAP chunks
+        are read; decompression still operates on whole MCAP chunks. Missing
+        chunk indexes are refused rather than falling back to a linear scan.
+        Open with ``require_index=True`` to also refuse scans at construction.
+        Identical seam duplicates are removed; conflicting duplicates raise.
+        """
+        if isinstance(topics, str) or not topics or len(set(topics)) != len(topics):
+            raise ValueError("keyframe_records: need distinct video topics")
+        if start_ns >= end_ns:
+            raise ValueError("keyframe_records: require start_ns < end_ns")
+        for topic in topics:
+            self._require_video_topic(topic)
+        sources = []
+        for path, idx in zip(self._files, self._index, strict=True):
+            if not _spans_window(idx, start_ns, end_ns):
+                continue
+            names = {p: t for t in topics
+                     if (p := self._video_topic_in(idx, t)) is not None}
+            if not names:
+                continue
+            if not idx.chunk_indexed:
+                raise ValueError(f"{path}: sparse reads require MCAP chunk indexes")
+            sources.append(self._keyframe_records_file(
+                path, names, start_ns, end_ns))
+        return self._merge_keyframe_records(sources)
+
+    @property
+    def sparse_read_stats(self) -> dict[str, int]:
+        """Logical bytes read by sparse queries, excluding metadata preflight.
+
+        Includes MCAP headers/summaries and compressed chunks, including repeat
+        reads. This is independent of OS filesystem-cache hits.
+        """
+        return dict(getattr(self, "_sparse_stats", {}))
+
+    def _keyframe_records_file(self, path, names, start_ns, end_ns):
+        stats = getattr(self, "_sparse_stats", None)
+        if stats is None:
+            stats = self._sparse_stats = {"bytes_read": 0, "files_read": 0,
+                                         "keyframes": 0}
+        stats["files_read"] += 1
+        with open(path, "rb") as file:
+            reader = make_reader(_CountedRead(file, stats))
+            video = message_class(VIDEO_SCHEMA)()
+            for index, (_schema, ch, msg) in enumerate(reader.iter_messages(
+                topics=list(names), start_time=start_ns, end_time=end_ns
+            )):
+                if index % 256 == 0:
+                    video = message_class(VIDEO_SCHEMA)()
+                video.ParseFromString(msg.data)
+                key = is_keyframe(video.format, video.data)
+                if key is None:
+                    raise ValueError(
+                        f"cannot locate keyframes in {video.format!r} on "
+                        f"{names[ch.topic]} — unsupported sparse video codec")
+                if key:
+                    stats["keyframes"] += 1
+                    yield Record(names[ch.topic], msg.log_time, VIDEO_SCHEMA,
+                                 None, msg.data)
+
+    @staticmethod
+    def _merge_keyframe_records(sources):
+        previous = {}
+        try:
+            for record in heapq.merge(*sources, key=lambda row: row.t_ns):
+                last = previous.get(record.topic)
+                if last is not None and last.t_ns == record.t_ns:
+                    if last.data != record.data:
+                        raise ValueError(
+                            f"{record.topic}: conflicting keyframes at {record.t_ns}")
+                    continue
+                previous[record.topic] = record
+                yield record
+        finally:
+            for source in sources:
+                source.close()
 
     def keyframe_stream(
         self,

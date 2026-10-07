@@ -31,6 +31,16 @@ is still settling. Import it explicitly::
 
     from visio_schema.reader import Session, sync, resample
 
+For sparse indexed video sampling, ``Session.open(..., require_index=True)``
+refuses a summary-less input. Call ``session.require_chunk_indexes()`` before
+calibration lookup to prevent that lookup's linear fallback on summary-only
+files. ``Session.keyframe_records(topics, start_ns=...,
+end_ns=...)`` additionally requires chunk indexes and returns compressed
+``Record`` objects on the wire clock, without decoding or loading exposure
+tracks. Pass those records through ``sync`` to choose a stereo pair before
+decoding the selected access units with ``HevcDecoder``. Window queries read
+overlapping whole MCAP chunks; they never fall back to a full recording scan.
+
 Needs the ``[reader]`` extra (numpy, scipy) plus the base ``av`` and ``mcap``.
 """
 
