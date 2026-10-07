@@ -318,6 +318,12 @@ message DeviceState {
   }
   Ble ble = 40;
 
+  // Last successful geometric calibration update, UTC Unix microseconds.
+  // Absent on older firmware; present zero when the date is unknown (legacy
+  // calibration or an unsynchronized clock). Report publication timestamps
+  // are independent of this persisted value.
+  optional uint64 calibration_updated_at_us = 41;
+
   // ── notice volume ──
   // Voice-notice loudness, 0-100 (SetNoticeVolume; 0 = muted).
   //
