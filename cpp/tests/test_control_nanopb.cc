@@ -56,6 +56,27 @@ std::string MakeEnvelope(std::size_t n) {
 
 }  // namespace
 
+TEST(ControlNanopb, JoinSavedWifiDecodesThePythonBoundaryVector) {
+  const std::string ssid(32, 's');
+  const std::string wire = std::string("\xf2\x02\x22\x0a\x20", 5) + ssid;
+  visio_schema_v1_control_Command cmd =
+      visio_schema_v1_control_Command_init_zero;
+  ASSERT_TRUE(Decode(visio_schema_v1_control_Command_fields, wire, &cmd));
+  ASSERT_EQ(cmd.which_body,
+            visio_schema_v1_control_Command_join_saved_wifi_tag);
+  EXPECT_EQ(sizeof(cmd.body.join_saved_wifi.ssid), 33u);
+  EXPECT_STREQ(cmd.body.join_saved_wifi.ssid, ssid.c_str());
+  EXPECT_EQ(Encode(visio_schema_v1_control_Command_fields, cmd), wire);
+}
+
+TEST(ControlNanopb, JoinSavedWifiRejectsAnOversizedSsid) {
+  const std::string wire = std::string("\xf2\x02\x23\x0a\x21", 5) +
+                           std::string(33, 's');
+  visio_schema_v1_control_Command cmd =
+      visio_schema_v1_control_Command_init_zero;
+  EXPECT_FALSE(Decode(visio_schema_v1_control_Command_fields, wire, &cmd));
+}
+
 // If this stops compiling, the field became a pb_callback_t and every sealed
 // command silently stopped arriving on device.
 static_assert(std::is_same<decltype(visio_schema_v1_control_SetRecordingKey{}

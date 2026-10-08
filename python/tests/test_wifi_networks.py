@@ -23,6 +23,23 @@ def test_forget_wifi_roundtrip():
     assert out.forget_wifi.ssid == "site-wifi"
 
 
+def test_join_saved_wifi_is_on_the_command_oneof_at_tag_46():
+    field = command_pb2.Command.DESCRIPTOR.fields_by_name["join_saved_wifi"]
+    assert field.number == 46
+    assert field.containing_oneof.name == "body"
+    assert set(command_pb2.JoinSavedWifi.DESCRIPTOR.fields_by_name) == {"ssid"}
+
+
+def test_join_saved_wifi_roundtrip_matches_the_nanopb_boundary_vector():
+    ssid = "s" * 32
+    cmd = command_pb2.Command(join_saved_wifi=command_pb2.JoinSavedWifi(ssid=ssid))
+    wire = bytes.fromhex("f202220a20") + ssid.encode()
+    assert cmd.SerializeToString() == wire
+    out = command_pb2.Command.FromString(wire)
+    assert out.WhichOneof("body") == "join_saved_wifi"
+    assert out.join_saved_wifi.ssid == ssid
+
+
 def test_wifi_networks_preserves_order():
     """The list is newest-first and the device joins in that order, so a sort or
     a set anywhere in the path is a behaviour change, not a cosmetic one."""

@@ -43,6 +43,7 @@ visio_schema.v1.service.heartbeat.Heartbeat.client_id   max_size:40
 visio_schema.v1.control.Command.target_device         max_size:32
 visio_schema.v1.control.ConnectWifi.ssid              max_size:33
 visio_schema.v1.control.ConnectWifi.passphrase        max_size:64
+visio_schema.v1.control.JoinSavedWifi.ssid            max_size:33
 # Same 33 as ConnectWifi.ssid, and it must stay the same: a 32-octet SSID that
 # ConnectWifi accepts would otherwise be truncated here, and the entry it named
 # could never be removed.

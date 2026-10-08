@@ -46,6 +46,7 @@ REQUIRED_COMMAND_BODIES = frozenset(
         "identify",
         "set_auto_start",
         "connect_wifi",
+        "join_saved_wifi",
         "scan_wifi",
         "set_storage",
         "test_storage",

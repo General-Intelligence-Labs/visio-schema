@@ -70,6 +70,12 @@ def test_access_key_id_fits_a_tencent_secret_id(sizes: dict[str, int]) -> None:
     assert sizes["SetStorage.access_key_id"] - 1 >= _TENCENT_SECRET_ID_LEN
 
 
+def test_wifi_ssid_caps_agree(sizes: dict[str, int]) -> None:
+    assert sizes["ConnectWifi.ssid"] == 33
+    assert sizes["JoinSavedWifi.ssid"] == sizes["ConnectWifi.ssid"]
+    assert sizes["ForgetWifi.ssid"] == sizes["ConnectWifi.ssid"]
+
+
 # The QR generator refuses to print a field longer than the device can decode,
 # using its own copy of these caps (DEVICE_MAX_SIZE). It is the same number in
 # two files, and only this test stops them drifting — at which point the
@@ -91,7 +97,8 @@ def test_generator_field_caps_match_the_options(sizes: dict[str, int]) -> None:
 # while setting nothing at all.
 @pytest.mark.parametrize("message",
                          ["SetStorage", "TestStorage", "SetRecordingKey",
-                          "ListRecordings", "OpenRecordingFile", "DeleteRecording"])
+                          "ListRecordings", "OpenRecordingFile", "DeleteRecording",
+                          "JoinSavedWifi"])
 def test_every_inbound_field_is_sized(sizes: dict[str, int], message: str) -> None:
     from visio_schema.v1.control import command_pb2
 

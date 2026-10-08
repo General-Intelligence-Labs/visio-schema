@@ -65,6 +65,7 @@ message Command {
     OpenRecordingFile open_recording_file = 43;
     DeleteRecording delete_recording = 44;
     SetBle set_ble = 45;
+    JoinSavedWifi join_saved_wifi = 46;
   }
 }
 
@@ -456,7 +457,18 @@ message SetTime {
 // There is deliberately no reorder command: joining IS the reorder.
 message ConnectWifi {
   string ssid       = 1;
+  // Empty means an open network; it does not select a stored credential.
   string passphrase = 2;
+}
+
+// Join an SSID from DeviceState.wifi_networks using its stored credential.
+// On success it moves to the front of that list, like ConnectWifi. An SSID
+// no longer remembered is refused with "wifi_not_remembered". Joining during
+// a recording is refused with "busy_recording" because changing Wi-Fi
+// channels can interrupt capture. The caller may lose its link, as with
+// ConnectWifi, and should rediscover the device after a post-send disconnect.
+message JoinSavedWifi {
+  string ssid = 1;
 }
 
 // Trigger a Wi-Fi scan; the CommandResult carries WifiScanResults. Replaces

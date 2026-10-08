@@ -6,6 +6,17 @@ bump the MINOR version.
 
 ## Unreleased
 
+### Join a remembered Wi-Fi network without resending its credential
+
+`Command.join_saved_wifi` (tag 46) carries `JoinSavedWifi { ssid }` and uses
+the device's saved credential. Success promotes that SSID to the front of
+`DeviceState.wifi_networks`; a missing saved entry is refused with
+`wifi_not_remembered`, and an active recording with `busy_recording`.
+The nanopb SSID buffer matches `ConnectWifi` and `ForgetWifi` at 33 bytes,
+including the terminating NUL. `ConnectWifi` retains empty-passphrase support
+for open networks. This additive command completes the contract already used
+by firmware's saved-network join handler.
+
 ### Orientation at an arbitrary instant: `Orientation` element, and a C++ quaternion history
 
 No wire change. The reader layer gains an `Orientation` element for
