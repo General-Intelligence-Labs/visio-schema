@@ -23,6 +23,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <utility>
@@ -66,8 +67,8 @@ inline McapReadbackOptions TestOptions() {
 
 // Varying bytes, so a misplaced ring window cannot pass as a match the way
 // a constant fill would.
-inline std::string Payload(int m) {
-  std::string p(kPayloadBytes, '\0');
+inline std::string Payload(int m, std::size_t bytes = kPayloadBytes) {
+  std::string p(bytes, '\0');
   for (std::size_t i = 0; i < p.size(); ++i)
     p[i] = static_cast<char>((m * 31 + i) & 0xff);
   return p;
@@ -99,6 +100,22 @@ inline void InjectStaleBlock(const std::string& path, std::uint64_t at) {
 
 inline bool SpanCanHoldTheBlock(std::uint64_t len) {
   return len >= kStaleBlockOffset + kStaleBlockBytes;
+}
+
+// A read-back hook that plants the field's block once, in the first span
+// large enough to hold it, just before that span's first read; where it
+// landed goes to `*injected_at`.
+inline std::function<void(const std::string&, std::uint64_t, std::uint64_t,
+                          McapReadbackPass)>
+InjectStaleBlockOnce(std::optional<std::uint64_t>* injected_at) {
+  return [injected_at](const std::string& path, std::uint64_t off,
+                       std::uint64_t len, McapReadbackPass pass) {
+    if (*injected_at || pass != McapReadbackPass::kFirstRead ||
+        !SpanCanHoldTheBlock(len))
+      return;
+    *injected_at = off + kStaleBlockOffset;
+    InjectStaleBlock(path, off + kStaleBlockOffset);
+  };
 }
 
 inline std::uint64_t ReportedMismatchOffset(const std::string& log) {

@@ -33,8 +33,9 @@ struct McapReadbackOptions {
   // produces between two steps (write rate x stepping period), rounded up
   // to a MiB. A span the writer has overrun is skipped (counted, never
   // waited for). Note the span size depends on the container: a plaintext
-  // part's writeback span is one MCAP chunk (~768 KiB), a VREC part's is
-  // the cipher's 64 KiB slice.
+  // part's writeback span is one MCAP chunk (~768 KiB, written in one
+  // call); a VREC part's arrives in the cipher's 64 KiB slices, so its span
+  // is sync_span_bytes rounded up to the next slice.
   std::uint64_t ring_bytes = 0;
   // A span is read back only once this many further bytes have been
   // written past it, giving the medium time to settle it.

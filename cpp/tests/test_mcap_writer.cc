@@ -521,15 +521,24 @@ TEST(McapWriterRotateKeyframe, DoesNotSplitACoPhasedPair) {
   RemoveParts("visio_schema_gate_j");
 }
 
-// noChunkCRC: chunk records must still be written (chunking carries the
-// per-chunk message index readers seek by) but with uncompressed_crc == 0 —
-// the spec's "not computed", which every reader skips. Pins BOTH halves of
-// the writer option: flipping noChunking too would silently drop the seek
-// index, and re-enabling the CRC would put the per-byte checksum back on the
-// device's hot path. Raw little-endian record scan — no C++ MCAP reader
-// exists in this repo, and none is needed for a field this shallow.
-TEST(McapWriter, WritesChunksWithZeroCrc) {
-  const std::string path = TempPath("visio_schema_mcap_nocrc.mcap");
+// Bitwise reflected CRC-32 (poly 0xEDB88320). Deliberately shares no table
+// with the library's slicing-by-8, so the two cannot be wrong together.
+std::uint32_t ReferenceCrc32(const unsigned char* p, std::size_t n) {
+  std::uint32_t c = 0xFFFFFFFFu;
+  for (std::size_t i = 0; i < n; ++i) {
+    c ^= p[i];
+    for (int k = 0; k < 8; ++k) c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1u)));
+  }
+  return ~c;
+}
+
+// Every chunk carries the CRC of its uncompressed records, and chunking stays
+// on (it carries the per-chunk message index readers seek by). Raw
+// little-endian record scan — no C++
+// MCAP reader exists in this repo, and none is needed for a field this
+// shallow.
+TEST(McapWriter, WritesChunksWithVerifiedCrc) {
+  const std::string path = TempPath("visio_schema_mcap_crc.mcap");
   std::remove(path.c_str());
   const Channel ch = MakeChannel(kFirstDynamic, "/dev/imu/0/raw");
   {
@@ -546,12 +555,22 @@ TEST(McapWriter, WritesChunksWithZeroCrc) {
     std::uint64_t len = 0;
     std::memcpy(&len, &b[off + 1], 8);
     if (off + 9 + len > b.size()) break;             // trailing magic
-    if (b[off] == 0x06 && len >= 28) {               // Chunk record
+    if (b[off] == 0x06 && len >= 40) {               // Chunk record
       ++chunks;
-      // Body: start time u64, end time u64, uncompressed_size u64, then crc.
-      std::uint32_t crc = 0;
-      std::memcpy(&crc, &b[off + 9 + 24], 4);
-      EXPECT_EQ(crc, 0u);
+      // Body: start u64, end u64, uncompressed_size u64, crc u32,
+      // compression (u32 length + bytes), records_len u64, records.
+      const unsigned char* body = &b[off + 9];
+      std::uint64_t usize = 0, rlen = 0;
+      std::uint32_t crc = 0, clen = 0;
+      std::memcpy(&usize, body + 16, 8);
+      std::memcpy(&crc, body + 24, 4);
+      std::memcpy(&clen, body + 28, 4);
+      ASSERT_EQ(clen, 0u) << "chunks are uncompressed";
+      std::memcpy(&rlen, body + 32, 8);
+      ASSERT_EQ(rlen, usize);
+      const unsigned char* records = &b[off + 9 + 40];
+      EXPECT_NE(crc, 0u);
+      EXPECT_EQ(crc, ReferenceCrc32(records, rlen));
     }
     off += 9 + len;
   }
