@@ -6,6 +6,13 @@ bump the MINOR version.
 
 ## Unreleased
 
+### Fuel-gauge voltage without a battery profile
+
+`SystemHealth.battery_voltage_v` (optional float, tag 14) reports measured
+cell-input voltage in volts independently of `battery_pct`. Devices with no
+readable gauge omit it. This allows CW2015 voltage telemetry before a
+cell-specific state-of-charge profile is available.
+
 ### Join a remembered Wi-Fi network without resending its credential
 
 `Command.join_saved_wifi` (tag 46) carries `JoinSavedWifi { ssid }` and uses

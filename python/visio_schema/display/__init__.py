@@ -985,7 +985,7 @@ class RerunSink:
         h = SystemHealth()
         h.ParseFromString(msg.payload)
         for field in ("cpu_temp_c", "cpu_usage_pct", "mem_free_bytes",
-                      "disk_free_bytes", "stream_clients"):
+                      "disk_free_bytes", "stream_clients", "battery_voltage_v"):
             if h.HasField(field):
                 self._rr.log(f"{base}/{field}",
                              self._rr.Scalars(float(getattr(h, field))))
