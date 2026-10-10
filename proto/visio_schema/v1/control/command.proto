@@ -395,37 +395,42 @@ message SetResolution {
 // these defaults for that one session. Answered by a CommandResult (ok +
 // DeviceState echoing the persisted labels — the fleet ids below are the one
 // exception, see there).
+// THE SETTINGS RULE — every settings message (SetRecordingMeta, SetStorage,
+// TestStorage, SetTime's fix) follows it, field by field, with no exceptions:
+//
+//   ABSENT   keeps the stored value. A field the sender did not touch is not
+//            sent, so saving one field can never reset another.
+//   PRESENT  replaces it, and PRESENT-but-empty clears it. An empty value is
+//            sent only when a user deliberately clears that field.
+//
+// That is why every field here is `optional`: proto3 drops an implicit-
+// presence field equal to its default from the wire, so a plain `string`
+// cannot tell "untouched" from "cleared". A sender predating this rule still
+// decodes correctly — its empty fields never reached the wire, so they read
+// as ABSENT and keep the stored value.
+//
+// A field whose cleared value would leave the setting unusable (a storage
+// endpoint, bucket, key or secret) is REJECTED when sent empty, never stored.
 message SetRecordingMeta {
-  string task     = 1;  // free-text capture task / label
-  string location = 2;  // human-readable place (user-entered)
-  string message  = 3;  // free-text note / annotation
-  string capturer = 8;  // who operated the capture (user-entered)
+  optional string task     = 1;  // free-text capture task / label
+  optional string location = 2;  // human-readable place (user-entered)
+  optional string message  = 3;  // free-text note / annotation
+  optional string capturer = 8;  // who operated the capture (user-entered)
   // GPS + host time/zone, mirroring StartRecording — persisted so auto-started
-  // boot recordings (no app input) still carry them. All optional; 0 = unknown.
-  // Unlike the text fields (where empty CLEARS the stored value), a 0 fix
-  // KEEPS the stored coordinates — hosts without a fix send 0, and wiping the
-  // last known position (also pushed via SetTime) would lose data. Coordinates
-  // are machine-owned, not user-cleared.
-  double latitude              = 4;  // GPS; 0 when unknown (keeps stored value)
-  double longitude             = 5;  // GPS; 0 when unknown (keeps stored value)
-  int64  client_unix_us        = 6;  // host reference timestamp (us since epoch)
-  sint32 client_utc_offset_min = 7;  // minutes east of UTC (+480 = UTC+8)
+  // boot recordings (no app input) still carry them. A host without a fix
+  // leaves the coordinates out rather than sending 0.
+  optional double latitude              = 4;  // GPS
+  optional double longitude             = 5;  // GPS
+  optional int64  client_unix_us        = 6;  // host reference timestamp (us)
+  optional sint32 client_utc_offset_min = 7;  // minutes east of UTC (+480)
 
   // Fleet identifiers: which operator account and which environment/site a rig
   // is capturing under. They ride into every session's capture metadata beside
   // the labels above, but no user-facing client sets them — they are for
   // provisioning tooling and fleet scripts, over this same command. Unlike the
   // labels, they are NOT echoed on DeviceState: a setter confirms them by
-  // reading a recording, not from the ack.
-  //
-  // `optional` is load-bearing, not decoration. A client sends this message as
-  // a whole and the device REPLACES the stored text with what arrives, so a
-  // plain field would be cleared by every app or web-page "Set" — wiping an id
-  // that UI never showed and whoever is holding the phone cannot restore.
-  // With presence: ABSENT keeps the stored value, PRESENT replaces it, and
-  // present-but-empty clears it. That makes clearing an id an explicit act by
-  // a client that knows the field exists, which is the same protection the
-  // 0-means-keep rule gives the coordinates above.
+  // reading a recording, not from the ack. They were the first fields to take
+  // the settings rule above, because no app UI shows them to restore.
   optional string operator_id    = 9;
   optional string environment_id = 10;
 }
@@ -444,8 +449,10 @@ message SetRecordingMeta {
 message SetTime {
   int64  unix_us        = 1;  // wall-clock time, us since Unix epoch (UTC)
   sint32 utc_offset_min = 2;  // minutes east of UTC (+480 = UTC+8)
-  double latitude       = 3;  // GPS; 0 when unknown (keeps stored value)
-  double longitude      = 4;  // GPS; 0 when unknown (keeps stored value)
+  // The settings rule (see SetRecordingMeta): a host without a fix leaves
+  // them out, and the stored fix is kept.
+  optional double latitude  = 3;  // GPS
+  optional double longitude = 4;  // GPS
 }
 
 // Provision Wi-Fi STA credentials and (re)associate. Replaces POST /wifi.
@@ -512,19 +519,26 @@ message ResetToAp {
 }
 
 // Persist S3 storage credentials. Replaces POST /storage.
+// Follows the settings rule (see SetRecordingMeta): an absent field keeps the
+// stored one, so "just repoint my bucket" sends the bucket alone. Sent empty,
+// endpoint_url / region / bucket / access_key_id / secret_access_key are
+// rejected (a destination without them cannot sign), while `prefix` clears to
+// the bucket root and `status_prefix` clears to the default ("status/").
+// One guard on top: a secret is never carried onto ANOTHER account — when
+// endpoint_url or access_key_id changes, a secret must come with it.
 message SetStorage {
-  string endpoint_url      = 1;
-  string region            = 2;
-  string bucket            = 3;
-  string access_key_id     = 4;
-  string secret_access_key = 5;
-  string prefix            = 6;
+  optional string endpoint_url      = 1;
+  optional string region            = 2;
+  optional string bucket            = 3;
+  optional string access_key_id     = 4;
+  optional string secret_access_key = 5;
+  optional string prefix            = 6;
   // Key prefix for periodic STATUS REPORTS (device health + a low-res camera
   // JPEG), written under the same credentials as `prefix` above but to a
-  // separate subtree with its own lifecycle and its own read grant. Empty means
-  // the device's default ("status/"). The two legs are independent: a device may
-  // upload recordings only, report status only, or both.
-  string status_prefix     = 7;
+  // separate subtree with its own lifecycle and its own read grant. The two
+  // legs are independent: a device may upload recordings only, report status
+  // only, or both.
+  optional string status_prefix     = 7;
 
   // A `visio-seal-v1` envelope carrying this destination's SECRET access key
   // (the format lives in visio_schema.crypto.envelope). Written by a v2 settings
@@ -533,7 +547,7 @@ message SetStorage {
   // private key can open them.
   //
   // Takes precedence over `secret_access_key` when both are set. An envelope
-  // that carries no `sk` leaves the stored secret alone, exactly as an empty
+  // that carries no `sk` leaves the stored secret alone, exactly as an absent
   // `secret_access_key` does — so a "just repoint my bucket" QR needs no
   // credential at all.
   bytes sealed = 8;
@@ -542,19 +556,18 @@ message SetStorage {
 // Validate S3 credentials WITHOUT persisting (a max-keys=1 list under the
 // recordings prefix, so the key needs only put + list — no bucket-info
 // grant). Replaces POST /storage/test. Same fields as SetStorage.
+// Tests the destination SetStorage WOULD store if sent the same fields: the
+// device folds them onto the stored destination by the same settings rule
+// (absent keeps) and probes the result, so "test before save" signs with the
+// secret Save would keep.
 message TestStorage {
-  string endpoint_url      = 1;
-  string region            = 2;
-  string bucket            = 3;
-  string access_key_id     = 4;
-  string secret_access_key = 5;
-  string prefix            = 6;
-  // Key prefix for periodic STATUS REPORTS (device health + a low-res camera
-  // JPEG), written under the same credentials as `prefix` above but to a
-  // separate subtree with its own lifecycle and its own read grant. Empty means
-  // the device's default ("status/"). The two legs are independent: a device may
-  // upload recordings only, report status only, or both.
-  string status_prefix     = 7;
+  optional string endpoint_url      = 1;
+  optional string region            = 2;
+  optional string bucket            = 3;
+  optional string access_key_id     = 4;
+  optional string secret_access_key = 5;
+  optional string prefix            = 6;
+  optional string status_prefix     = 7;  // see SetStorage.status_prefix
 
   // The same envelope as SetStorage.sealed. A credential the device will
   // ACCEPT must also be one it can be asked to TEST, or "test before save"

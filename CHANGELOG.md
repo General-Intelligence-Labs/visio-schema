@@ -6,6 +6,30 @@ bump the MINOR version.
 
 ## Unreleased
 
+### BREAKING (next release is 0.10.0): one settings rule — absent keeps, sent sets
+
+Every field of `SetRecordingMeta`, `SetStorage` and `TestStorage` (which
+tests what Save would store), and `SetTime`'s
+`latitude`/`longitude`, is now `optional`, and all of them follow one rule:
+an ABSENT field keeps the device's stored value; a PRESENT field replaces it;
+present-but-empty clears it. A sender transmits an empty value only when a
+user deliberately clears that field. `SetStorage` rejects a cleared endpoint,
+region, bucket, key id or secret, and still refuses to carry a stored secret
+onto a different account.
+
+Before, each field had its own rule: meta text cleared on empty, coordinates
+kept on 0, `status_prefix` kept on empty, `prefix` RESET to the bucket root on
+empty, and the secret kept on empty. One save could silently wipe fields the
+user never touched (a QR carrying only `task` cleared location, message and
+capturer; a storage save without `prefix` moved uploads to the bucket root).
+
+Wire-compatible, semantics not: `buf breaking` reports FIELD_SAME_CARDINALITY
+because generated code gains presence (`has_*` in nanopb, `?:` in TypeScript,
+`HasField` in Python). A sender built against the old schema never put an
+empty implicit-presence field on the wire, so the device now reads its empty
+fields as absent and KEEPS them — the safe direction. The one behaviour such a
+sender loses is clearing a field by sending it empty.
+
 ### Join a remembered Wi-Fi network without resending its credential
 
 `Command.join_saved_wifi` (tag 46) carries `JoinSavedWifi { ssid }` and uses

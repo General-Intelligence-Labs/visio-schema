@@ -31,7 +31,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file visio_schema/v1/control/command.proto.
  */
 export const file_visio_schema_v1_control_command: GenFile = /*@__PURE__*/
-  fileDesc("CiV2aXNpb19zY2hlbWEvdjEvY29udHJvbC9jb21tYW5kLnByb3RvEhd2aXNpb19zY2hlbWEudjEuY29udHJvbCL4EwoHQ29tbWFuZBIVCg10YXJnZXRfZGV2aWNlGAEgASgJEhIKCmNvbW1hbmRfaWQYAiABKAQSQgoPc3RhcnRfcmVjb3JkaW5nGAogASgLMicudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU3RhcnRSZWNvcmRpbmdIABJACg5zdG9wX3JlY29yZGluZxgLIAEoCzImLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlN0b3BSZWNvcmRpbmdIABI1CghpZGVudGlmeRgMIAEoCzIhLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLklkZW50aWZ5SAASPwoOc2V0X2F1dG9fc3RhcnQYDSABKAsyJS52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRBdXRvU3RhcnRIABI8Cgxjb25uZWN0X3dpZmkYDiABKAsyJC52aXNpb19zY2hlbWEudjEuY29udHJvbC5Db25uZWN0V2lmaUgAEjYKCXNjYW5fd2lmaRgPIAEoCzIhLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNjYW5XaWZpSAASOgoLc2V0X3N0b3JhZ2UYECABKAsyIy52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRTdG9yYWdlSAASPAoMdGVzdF9zdG9yYWdlGBEgASgLMiQudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuVGVzdFN0b3JhZ2VIABJCCg9saXN0X3JlY29yZGluZ3MYEiABKAsyJy52aXNpb19zY2hlbWEudjEuY29udHJvbC5MaXN0UmVjb3JkaW5nc0gAEjYKCWdldF9zdGF0ZRgTIAEoCzIhLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLkdldFN0YXRlSAASQgoPc2V0X2NhbGlicmF0aW9uGBQgASgLMicudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0Q2FsaWJyYXRpb25IABI0CghzZXRfdGltZRgVIAEoCzIgLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFRpbWVIABJHChJzZXRfcmVjb3JkaW5nX21ldGEYFiABKAsyKS52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRSZWNvcmRpbmdNZXRhSAASTQoTc2V0X3ZpZGVvX3N0cmVhbWluZxgXIAEoCzIqLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFZpZGVvU3RyZWFtaW5nQgIYAUgAEjoKC3NldF9iaXRyYXRlGBggASgLMiMudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0Qml0cmF0ZUgAEkAKDmZvcm1hdF9zdG9yYWdlGBkgASgLMiYudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuRm9ybWF0U3RvcmFnZUgAEkEKD3NldF9hdXRvX3VwbG9hZBgaIAEoCzImLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldEF1dG9VcGxvYWRIABJBCg9zZXRfbm90aWNlX2xhbmcYGyABKAsyJi52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXROb3RpY2VMYW5nSAASQAoOc2V0X3Jlc29sdXRpb24YHCABKAsyJi52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRSZXNvbHV0aW9uSAASOQoLcmVzZXRfdG9fYXAYHSABKAsyIi52aXNpb19zY2hlbWEudjEuY29udHJvbC5SZXNldFRvQXBIABJJChNzZXRfYXVkaW9fcmVjb3JkaW5nGB4gASgLMioudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0QXVkaW9SZWNvcmRpbmdIABJIChFzZXRfaW11X2xpdmVfcmF0ZRgfIAEoCzInLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldEltdUxpdmVSYXRlQgIYAUgAEkUKEXNldF9zdHJlYW1fcG9saWN5GCAgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0U3RyZWFtUG9saWN5SAASOgoLZm9yZ2V0X3dpZmkYISABKAsyIy52aXNpb19zY2hlbWEudjEuY29udHJvbC5Gb3JnZXRXaWZpSAASRQoRc2V0X3N0YXR1c19yZXBvcnQYIiABKAsyKC52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRTdGF0dXNSZXBvcnRIABJJChNjbGVhcl9jYW1lcmFfdHVuaW5nGCMgASgLMioudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuQ2xlYXJDYW1lcmFUdW5pbmdIABJVChlzZXRfcmVjb3JkaW5nX2Rlc3RpbmF0aW9uGCQgASgLMjAudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0UmVjb3JkaW5nRGVzdGluYXRpb25IABJRChdzZXRfcmVjb3JkaW5nX2hlYXJ0YmVhdBglIAEoCzIuLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFJlY29yZGluZ0hlYXJ0YmVhdEgAEkUKEXNldF9ub3RpY2Vfdm9sdW1lGCYgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0Tm90aWNlVm9sdW1lSAASRQoRc2V0X3JlY29yZGluZ19rZXkYJyABKAsyKC52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRSZWNvcmRpbmdLZXlIABJHChJzZXRfaGFuZF9kZXRlY3Rpb24YKCABKAsyKS52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRIYW5kRGV0ZWN0aW9uSAASQQoPc2V0X2dwc190YWdnaW5nGCkgASgLMiYudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0R3BzVGFnZ2luZ0gAEkcKEnNldF9kaWFnX3ZlcmJvc2l0eRgqIAEoCzIpLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldERpYWdWZXJib3NpdHlIABJJChNvcGVuX3JlY29yZGluZ19maWxlGCsgASgLMioudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuT3BlblJlY29yZGluZ0ZpbGVIABJEChBkZWxldGVfcmVjb3JkaW5nGCwgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuRGVsZXRlUmVjb3JkaW5nSAASMgoHc2V0X2JsZRgtIAEoCzIfLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldEJsZUgAEkEKD2pvaW5fc2F2ZWRfd2lmaRguIAEoCzImLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLkpvaW5TYXZlZFdpZmlIAEIGCgRib2R5IigKFVNldFJlY29yZGluZ0hlYXJ0YmVhdBIPCgdlbmFibGVkGAEgASgIIrwBChdTZXRSZWNvcmRpbmdEZXN0aW5hdGlvbhJRCgtkZXN0aW5hdGlvbhgBIAEoDjI8LnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFJlY29yZGluZ0Rlc3RpbmF0aW9uLkRlc3RpbmF0aW9uEhAKCGxlYXNlX21zGAIgASgNIjwKC0Rlc3RpbmF0aW9uEhYKEkRFU1RJTkFUSU9OX0RFVklDRRAAEhUKEURFU1RJTkFUSU9OX1BIT05FEAEirwEKDlN0YXJ0UmVjb3JkaW5nEhQKDHNlc3Npb25fbmFtZRgBIAEoCRIMCgR0YXNrGAIgASgJEhAKCGxvY2F0aW9uGAMgASgJEhAKCGxhdGl0dWRlGAQgASgBEhEKCWxvbmdpdHVkZRgFIAEoARIWCg5jbGllbnRfdW5peF91cxgGIAEoAxIdChVjbGllbnRfdXRjX29mZnNldF9taW4YByABKBESCwoDZnBzGAggASgNIg8KDVN0b3BSZWNvcmRpbmciCgoISWRlbnRpZnkiiQEKD1NldFN0cmVhbVBvbGljeRI8CgVydWxlcxgBIAMoCzItLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFN0cmVhbVBvbGljeS5SdWxlGjgKBFJ1bGUSDQoFdG9waWMYASABKAkSDAoEZHJvcBgCIAEoCBITCgttYXhfcmF0ZV9oehgDIAEoDSIoChFTZXRWaWRlb1N0cmVhbWluZxIPCgdlbmFibGVkGAEgASgIOgIYASIlCg5TZXRJbXVMaXZlUmF0ZRIPCgdyYXRlX2h6GAEgASgNOgIYASIiCgxTZXRBdXRvU3RhcnQSEgoKYXV0b19zdGFydBgBIAEoCCIiCg9TZXRTdGF0dXNSZXBvcnQSDwoHZW5hYmxlZBgBIAEoCCIgCg1TZXRBdXRvVXBsb2FkEg8KB2VuYWJsZWQYASABKAgiJAoRU2V0QXVkaW9SZWNvcmRpbmcSDwoHZW5hYmxlZBgBIAEoCCIjChBTZXRIYW5kRGV0ZWN0aW9uEg8KB2VuYWJsZWQYASABKAgiGQoGU2V0QmxlEg8KB2VuYWJsZWQYASABKAgiIAoNU2V0R3BzVGFnZ2luZxIPCgdlbmFibGVkGAEgASgIIiEKEFNldERpYWdWZXJib3NpdHkSDQoFbGV2ZWwYASABKA0iIgoKU2V0Qml0cmF0ZRIUCgxiaXRyYXRlX2ticHMYASABKA0iLgoNU2V0UmVzb2x1dGlvbhINCgV3aWR0aBgBIAEoDRIOCgZoZWlnaHQYAiABKA0iiwIKEFNldFJlY29yZGluZ01ldGESDAoEdGFzaxgBIAEoCRIQCghsb2NhdGlvbhgCIAEoCRIPCgdtZXNzYWdlGAMgASgJEhAKCGNhcHR1cmVyGAggASgJEhAKCGxhdGl0dWRlGAQgASgBEhEKCWxvbmdpdHVkZRgFIAEoARIWCg5jbGllbnRfdW5peF91cxgGIAEoAxIdChVjbGllbnRfdXRjX29mZnNldF9taW4YByABKBESGAoLb3BlcmF0b3JfaWQYCSABKAlIAIgBARIbCg5lbnZpcm9ubWVudF9pZBgKIAEoCUgBiAEBQg4KDF9vcGVyYXRvcl9pZEIRCg9fZW52aXJvbm1lbnRfaWQiVwoHU2V0VGltZRIPCgd1bml4X3VzGAEgASgDEhYKDnV0Y19vZmZzZXRfbWluGAIgASgREhAKCGxhdGl0dWRlGAMgASgBEhEKCWxvbmdpdHVkZRgEIAEoASIvCgtDb25uZWN0V2lmaRIMCgRzc2lkGAEgASgJEhIKCnBhc3NwaHJhc2UYAiABKAkiHQoNSm9pblNhdmVkV2lmaRIMCgRzc2lkGAEgASgJIgoKCFNjYW5XaWZpIhoKCkZvcmdldFdpZmkSDAoEc3NpZBgBIAEoCSILCglSZXNldFRvQXAiqwEKClNldFN0b3JhZ2USFAoMZW5kcG9pbnRfdXJsGAEgASgJEg4KBnJlZ2lvbhgCIAEoCRIOCgZidWNrZXQYAyABKAkSFQoNYWNjZXNzX2tleV9pZBgEIAEoCRIZChFzZWNyZXRfYWNjZXNzX2tleRgFIAEoCRIOCgZwcmVmaXgYBiABKAkSFQoNc3RhdHVzX3ByZWZpeBgHIAEoCRIOCgZzZWFsZWQYCCABKAwirAEKC1Rlc3RTdG9yYWdlEhQKDGVuZHBvaW50X3VybBgBIAEoCRIOCgZyZWdpb24YAiABKAkSDgoGYnVja2V0GAMgASgJEhUKDWFjY2Vzc19rZXlfaWQYBCABKAkSGQoRc2VjcmV0X2FjY2Vzc19rZXkYBSABKAkSDgoGcHJlZml4GAYgASgJEhUKDXN0YXR1c19wcmVmaXgYByABKAkSDgoGc2VhbGVkGAggASgMIkUKDkxpc3RSZWNvcmRpbmdzEg0KBWxpbWl0GAEgASgNEg4KBmN1cnNvchgCIAEoCRIUCgxzZXNzaW9uX25hbWUYAyABKAkiegoRT3BlblJlY29yZGluZ0ZpbGUSFAoMc2Vzc2lvbl9uYW1lGAEgASgJEhEKCWZpbGVfbmFtZRgCIAEoCRIOCgZvZmZzZXQYAyABKAQSEwoLZXhwZWN0X3NpemUYBCABKAQSFwoPZXhwZWN0X210aW1lX25zGAUgASgEIicKD0RlbGV0ZVJlY29yZGluZxIUCgxzZXNzaW9uX25hbWUYASABKAkiCgoIR2V0U3RhdGUiIAoNRm9ybWF0U3RvcmFnZRIPCgdmc190eXBlGAEgASgJIh0KDVNldE5vdGljZUxhbmcSDAoEbGFuZxgBIAEoCSIhCg9TZXROb3RpY2VWb2x1bWUSDgoGdm9sdW1lGAEgASgNIpMFCg5TZXRDYWxpYnJhdGlvbhJHCgtzZW5zb3Jfa2luZBgBIAEoDjIyLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldENhbGlicmF0aW9uLlNlbnNvcktpbmQSFAoMc2Vuc29yX2luZGV4GAIgASgNEjEKCmludHJpbnNpY3MYCyABKAsyGy5mb3hnbG92ZS5DYW1lcmFDYWxpYnJhdGlvbkgAEi4KCmV4dHJpbnNpY3MYDCABKAsyGC5mb3hnbG92ZS5GcmFtZVRyYW5zZm9ybUgAEj8KCGltdV9pbmZvGA0gASgLMisudmlzaW9fc2NoZW1hLnYxLmNhbGlicmF0aW9uLkltdUNhbGlicmF0aW9uSAASRwoMZW5jb2Rlcl9pbmZvGA4gASgLMi8udmlzaW9fc2NoZW1hLnYxLmNhbGlicmF0aW9uLkVuY29kZXJDYWxpYnJhdGlvbkgAEkIKDWNhbWVyYV90dW5pbmcYDyABKAsyKS52aXNpb19zY2hlbWEudjEuY2FsaWJyYXRpb24uQ2FtZXJhVHVuaW5nSAASEwoJdW5pdF9zaWRlGBAgASgJSAASMgoOdGNwX2V4dHJpbnNpY3MYESABKAsyGC5mb3hnbG92ZS5GcmFtZVRyYW5zZm9ybUgAEkUKCWZpZHVjaWFscxgSIAEoCzIwLnZpc2lvX3NjaGVtYS52MS5jYWxpYnJhdGlvbi5GaWR1Y2lhbENhbGlicmF0aW9uSAAiVQoKU2Vuc29yS2luZBIbChdTRU5TT1JfS0lORF9VTlNQRUNJRklFRBAAEgoKBkNBTUVSQRABEgcKA0lNVRACEgsKB0VOQ09ERVIQAxIICgRVTklUEARCCgoIYXJ0aWZhY3QiEwoRQ2xlYXJDYW1lcmFUdW5pbmciIQoPU2V0UmVjb3JkaW5nS2V5Eg4KBnNlYWxlZBgBIAEoDGIGcHJvdG8z", [file_foxglove_CameraCalibration, file_foxglove_FrameTransform, file_visio_schema_v1_calibration_imu, file_visio_schema_v1_calibration_encoder, file_visio_schema_v1_calibration_camera_tuning, file_visio_schema_v1_calibration_fiducial]);
+  fileDesc("CiV2aXNpb19zY2hlbWEvdjEvY29udHJvbC9jb21tYW5kLnByb3RvEhd2aXNpb19zY2hlbWEudjEuY29udHJvbCL4EwoHQ29tbWFuZBIVCg10YXJnZXRfZGV2aWNlGAEgASgJEhIKCmNvbW1hbmRfaWQYAiABKAQSQgoPc3RhcnRfcmVjb3JkaW5nGAogASgLMicudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU3RhcnRSZWNvcmRpbmdIABJACg5zdG9wX3JlY29yZGluZxgLIAEoCzImLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlN0b3BSZWNvcmRpbmdIABI1CghpZGVudGlmeRgMIAEoCzIhLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLklkZW50aWZ5SAASPwoOc2V0X2F1dG9fc3RhcnQYDSABKAsyJS52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRBdXRvU3RhcnRIABI8Cgxjb25uZWN0X3dpZmkYDiABKAsyJC52aXNpb19zY2hlbWEudjEuY29udHJvbC5Db25uZWN0V2lmaUgAEjYKCXNjYW5fd2lmaRgPIAEoCzIhLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNjYW5XaWZpSAASOgoLc2V0X3N0b3JhZ2UYECABKAsyIy52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRTdG9yYWdlSAASPAoMdGVzdF9zdG9yYWdlGBEgASgLMiQudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuVGVzdFN0b3JhZ2VIABJCCg9saXN0X3JlY29yZGluZ3MYEiABKAsyJy52aXNpb19zY2hlbWEudjEuY29udHJvbC5MaXN0UmVjb3JkaW5nc0gAEjYKCWdldF9zdGF0ZRgTIAEoCzIhLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLkdldFN0YXRlSAASQgoPc2V0X2NhbGlicmF0aW9uGBQgASgLMicudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0Q2FsaWJyYXRpb25IABI0CghzZXRfdGltZRgVIAEoCzIgLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFRpbWVIABJHChJzZXRfcmVjb3JkaW5nX21ldGEYFiABKAsyKS52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRSZWNvcmRpbmdNZXRhSAASTQoTc2V0X3ZpZGVvX3N0cmVhbWluZxgXIAEoCzIqLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFZpZGVvU3RyZWFtaW5nQgIYAUgAEjoKC3NldF9iaXRyYXRlGBggASgLMiMudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0Qml0cmF0ZUgAEkAKDmZvcm1hdF9zdG9yYWdlGBkgASgLMiYudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuRm9ybWF0U3RvcmFnZUgAEkEKD3NldF9hdXRvX3VwbG9hZBgaIAEoCzImLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldEF1dG9VcGxvYWRIABJBCg9zZXRfbm90aWNlX2xhbmcYGyABKAsyJi52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXROb3RpY2VMYW5nSAASQAoOc2V0X3Jlc29sdXRpb24YHCABKAsyJi52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRSZXNvbHV0aW9uSAASOQoLcmVzZXRfdG9fYXAYHSABKAsyIi52aXNpb19zY2hlbWEudjEuY29udHJvbC5SZXNldFRvQXBIABJJChNzZXRfYXVkaW9fcmVjb3JkaW5nGB4gASgLMioudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0QXVkaW9SZWNvcmRpbmdIABJIChFzZXRfaW11X2xpdmVfcmF0ZRgfIAEoCzInLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldEltdUxpdmVSYXRlQgIYAUgAEkUKEXNldF9zdHJlYW1fcG9saWN5GCAgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0U3RyZWFtUG9saWN5SAASOgoLZm9yZ2V0X3dpZmkYISABKAsyIy52aXNpb19zY2hlbWEudjEuY29udHJvbC5Gb3JnZXRXaWZpSAASRQoRc2V0X3N0YXR1c19yZXBvcnQYIiABKAsyKC52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRTdGF0dXNSZXBvcnRIABJJChNjbGVhcl9jYW1lcmFfdHVuaW5nGCMgASgLMioudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuQ2xlYXJDYW1lcmFUdW5pbmdIABJVChlzZXRfcmVjb3JkaW5nX2Rlc3RpbmF0aW9uGCQgASgLMjAudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0UmVjb3JkaW5nRGVzdGluYXRpb25IABJRChdzZXRfcmVjb3JkaW5nX2hlYXJ0YmVhdBglIAEoCzIuLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFJlY29yZGluZ0hlYXJ0YmVhdEgAEkUKEXNldF9ub3RpY2Vfdm9sdW1lGCYgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0Tm90aWNlVm9sdW1lSAASRQoRc2V0X3JlY29yZGluZ19rZXkYJyABKAsyKC52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRSZWNvcmRpbmdLZXlIABJHChJzZXRfaGFuZF9kZXRlY3Rpb24YKCABKAsyKS52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRIYW5kRGV0ZWN0aW9uSAASQQoPc2V0X2dwc190YWdnaW5nGCkgASgLMiYudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0R3BzVGFnZ2luZ0gAEkcKEnNldF9kaWFnX3ZlcmJvc2l0eRgqIAEoCzIpLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldERpYWdWZXJib3NpdHlIABJJChNvcGVuX3JlY29yZGluZ19maWxlGCsgASgLMioudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuT3BlblJlY29yZGluZ0ZpbGVIABJEChBkZWxldGVfcmVjb3JkaW5nGCwgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuRGVsZXRlUmVjb3JkaW5nSAASMgoHc2V0X2JsZRgtIAEoCzIfLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldEJsZUgAEkEKD2pvaW5fc2F2ZWRfd2lmaRguIAEoCzImLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLkpvaW5TYXZlZFdpZmlIAEIGCgRib2R5IigKFVNldFJlY29yZGluZ0hlYXJ0YmVhdBIPCgdlbmFibGVkGAEgASgIIrwBChdTZXRSZWNvcmRpbmdEZXN0aW5hdGlvbhJRCgtkZXN0aW5hdGlvbhgBIAEoDjI8LnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFJlY29yZGluZ0Rlc3RpbmF0aW9uLkRlc3RpbmF0aW9uEhAKCGxlYXNlX21zGAIgASgNIjwKC0Rlc3RpbmF0aW9uEhYKEkRFU1RJTkFUSU9OX0RFVklDRRAAEhUKEURFU1RJTkFUSU9OX1BIT05FEAEirwEKDlN0YXJ0UmVjb3JkaW5nEhQKDHNlc3Npb25fbmFtZRgBIAEoCRIMCgR0YXNrGAIgASgJEhAKCGxvY2F0aW9uGAMgASgJEhAKCGxhdGl0dWRlGAQgASgBEhEKCWxvbmdpdHVkZRgFIAEoARIWCg5jbGllbnRfdW5peF91cxgGIAEoAxIdChVjbGllbnRfdXRjX29mZnNldF9taW4YByABKBESCwoDZnBzGAggASgNIg8KDVN0b3BSZWNvcmRpbmciCgoISWRlbnRpZnkiiQEKD1NldFN0cmVhbVBvbGljeRI8CgVydWxlcxgBIAMoCzItLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFN0cmVhbVBvbGljeS5SdWxlGjgKBFJ1bGUSDQoFdG9waWMYASABKAkSDAoEZHJvcBgCIAEoCBITCgttYXhfcmF0ZV9oehgDIAEoDSIoChFTZXRWaWRlb1N0cmVhbWluZxIPCgdlbmFibGVkGAEgASgIOgIYASIlCg5TZXRJbXVMaXZlUmF0ZRIPCgdyYXRlX2h6GAEgASgNOgIYASIiCgxTZXRBdXRvU3RhcnQSEgoKYXV0b19zdGFydBgBIAEoCCIiCg9TZXRTdGF0dXNSZXBvcnQSDwoHZW5hYmxlZBgBIAEoCCIgCg1TZXRBdXRvVXBsb2FkEg8KB2VuYWJsZWQYASABKAgiJAoRU2V0QXVkaW9SZWNvcmRpbmcSDwoHZW5hYmxlZBgBIAEoCCIjChBTZXRIYW5kRGV0ZWN0aW9uEg8KB2VuYWJsZWQYASABKAgiGQoGU2V0QmxlEg8KB2VuYWJsZWQYASABKAgiIAoNU2V0R3BzVGFnZ2luZxIPCgdlbmFibGVkGAEgASgIIiEKEFNldERpYWdWZXJib3NpdHkSDQoFbGV2ZWwYASABKA0iIgoKU2V0Qml0cmF0ZRIUCgxiaXRyYXRlX2ticHMYASABKA0iLgoNU2V0UmVzb2x1dGlvbhINCgV3aWR0aBgBIAEoDRIOCgZoZWlnaHQYAiABKA0iqgMKEFNldFJlY29yZGluZ01ldGESEQoEdGFzaxgBIAEoCUgAiAEBEhUKCGxvY2F0aW9uGAIgASgJSAGIAQESFAoHbWVzc2FnZRgDIAEoCUgCiAEBEhUKCGNhcHR1cmVyGAggASgJSAOIAQESFQoIbGF0aXR1ZGUYBCABKAFIBIgBARIWCglsb25naXR1ZGUYBSABKAFIBYgBARIbCg5jbGllbnRfdW5peF91cxgGIAEoA0gGiAEBEiIKFWNsaWVudF91dGNfb2Zmc2V0X21pbhgHIAEoEUgHiAEBEhgKC29wZXJhdG9yX2lkGAkgASgJSAiIAQESGwoOZW52aXJvbm1lbnRfaWQYCiABKAlICYgBAUIHCgVfdGFza0ILCglfbG9jYXRpb25CCgoIX21lc3NhZ2VCCwoJX2NhcHR1cmVyQgsKCV9sYXRpdHVkZUIMCgpfbG9uZ2l0dWRlQhEKD19jbGllbnRfdW5peF91c0IYChZfY2xpZW50X3V0Y19vZmZzZXRfbWluQg4KDF9vcGVyYXRvcl9pZEIRCg9fZW52aXJvbm1lbnRfaWQifAoHU2V0VGltZRIPCgd1bml4X3VzGAEgASgDEhYKDnV0Y19vZmZzZXRfbWluGAIgASgREhUKCGxhdGl0dWRlGAMgASgBSACIAQESFgoJbG9uZ2l0dWRlGAQgASgBSAGIAQFCCwoJX2xhdGl0dWRlQgwKCl9sb25naXR1ZGUiLwoLQ29ubmVjdFdpZmkSDAoEc3NpZBgBIAEoCRISCgpwYXNzcGhyYXNlGAIgASgJIh0KDUpvaW5TYXZlZFdpZmkSDAoEc3NpZBgBIAEoCSIKCghTY2FuV2lmaSIaCgpGb3JnZXRXaWZpEgwKBHNzaWQYASABKAkiCwoJUmVzZXRUb0FwIroCCgpTZXRTdG9yYWdlEhkKDGVuZHBvaW50X3VybBgBIAEoCUgAiAEBEhMKBnJlZ2lvbhgCIAEoCUgBiAEBEhMKBmJ1Y2tldBgDIAEoCUgCiAEBEhoKDWFjY2Vzc19rZXlfaWQYBCABKAlIA4gBARIeChFzZWNyZXRfYWNjZXNzX2tleRgFIAEoCUgEiAEBEhMKBnByZWZpeBgGIAEoCUgFiAEBEhoKDXN0YXR1c19wcmVmaXgYByABKAlIBogBARIOCgZzZWFsZWQYCCABKAxCDwoNX2VuZHBvaW50X3VybEIJCgdfcmVnaW9uQgkKB19idWNrZXRCEAoOX2FjY2Vzc19rZXlfaWRCFAoSX3NlY3JldF9hY2Nlc3Nfa2V5QgkKB19wcmVmaXhCEAoOX3N0YXR1c19wcmVmaXgiuwIKC1Rlc3RTdG9yYWdlEhkKDGVuZHBvaW50X3VybBgBIAEoCUgAiAEBEhMKBnJlZ2lvbhgCIAEoCUgBiAEBEhMKBmJ1Y2tldBgDIAEoCUgCiAEBEhoKDWFjY2Vzc19rZXlfaWQYBCABKAlIA4gBARIeChFzZWNyZXRfYWNjZXNzX2tleRgFIAEoCUgEiAEBEhMKBnByZWZpeBgGIAEoCUgFiAEBEhoKDXN0YXR1c19wcmVmaXgYByABKAlIBogBARIOCgZzZWFsZWQYCCABKAxCDwoNX2VuZHBvaW50X3VybEIJCgdfcmVnaW9uQgkKB19idWNrZXRCEAoOX2FjY2Vzc19rZXlfaWRCFAoSX3NlY3JldF9hY2Nlc3Nfa2V5QgkKB19wcmVmaXhCEAoOX3N0YXR1c19wcmVmaXgiRQoOTGlzdFJlY29yZGluZ3MSDQoFbGltaXQYASABKA0SDgoGY3Vyc29yGAIgASgJEhQKDHNlc3Npb25fbmFtZRgDIAEoCSJ6ChFPcGVuUmVjb3JkaW5nRmlsZRIUCgxzZXNzaW9uX25hbWUYASABKAkSEQoJZmlsZV9uYW1lGAIgASgJEg4KBm9mZnNldBgDIAEoBBITCgtleHBlY3Rfc2l6ZRgEIAEoBBIXCg9leHBlY3RfbXRpbWVfbnMYBSABKAQiJwoPRGVsZXRlUmVjb3JkaW5nEhQKDHNlc3Npb25fbmFtZRgBIAEoCSIKCghHZXRTdGF0ZSIgCg1Gb3JtYXRTdG9yYWdlEg8KB2ZzX3R5cGUYASABKAkiHQoNU2V0Tm90aWNlTGFuZxIMCgRsYW5nGAEgASgJIiEKD1NldE5vdGljZVZvbHVtZRIOCgZ2b2x1bWUYASABKA0ikwUKDlNldENhbGlicmF0aW9uEkcKC3NlbnNvcl9raW5kGAEgASgOMjIudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0Q2FsaWJyYXRpb24uU2Vuc29yS2luZBIUCgxzZW5zb3JfaW5kZXgYAiABKA0SMQoKaW50cmluc2ljcxgLIAEoCzIbLmZveGdsb3ZlLkNhbWVyYUNhbGlicmF0aW9uSAASLgoKZXh0cmluc2ljcxgMIAEoCzIYLmZveGdsb3ZlLkZyYW1lVHJhbnNmb3JtSAASPwoIaW11X2luZm8YDSABKAsyKy52aXNpb19zY2hlbWEudjEuY2FsaWJyYXRpb24uSW11Q2FsaWJyYXRpb25IABJHCgxlbmNvZGVyX2luZm8YDiABKAsyLy52aXNpb19zY2hlbWEudjEuY2FsaWJyYXRpb24uRW5jb2RlckNhbGlicmF0aW9uSAASQgoNY2FtZXJhX3R1bmluZxgPIAEoCzIpLnZpc2lvX3NjaGVtYS52MS5jYWxpYnJhdGlvbi5DYW1lcmFUdW5pbmdIABITCgl1bml0X3NpZGUYECABKAlIABIyCg50Y3BfZXh0cmluc2ljcxgRIAEoCzIYLmZveGdsb3ZlLkZyYW1lVHJhbnNmb3JtSAASRQoJZmlkdWNpYWxzGBIgASgLMjAudmlzaW9fc2NoZW1hLnYxLmNhbGlicmF0aW9uLkZpZHVjaWFsQ2FsaWJyYXRpb25IACJVCgpTZW5zb3JLaW5kEhsKF1NFTlNPUl9LSU5EX1VOU1BFQ0lGSUVEEAASCgoGQ0FNRVJBEAESBwoDSU1VEAISCwoHRU5DT0RFUhADEggKBFVOSVQQBEIKCghhcnRpZmFjdCITChFDbGVhckNhbWVyYVR1bmluZyIhCg9TZXRSZWNvcmRpbmdLZXkSDgoGc2VhbGVkGAEgASgMYgZwcm90bzM", [file_foxglove_CameraCalibration, file_foxglove_FrameTransform, file_visio_schema_v1_calibration_imu, file_visio_schema_v1_calibration_encoder, file_visio_schema_v1_calibration_camera_tuning, file_visio_schema_v1_calibration_fiducial]);
 
 /**
  * @generated from message visio_schema.v1.control.Command
@@ -964,6 +964,22 @@ export const SetResolutionSchema: GenMessage<SetResolution> = /*@__PURE__*/
  * these defaults for that one session. Answered by a CommandResult (ok +
  * DeviceState echoing the persisted labels — the fleet ids below are the one
  * exception, see there).
+ * THE SETTINGS RULE — every settings message (SetRecordingMeta, SetStorage,
+ * TestStorage, SetTime's fix) follows it, field by field, with no exceptions:
+ *
+ *   ABSENT   keeps the stored value. A field the sender did not touch is not
+ *            sent, so saving one field can never reset another.
+ *   PRESENT  replaces it, and PRESENT-but-empty clears it. An empty value is
+ *            sent only when a user deliberately clears that field.
+ *
+ * That is why every field here is `optional`: proto3 drops an implicit-
+ * presence field equal to its default from the wire, so a plain `string`
+ * cannot tell "untouched" from "cleared". A sender predating this rule still
+ * decodes correctly — its empty fields never reached the wire, so they read
+ * as ABSENT and keep the stored value.
+ *
+ * A field whose cleared value would leave the setting unusable (a storage
+ * endpoint, bucket, key or secret) is REJECTED when sent empty, never stored.
  *
  * @generated from message visio_schema.v1.control.SetRecordingMeta
  */
@@ -971,65 +987,62 @@ export type SetRecordingMeta = Message<"visio_schema.v1.control.SetRecordingMeta
   /**
    * free-text capture task / label
    *
-   * @generated from field: string task = 1;
+   * @generated from field: optional string task = 1;
    */
-  task: string;
+  task?: string | undefined;
 
   /**
    * human-readable place (user-entered)
    *
-   * @generated from field: string location = 2;
+   * @generated from field: optional string location = 2;
    */
-  location: string;
+  location?: string | undefined;
 
   /**
    * free-text note / annotation
    *
-   * @generated from field: string message = 3;
+   * @generated from field: optional string message = 3;
    */
-  message: string;
+  message?: string | undefined;
 
   /**
    * who operated the capture (user-entered)
    *
-   * @generated from field: string capturer = 8;
+   * @generated from field: optional string capturer = 8;
    */
-  capturer: string;
+  capturer?: string | undefined;
 
   /**
    * GPS + host time/zone, mirroring StartRecording — persisted so auto-started
-   * boot recordings (no app input) still carry them. All optional; 0 = unknown.
-   * Unlike the text fields (where empty CLEARS the stored value), a 0 fix
-   * KEEPS the stored coordinates — hosts without a fix send 0, and wiping the
-   * last known position (also pushed via SetTime) would lose data. Coordinates
-   * are machine-owned, not user-cleared.
+   * boot recordings (no app input) still carry them. A host without a fix
+   * leaves the coordinates out rather than sending 0.
    *
-   * GPS; 0 when unknown (keeps stored value)
+   * GPS
    *
-   * @generated from field: double latitude = 4;
+   * @generated from field: optional double latitude = 4;
    */
-  latitude: number;
+  latitude?: number | undefined;
 
   /**
-   * GPS; 0 when unknown (keeps stored value)
+   * GPS
    *
-   * @generated from field: double longitude = 5;
+   * @generated from field: optional double longitude = 5;
    */
-  longitude: number;
+  longitude?: number | undefined;
 
   /**
-   * host reference timestamp (us since epoch)
+   * host reference timestamp (us)
    *
-   * @generated from field: int64 client_unix_us = 6;
+   * @generated from field: optional int64 client_unix_us = 6;
    */
-  clientUnixUs: bigint;
+  clientUnixUs?: bigint | undefined;
 
   /**
-   * minutes east of UTC (+480 = UTC+8)
+   * minutes east of UTC (+480)
    *
-   * @generated from field: sint32 client_utc_offset_min = 7;
+   * @generated from field: optional sint32 client_utc_offset_min = 7;
    */
-  clientUtcOffsetMin: number;
+  clientUtcOffsetMin?: number | undefined;
 
   /**
    * Fleet identifiers: which operator account and which environment/site a rig
@@ -1037,16 +1050,8 @@ export type SetRecordingMeta = Message<"visio_schema.v1.control.SetRecordingMeta
    * the labels above, but no user-facing client sets them — they are for
    * provisioning tooling and fleet scripts, over this same command. Unlike the
    * labels, they are NOT echoed on DeviceState: a setter confirms them by
-   * reading a recording, not from the ack.
-   *
-   * `optional` is load-bearing, not decoration. A client sends this message as
-   * a whole and the device REPLACES the stored text with what arrives, so a
-   * plain field would be cleared by every app or web-page "Set" — wiping an id
-   * that UI never showed and whoever is holding the phone cannot restore.
-   * With presence: ABSENT keeps the stored value, PRESENT replaces it, and
-   * present-but-empty clears it. That makes clearing an id an explicit act by
-   * a client that knows the field exists, which is the same protection the
-   * 0-means-keep rule gives the coordinates above.
+   * reading a recording, not from the ack. They were the first fields to take
+   * the settings rule above, because no app UI shows them to restore.
    *
    * @generated from field: optional string operator_id = 9;
    */
@@ -1096,18 +1101,21 @@ export type SetTime = Message<"visio_schema.v1.control.SetTime"> & {
   utcOffsetMin: number;
 
   /**
-   * GPS; 0 when unknown (keeps stored value)
+   * The settings rule (see SetRecordingMeta): a host without a fix leaves
+   * them out, and the stored fix is kept.
    *
-   * @generated from field: double latitude = 3;
+   * GPS
+   *
+   * @generated from field: optional double latitude = 3;
    */
-  latitude: number;
+  latitude?: number | undefined;
 
   /**
-   * GPS; 0 when unknown (keeps stored value)
+   * GPS
    *
-   * @generated from field: double longitude = 4;
+   * @generated from field: optional double longitude = 4;
    */
-  longitude: number;
+  longitude?: number | undefined;
 };
 
 /**
@@ -1251,50 +1259,57 @@ export const ResetToApSchema: GenMessage<ResetToAp> = /*@__PURE__*/
 
 /**
  * Persist S3 storage credentials. Replaces POST /storage.
+ * Follows the settings rule (see SetRecordingMeta): an absent field keeps the
+ * stored one, so "just repoint my bucket" sends the bucket alone. Sent empty,
+ * endpoint_url / region / bucket / access_key_id / secret_access_key are
+ * rejected (a destination without them cannot sign), while `prefix` clears to
+ * the bucket root and `status_prefix` clears to the default ("status/").
+ * One guard on top: a secret is never carried onto ANOTHER account — when
+ * endpoint_url or access_key_id changes, a secret must come with it.
  *
  * @generated from message visio_schema.v1.control.SetStorage
  */
 export type SetStorage = Message<"visio_schema.v1.control.SetStorage"> & {
   /**
-   * @generated from field: string endpoint_url = 1;
+   * @generated from field: optional string endpoint_url = 1;
    */
-  endpointUrl: string;
+  endpointUrl?: string | undefined;
 
   /**
-   * @generated from field: string region = 2;
+   * @generated from field: optional string region = 2;
    */
-  region: string;
+  region?: string | undefined;
 
   /**
-   * @generated from field: string bucket = 3;
+   * @generated from field: optional string bucket = 3;
    */
-  bucket: string;
+  bucket?: string | undefined;
 
   /**
-   * @generated from field: string access_key_id = 4;
+   * @generated from field: optional string access_key_id = 4;
    */
-  accessKeyId: string;
+  accessKeyId?: string | undefined;
 
   /**
-   * @generated from field: string secret_access_key = 5;
+   * @generated from field: optional string secret_access_key = 5;
    */
-  secretAccessKey: string;
+  secretAccessKey?: string | undefined;
 
   /**
-   * @generated from field: string prefix = 6;
+   * @generated from field: optional string prefix = 6;
    */
-  prefix: string;
+  prefix?: string | undefined;
 
   /**
    * Key prefix for periodic STATUS REPORTS (device health + a low-res camera
    * JPEG), written under the same credentials as `prefix` above but to a
-   * separate subtree with its own lifecycle and its own read grant. Empty means
-   * the device's default ("status/"). The two legs are independent: a device may
-   * upload recordings only, report status only, or both.
+   * separate subtree with its own lifecycle and its own read grant. The two
+   * legs are independent: a device may upload recordings only, report status
+   * only, or both.
    *
-   * @generated from field: string status_prefix = 7;
+   * @generated from field: optional string status_prefix = 7;
    */
-  statusPrefix: string;
+  statusPrefix?: string | undefined;
 
   /**
    * A `visio-seal-v1` envelope carrying this destination's SECRET access key
@@ -1304,7 +1319,7 @@ export type SetStorage = Message<"visio_schema.v1.control.SetStorage"> & {
    * private key can open them.
    *
    * Takes precedence over `secret_access_key` when both are set. An envelope
-   * that carries no `sk` leaves the stored secret alone, exactly as an empty
+   * that carries no `sk` leaves the stored secret alone, exactly as an absent
    * `secret_access_key` does — so a "just repoint my bucket" QR needs no
    * credential at all.
    *
@@ -1324,50 +1339,50 @@ export const SetStorageSchema: GenMessage<SetStorage> = /*@__PURE__*/
  * Validate S3 credentials WITHOUT persisting (a max-keys=1 list under the
  * recordings prefix, so the key needs only put + list — no bucket-info
  * grant). Replaces POST /storage/test. Same fields as SetStorage.
+ * Tests the destination SetStorage WOULD store if sent the same fields: the
+ * device folds them onto the stored destination by the same settings rule
+ * (absent keeps) and probes the result, so "test before save" signs with the
+ * secret Save would keep.
  *
  * @generated from message visio_schema.v1.control.TestStorage
  */
 export type TestStorage = Message<"visio_schema.v1.control.TestStorage"> & {
   /**
-   * @generated from field: string endpoint_url = 1;
+   * @generated from field: optional string endpoint_url = 1;
    */
-  endpointUrl: string;
+  endpointUrl?: string | undefined;
 
   /**
-   * @generated from field: string region = 2;
+   * @generated from field: optional string region = 2;
    */
-  region: string;
+  region?: string | undefined;
 
   /**
-   * @generated from field: string bucket = 3;
+   * @generated from field: optional string bucket = 3;
    */
-  bucket: string;
+  bucket?: string | undefined;
 
   /**
-   * @generated from field: string access_key_id = 4;
+   * @generated from field: optional string access_key_id = 4;
    */
-  accessKeyId: string;
+  accessKeyId?: string | undefined;
 
   /**
-   * @generated from field: string secret_access_key = 5;
+   * @generated from field: optional string secret_access_key = 5;
    */
-  secretAccessKey: string;
+  secretAccessKey?: string | undefined;
 
   /**
-   * @generated from field: string prefix = 6;
+   * @generated from field: optional string prefix = 6;
    */
-  prefix: string;
+  prefix?: string | undefined;
 
   /**
-   * Key prefix for periodic STATUS REPORTS (device health + a low-res camera
-   * JPEG), written under the same credentials as `prefix` above but to a
-   * separate subtree with its own lifecycle and its own read grant. Empty means
-   * the device's default ("status/"). The two legs are independent: a device may
-   * upload recordings only, report status only, or both.
+   * see SetStorage.status_prefix
    *
-   * @generated from field: string status_prefix = 7;
+   * @generated from field: optional string status_prefix = 7;
    */
-  statusPrefix: string;
+  statusPrefix?: string | undefined;
 
   /**
    * The same envelope as SetStorage.sealed. A credential the device will

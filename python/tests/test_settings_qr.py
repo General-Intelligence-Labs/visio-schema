@@ -1085,12 +1085,14 @@ class TestCliRemainingBranches:
                      "--dry-run"]) == 0
         assert "wifi.passphrase is NOT sealed" in capsys.readouterr().err
 
-    def test_a_partial_meta_section_warns_that_the_rest_is_cleared(
+    def test_a_partial_meta_section_is_not_called_a_wipe(
             self, tmp_path, config, capsys) -> None:
+        # The settings rule: the device KEEPS a meta field the code omits, so
+        # the old "the app will CLEAR them" note would now be a false alarm.
         config["meta"] = {"task": "only-this-one"}
         assert main(["--config", self._write(tmp_path, config),
                      "--dry-run"]) == 0
-        assert "will CLEAR them" in capsys.readouterr().err
+        assert "CLEAR" not in capsys.readouterr().err
 
     def test_a_malformed_storage_section_is_a_validation_error(
             self, tmp_path, capsys) -> None:
