@@ -232,6 +232,11 @@ def session_json_text(meta: dict[str, str]) -> str:
         # the same bytes sit in every part's VREC header.
         ("recording_key_fingerprint",
          _quote(meta.get("recording_key_fingerprint", ""))),
+        # These are filled only by the device's close-path sidecar rewrite, so
+        # the opening MCAP capture record cannot recover them. Empty/zero are
+        # the firmware's explicit "not available" values.
+        ("stop_cause", _quote(meta.get("stop_cause", ""))),
+        ("duration_s", _integer(meta, "duration_s")),
     )
     return "{" + ",".join(f"{_quote(k)}:{v}" for k, v in fields) + "}\n"
 

@@ -52,7 +52,8 @@ LEGACY = (
 FLEET_IDS_BLANK = '"operator_id":"","environment_id":""'
 # The whole post-frozen tail, in table order. One constant so a field added at
 # the end costs one edit here rather than one per assertion.
-TAIL_BLANK = f'{FLEET_IDS_BLANK},"recording_key_fingerprint":""'
+TAIL_BLANK = (f'{FLEET_IDS_BLANK},"recording_key_fingerprint":"",'
+              '"stop_cause":"","duration_s":0')
 GOLDEN = f"{LEGACY},{TAIL_BLANK}}}\n"
 
 # What the firmware embeds for that session: it omits the empty/zero fields, which the
@@ -190,7 +191,8 @@ def test_fleet_ids_render_after_the_frozen_layout(tmp_path):
     assert rebuild_session(session)[0] == REBUILT
     raw = (session / SIDECAR_NAME).read_text(encoding="utf-8")
     assert raw == LEGACY + (',"operator_id":"op-7","environment_id":"warehouse-b"'
-                            ',"recording_key_fingerprint":""}\n')
+                            ',"recording_key_fingerprint":"","stop_cause":"",'
+                            '"duration_s":0}\n')
 
 
 def test_record_serial_becomes_the_sidecars_device_id():
@@ -552,7 +554,8 @@ def test_the_rebuilt_sidecar_names_the_key_that_opens_the_session():
     rendered = session_json_text(
         {**GOLDEN_META, "recording_key_fingerprint": "0f1e2d3c4b5a6978"})
     assert rendered.endswith(
-        f'{FLEET_IDS_BLANK},"recording_key_fingerprint":"0f1e2d3c4b5a6978"}}\n')
+        f'{FLEET_IDS_BLANK},"recording_key_fingerprint":"0f1e2d3c4b5a6978",'
+        '"stop_cause":"","duration_s":0}\n')
 
 
 def test_a_plaintext_session_renders_an_empty_fingerprint_not_a_missing_key():

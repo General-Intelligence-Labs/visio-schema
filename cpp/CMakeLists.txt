@@ -136,6 +136,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT CMAKE_CROSSCOMPILI
     tests/test_topic_match.cc
     tests/test_log.cc
     tests/test_golden_vectors.cc
+    tests/test_time_history.cc
     tests/test_ota_vectors.cc
     tests/test_wire_recordings.cc
     tests/test_wire_ota_quiesce.cc

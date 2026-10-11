@@ -18,8 +18,9 @@ from visio_schema.reader import (
     IMU_RAW_SCHEMA,
     JOINT_STATES_SCHEMA,
     POSE_SCHEMA,
+    QUATERNION_SCHEMA,
     VIDEO_SCHEMA,
-    Record,
+    Orientation,
     Session,
 )
 from visio_schema.reader.adapters import (
@@ -31,6 +32,9 @@ from visio_schema.reader.adapters import (
 )
 
 QUAT = "visio_schema.v1.ros.geometry_msgs.Quaternion"
+# An unregistered schema with a settable field, for the Record-fallback tests. Was
+# QUAT until quaternions got their own element type (`Orientation`).
+VEC3 = "foxglove.Vector3"
 
 
 def test_builtins_are_registered():
@@ -46,6 +50,7 @@ def test_builtins_are_registered():
         IMU_RAW_SCHEMA,
         POSE_SCHEMA,
         JOINT_STATES_SCHEMA,
+        QUATERNION_SCHEMA,
     }
 
 
@@ -69,13 +74,13 @@ def test_record_adapter_uses_a_fresh_message_per_call():
     from visio_schema import message_class
 
     ctx = AdapterContext(
-        make_decoders=None, message_class_for=lambda n: message_class(QUAT)
+        make_decoders=None, message_class_for=lambda n: message_class(VEC3)
     )
-    adapter = build_adapter(QUAT, ctx)
+    adapter = build_adapter(VEC3, ctx)
 
-    first = message_class(QUAT)()
+    first = message_class(VEC3)()
     first.x = 1.0
-    second = message_class(QUAT)()
+    second = message_class(VEC3)()
     second.x = 2.0
 
     (_, _, rec_a), = adapter.emit(first.SerializeToString(), "t", 10)
@@ -137,7 +142,7 @@ def test_session_override_retypes_one_stream_without_touching_the_registry(rec):
     before = frozenset(registered_schemas())
 
     default = list(Session.open(path).stream(["/ego/imu/0/quat"]))
-    assert default and all(isinstance(el, Record) for el in default)
+    assert default and all(isinstance(el, Orientation) for el in default)
 
     typed = list(
         Session.open(path, adapters={QUAT: _TypedAdapter}).stream(["/ego/imu/0/quat"])
@@ -146,7 +151,7 @@ def test_session_override_retypes_one_stream_without_touching_the_registry(rec):
     assert all(isinstance(el, _Typed) for el in typed)
 
     assert registered_schemas() == before, "an override leaked into the global table"
-    assert QUAT not in _REGISTRY
+    assert _REGISTRY[QUAT] is not _TypedAdapter, "the override replaced the built-in"
 
 
 def test_video_still_decodes_through_its_adapter(rec):

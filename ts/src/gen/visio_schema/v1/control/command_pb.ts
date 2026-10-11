@@ -23,13 +23,15 @@ import type { EncoderCalibration } from "../calibration/encoder_pb.js";
 import { file_visio_schema_v1_calibration_encoder } from "../calibration/encoder_pb.js";
 import type { CameraTuning } from "../calibration/camera_tuning_pb.js";
 import { file_visio_schema_v1_calibration_camera_tuning } from "../calibration/camera_tuning_pb.js";
+import type { FiducialCalibration } from "../calibration/fiducial_pb.js";
+import { file_visio_schema_v1_calibration_fiducial } from "../calibration/fiducial_pb.js";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file visio_schema/v1/control/command.proto.
  */
 export const file_visio_schema_v1_control_command: GenFile = /*@__PURE__*/
-  fileDesc("CiV2aXNpb19zY2hlbWEvdjEvY29udHJvbC9jb21tYW5kLnByb3RvEhd2aXNpb19zY2hlbWEudjEuY29udHJvbCK1EwoHQ29tbWFuZBIVCg10YXJnZXRfZGV2aWNlGAEgASgJEhIKCmNvbW1hbmRfaWQYAiABKAQSQgoPc3RhcnRfcmVjb3JkaW5nGAogASgLMicudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU3RhcnRSZWNvcmRpbmdIABJACg5zdG9wX3JlY29yZGluZxgLIAEoCzImLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlN0b3BSZWNvcmRpbmdIABI1CghpZGVudGlmeRgMIAEoCzIhLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLklkZW50aWZ5SAASPwoOc2V0X2F1dG9fc3RhcnQYDSABKAsyJS52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRBdXRvU3RhcnRIABI8Cgxjb25uZWN0X3dpZmkYDiABKAsyJC52aXNpb19zY2hlbWEudjEuY29udHJvbC5Db25uZWN0V2lmaUgAEjYKCXNjYW5fd2lmaRgPIAEoCzIhLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNjYW5XaWZpSAASOgoLc2V0X3N0b3JhZ2UYECABKAsyIy52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRTdG9yYWdlSAASPAoMdGVzdF9zdG9yYWdlGBEgASgLMiQudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuVGVzdFN0b3JhZ2VIABJCCg9saXN0X3JlY29yZGluZ3MYEiABKAsyJy52aXNpb19zY2hlbWEudjEuY29udHJvbC5MaXN0UmVjb3JkaW5nc0gAEjYKCWdldF9zdGF0ZRgTIAEoCzIhLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLkdldFN0YXRlSAASQgoPc2V0X2NhbGlicmF0aW9uGBQgASgLMicudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0Q2FsaWJyYXRpb25IABI0CghzZXRfdGltZRgVIAEoCzIgLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFRpbWVIABJHChJzZXRfcmVjb3JkaW5nX21ldGEYFiABKAsyKS52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRSZWNvcmRpbmdNZXRhSAASTQoTc2V0X3ZpZGVvX3N0cmVhbWluZxgXIAEoCzIqLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFZpZGVvU3RyZWFtaW5nQgIYAUgAEjoKC3NldF9iaXRyYXRlGBggASgLMiMudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0Qml0cmF0ZUgAEkAKDmZvcm1hdF9zdG9yYWdlGBkgASgLMiYudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuRm9ybWF0U3RvcmFnZUgAEkEKD3NldF9hdXRvX3VwbG9hZBgaIAEoCzImLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldEF1dG9VcGxvYWRIABJBCg9zZXRfbm90aWNlX2xhbmcYGyABKAsyJi52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXROb3RpY2VMYW5nSAASQAoOc2V0X3Jlc29sdXRpb24YHCABKAsyJi52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRSZXNvbHV0aW9uSAASOQoLcmVzZXRfdG9fYXAYHSABKAsyIi52aXNpb19zY2hlbWEudjEuY29udHJvbC5SZXNldFRvQXBIABJJChNzZXRfYXVkaW9fcmVjb3JkaW5nGB4gASgLMioudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0QXVkaW9SZWNvcmRpbmdIABJIChFzZXRfaW11X2xpdmVfcmF0ZRgfIAEoCzInLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldEltdUxpdmVSYXRlQgIYAUgAEkUKEXNldF9zdHJlYW1fcG9saWN5GCAgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0U3RyZWFtUG9saWN5SAASOgoLZm9yZ2V0X3dpZmkYISABKAsyIy52aXNpb19zY2hlbWEudjEuY29udHJvbC5Gb3JnZXRXaWZpSAASRQoRc2V0X3N0YXR1c19yZXBvcnQYIiABKAsyKC52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRTdGF0dXNSZXBvcnRIABJJChNjbGVhcl9jYW1lcmFfdHVuaW5nGCMgASgLMioudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuQ2xlYXJDYW1lcmFUdW5pbmdIABJVChlzZXRfcmVjb3JkaW5nX2Rlc3RpbmF0aW9uGCQgASgLMjAudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0UmVjb3JkaW5nRGVzdGluYXRpb25IABJRChdzZXRfcmVjb3JkaW5nX2hlYXJ0YmVhdBglIAEoCzIuLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFJlY29yZGluZ0hlYXJ0YmVhdEgAEkUKEXNldF9ub3RpY2Vfdm9sdW1lGCYgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0Tm90aWNlVm9sdW1lSAASRQoRc2V0X3JlY29yZGluZ19rZXkYJyABKAsyKC52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRSZWNvcmRpbmdLZXlIABJHChJzZXRfaGFuZF9kZXRlY3Rpb24YKCABKAsyKS52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRIYW5kRGV0ZWN0aW9uSAASQQoPc2V0X2dwc190YWdnaW5nGCkgASgLMiYudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0R3BzVGFnZ2luZ0gAEkcKEnNldF9kaWFnX3ZlcmJvc2l0eRgqIAEoCzIpLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldERpYWdWZXJib3NpdHlIABJJChNvcGVuX3JlY29yZGluZ19maWxlGCsgASgLMioudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuT3BlblJlY29yZGluZ0ZpbGVIABJEChBkZWxldGVfcmVjb3JkaW5nGCwgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuRGVsZXRlUmVjb3JkaW5nSAASMgoHc2V0X2JsZRgtIAEoCzIfLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldEJsZUgAQgYKBGJvZHkiKAoVU2V0UmVjb3JkaW5nSGVhcnRiZWF0Eg8KB2VuYWJsZWQYASABKAgivAEKF1NldFJlY29yZGluZ0Rlc3RpbmF0aW9uElEKC2Rlc3RpbmF0aW9uGAEgASgOMjwudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0UmVjb3JkaW5nRGVzdGluYXRpb24uRGVzdGluYXRpb24SEAoIbGVhc2VfbXMYAiABKA0iPAoLRGVzdGluYXRpb24SFgoSREVTVElOQVRJT05fREVWSUNFEAASFQoRREVTVElOQVRJT05fUEhPTkUQASKvAQoOU3RhcnRSZWNvcmRpbmcSFAoMc2Vzc2lvbl9uYW1lGAEgASgJEgwKBHRhc2sYAiABKAkSEAoIbG9jYXRpb24YAyABKAkSEAoIbGF0aXR1ZGUYBCABKAESEQoJbG9uZ2l0dWRlGAUgASgBEhYKDmNsaWVudF91bml4X3VzGAYgASgDEh0KFWNsaWVudF91dGNfb2Zmc2V0X21pbhgHIAEoERILCgNmcHMYCCABKA0iDwoNU3RvcFJlY29yZGluZyIKCghJZGVudGlmeSKJAQoPU2V0U3RyZWFtUG9saWN5EjwKBXJ1bGVzGAEgAygLMi0udmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0U3RyZWFtUG9saWN5LlJ1bGUaOAoEUnVsZRINCgV0b3BpYxgBIAEoCRIMCgRkcm9wGAIgASgIEhMKC21heF9yYXRlX2h6GAMgASgNIigKEVNldFZpZGVvU3RyZWFtaW5nEg8KB2VuYWJsZWQYASABKAg6AhgBIiUKDlNldEltdUxpdmVSYXRlEg8KB3JhdGVfaHoYASABKA06AhgBIiIKDFNldEF1dG9TdGFydBISCgphdXRvX3N0YXJ0GAEgASgIIiIKD1NldFN0YXR1c1JlcG9ydBIPCgdlbmFibGVkGAEgASgIIiAKDVNldEF1dG9VcGxvYWQSDwoHZW5hYmxlZBgBIAEoCCIkChFTZXRBdWRpb1JlY29yZGluZxIPCgdlbmFibGVkGAEgASgIIiMKEFNldEhhbmREZXRlY3Rpb24SDwoHZW5hYmxlZBgBIAEoCCIZCgZTZXRCbGUSDwoHZW5hYmxlZBgBIAEoCCIgCg1TZXRHcHNUYWdnaW5nEg8KB2VuYWJsZWQYASABKAgiIQoQU2V0RGlhZ1ZlcmJvc2l0eRINCgVsZXZlbBgBIAEoDSIiCgpTZXRCaXRyYXRlEhQKDGJpdHJhdGVfa2JwcxgBIAEoDSIuCg1TZXRSZXNvbHV0aW9uEg0KBXdpZHRoGAEgASgNEg4KBmhlaWdodBgCIAEoDSKLAgoQU2V0UmVjb3JkaW5nTWV0YRIMCgR0YXNrGAEgASgJEhAKCGxvY2F0aW9uGAIgASgJEg8KB21lc3NhZ2UYAyABKAkSEAoIY2FwdHVyZXIYCCABKAkSEAoIbGF0aXR1ZGUYBCABKAESEQoJbG9uZ2l0dWRlGAUgASgBEhYKDmNsaWVudF91bml4X3VzGAYgASgDEh0KFWNsaWVudF91dGNfb2Zmc2V0X21pbhgHIAEoERIYCgtvcGVyYXRvcl9pZBgJIAEoCUgAiAEBEhsKDmVudmlyb25tZW50X2lkGAogASgJSAGIAQFCDgoMX29wZXJhdG9yX2lkQhEKD19lbnZpcm9ubWVudF9pZCJXCgdTZXRUaW1lEg8KB3VuaXhfdXMYASABKAMSFgoOdXRjX29mZnNldF9taW4YAiABKBESEAoIbGF0aXR1ZGUYAyABKAESEQoJbG9uZ2l0dWRlGAQgASgBIi8KC0Nvbm5lY3RXaWZpEgwKBHNzaWQYASABKAkSEgoKcGFzc3BocmFzZRgCIAEoCSIKCghTY2FuV2lmaSIaCgpGb3JnZXRXaWZpEgwKBHNzaWQYASABKAkiCwoJUmVzZXRUb0FwIqsBCgpTZXRTdG9yYWdlEhQKDGVuZHBvaW50X3VybBgBIAEoCRIOCgZyZWdpb24YAiABKAkSDgoGYnVja2V0GAMgASgJEhUKDWFjY2Vzc19rZXlfaWQYBCABKAkSGQoRc2VjcmV0X2FjY2Vzc19rZXkYBSABKAkSDgoGcHJlZml4GAYgASgJEhUKDXN0YXR1c19wcmVmaXgYByABKAkSDgoGc2VhbGVkGAggASgMIqwBCgtUZXN0U3RvcmFnZRIUCgxlbmRwb2ludF91cmwYASABKAkSDgoGcmVnaW9uGAIgASgJEg4KBmJ1Y2tldBgDIAEoCRIVCg1hY2Nlc3Nfa2V5X2lkGAQgASgJEhkKEXNlY3JldF9hY2Nlc3Nfa2V5GAUgASgJEg4KBnByZWZpeBgGIAEoCRIVCg1zdGF0dXNfcHJlZml4GAcgASgJEg4KBnNlYWxlZBgIIAEoDCJFCg5MaXN0UmVjb3JkaW5ncxINCgVsaW1pdBgBIAEoDRIOCgZjdXJzb3IYAiABKAkSFAoMc2Vzc2lvbl9uYW1lGAMgASgJInoKEU9wZW5SZWNvcmRpbmdGaWxlEhQKDHNlc3Npb25fbmFtZRgBIAEoCRIRCglmaWxlX25hbWUYAiABKAkSDgoGb2Zmc2V0GAMgASgEEhMKC2V4cGVjdF9zaXplGAQgASgEEhcKD2V4cGVjdF9tdGltZV9ucxgFIAEoBCInCg9EZWxldGVSZWNvcmRpbmcSFAoMc2Vzc2lvbl9uYW1lGAEgASgJIgoKCEdldFN0YXRlIiAKDUZvcm1hdFN0b3JhZ2USDwoHZnNfdHlwZRgBIAEoCSIdCg1TZXROb3RpY2VMYW5nEgwKBGxhbmcYASABKAkiIQoPU2V0Tm90aWNlVm9sdW1lEg4KBnZvbHVtZRgBIAEoDSLMBAoOU2V0Q2FsaWJyYXRpb24SRwoLc2Vuc29yX2tpbmQYASABKA4yMi52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRDYWxpYnJhdGlvbi5TZW5zb3JLaW5kEhQKDHNlbnNvcl9pbmRleBgCIAEoDRIxCgppbnRyaW5zaWNzGAsgASgLMhsuZm94Z2xvdmUuQ2FtZXJhQ2FsaWJyYXRpb25IABIuCgpleHRyaW5zaWNzGAwgASgLMhguZm94Z2xvdmUuRnJhbWVUcmFuc2Zvcm1IABI/CghpbXVfaW5mbxgNIAEoCzIrLnZpc2lvX3NjaGVtYS52MS5jYWxpYnJhdGlvbi5JbXVDYWxpYnJhdGlvbkgAEkcKDGVuY29kZXJfaW5mbxgOIAEoCzIvLnZpc2lvX3NjaGVtYS52MS5jYWxpYnJhdGlvbi5FbmNvZGVyQ2FsaWJyYXRpb25IABJCCg1jYW1lcmFfdHVuaW5nGA8gASgLMikudmlzaW9fc2NoZW1hLnYxLmNhbGlicmF0aW9uLkNhbWVyYVR1bmluZ0gAEhMKCXVuaXRfc2lkZRgQIAEoCUgAEjIKDnRjcF9leHRyaW5zaWNzGBEgASgLMhguZm94Z2xvdmUuRnJhbWVUcmFuc2Zvcm1IACJVCgpTZW5zb3JLaW5kEhsKF1NFTlNPUl9LSU5EX1VOU1BFQ0lGSUVEEAASCgoGQ0FNRVJBEAESBwoDSU1VEAISCwoHRU5DT0RFUhADEggKBFVOSVQQBEIKCghhcnRpZmFjdCITChFDbGVhckNhbWVyYVR1bmluZyIhCg9TZXRSZWNvcmRpbmdLZXkSDgoGc2VhbGVkGAEgASgMYgZwcm90bzM", [file_foxglove_CameraCalibration, file_foxglove_FrameTransform, file_visio_schema_v1_calibration_imu, file_visio_schema_v1_calibration_encoder, file_visio_schema_v1_calibration_camera_tuning]);
+  fileDesc("CiV2aXNpb19zY2hlbWEvdjEvY29udHJvbC9jb21tYW5kLnByb3RvEhd2aXNpb19zY2hlbWEudjEuY29udHJvbCL4EwoHQ29tbWFuZBIVCg10YXJnZXRfZGV2aWNlGAEgASgJEhIKCmNvbW1hbmRfaWQYAiABKAQSQgoPc3RhcnRfcmVjb3JkaW5nGAogASgLMicudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU3RhcnRSZWNvcmRpbmdIABJACg5zdG9wX3JlY29yZGluZxgLIAEoCzImLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlN0b3BSZWNvcmRpbmdIABI1CghpZGVudGlmeRgMIAEoCzIhLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLklkZW50aWZ5SAASPwoOc2V0X2F1dG9fc3RhcnQYDSABKAsyJS52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRBdXRvU3RhcnRIABI8Cgxjb25uZWN0X3dpZmkYDiABKAsyJC52aXNpb19zY2hlbWEudjEuY29udHJvbC5Db25uZWN0V2lmaUgAEjYKCXNjYW5fd2lmaRgPIAEoCzIhLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNjYW5XaWZpSAASOgoLc2V0X3N0b3JhZ2UYECABKAsyIy52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRTdG9yYWdlSAASPAoMdGVzdF9zdG9yYWdlGBEgASgLMiQudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuVGVzdFN0b3JhZ2VIABJCCg9saXN0X3JlY29yZGluZ3MYEiABKAsyJy52aXNpb19zY2hlbWEudjEuY29udHJvbC5MaXN0UmVjb3JkaW5nc0gAEjYKCWdldF9zdGF0ZRgTIAEoCzIhLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLkdldFN0YXRlSAASQgoPc2V0X2NhbGlicmF0aW9uGBQgASgLMicudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0Q2FsaWJyYXRpb25IABI0CghzZXRfdGltZRgVIAEoCzIgLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFRpbWVIABJHChJzZXRfcmVjb3JkaW5nX21ldGEYFiABKAsyKS52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRSZWNvcmRpbmdNZXRhSAASTQoTc2V0X3ZpZGVvX3N0cmVhbWluZxgXIAEoCzIqLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFZpZGVvU3RyZWFtaW5nQgIYAUgAEjoKC3NldF9iaXRyYXRlGBggASgLMiMudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0Qml0cmF0ZUgAEkAKDmZvcm1hdF9zdG9yYWdlGBkgASgLMiYudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuRm9ybWF0U3RvcmFnZUgAEkEKD3NldF9hdXRvX3VwbG9hZBgaIAEoCzImLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldEF1dG9VcGxvYWRIABJBCg9zZXRfbm90aWNlX2xhbmcYGyABKAsyJi52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXROb3RpY2VMYW5nSAASQAoOc2V0X3Jlc29sdXRpb24YHCABKAsyJi52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRSZXNvbHV0aW9uSAASOQoLcmVzZXRfdG9fYXAYHSABKAsyIi52aXNpb19zY2hlbWEudjEuY29udHJvbC5SZXNldFRvQXBIABJJChNzZXRfYXVkaW9fcmVjb3JkaW5nGB4gASgLMioudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0QXVkaW9SZWNvcmRpbmdIABJIChFzZXRfaW11X2xpdmVfcmF0ZRgfIAEoCzInLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldEltdUxpdmVSYXRlQgIYAUgAEkUKEXNldF9zdHJlYW1fcG9saWN5GCAgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0U3RyZWFtUG9saWN5SAASOgoLZm9yZ2V0X3dpZmkYISABKAsyIy52aXNpb19zY2hlbWEudjEuY29udHJvbC5Gb3JnZXRXaWZpSAASRQoRc2V0X3N0YXR1c19yZXBvcnQYIiABKAsyKC52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRTdGF0dXNSZXBvcnRIABJJChNjbGVhcl9jYW1lcmFfdHVuaW5nGCMgASgLMioudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuQ2xlYXJDYW1lcmFUdW5pbmdIABJVChlzZXRfcmVjb3JkaW5nX2Rlc3RpbmF0aW9uGCQgASgLMjAudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0UmVjb3JkaW5nRGVzdGluYXRpb25IABJRChdzZXRfcmVjb3JkaW5nX2hlYXJ0YmVhdBglIAEoCzIuLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFJlY29yZGluZ0hlYXJ0YmVhdEgAEkUKEXNldF9ub3RpY2Vfdm9sdW1lGCYgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0Tm90aWNlVm9sdW1lSAASRQoRc2V0X3JlY29yZGluZ19rZXkYJyABKAsyKC52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRSZWNvcmRpbmdLZXlIABJHChJzZXRfaGFuZF9kZXRlY3Rpb24YKCABKAsyKS52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRIYW5kRGV0ZWN0aW9uSAASQQoPc2V0X2dwc190YWdnaW5nGCkgASgLMiYudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0R3BzVGFnZ2luZ0gAEkcKEnNldF9kaWFnX3ZlcmJvc2l0eRgqIAEoCzIpLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldERpYWdWZXJib3NpdHlIABJJChNvcGVuX3JlY29yZGluZ19maWxlGCsgASgLMioudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuT3BlblJlY29yZGluZ0ZpbGVIABJEChBkZWxldGVfcmVjb3JkaW5nGCwgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuRGVsZXRlUmVjb3JkaW5nSAASMgoHc2V0X2JsZRgtIAEoCzIfLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldEJsZUgAEkEKD2pvaW5fc2F2ZWRfd2lmaRguIAEoCzImLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLkpvaW5TYXZlZFdpZmlIAEIGCgRib2R5IigKFVNldFJlY29yZGluZ0hlYXJ0YmVhdBIPCgdlbmFibGVkGAEgASgIIrwBChdTZXRSZWNvcmRpbmdEZXN0aW5hdGlvbhJRCgtkZXN0aW5hdGlvbhgBIAEoDjI8LnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFJlY29yZGluZ0Rlc3RpbmF0aW9uLkRlc3RpbmF0aW9uEhAKCGxlYXNlX21zGAIgASgNIjwKC0Rlc3RpbmF0aW9uEhYKEkRFU1RJTkFUSU9OX0RFVklDRRAAEhUKEURFU1RJTkFUSU9OX1BIT05FEAEirwEKDlN0YXJ0UmVjb3JkaW5nEhQKDHNlc3Npb25fbmFtZRgBIAEoCRIMCgR0YXNrGAIgASgJEhAKCGxvY2F0aW9uGAMgASgJEhAKCGxhdGl0dWRlGAQgASgBEhEKCWxvbmdpdHVkZRgFIAEoARIWCg5jbGllbnRfdW5peF91cxgGIAEoAxIdChVjbGllbnRfdXRjX29mZnNldF9taW4YByABKBESCwoDZnBzGAggASgNIg8KDVN0b3BSZWNvcmRpbmciCgoISWRlbnRpZnkiiQEKD1NldFN0cmVhbVBvbGljeRI8CgVydWxlcxgBIAMoCzItLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFN0cmVhbVBvbGljeS5SdWxlGjgKBFJ1bGUSDQoFdG9waWMYASABKAkSDAoEZHJvcBgCIAEoCBITCgttYXhfcmF0ZV9oehgDIAEoDSIoChFTZXRWaWRlb1N0cmVhbWluZxIPCgdlbmFibGVkGAEgASgIOgIYASIlCg5TZXRJbXVMaXZlUmF0ZRIPCgdyYXRlX2h6GAEgASgNOgIYASIiCgxTZXRBdXRvU3RhcnQSEgoKYXV0b19zdGFydBgBIAEoCCIiCg9TZXRTdGF0dXNSZXBvcnQSDwoHZW5hYmxlZBgBIAEoCCIgCg1TZXRBdXRvVXBsb2FkEg8KB2VuYWJsZWQYASABKAgiJAoRU2V0QXVkaW9SZWNvcmRpbmcSDwoHZW5hYmxlZBgBIAEoCCIjChBTZXRIYW5kRGV0ZWN0aW9uEg8KB2VuYWJsZWQYASABKAgiGQoGU2V0QmxlEg8KB2VuYWJsZWQYASABKAgiIAoNU2V0R3BzVGFnZ2luZxIPCgdlbmFibGVkGAEgASgIIiEKEFNldERpYWdWZXJib3NpdHkSDQoFbGV2ZWwYASABKA0iIgoKU2V0Qml0cmF0ZRIUCgxiaXRyYXRlX2ticHMYASABKA0iLgoNU2V0UmVzb2x1dGlvbhINCgV3aWR0aBgBIAEoDRIOCgZoZWlnaHQYAiABKA0iqgMKEFNldFJlY29yZGluZ01ldGESEQoEdGFzaxgBIAEoCUgAiAEBEhUKCGxvY2F0aW9uGAIgASgJSAGIAQESFAoHbWVzc2FnZRgDIAEoCUgCiAEBEhUKCGNhcHR1cmVyGAggASgJSAOIAQESFQoIbGF0aXR1ZGUYBCABKAFIBIgBARIWCglsb25naXR1ZGUYBSABKAFIBYgBARIbCg5jbGllbnRfdW5peF91cxgGIAEoA0gGiAEBEiIKFWNsaWVudF91dGNfb2Zmc2V0X21pbhgHIAEoEUgHiAEBEhgKC29wZXJhdG9yX2lkGAkgASgJSAiIAQESGwoOZW52aXJvbm1lbnRfaWQYCiABKAlICYgBAUIHCgVfdGFza0ILCglfbG9jYXRpb25CCgoIX21lc3NhZ2VCCwoJX2NhcHR1cmVyQgsKCV9sYXRpdHVkZUIMCgpfbG9uZ2l0dWRlQhEKD19jbGllbnRfdW5peF91c0IYChZfY2xpZW50X3V0Y19vZmZzZXRfbWluQg4KDF9vcGVyYXRvcl9pZEIRCg9fZW52aXJvbm1lbnRfaWQifAoHU2V0VGltZRIPCgd1bml4X3VzGAEgASgDEhYKDnV0Y19vZmZzZXRfbWluGAIgASgREhUKCGxhdGl0dWRlGAMgASgBSACIAQESFgoJbG9uZ2l0dWRlGAQgASgBSAGIAQFCCwoJX2xhdGl0dWRlQgwKCl9sb25naXR1ZGUiLwoLQ29ubmVjdFdpZmkSDAoEc3NpZBgBIAEoCRISCgpwYXNzcGhyYXNlGAIgASgJIh0KDUpvaW5TYXZlZFdpZmkSDAoEc3NpZBgBIAEoCSIKCghTY2FuV2lmaSIaCgpGb3JnZXRXaWZpEgwKBHNzaWQYASABKAkiCwoJUmVzZXRUb0FwIroCCgpTZXRTdG9yYWdlEhkKDGVuZHBvaW50X3VybBgBIAEoCUgAiAEBEhMKBnJlZ2lvbhgCIAEoCUgBiAEBEhMKBmJ1Y2tldBgDIAEoCUgCiAEBEhoKDWFjY2Vzc19rZXlfaWQYBCABKAlIA4gBARIeChFzZWNyZXRfYWNjZXNzX2tleRgFIAEoCUgEiAEBEhMKBnByZWZpeBgGIAEoCUgFiAEBEhoKDXN0YXR1c19wcmVmaXgYByABKAlIBogBARIOCgZzZWFsZWQYCCABKAxCDwoNX2VuZHBvaW50X3VybEIJCgdfcmVnaW9uQgkKB19idWNrZXRCEAoOX2FjY2Vzc19rZXlfaWRCFAoSX3NlY3JldF9hY2Nlc3Nfa2V5QgkKB19wcmVmaXhCEAoOX3N0YXR1c19wcmVmaXgiuwIKC1Rlc3RTdG9yYWdlEhkKDGVuZHBvaW50X3VybBgBIAEoCUgAiAEBEhMKBnJlZ2lvbhgCIAEoCUgBiAEBEhMKBmJ1Y2tldBgDIAEoCUgCiAEBEhoKDWFjY2Vzc19rZXlfaWQYBCABKAlIA4gBARIeChFzZWNyZXRfYWNjZXNzX2tleRgFIAEoCUgEiAEBEhMKBnByZWZpeBgGIAEoCUgFiAEBEhoKDXN0YXR1c19wcmVmaXgYByABKAlIBogBARIOCgZzZWFsZWQYCCABKAxCDwoNX2VuZHBvaW50X3VybEIJCgdfcmVnaW9uQgkKB19idWNrZXRCEAoOX2FjY2Vzc19rZXlfaWRCFAoSX3NlY3JldF9hY2Nlc3Nfa2V5QgkKB19wcmVmaXhCEAoOX3N0YXR1c19wcmVmaXgiRQoOTGlzdFJlY29yZGluZ3MSDQoFbGltaXQYASABKA0SDgoGY3Vyc29yGAIgASgJEhQKDHNlc3Npb25fbmFtZRgDIAEoCSJ6ChFPcGVuUmVjb3JkaW5nRmlsZRIUCgxzZXNzaW9uX25hbWUYASABKAkSEQoJZmlsZV9uYW1lGAIgASgJEg4KBm9mZnNldBgDIAEoBBITCgtleHBlY3Rfc2l6ZRgEIAEoBBIXCg9leHBlY3RfbXRpbWVfbnMYBSABKAQiJwoPRGVsZXRlUmVjb3JkaW5nEhQKDHNlc3Npb25fbmFtZRgBIAEoCSIKCghHZXRTdGF0ZSIgCg1Gb3JtYXRTdG9yYWdlEg8KB2ZzX3R5cGUYASABKAkiHQoNU2V0Tm90aWNlTGFuZxIMCgRsYW5nGAEgASgJIiEKD1NldE5vdGljZVZvbHVtZRIOCgZ2b2x1bWUYASABKA0ikwUKDlNldENhbGlicmF0aW9uEkcKC3NlbnNvcl9raW5kGAEgASgOMjIudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0Q2FsaWJyYXRpb24uU2Vuc29yS2luZBIUCgxzZW5zb3JfaW5kZXgYAiABKA0SMQoKaW50cmluc2ljcxgLIAEoCzIbLmZveGdsb3ZlLkNhbWVyYUNhbGlicmF0aW9uSAASLgoKZXh0cmluc2ljcxgMIAEoCzIYLmZveGdsb3ZlLkZyYW1lVHJhbnNmb3JtSAASPwoIaW11X2luZm8YDSABKAsyKy52aXNpb19zY2hlbWEudjEuY2FsaWJyYXRpb24uSW11Q2FsaWJyYXRpb25IABJHCgxlbmNvZGVyX2luZm8YDiABKAsyLy52aXNpb19zY2hlbWEudjEuY2FsaWJyYXRpb24uRW5jb2RlckNhbGlicmF0aW9uSAASQgoNY2FtZXJhX3R1bmluZxgPIAEoCzIpLnZpc2lvX3NjaGVtYS52MS5jYWxpYnJhdGlvbi5DYW1lcmFUdW5pbmdIABITCgl1bml0X3NpZGUYECABKAlIABIyCg50Y3BfZXh0cmluc2ljcxgRIAEoCzIYLmZveGdsb3ZlLkZyYW1lVHJhbnNmb3JtSAASRQoJZmlkdWNpYWxzGBIgASgLMjAudmlzaW9fc2NoZW1hLnYxLmNhbGlicmF0aW9uLkZpZHVjaWFsQ2FsaWJyYXRpb25IACJVCgpTZW5zb3JLaW5kEhsKF1NFTlNPUl9LSU5EX1VOU1BFQ0lGSUVEEAASCgoGQ0FNRVJBEAESBwoDSU1VEAISCwoHRU5DT0RFUhADEggKBFVOSVQQBEIKCghhcnRpZmFjdCITChFDbGVhckNhbWVyYVR1bmluZyIhCg9TZXRSZWNvcmRpbmdLZXkSDgoGc2VhbGVkGAEgASgMYgZwcm90bzM", [file_foxglove_CameraCalibration, file_foxglove_FrameTransform, file_visio_schema_v1_calibration_imu, file_visio_schema_v1_calibration_encoder, file_visio_schema_v1_calibration_camera_tuning, file_visio_schema_v1_calibration_fiducial]);
 
 /**
  * @generated from message visio_schema.v1.control.Command
@@ -273,6 +275,12 @@ export type Command = Message<"visio_schema.v1.control.Command"> & {
      */
     value: SetBle;
     case: "setBle";
+  } | {
+    /**
+     * @generated from field: visio_schema.v1.control.JoinSavedWifi join_saved_wifi = 46;
+     */
+    value: JoinSavedWifi;
+    case: "joinSavedWifi";
   } | { case: undefined; value?: undefined };
 };
 
@@ -956,6 +964,22 @@ export const SetResolutionSchema: GenMessage<SetResolution> = /*@__PURE__*/
  * these defaults for that one session. Answered by a CommandResult (ok +
  * DeviceState echoing the persisted labels — the fleet ids below are the one
  * exception, see there).
+ * THE SETTINGS RULE — every settings message (SetRecordingMeta, SetStorage,
+ * TestStorage, SetTime's fix) follows it, field by field, with no exceptions:
+ *
+ *   ABSENT   keeps the stored value. A field the sender did not touch is not
+ *            sent, so saving one field can never reset another.
+ *   PRESENT  replaces it, and PRESENT-but-empty clears it. An empty value is
+ *            sent only when a user deliberately clears that field.
+ *
+ * That is why every field here is `optional`: proto3 drops an implicit-
+ * presence field equal to its default from the wire, so a plain `string`
+ * cannot tell "untouched" from "cleared". A sender predating this rule still
+ * decodes correctly — its empty fields never reached the wire, so they read
+ * as ABSENT and keep the stored value.
+ *
+ * A field whose cleared value would leave the setting unusable (a storage
+ * endpoint, bucket, key or secret) is REJECTED when sent empty, never stored.
  *
  * @generated from message visio_schema.v1.control.SetRecordingMeta
  */
@@ -963,65 +987,62 @@ export type SetRecordingMeta = Message<"visio_schema.v1.control.SetRecordingMeta
   /**
    * free-text capture task / label
    *
-   * @generated from field: string task = 1;
+   * @generated from field: optional string task = 1;
    */
-  task: string;
+  task?: string | undefined;
 
   /**
    * human-readable place (user-entered)
    *
-   * @generated from field: string location = 2;
+   * @generated from field: optional string location = 2;
    */
-  location: string;
+  location?: string | undefined;
 
   /**
    * free-text note / annotation
    *
-   * @generated from field: string message = 3;
+   * @generated from field: optional string message = 3;
    */
-  message: string;
+  message?: string | undefined;
 
   /**
    * who operated the capture (user-entered)
    *
-   * @generated from field: string capturer = 8;
+   * @generated from field: optional string capturer = 8;
    */
-  capturer: string;
+  capturer?: string | undefined;
 
   /**
    * GPS + host time/zone, mirroring StartRecording — persisted so auto-started
-   * boot recordings (no app input) still carry them. All optional; 0 = unknown.
-   * Unlike the text fields (where empty CLEARS the stored value), a 0 fix
-   * KEEPS the stored coordinates — hosts without a fix send 0, and wiping the
-   * last known position (also pushed via SetTime) would lose data. Coordinates
-   * are machine-owned, not user-cleared.
+   * boot recordings (no app input) still carry them. A host without a fix
+   * leaves the coordinates out rather than sending 0.
    *
-   * GPS; 0 when unknown (keeps stored value)
+   * GPS
    *
-   * @generated from field: double latitude = 4;
+   * @generated from field: optional double latitude = 4;
    */
-  latitude: number;
+  latitude?: number | undefined;
 
   /**
-   * GPS; 0 when unknown (keeps stored value)
+   * GPS
    *
-   * @generated from field: double longitude = 5;
+   * @generated from field: optional double longitude = 5;
    */
-  longitude: number;
+  longitude?: number | undefined;
 
   /**
-   * host reference timestamp (us since epoch)
+   * host reference timestamp (us)
    *
-   * @generated from field: int64 client_unix_us = 6;
+   * @generated from field: optional int64 client_unix_us = 6;
    */
-  clientUnixUs: bigint;
+  clientUnixUs?: bigint | undefined;
 
   /**
-   * minutes east of UTC (+480 = UTC+8)
+   * minutes east of UTC (+480)
    *
-   * @generated from field: sint32 client_utc_offset_min = 7;
+   * @generated from field: optional sint32 client_utc_offset_min = 7;
    */
-  clientUtcOffsetMin: number;
+  clientUtcOffsetMin?: number | undefined;
 
   /**
    * Fleet identifiers: which operator account and which environment/site a rig
@@ -1029,16 +1050,8 @@ export type SetRecordingMeta = Message<"visio_schema.v1.control.SetRecordingMeta
    * the labels above, but no user-facing client sets them — they are for
    * provisioning tooling and fleet scripts, over this same command. Unlike the
    * labels, they are NOT echoed on DeviceState: a setter confirms them by
-   * reading a recording, not from the ack.
-   *
-   * `optional` is load-bearing, not decoration. A client sends this message as
-   * a whole and the device REPLACES the stored text with what arrives, so a
-   * plain field would be cleared by every app or web-page "Set" — wiping an id
-   * that UI never showed and whoever is holding the phone cannot restore.
-   * With presence: ABSENT keeps the stored value, PRESENT replaces it, and
-   * present-but-empty clears it. That makes clearing an id an explicit act by
-   * a client that knows the field exists, which is the same protection the
-   * 0-means-keep rule gives the coordinates above.
+   * reading a recording, not from the ack. They were the first fields to take
+   * the settings rule above, because no app UI shows them to restore.
    *
    * @generated from field: optional string operator_id = 9;
    */
@@ -1088,18 +1101,21 @@ export type SetTime = Message<"visio_schema.v1.control.SetTime"> & {
   utcOffsetMin: number;
 
   /**
-   * GPS; 0 when unknown (keeps stored value)
+   * The settings rule (see SetRecordingMeta): a host without a fix leaves
+   * them out, and the stored fix is kept.
    *
-   * @generated from field: double latitude = 3;
+   * GPS
+   *
+   * @generated from field: optional double latitude = 3;
    */
-  latitude: number;
+  latitude?: number | undefined;
 
   /**
-   * GPS; 0 when unknown (keeps stored value)
+   * GPS
    *
-   * @generated from field: double longitude = 4;
+   * @generated from field: optional double longitude = 4;
    */
-  longitude: number;
+  longitude?: number | undefined;
 };
 
 /**
@@ -1127,6 +1143,8 @@ export type ConnectWifi = Message<"visio_schema.v1.control.ConnectWifi"> & {
   ssid: string;
 
   /**
+   * Empty means an open network; it does not select a stored credential.
+   *
    * @generated from field: string passphrase = 2;
    */
   passphrase: string;
@@ -1138,6 +1156,30 @@ export type ConnectWifi = Message<"visio_schema.v1.control.ConnectWifi"> & {
  */
 export const ConnectWifiSchema: GenMessage<ConnectWifi> = /*@__PURE__*/
   messageDesc(file_visio_schema_v1_control_command, 21);
+
+/**
+ * Join an SSID from DeviceState.wifi_networks using its stored credential.
+ * On success it moves to the front of that list, like ConnectWifi. An SSID
+ * no longer remembered is refused with "wifi_not_remembered". Joining during
+ * a recording is refused with "busy_recording" because changing Wi-Fi
+ * channels can interrupt capture. The caller may lose its link, as with
+ * ConnectWifi, and should rediscover the device after a post-send disconnect.
+ *
+ * @generated from message visio_schema.v1.control.JoinSavedWifi
+ */
+export type JoinSavedWifi = Message<"visio_schema.v1.control.JoinSavedWifi"> & {
+  /**
+   * @generated from field: string ssid = 1;
+   */
+  ssid: string;
+};
+
+/**
+ * Describes the message visio_schema.v1.control.JoinSavedWifi.
+ * Use `create(JoinSavedWifiSchema)` to create a new message.
+ */
+export const JoinSavedWifiSchema: GenMessage<JoinSavedWifi> = /*@__PURE__*/
+  messageDesc(file_visio_schema_v1_control_command, 22);
 
 /**
  * Trigger a Wi-Fi scan; the CommandResult carries WifiScanResults. Replaces
@@ -1153,7 +1195,7 @@ export type ScanWifi = Message<"visio_schema.v1.control.ScanWifi"> & {
  * Use `create(ScanWifiSchema)` to create a new message.
  */
 export const ScanWifiSchema: GenMessage<ScanWifi> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 22);
+  messageDesc(file_visio_schema_v1_control_command, 23);
 
 /**
  * Forget ONE remembered Wi-Fi network, by SSID. ResetToAp forgets them all;
@@ -1188,7 +1230,7 @@ export type ForgetWifi = Message<"visio_schema.v1.control.ForgetWifi"> & {
  * Use `create(ForgetWifiSchema)` to create a new message.
  */
 export const ForgetWifiSchema: GenMessage<ForgetWifi> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 23);
+  messageDesc(file_visio_schema_v1_control_command, 24);
 
 /**
  * Forget ALL remembered Wi-Fi STA credentials and return to the setup soft-AP.
@@ -1213,54 +1255,61 @@ export type ResetToAp = Message<"visio_schema.v1.control.ResetToAp"> & {
  * Use `create(ResetToApSchema)` to create a new message.
  */
 export const ResetToApSchema: GenMessage<ResetToAp> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 24);
+  messageDesc(file_visio_schema_v1_control_command, 25);
 
 /**
  * Persist S3 storage credentials. Replaces POST /storage.
+ * Follows the settings rule (see SetRecordingMeta): an absent field keeps the
+ * stored one, so "just repoint my bucket" sends the bucket alone. Sent empty,
+ * endpoint_url / region / bucket / access_key_id / secret_access_key are
+ * rejected (a destination without them cannot sign), while `prefix` clears to
+ * the bucket root and `status_prefix` clears to the default ("status/").
+ * One guard on top: a secret is never carried onto ANOTHER account — when
+ * endpoint_url or access_key_id changes, a secret must come with it.
  *
  * @generated from message visio_schema.v1.control.SetStorage
  */
 export type SetStorage = Message<"visio_schema.v1.control.SetStorage"> & {
   /**
-   * @generated from field: string endpoint_url = 1;
+   * @generated from field: optional string endpoint_url = 1;
    */
-  endpointUrl: string;
+  endpointUrl?: string | undefined;
 
   /**
-   * @generated from field: string region = 2;
+   * @generated from field: optional string region = 2;
    */
-  region: string;
+  region?: string | undefined;
 
   /**
-   * @generated from field: string bucket = 3;
+   * @generated from field: optional string bucket = 3;
    */
-  bucket: string;
+  bucket?: string | undefined;
 
   /**
-   * @generated from field: string access_key_id = 4;
+   * @generated from field: optional string access_key_id = 4;
    */
-  accessKeyId: string;
+  accessKeyId?: string | undefined;
 
   /**
-   * @generated from field: string secret_access_key = 5;
+   * @generated from field: optional string secret_access_key = 5;
    */
-  secretAccessKey: string;
+  secretAccessKey?: string | undefined;
 
   /**
-   * @generated from field: string prefix = 6;
+   * @generated from field: optional string prefix = 6;
    */
-  prefix: string;
+  prefix?: string | undefined;
 
   /**
    * Key prefix for periodic STATUS REPORTS (device health + a low-res camera
    * JPEG), written under the same credentials as `prefix` above but to a
-   * separate subtree with its own lifecycle and its own read grant. Empty means
-   * the device's default ("status/"). The two legs are independent: a device may
-   * upload recordings only, report status only, or both.
+   * separate subtree with its own lifecycle and its own read grant. The two
+   * legs are independent: a device may upload recordings only, report status
+   * only, or both.
    *
-   * @generated from field: string status_prefix = 7;
+   * @generated from field: optional string status_prefix = 7;
    */
-  statusPrefix: string;
+  statusPrefix?: string | undefined;
 
   /**
    * A `visio-seal-v1` envelope carrying this destination's SECRET access key
@@ -1270,7 +1319,7 @@ export type SetStorage = Message<"visio_schema.v1.control.SetStorage"> & {
    * private key can open them.
    *
    * Takes precedence over `secret_access_key` when both are set. An envelope
-   * that carries no `sk` leaves the stored secret alone, exactly as an empty
+   * that carries no `sk` leaves the stored secret alone, exactly as an absent
    * `secret_access_key` does — so a "just repoint my bucket" QR needs no
    * credential at all.
    *
@@ -1284,56 +1333,56 @@ export type SetStorage = Message<"visio_schema.v1.control.SetStorage"> & {
  * Use `create(SetStorageSchema)` to create a new message.
  */
 export const SetStorageSchema: GenMessage<SetStorage> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 25);
+  messageDesc(file_visio_schema_v1_control_command, 26);
 
 /**
  * Validate S3 credentials WITHOUT persisting (a max-keys=1 list under the
  * recordings prefix, so the key needs only put + list — no bucket-info
  * grant). Replaces POST /storage/test. Same fields as SetStorage.
+ * Tests the destination SetStorage WOULD store if sent the same fields: the
+ * device folds them onto the stored destination by the same settings rule
+ * (absent keeps) and probes the result, so "test before save" signs with the
+ * secret Save would keep.
  *
  * @generated from message visio_schema.v1.control.TestStorage
  */
 export type TestStorage = Message<"visio_schema.v1.control.TestStorage"> & {
   /**
-   * @generated from field: string endpoint_url = 1;
+   * @generated from field: optional string endpoint_url = 1;
    */
-  endpointUrl: string;
+  endpointUrl?: string | undefined;
 
   /**
-   * @generated from field: string region = 2;
+   * @generated from field: optional string region = 2;
    */
-  region: string;
+  region?: string | undefined;
 
   /**
-   * @generated from field: string bucket = 3;
+   * @generated from field: optional string bucket = 3;
    */
-  bucket: string;
+  bucket?: string | undefined;
 
   /**
-   * @generated from field: string access_key_id = 4;
+   * @generated from field: optional string access_key_id = 4;
    */
-  accessKeyId: string;
+  accessKeyId?: string | undefined;
 
   /**
-   * @generated from field: string secret_access_key = 5;
+   * @generated from field: optional string secret_access_key = 5;
    */
-  secretAccessKey: string;
+  secretAccessKey?: string | undefined;
 
   /**
-   * @generated from field: string prefix = 6;
+   * @generated from field: optional string prefix = 6;
    */
-  prefix: string;
+  prefix?: string | undefined;
 
   /**
-   * Key prefix for periodic STATUS REPORTS (device health + a low-res camera
-   * JPEG), written under the same credentials as `prefix` above but to a
-   * separate subtree with its own lifecycle and its own read grant. Empty means
-   * the device's default ("status/"). The two legs are independent: a device may
-   * upload recordings only, report status only, or both.
+   * see SetStorage.status_prefix
    *
-   * @generated from field: string status_prefix = 7;
+   * @generated from field: optional string status_prefix = 7;
    */
-  statusPrefix: string;
+  statusPrefix?: string | undefined;
 
   /**
    * The same envelope as SetStorage.sealed. A credential the device will
@@ -1351,7 +1400,7 @@ export type TestStorage = Message<"visio_schema.v1.control.TestStorage"> & {
  * Use `create(TestStorageSchema)` to create a new message.
  */
 export const TestStorageSchema: GenMessage<TestStorage> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 26);
+  messageDesc(file_visio_schema_v1_control_command, 27);
 
 /**
  * List recorded sessions + their upload state; the CommandResult carries
@@ -1393,7 +1442,7 @@ export type ListRecordings = Message<"visio_schema.v1.control.ListRecordings"> &
  * Use `create(ListRecordingsSchema)` to create a new message.
  */
 export const ListRecordingsSchema: GenMessage<ListRecordings> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 27);
+  messageDesc(file_visio_schema_v1_control_command, 28);
 
 /**
  * Open one recording file for a pull. The CommandResult carries
@@ -1450,7 +1499,7 @@ export type OpenRecordingFile = Message<"visio_schema.v1.control.OpenRecordingFi
  * Use `create(OpenRecordingFileSchema)` to create a new message.
  */
 export const OpenRecordingFileSchema: GenMessage<OpenRecordingFile> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 28);
+  messageDesc(file_visio_schema_v1_control_command, 29);
 
 /**
  * Delete one whole recorded session from local storage. Command.target_device
@@ -1476,7 +1525,7 @@ export type DeleteRecording = Message<"visio_schema.v1.control.DeleteRecording">
  * Use `create(DeleteRecordingSchema)` to create a new message.
  */
 export const DeleteRecordingSchema: GenMessage<DeleteRecording> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 29);
+  messageDesc(file_visio_schema_v1_control_command, 30);
 
 /**
  * Pull the device's operational-state snapshot; the CommandResult carries
@@ -1492,7 +1541,7 @@ export type GetState = Message<"visio_schema.v1.control.GetState"> & {
  * Use `create(GetStateSchema)` to create a new message.
  */
 export const GetStateSchema: GenMessage<GetState> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 30);
+  messageDesc(file_visio_schema_v1_control_command, 31);
 
 /**
  * Reformat the recording SD card, then re-mount it. Manufacturing / quality-
@@ -1529,7 +1578,7 @@ export type FormatStorage = Message<"visio_schema.v1.control.FormatStorage"> & {
  * Use `create(FormatStorageSchema)` to create a new message.
  */
 export const FormatStorageSchema: GenMessage<FormatStorage> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 31);
+  messageDesc(file_visio_schema_v1_control_command, 32);
 
 /**
  * Select the language of the device's spoken voice notices (boards with a
@@ -1555,7 +1604,7 @@ export type SetNoticeLang = Message<"visio_schema.v1.control.SetNoticeLang"> & {
  * Use `create(SetNoticeLangSchema)` to create a new message.
  */
 export const SetNoticeLangSchema: GenMessage<SetNoticeLang> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 32);
+  messageDesc(file_visio_schema_v1_control_command, 33);
 
 /**
  * Set the loudness of the device's spoken voice notices. Persisted to a
@@ -1593,7 +1642,7 @@ export type SetNoticeVolume = Message<"visio_schema.v1.control.SetNoticeVolume">
  * Use `create(SetNoticeVolumeSchema)` to create a new message.
  */
 export const SetNoticeVolumeSchema: GenMessage<SetNoticeVolume> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 33);
+  messageDesc(file_visio_schema_v1_control_command, 34);
 
 /**
  * Persist one piece of sensor calibration (effective on next boot). The target
@@ -1705,12 +1754,18 @@ export type SetCalibration = Message<"visio_schema.v1.control.SetCalibration"> &
      * off the anchor camera and is re-published on
      * `/<dev>/camera/0/tcp_extrinsics`.
      *
-     * 10 reserved for a deferred magnetometer artifact.
-     *
      * @generated from field: foxglove.FrameTransform tcp_extrinsics = 17;
      */
     value: FrameTransform;
     case: "tcpExtrinsics";
+  } | {
+    /**
+     * UNIT
+     *
+     * @generated from field: visio_schema.v1.calibration.FiducialCalibration fiducials = 18;
+     */
+    value: FiducialCalibration;
+    case: "fiducials";
   } | { case: undefined; value?: undefined };
 };
 
@@ -1719,7 +1774,7 @@ export type SetCalibration = Message<"visio_schema.v1.control.SetCalibration"> &
  * Use `create(SetCalibrationSchema)` to create a new message.
  */
 export const SetCalibrationSchema: GenMessage<SetCalibration> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 34);
+  messageDesc(file_visio_schema_v1_control_command, 35);
 
 /**
  * @generated from enum visio_schema.v1.control.SetCalibration.SensorKind
@@ -1761,7 +1816,7 @@ export enum SetCalibration_SensorKind {
  * Describes the enum visio_schema.v1.control.SetCalibration.SensorKind.
  */
 export const SetCalibration_SensorKindSchema: GenEnum<SetCalibration_SensorKind> = /*@__PURE__*/
-  enumDesc(file_visio_schema_v1_control_command, 34, 0);
+  enumDesc(file_visio_schema_v1_control_command, 35, 0);
 
 /**
  * Erase this unit's stored per-unit camera tuning (the camera_tuning record) and
@@ -1790,7 +1845,7 @@ export type ClearCameraTuning = Message<"visio_schema.v1.control.ClearCameraTuni
  * Use `create(ClearCameraTuningSchema)` to create a new message.
  */
 export const ClearCameraTuningSchema: GenMessage<ClearCameraTuning> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 35);
+  messageDesc(file_visio_schema_v1_control_command, 36);
 
 /**
  * Set, rotate or clear the symmetric key this unit encrypts its recordings
@@ -1831,5 +1886,5 @@ export type SetRecordingKey = Message<"visio_schema.v1.control.SetRecordingKey">
  * Use `create(SetRecordingKeySchema)` to create a new message.
  */
 export const SetRecordingKeySchema: GenMessage<SetRecordingKey> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 36);
+  messageDesc(file_visio_schema_v1_control_command, 37);
 

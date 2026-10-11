@@ -8,6 +8,7 @@
 #include <pb_encode.h>
 
 #include <string>
+#include <cstring>
 #include <vector>
 
 #include "foxglove/CameraCalibration.pb.h"
@@ -161,4 +162,40 @@ TEST(CalibrationNanopb, TargetDeviceIsReadable) {
   visio_schema_v1_control_Command out = visio_schema_v1_control_Command_init_zero;
   ASSERT_TRUE(Decode(visio_schema_v1_control_Command_fields, buf, &out));
   EXPECT_STREQ(out.target_device, "gripper_left");
+}
+
+TEST(CalibrationNanopb, MaximumFiducialBundleAndEmptyClearRoundTrip) {
+  visio_schema_v1_control_Command cmd = visio_schema_v1_control_Command_init_zero;
+  cmd.which_body = visio_schema_v1_control_Command_set_calibration_tag;
+  auto& sc = cmd.body.set_calibration;
+  sc.sensor_kind = visio_schema_v1_control_SetCalibration_SensorKind_UNIT;
+  sc.which_artifact = visio_schema_v1_control_SetCalibration_fiducials_tag;
+  auto& bundle = sc.artifact.fiducials;
+  bundle.fiducials_count = 32;
+  for (pb_size_t i = 0; i < bundle.fiducials_count; ++i) {
+    auto& m = bundle.fiducials[i];
+    std::memset(m.dictionary, 'D', sizeof(m.dictionary) - 1);
+    m.dictionary[sizeof(m.dictionary) - 1] = 0;
+    m.marker_id = i;
+    m.size_m = .0225;
+    m.has_T_cam0_fiducial = true;
+    m.T_cam0_fiducial.has_position = true;
+    m.T_cam0_fiducial.has_orientation = true;
+    m.T_cam0_fiducial.position.x = .01;
+    m.T_cam0_fiducial.orientation.w = 1.;
+  }
+  std::string buf = Encode(visio_schema_v1_control_Command_fields, cmd);
+  EXPECT_GT(buf.size(), 2048u);
+  visio_schema_v1_control_Command decoded = visio_schema_v1_control_Command_init_zero;
+  ASSERT_TRUE(Decode(visio_schema_v1_control_Command_fields, buf, &decoded));
+  EXPECT_EQ(decoded.body.set_calibration.artifact.fiducials.fiducials_count, 32u);
+  bundle.fiducials_count = 0;
+  buf = Encode(visio_schema_v1_control_Command_fields, cmd);
+  ASSERT_TRUE(Decode(visio_schema_v1_control_Command_fields, buf, &decoded));
+  EXPECT_EQ(decoded.body.set_calibration.which_artifact,
+            visio_schema_v1_control_SetCalibration_fiducials_tag);
+  EXPECT_EQ(decoded.body.set_calibration.artifact.fiducials.fiducials_count, 0u);
+  visio_schema_v1_calibration_FiducialCalibration empty =
+      visio_schema_v1_calibration_FiducialCalibration_init_zero;
+  EXPECT_TRUE(Encode(visio_schema_v1_calibration_FiducialCalibration_fields, empty).empty());
 }

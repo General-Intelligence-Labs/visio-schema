@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package visio_schema.v1.calibration;
+
+import "foxglove/Pose.proto";
+
+// Complete replacement of the calibrated markers mounted on one device.
+// Topic: /<root>/fiducials. An empty bundle clears the mounted-marker catalog.
+message FiducialCalibration {
+  repeated Fiducial fiducials = 1;
+}
+
+// Native marker identity: dictionary/family and detector ID, with no renumbering.
+// Square origin is its center; x right, y up, z outward. Corners are TL/TR/BR/BL.
+message Fiducial {
+  string dictionary = 1;
+  uint32 marker_id = 2;
+  double size_m = 3; // Detected square side, excluding the outer white margin.
+  // T_X_Y maps Y coordinates into X. Position in metres, orientation xyzw.
+  foxglove.Pose T_cam0_fiducial = 4;
+}

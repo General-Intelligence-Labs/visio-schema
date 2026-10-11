@@ -179,12 +179,7 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "must be 8-63 characters (or empty for an open network)",
         "zh": "必须为 8-63 个字符（留空表示开放网络）",
     },
-    # -- cli: size + partial-meta notices -------------------------------- #
-    "notePartialMeta": {
-        "en": ("note: meta fields {fields} are absent — the app will CLEAR "
-               "them on the device"),
-        "zh": "注意：缺少 meta 字段 {fields}——应用会在设备上清除它们",
-    },
+    # -- cli: size notices ----------------------------------------------- #
     "invalidPayload": {
         "en": "invalid settings payload:", "zh": "设置载荷无效："},
     "payloadTooDense": {

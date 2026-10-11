@@ -1,7 +1,7 @@
 """breaking_waivers.py is the field-scoped waiver filter behind `make breaking`:
-it drops ONLY the specific reviewed field deletions in its WAIVERS table and fails
-on every other wire-breaking change. Guard both directions — a real break must not
-be swallowed (fail-open), and the sanctioned deletion must pass.
+it drops ONLY the specific reviewed changes in its WAIVERS table and fails on
+every other wire-breaking change. Guard both directions — a real break must not
+be swallowed (fail-open), and the sanctioned change must pass.
 """
 from __future__ import annotations
 
@@ -98,7 +98,71 @@ def test_waived_number_in_different_message_fails() -> None:
     assert "un-waived" in r.stderr
 
 
-def test_non_delete_break_is_never_waived() -> None:
+_COMMAND = "proto/visio_schema/v1/control/command.proto"
+
+
+_TO_EXPLICIT = ('from "optional with implicit presence" '
+                'to "optional with explicit presence"')
+
+
+def _presence(num: int, message: str, transition: str = _TO_EXPLICIT) -> dict:
+    return _err(_COMMAND, f'Field "{num}" with name "f{num}" on message '
+                          f'"{message}" changed cardinality {transition}.',
+                type_="FIELD_SAME_CARDINALITY")
+
+
+def test_settings_presence_change_is_waived() -> None:
+    """0.10.0: the settings commands' fields gained explicit presence."""
+    errors = ([_presence(n, "SetRecordingMeta") for n in range(1, 9)]
+              + [_presence(n, "SetTime") for n in (3, 4)]
+              + [_presence(n, m) for m in ("SetStorage", "TestStorage")
+                 for n in range(1, 8)])
+    r = _run(errors)
+    assert r.returncode == 0
+    assert "24 error(s) waived" in r.stdout
+
+
+def test_presence_change_outside_the_waived_fields_fails() -> None:
+    # SetTime's other fields kept implicit presence; a change there is new.
+    r = _run([_presence(1, "SetTime")])
+    assert r.returncode == 1
+    assert "un-waived" in r.stderr
+
+
+def test_presence_change_in_an_unwaived_message_fails() -> None:
+    r = _run([_presence(1, "ConnectWifi")])
+    assert r.returncode == 1
+    assert "un-waived" in r.stderr
+
+
+def test_presence_waiver_only_covers_implicit_to_explicit() -> None:
+    # Once 0.10.0 is the baseline, dropping `optional` again reports the same
+    # rule on the same field — and that one is a behaviour break.
+    for transition in (
+        'from "optional with explicit presence" '
+        'to "optional with implicit presence"',
+        'from "optional with explicit presence" to "repeated"',
+    ):
+        r = _run([_presence(1, "SetStorage", transition)])
+        assert r.returncode == 1, transition
+        assert "un-waived" in r.stderr
+
+
+def test_other_rules_on_presence_waived_fields_fail() -> None:
+    for rule, text in (
+        ("FIELD_NO_DELETE", 'Previously present field "1" with name '
+                            '"endpoint_url" on message "SetStorage" was '
+                            'deleted.'),
+        ("FIELD_SAME_TYPE", 'Field "1" with name "endpoint_url" on message '
+                            '"SetStorage" changed type from "string" to '
+                            '"bytes".'),
+    ):
+        r = _run([_err(_COMMAND, text, type_=rule)])
+        assert r.returncode == 1, rule
+        assert "un-waived" in r.stderr
+
+
+def test_unwaived_rule_on_a_waived_number_fails() -> None:
     # A type change carries a waived field number but a different rule id.
     r = _run([_err(_IMU, 'Field "3" with name "accel_bias_x" on message '
                          '"ImuCalibration" changed type from "double" to "float".',

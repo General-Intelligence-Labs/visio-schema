@@ -89,18 +89,35 @@ def test_generator_field_caps_match_the_options(sizes: dict[str, int]) -> None:
 # Bytes matter as much as strings here: the sealed provisioning envelope is a
 # `bytes` field, and an unsized one would make a v2 settings QR appear to apply
 # while setting nothing at all.
-@pytest.mark.parametrize("message",
-                         ["SetStorage", "TestStorage", "SetRecordingKey",
-                          "ListRecordings", "OpenRecordingFile", "DeleteRecording"])
-def test_every_inbound_field_is_sized(sizes: dict[str, int], message: str) -> None:
+#
+# Enumerated from `Command.body` rather than listed by hand: a hand-written list
+# only covers the bodies someone remembered to add, so a NEW command's unsized
+# field passes. That is not hypothetical — JoinSavedWifi shipped unsized and the
+# firmware could not read its ssid.
+#
+# The device GENERATES the session name and never reads the client's, so that
+# one field is deliberately a callback. Every other entry added here owes the
+# same kind of reason.
+UNREAD_BY_THE_DEVICE = frozenset({"StartRecording.session_name"})
+
+
+def test_every_inbound_field_is_sized(sizes: dict[str, int]) -> None:
     from visio_schema.v1.control import command_pb2
 
-    descriptor = getattr(command_pb2, message).DESCRIPTOR
-    for field in descriptor.fields:
-        if field.type in (field.TYPE_STRING, field.TYPE_BYTES):
-            assert f"{message}.{field.name}" in sizes, (
-                f"{message}.{field.name} has no max_size — it would decode as a callback"
-            )
+    unsized = []
+    for body in command_pb2.Command.DESCRIPTOR.oneofs_by_name["body"].fields:
+        if body.type != body.TYPE_MESSAGE:
+            continue
+        for field in body.message_type.fields:
+            if field.type not in (field.TYPE_STRING, field.TYPE_BYTES):
+                continue
+            name = f"{body.message_type.name}.{field.name}"
+            if name not in sizes and name not in UNREAD_BY_THE_DEVICE:
+                unsized.append(name)
+    assert not unsized, (
+        f"no max_size, so these decode as callbacks the firmware cannot "
+        f"read: {sorted(unsized)}"
+    )
 
 
 # The sealed envelope caps are a MEASUREMENT, not a guess: this builds the

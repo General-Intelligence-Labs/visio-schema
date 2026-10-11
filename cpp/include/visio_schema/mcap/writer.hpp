@@ -122,7 +122,7 @@ class McapWriter {
   // writer. A no-op (false) when read-back is off.
   bool ReadbackStep(std::chrono::milliseconds budget);
   // Spans queued or in progress. Nonzero with a false step means the front
-  // span is waiting for trail_bytes of further writes.
+  // span is waiting for settle_bytes of further writes.
   std::size_t readback_pending() const;
   McapReadbackStats readback_stats() const;
   // Latched once a span stayed wrong after its rewrite (or the rewrite

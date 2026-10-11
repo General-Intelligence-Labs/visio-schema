@@ -39,11 +39,13 @@ from .domain import (
     IMU_RAW_SCHEMA,
     JOINT_STATES_SCHEMA,
     POSE_SCHEMA,
+    QUATERNION_SCHEMA,
     VIDEO_SCHEMA,
     Element,
     ImuSample,
     JointState,
     Ns,
+    Orientation,
     Pose,
     Record,
 )
@@ -271,6 +273,27 @@ class _JointStateAdapter:
         return iter(())
 
 
+class _OrientationAdapter:
+    """`visio_schema.v1.ros.geometry_msgs.Quaternion` -> `Orientation`.
+
+    Stamped with the wire ``t_ns``, never the payload's ``timestamp``: see
+    `Orientation`. Stateless, and a fresh array per element so nothing aliases
+    across the reorder heap.
+    """
+
+    def __init__(self, schema_name: str, ctx: AdapterContext) -> None:
+        self._cls = ctx.message_class_for(schema_name)
+
+    def emit(self, data: bytes, topic: str, t_ns: Ns) -> Iterator[Triple]:
+        m = self._cls()
+        m.ParseFromString(data)
+        yield t_ns, t_ns, Orientation(
+            topic=topic, t_ns=t_ns, q=np.array([m.x, m.y, m.z, m.w], float))
+
+    def flush(self) -> Iterator[Triple]:
+        return iter(())
+
+
 # ── everything else: opaque, but on the same clock ─────────────────────── #
 
 
@@ -305,4 +328,5 @@ element_adapter(VIDEO_SCHEMA)(_DecodedAdapter)
 element_adapter(IMAGE_SCHEMA)(_DecodedAdapter)
 element_adapter(IMU_RAW_SCHEMA)(_ImuAdapter)
 element_adapter(POSE_SCHEMA)(_PoseAdapter)
+element_adapter(QUATERNION_SCHEMA)(_OrientationAdapter)
 element_adapter(JOINT_STATES_SCHEMA)(_JointStateAdapter)

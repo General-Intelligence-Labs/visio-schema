@@ -43,6 +43,7 @@ visio_schema.v1.service.heartbeat.Heartbeat.client_id   max_size:40
 visio_schema.v1.control.Command.target_device         max_size:32
 visio_schema.v1.control.ConnectWifi.ssid              max_size:33
 visio_schema.v1.control.ConnectWifi.passphrase        max_size:64
+visio_schema.v1.control.JoinSavedWifi.ssid            max_size:33
 # Same 33 as ConnectWifi.ssid, and it must stay the same: a 32-octet SSID that
 # ConnectWifi accepts would otherwise be truncated here, and the entry it named
 # could never be removed.
@@ -211,6 +212,8 @@ foxglove.CameraCalibration.R                   max_count:9
 foxglove.CameraCalibration.P                   max_count:12
 foxglove.FrameTransform.parent_frame_id       max_size:16
 foxglove.FrameTransform.child_frame_id        max_size:16
+visio_schema.v1.calibration.FiducialCalibration.fiducials max_count:32
+visio_schema.v1.calibration.Fiducial.dictionary max_size:64
 # TactileLayout (glove taxel->hand map): bound the repeated + label fields so the
 # whole message is FT_STATIC (no malloc). points headroom 160 > the glove's 137 taxels.
 # precision is an enum (no options). Group.fields reuses foxglove.PackedElementField;
@@ -342,3 +345,12 @@ visio_schema.v1.sensor.DiagLog.blob                     max_size:1024
 # here (the device ENCODES this message) but the publisher still clamps, so a
 # board wider than the bound reports the first N instead of corrupting.
 visio_schema.v1.sensor.SystemHealth.camera_temps        max_count:8
+
+# VIVE: repeated fields use callbacks; the producer bounds batches to 128 poses.
+visio_schema.v1.sensor.VivePoseBatch.frame_id                max_size:32
+visio_schema.v1.sensor.VivePoseBatch.station_map_id          max_size:40
+visio_schema.v1.sensor.VivePoseBatch.Tracker.tracker_serial  max_size:24
+visio_schema.v1.sensor.ViveStatus.station_map_id             max_size:40
+visio_schema.v1.sensor.ViveStatus.detail                     max_size:160
+visio_schema.v1.sensor.ViveStatus.Tracker.tracker_serial     max_size:24
+visio_schema.v1.sensor.ViveStatus.Tracker.detail             max_size:128
