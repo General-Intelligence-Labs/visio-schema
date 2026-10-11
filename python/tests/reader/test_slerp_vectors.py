@@ -1,7 +1,7 @@
 """The orientation kernel against the cross-language golden file.
 
 `tests/golden/slerp_vectors.txt` is what the C++ `SlerpXyzw` replays too. This
-side asserts the Python reference still produces those exact bytes, so the file
+side asserts the Python reference still reproduces it within 1e-12, so the file
 cannot silently go stale behind a kernel change: regenerate it with
 scripts/gen_slerp_vectors.py, and the C++ suite then tells you whether the twin
 followed.
@@ -36,8 +36,11 @@ def test_kernel_reproduces_the_golden_output(name):
     v = struct.unpack("<13d", CASES[name])
     q0, q1, w, want = np.array(v[0:4]), np.array(v[4:8]), v[8], np.array(v[9:13])
     got = slerp_xyzw(q0, q1, w)
-    # Bit-for-bit on the reference implementation: this file WAS produced by it.
-    assert got.tobytes() == want.tobytes()
+    # Not bitwise: numpy and libm round sin/acos differently in the last ulp
+    # across platforms, so CI's runner disagreed with the generating box. The
+    # C++ twin uses the same 1e-12 (~1e-10 degrees); a kernel change is far
+    # larger, so a stale file still fails.
+    np.testing.assert_allclose(got, want, rtol=0, atol=1e-12)
 
 
 def test_orientation_blends_through_the_kernel():
