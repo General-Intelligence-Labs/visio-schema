@@ -37,7 +37,6 @@ from .i18n import LANGUAGES, set_language, tr
 from .interactive import ask_language, interactive, interactive_recording_key
 from .payload import (
     MAX_BYTES,
-    META_FIELDS,
     PAYLOAD_TYPE,
     PLAINTEXT_VERSION,
     WARN_BYTES,
@@ -220,16 +219,6 @@ def render_qr(payload: str, out: Path) -> None:
     print(tr("qrWritten", version=qr.version, path=out), file=sys.stderr)
 
 
-def _warn_partial_meta(cfg: dict) -> None:
-    meta = cfg.get("meta")
-    if isinstance(meta, dict) and len(meta) < len(META_FIELDS):
-        # These four SetRecordingMeta fields carry no per-field presence
-        # (unlike its fleet ids, which this payload does not set), so a
-        # partial meta section clears the rest.
-        missing = [f for f in META_FIELDS if f not in meta]
-        print(tr("notePartialMeta", fields=missing), file=sys.stderr)
-
-
 def _warn_unsealed_wifi(cfg: dict) -> None:
     """v2 seals the storage secret but NOT the Wi-Fi passphrase.
 
@@ -326,7 +315,6 @@ def cmd_qr(args: argparse.Namespace) -> int:
 
     normalize_bare_numbers(cfg)
     normalize_storage_prefix(cfg)
-    _warn_partial_meta(cfg)
     secrets = _collect_secrets(cfg, args)
 
     if args.plaintext:

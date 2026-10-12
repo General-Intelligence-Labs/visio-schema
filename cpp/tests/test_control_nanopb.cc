@@ -152,6 +152,7 @@ TEST(ControlNanopb, StorageSealedFieldsAreStaticAndAgree) {
   auto& s = cmd.body.set_storage.sealed;
   s.size = static_cast<pb_size_t>(blob.size());
   std::memcpy(s.bytes, blob.data(), blob.size());
+  cmd.body.set_storage.has_bucket = true;  // presence: absent would keep
   std::snprintf(cmd.body.set_storage.bucket,
                 sizeof(cmd.body.set_storage.bucket), "gilabs-captures");
 

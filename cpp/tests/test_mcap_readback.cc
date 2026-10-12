@@ -62,15 +62,7 @@ TEST_F(McapReadback, DetectsAndRewritesAnInjectedStaleSector) {
     const std::string on = Stem("stale_on");
     McapReadbackOptions o = TestOptions();
     std::optional<std::uint64_t> injected_at;
-    o.before_span_read_for_test = [&](const std::string& path,
-                                      std::uint64_t off, std::uint64_t len,
-                                      McapReadbackPass pass) {
-      if (injected_at || pass != McapReadbackPass::kFirstRead ||
-          !SpanCanHoldTheBlock(len))
-        return;
-      injected_at = off + kStaleBlockOffset;
-      InjectStaleBlock(path, off + kStaleBlockOffset);
-    };
+    o.before_span_read_for_test = InjectStaleBlockOnce(&injected_at);
     testing::internal::CaptureStderr();
     const Outcome out = Record(on, key, o, 16);
     const std::string log = testing::internal::GetCapturedStderr();
@@ -257,4 +249,58 @@ TEST_F(McapReadback, TailIsVerifiedAfterClose) {
   const auto [bounded_stem, bounded] = record("tail_bounded", 1);
   EXPECT_EQ(bounded.stats.spans_verified + bounded.stats.spans_skipped,
             static_cast<std::uint64_t>(parts));
+}
+
+// A production sizing: 512 KiB writeback spans, a 3 MiB ring, 256 KiB settle
+// and pieces, stepped every 100 ms. One piece per step is NOT enough: at the
+// 2.5 MB/s worst-case rate it verifies ~262 KB against ~250 KB written, and the
+// first repair (rewrite + re-read of a ~794 KiB plaintext span) lets the
+// writer overrun the ring. Two pieces per tick leave 2x headroom: every
+// byte of every part is verified, none skipped, and a stale block is
+// repaired. Time is modelled, not slept: a "tick" is 250 KB of writes then
+// kPiecesPerTick one-piece steps.
+TEST_F(McapReadback, DeviceSizingVerifiesEverySpanAtFullRate) {
+  constexpr std::size_t kVideoPayload = 25 * 1024;  // one ~frame
+  constexpr std::size_t kBytesPerTick = 250 * 1000;
+  constexpr int kMessagesTotal = 1200;              // ~30 MB, 3+ parts
+  constexpr int kPiecesPerTick = 2;
+  for (const bool encrypted : {false, true}) {
+    SCOPED_TRACE(encrypted ? "VREC" : "plaintext");
+    const std::optional<RecordingKey> key =
+        encrypted ? std::optional<RecordingKey>(TestKey(9)) : std::nullopt;
+    const std::string stem = Stem(encrypted ? "device_vrec" : "device");
+    McapReadbackOptions o;
+    o.ring_bytes = 3 << 20;
+    o.settle_bytes = 256 << 10;
+    o.piece_bytes = 256 << 10;
+    o.close_flush_ms = 3000;
+    std::optional<std::uint64_t> injected;
+    o.before_span_read_for_test = InjectStaleBlockOnce(&injected);
+    const Channel ch = MakeChannel(kFirstDynamic, "/dev/camera/0");
+    McapWriter w(TempPath(stem + ".mcap"), 10u << 20, 0.0, false, 0,
+                 512 * 1024, key, std::move(o));
+    std::size_t since_tick = 0;
+    testing::internal::CaptureStderr();
+    for (int i = 0; i < kMessagesTotal; ++i) {
+      w.Write(ch, Data(kFirstDynamic, Payload(i, kVideoPayload)));
+      since_tick += kVideoPayload;
+      if (since_tick >= kBytesPerTick) {
+        since_tick = 0;
+        for (int p = 0; p < kPiecesPerTick; ++p)
+          w.ReadbackStep(milliseconds(0));  // exactly one piece per call
+      }
+    }
+    w.Close();
+    const std::string log = testing::internal::GetCapturedStderr();
+    const McapReadbackStats s = w.readback_stats();
+    ASSERT_TRUE(injected.has_value());
+    EXPECT_GE(PartCount(stem), 3);
+    EXPECT_EQ(s.spans_skipped, 0u) << log;
+    EXPECT_EQ(s.bytes_verified, PartsBytes(stem)) << log;
+    EXPECT_EQ(s.spans_mismatched, 1u);
+    EXPECT_EQ(s.spans_rewritten_ok, 1u);
+    EXPECT_EQ(s.spans_unrepaired, 0u);
+    EXPECT_FALSE(w.storage_fault());
+    EXPECT_LE(s.max_lag_bytes, 3u << 20) << "ring must cover the lag";
+  }
 }

@@ -196,7 +196,8 @@ def interactive() -> dict:
 
     if _ask_yn(tr("askMeta")):
         meta = {f: _ask_bounded(f, META_MAX_BYTES[f]) for f in META_FIELDS}
-        # Skipped fields are omitted; the CLI prints the will-be-cleared note.
+        # Skipped fields are omitted, so the device keeps them (the
+        # settings rule, command.proto above SetRecordingMeta).
         cfg["meta"] = {k: v for k, v in meta.items() if v}
 
     if _ask_yn(tr("askStorage")):
