@@ -323,6 +323,27 @@ message DeviceState {
   // calibration or an unsynchronized clock). Report publication timestamps
   // are independent of this persisted value.
   optional uint64 calibration_updated_at_us = 41;
+  // ── anti-flicker ──
+  // The mains anti-flicker setting (SetAntiFlicker) as the cameras run it. A
+  // command's echo reports the last completed apply; anti_flicker_pending
+  // stays true until the camera thread finishes the request. A failed switch
+  // that restores the IQ exposure reports OFF; a failed restore is unknown
+  // and reports UNKNOWN until a subsequent apply succeeds.
+  //
+  // UNSUPPORTED covers both "this device cannot run the setting" and "this
+  // firmware predates it", and lets the app HIDE the control. OFF is the
+  // camera's tuned default, not "no anti-flicker at all".
+  enum AntiFlicker {
+    ANTI_FLICKER_UNSUPPORTED = 0;
+    ANTI_FLICKER_OFF         = 1;
+    ANTI_FLICKER_50HZ        = 2;
+    ANTI_FLICKER_60HZ        = 3;
+    ANTI_FLICKER_UNKNOWN     = 4; // failed apply and restore; retry is available
+  }
+  AntiFlicker anti_flicker = 42;
+  // A persisted SetAntiFlicker request is waiting for the camera thread.
+  // anti_flicker reports the last completed apply, including a failed restore.
+  bool anti_flicker_pending = 43;
 
   // ── notice volume ──
   // Voice-notice loudness, 0-100 (SetNoticeVolume; 0 = muted).
