@@ -67,8 +67,20 @@ message Command {
     SetBle set_ble = 45;
     JoinSavedWifi join_saved_wifi = 46;
     SetAntiFlicker set_anti_flicker = 47;
+    CaptureSnapshot capture_snapshot = 48;
   }
 }
+
+// Capture the primary camera as an upright 640x360 JPEG (quality 60). Must be
+// addressed to the directly connected device: empty targets and hub-relayed
+// targets are refused at the first hop with invalid_request. Returns the
+// Snapshot metadata in CommandResult and a finite SnapshotChunk response stream
+// on /<device>/snapshot, sent only to the requesting connection. The snapshot_id
+// is this Command's nonzero command_id. Register reception before sending.
+// Works over every command transport, including BLE. Does not start recording
+// or enable live video. Errors include unsupported, busy, timeout,
+// encode_failed, and image_too_large. Exactly one capture is admitted at a time.
+message CaptureSnapshot {}
 
 // Mains anti-flicker for every camera on this device: the switch a wearer turns
 // on when lamps on AC mains (LED, fluorescent) flicker in the video.

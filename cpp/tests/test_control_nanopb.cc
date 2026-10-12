@@ -6,6 +6,9 @@
 // QR would appear to apply while setting nothing. Everything asserted here is
 // what makes the cap real on the device rather than a number in a text file.
 #include <gtest/gtest.h>
+#include "golden_vectors_test_util.hpp"
+#include "visio_schema/wire/codec/frame.hpp"
+#include "visio_schema/wire/message.hpp"
 
 #include <pb_decode.h>
 #include <pb_encode.h>
@@ -17,6 +20,7 @@
 
 #include "visio_schema/v1/control/command.pb.h"
 #include "visio_schema/v1/control/command_result.pb.h"
+#include "visio_schema/v1/service/snapshot/snapshot.pb.h"
 
 namespace {
 
@@ -188,4 +192,45 @@ TEST(ControlNanopb, DeviceStateCarriesTheFingerprintNotTheKey) {
   EXPECT_STREQ(got.recording_key_fingerprint, "730311a8e481b5e6");
   EXPECT_STREQ(got.seal_key_id, "77ba509d");
   EXPECT_TRUE(got.recording_encryption_required);
+}
+
+
+TEST(ControlNanopb, SnapshotCorpusAndFiniteStream) {
+  const auto vectors = visio_golden::Load("snapshot_vectors.txt");
+  ASSERT_EQ(vectors.size(), 8u);
+  for (const auto& entry : vectors) {
+    if (entry.first.find(".cmd") != std::string::npos) {
+      visio_schema_v1_control_Command cmd = visio_schema_v1_control_Command_init_zero;
+      ASSERT_TRUE(Decode(visio_schema_v1_control_Command_fields, entry.second, &cmd));
+      EXPECT_EQ(Encode(visio_schema_v1_control_Command_fields, cmd), entry.second);
+      EXPECT_STREQ(cmd.target_device, "GILABS-TEST");
+    } else if (entry.first.find(".chunk") != std::string::npos) {
+      visio_schema_v1_service_snapshot_SnapshotChunk chunk =
+          visio_schema_v1_service_snapshot_SnapshotChunk_init_zero;
+      ASSERT_TRUE(Decode(visio_schema_v1_service_snapshot_SnapshotChunk_fields, entry.second, &chunk));
+      EXPECT_EQ(Encode(visio_schema_v1_service_snapshot_SnapshotChunk_fields, chunk), entry.second);
+      EXPECT_EQ(sizeof(chunk.jpeg.bytes), 1024u);
+      EXPECT_GT(chunk.jpeg.size, 0u);
+    } else {
+      visio_schema_v1_control_CommandResult result = visio_schema_v1_control_CommandResult_init_zero;
+      ASSERT_TRUE(Decode(visio_schema_v1_control_CommandResult_fields, entry.second, &result));
+      EXPECT_EQ(Encode(visio_schema_v1_control_CommandResult_fields, result), entry.second);
+      pb_release(visio_schema_v1_control_CommandResult_fields, &result);
+    }
+  }
+  visio_schema_v1_control_CommandResult result = visio_schema_v1_control_CommandResult_init_zero;
+  ASSERT_TRUE(Decode(visio_schema_v1_control_CommandResult_fields, vectors.at("capture.result"), &result));
+  ASSERT_EQ(result.which_payload, visio_schema_v1_control_CommandResult_snapshot_tag);
+  EXPECT_EQ(result.payload.snapshot.snapshot_id, result.command_id);
+  EXPECT_EQ(result.payload.snapshot.camera_index, 7u);
+  EXPECT_EQ(result.payload.snapshot.capture_pts_us, 12345678901234567ull);
+}
+
+TEST(ControlNanopb, SnapshotStreamRejectsOversizeBytes) {
+  visio_schema_v1_service_snapshot_SnapshotChunk chunk =
+      visio_schema_v1_service_snapshot_SnapshotChunk_init_zero;
+  chunk.jpeg.size = 1025;
+  std::uint8_t buffer[2048];
+  auto os = pb_ostream_from_buffer(buffer, sizeof(buffer));
+  EXPECT_FALSE(pb_encode(&os, visio_schema_v1_service_snapshot_SnapshotChunk_fields, &chunk));
 }

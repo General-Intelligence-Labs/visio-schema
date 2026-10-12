@@ -143,6 +143,7 @@ visio_schema.v1.control.SetStreamPolicy.Rule.topic    max_size:64
 #      ack is a static struct; the two list payloads below are FT_POINTER) -----
 visio_schema.v1.control.CommandResult.error_code               max_size:32
 visio_schema.v1.control.CommandResult.error_message            max_size:128
+visio_schema.v1.service.snapshot.SnapshotChunk.jpeg           max_size:1024
 visio_schema.v1.control.DeviceState.recording_session_name     max_size:64
 # recording_* / recording_meta_* mirror StartRecording + SetRecordingMeta above
 # (the board echoes what it accepted); keep the sizes equal or the echo would

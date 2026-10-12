@@ -136,6 +136,9 @@ message RecordingFileOpen {
 // intentionally NOT duplicated
 // here. Carried only inside CommandResult; it has no own stream.
 message DeviceState {
+  // A working primary-camera JPEG tap, independent of cloud status reporting
+  // and hand detection. False on older firmware or camera-less devices.
+  bool snapshot_supported = 44;
   // ── recording ──
   bool   recording_auto_start    = 1;
   string recording_session_name  = 2;  // empty when not recording
@@ -418,5 +421,21 @@ message CommandResult {
     WifiScanResults   scan       = 11;
     RecordingsList    recordings = 12;
     RecordingFileOpen file_open  = 13;
+    Snapshot          snapshot   = 14;
   }
+}
+
+// The image described by CaptureSnapshot's single command acknowledgment.
+// JPEG bytes arrive separately on the caller-only /<device>/snapshot channel
+// as visio_schema.v1.service.snapshot.SnapshotChunk messages. Chunks may arrive
+// before this acknowledgment; correlate by snapshot_id == command_id.
+message Snapshot {
+  uint64 snapshot_id = 1;
+  uint32 camera_index = 2;
+  uint32 width = 3;
+  uint32 height = 4;
+  // Original VI capture PTS, CLOCK_BOOTTIME microseconds, in the camera's own
+  // clock. This is not UTC and is not shifted by hop-level header timesync.
+  uint64 capture_pts_us = 5;
+  uint32 total_bytes = 6; // 1..131072; fixed bound on the full JPEG
 }

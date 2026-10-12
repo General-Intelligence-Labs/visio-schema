@@ -39,10 +39,26 @@ bool FramedOutbox::Enqueue(const std::uint8_t* frame, std::size_t len,
                  keyframe);
 }
 
+bool FramedOutbox::TryEnqueue(SharedFrame frame, std::size_t queued_byte_limit) {
+  if (!frame || frame->empty() || frame->size() > queued_byte_limit) return false;
+  const auto enqueue_us = now_();
+  std::lock_guard<std::mutex> lk(mu_);
+  if (queue_bytes_ > queued_byte_limit - frame->size()) return false;
+  queue_bytes_ += frame->size();
+  queue_.push_back({std::move(frame), enqueue_us, false});
+  return true;
+}
+
+void FramedOutbox::DiscardQueued() {
+  std::lock_guard<std::mutex> lk(mu_);
+  queue_.clear();
+  queue_bytes_ = 0;
+}
+
 // Three-phase drain (see header + umi_channel.hpp). The blocking WriteFn runs
 // OUTSIDE mu_; only phase 2/3 (touching queue_) hold the lock. Eviction may only
 // touch the uncommitted queue_; in_flight_ is already on the wire.
-bool FramedOutbox::Drain(const WriteFn& wr) {
+bool FramedOutbox::Drain(const WriteFn& wr, bool one_frame) {
   // Phase 1: finish what's in-flight (drainer-private; no lock). Committed bytes.
   if (in_flight_off_ < in_flight_size()) {
     const long r = wr(in_flight_->data() + in_flight_off_,
@@ -52,6 +68,7 @@ bool FramedOutbox::Drain(const WriteFn& wr) {
     if (in_flight_off_ < in_flight_size()) return true;  // partial/EAGAIN
     in_flight_.reset();
     in_flight_off_ = 0;
+    if (one_frame) return true;  // let the endpoint re-check control priority
   }
 
   // Phase 2 + 3 under the queue lock: age-evict, then promote into in_flight_.

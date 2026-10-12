@@ -6,6 +6,18 @@ bump the MINOR version.
 
 ## Unreleased
 
+### Manual camera snapshots
+
+Added the `CaptureSnapshot` command (tag 48), the bounded
+`CommandResult.snapshot` payload (tag 14), and `DeviceState.snapshot_supported`
+(field 44). A directly connected host can retrieve a fresh primary-camera
+640×360 q60 JPEG in 1024-byte chunks on any command transport, including BLE.
+One capture solicits a caller-only finite `SnapshotChunk` response stream;
+its single command acknowledgment describes the image. No per-chunk commands
+or post-capture cache are required.
+See [the snapshot contract](docs/protocol/snapshots.md). This addition introduces
+new message types and belongs in the next minor schema release.
+
 ### SetAntiFlicker — a per-unit switch for lamps that flicker on AC mains
 
 `Command.set_anti_flicker` (tag 47) and `DeviceState.anti_flicker` (field 42:

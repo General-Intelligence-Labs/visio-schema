@@ -34,6 +34,8 @@ void FramedFdEndpoint::AdoptFd(int fd) {
     return;
   }
   fd_ = fd;
+  std::lock_guard<std::mutex> lk(reliable_send_mu_);
+  reliable_link_up_ = true;
 }
 
 // Control queue: near-lossless and bounded by frame count (control + IMU are
@@ -88,6 +90,10 @@ void FramedFdEndpoint::Start(InboundFn on_inbound, ClosedFn on_closed) {
 
 void FramedFdEndpoint::Stop() {
   stop_.store(true);
+  {
+    std::lock_guard<std::mutex> lk(reliable_send_mu_);
+    reliable_link_up_ = false;
+  }
   Wake();
   if (thread_.joinable()) thread_.join();
   if (fd_ >= 0) {
@@ -95,11 +101,29 @@ void FramedFdEndpoint::Stop() {
     fd_ = -1;
   }
   wake_.Close();
+  reliable_outbox_.Clear();
 }
 
 void FramedFdEndpoint::Send(const Message& msg) {
   // Qualified: an override that looped Send would otherwise recurse.
   FramedFdEndpoint::SendBatch(&msg, 1);
+}
+
+Endpoint::SendResult FramedFdEndpoint::TrySendReliable(const Message& msg) {
+  std::lock_guard<std::mutex> lk(reliable_send_mu_);
+  if (stop_.load() || !reliable_link_up_) return SendResult::Closed;
+  if (!msg.framed) {
+    msg.framed = std::make_shared<const std::vector<std::uint8_t>>(EncodeFramed(msg));
+  }
+  if (msg.framed->size() > kReliableQueueBytes) return SendResult::Unsupported;
+  if (!reliable_outbox_.TryEnqueue(msg.framed, kReliableQueueBytes))
+    return SendResult::Backpressure;
+  Wake();
+  return SendResult::Accepted;
+}
+
+void FramedFdEndpoint::DiscardReliable() {
+  reliable_outbox_.DiscardQueued();
 }
 
 // ONE wake for the whole group, which is the only thing this adds. Waking per
@@ -347,18 +371,22 @@ void FramedFdEndpoint::Pump() {
     // (neither in-flight) do we choose, and then control goes first so a reply
     // never waits behind the video backlog. The video outbox is OneAtATime, so
     // "finish the in-flight frame" is bounded to a single video frame.
-    FramedOutbox* pick = outbox_.InFlightActive()         ? &outbox_
-                         : ctrl_outbox_.InFlightActive()  ? &ctrl_outbox_
-                         : ctrl_outbox_.HasPending()      ? &ctrl_outbox_
-                                                          : &outbox_;
-    if (!pick->Drain(wr)) {
+    FramedOutbox* pick = &outbox_;
+    if (ctrl_outbox_.InFlightActive()) pick = &ctrl_outbox_;
+    else if (reliable_outbox_.InFlightActive()) pick = &reliable_outbox_;
+    else if (!outbox_.InFlightActive()) {
+      if (ctrl_outbox_.HasPending()) pick = &ctrl_outbox_;
+      else if (reliable_outbox_.HasPending()) pick = &reliable_outbox_;
+    }
+    if (!pick->Drain(wr, pick == &reliable_outbox_)) {
       MarkLinkDead();
       return;
     }
     // Bytes still in flight => the write hit EAGAIN; wait for the next POLLOUT
     // rather than spinning on a socket that isn't taking data.
     if (pick->InFlightActive()) break;
-    if (!ctrl_outbox_.HasPending() && !outbox_.HasPending()) break;
+    if (!ctrl_outbox_.HasPending() && !reliable_outbox_.HasPending() &&
+        !outbox_.HasPending()) break;
   }
   UpdateStallState(accepted);
 }
@@ -387,7 +415,8 @@ void FramedFdEndpoint::UpdateStallState(long accepted) {
           "to keyframes-only");
     }
   }
-  const bool pending = ctrl_outbox_.HasPending() || outbox_.HasPending();
+  const bool pending = ctrl_outbox_.HasPending() || reliable_outbox_.HasPending() ||
+                       outbox_.HasPending();
   if (accepted > 0 || !pending) {
     last_progress_ns_ = now_ns;
     if (link_stalled_.load(std::memory_order_relaxed) && accepted > 0) {
@@ -423,6 +452,11 @@ void FramedFdEndpoint::ReportClosedOnce() {
 }
 
 void FramedFdEndpoint::MarkLinkDead() {
+  {
+    std::lock_guard<std::mutex> lk(reliable_send_mu_);
+    reliable_link_up_ = false;
+    reliable_outbox_.Clear();
+  }
   // A FIXED fd cannot come back: Tick() only reopens when a factory is set, so
   // for an accepted TCP client or a dialed TcpEndpoint this IS the end of the
   // link — and the owner has to hear about it, exactly as it would from a read
@@ -499,7 +533,8 @@ void FramedFdEndpoint::Loop() {
     int fd_idx = -1;
     if (fd >= 0) {
       short ev = POLLIN;
-      if (ctrl_outbox_.HasPending() || outbox_.HasPending()) ev |= POLLOUT;
+      if (ctrl_outbox_.HasPending() || reliable_outbox_.HasPending() ||
+          outbox_.HasPending()) ev |= POLLOUT;
       fd_idx = n;
       pfds[n++] = {fd, ev, 0};
     }
