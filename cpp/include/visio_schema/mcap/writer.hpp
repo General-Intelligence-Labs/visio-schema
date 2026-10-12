@@ -47,6 +47,16 @@ namespace visio_schema::mcap {
 
 using visio_schema::wire::Message;
 
+// What the writer records of a message: its timing, sequence, sync flag and
+// payload bytes. A view, so the payload can live in any buffer the caller
+// keeps alive across Write().
+struct RecordedMessage {
+  google_protobuf_Timestamp timestamp = google_protobuf_Timestamp_init_zero;
+  std::uint32_t seq = 0;
+  bool keyframe = false;
+  std::string_view payload;
+};
+
 class SpanReadback;
 
 class McapWriter {
@@ -94,6 +104,9 @@ class McapWriter {
   // Record one message against `channel` (lazily registering its schema +
   // channel records — declare-before-write).
   void Write(const Channel& channel, const Message& msg);
+  // The same, for a message whose payload is held somewhere other than a
+  // Message (a queue's own buffer); `msg.payload` need only outlive the call.
+  void Write(const Channel& channel, const RecordedMessage& msg);
   void Close();
 
   // Carry an MCAP Metadata record (`name` + key/values) in the file — e.g. the

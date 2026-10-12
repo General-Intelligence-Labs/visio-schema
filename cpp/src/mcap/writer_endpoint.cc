@@ -1,5 +1,6 @@
 #include "visio_schema/mcap/writer_endpoint.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <utility>
 
@@ -10,6 +11,23 @@
 namespace visio_schema::mcap {
 
 namespace {
+// Records never span a chunk, so this is also the largest frame the arena
+// takes; a bigger one is held in its producer's buffer. Two chunks are the
+// steady state of a recorder that keeps up, and stay mapped.
+constexpr std::size_t kArenaChunkBytes = 256u << 10;
+constexpr std::size_t kArenaResidentChunks = 2;
+// Address space only, but on a 32-bit process not free: the most reserved.
+constexpr std::size_t kArenaMaxCapacity = 64u << 20;
+
+// A full queue plus a full batch in flight is what the policy's byte bound
+// allows the endpoint to hold. A policy with no byte bound has no arena, and
+// queues in the producers' buffers.
+std::size_t ArenaCapacity(const transport::WritePolicy& p) {
+  if (p.drop != transport::WritePolicy::DropMode::StaleEviction) return 0;
+  if (p.max_bytes == 0) return 0;
+  return std::min<std::size_t>(2 * p.max_bytes, kArenaMaxCapacity);
+}
+
 std::uint64_t SteadyNs() {
   return static_cast<std::uint64_t>(
       std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -30,7 +48,8 @@ McapWriterEndpoint::McapWriterEndpoint(std::string_view path, StreamResolver res
       writer_(std::make_unique<visio_schema::mcap::McapWriter>(
           path, max_bytes, max_duration_s, rotate_on_keyframe, pair_guard_ns,
           sync_span_bytes, std::move(recording_key), std::move(readback))),
-      policy_(policy) {
+      policy_(policy),
+      arena_(ArenaCapacity(policy), kArenaChunkBytes, kArenaResidentChunks) {
   // Written on this (constructing) thread, before Start() spawns the writer
   // thread — so it lands in the file ahead of any message, no locking needed.
   if (!metadata.empty()) writer_->SetMetadata("visio.capture", std::move(metadata));
@@ -132,12 +151,19 @@ void McapWriterEndpoint::Send(const Message& msg) {
     std::lock_guard<std::mutex> lk(mu_);
     const std::size_t before = queue_.size();
     if (!transport::ApplyDropBound(policy_, queue_, queue_bytes_, len,
-                                   [](const Entry& e) { return e.msg.payload.size(); })) {
+                                   [](const Entry& e) { return e.size; })) {
       NoteDrop(1);
       return;
     }
     if (const std::size_t evicted = before - queue_.size()) NoteDrop(evicted);
-    queue_.push_back(Entry{std::move(ch), msg});
+    Entry e{std::move(ch), msg.timestamp, msg.seq, msg.keyframe, len,
+            msg.payload};
+    if (auto record = arena_.Put(msg.payload.str())) {
+      e.payload = std::move(*record);
+    } else if (len > 0 && arena_.capacity() > 0) {
+      stat_arena_fallbacks_.fetch_add(1, std::memory_order_relaxed);
+    }
+    queue_.push_back(std::move(e));
     queue_bytes_ += len;
     // The QUEUE's high-water mark, deliberately not queue+in-flight: this stat
     // is the queue's relationship to the policy bound (the firmware prints it
@@ -162,17 +188,16 @@ void McapWriterEndpoint::WriterLoop() {
   // the command worker's), which mis-attributes all recording CPU in top -H.
   transport::EnterServiceThread("mcap_wr", 0);
   for (;;) {
-    std::deque<Entry> batch;
     {
       std::unique_lock<std::mutex> lk(mu_);
       cv_.wait(lk, [this] { return stop_ || !queue_.empty(); });
-      batch.swap(queue_);
+      batch_.swap(queue_);
       // The bytes just taken are exactly what the queue was holding; they stay
       // counted (as in-flight) until each one is written and freed, so
       // pending_bytes() never pretends the endpoint got lighter at the swap.
       inflight_bytes_.store(queue_bytes_, std::memory_order_relaxed);
       queue_bytes_ = 0;
-      if (batch.empty() && stop_) return;  // stopped + fully drained
+      if (batch_.empty() && stop_) return;  // stopped + fully drained
     }
     // This is the thread's ENTRY function: an exception leaving it calls
     // std::terminate and takes the whole process down. McapWriter throws when
@@ -181,10 +206,10 @@ void McapWriterEndpoint::WriterLoop() {
     // shed what is queued, leaving Send()/Stop() well-behaved. The owner polls
     // write_failed() and stops the recording.
     if (failed_.load(std::memory_order_relaxed)) {
-      NoteDrop(batch.size());
+      NoteDrop(batch_.size());
     } else {
       try {
-        DrainBatch(batch);
+        DrainBatch(batch_);
       } catch (const std::exception& e) {
         NoteFailure(e.what());
       } catch (...) {   // nothing may escape this frame; see above
@@ -194,9 +219,18 @@ void McapWriterEndpoint::WriterLoop() {
     // One release point for every path out of the batch (drained, shed by the
     // latch, or abandoned mid-write): free whatever it still holds FIRST, then
     // zero the accounting, so the gauge never reads lighter than the process is.
-    batch.clear();
+    {
+      std::lock_guard<std::mutex> lk(mu_);
+      batch_.clear();
+    }
     inflight_bytes_.store(0, std::memory_order_relaxed);
   }
+}
+
+std::string_view McapWriterEndpoint::PayloadOf(const Entry& e) {
+  if (const auto* r = std::get_if<PayloadArena::Record>(&e.payload))
+    return r->bytes();
+  return std::get<wire::Payload>(e.payload).str();
 }
 
 // nothrow: also reached from Stop(), which a noexcept destructor calls. The
@@ -213,20 +247,21 @@ void McapWriterEndpoint::NoteFailure(const char* what) noexcept {
 }
 
 // POP as we go, rather than iterating and clearing at the end: an entry's
-// payload is released the instant it has been written, so the batch's resident
-// bytes fall through the drain. Holding all of them to a trailing clear() made
-// the queue's byte bound effectively DOUBLE — Send() may refill the queue to
-// the full bound (16 MiB on the device) while the batch just swapped out is
-// still resident, and the COBS `framed` cache each Message may carry from the
-// fanout (wire/message.hpp) rides along on top, uncounted. On a 44 MB box that
-// was the difference between a bound and a wish.
+// payload, arena record or producer buffer, is released the instant it has
+// been written, so the batch's resident bytes fall through the drain. Holding
+// all of them to a trailing clear() made the queue's byte bound effectively
+// DOUBLE, since Send() may refill the queue to the full bound while the batch
+// just swapped out is still resident.
 void McapWriterEndpoint::DrainBatch(std::deque<Entry>& batch) {
   while (!batch.empty()) {
+    // Read without mu_: only this thread pops `batch`, and nothing writes
+    // or hands back an arena chunk that holds a live record.
     const Entry& e = batch.front();
-    const std::size_t bytes = e.msg.payload.size();
+    const std::size_t bytes = e.size;
     if (e.channel) {
+      const RecordedMessage m{e.timestamp, e.seq, e.keyframe, PayloadOf(e)};
       const std::uint64_t t0 = SteadyNs();
-      writer_->Write(*e.channel, e.msg);
+      writer_->Write(*e.channel, m);
       const std::uint64_t dt = SteadyNs() - t0;
       stat_writes_.fetch_add(1, std::memory_order_relaxed);
       stat_blocked_ns_.fetch_add(dt, std::memory_order_relaxed);
@@ -236,7 +271,10 @@ void McapWriterEndpoint::DrainBatch(std::deque<Entry>& batch) {
       }
       if (dt > kSlowWriteNs) stat_slow_writes_.fetch_add(1, std::memory_order_relaxed);
     }
-    batch.pop_front();  // frees this payload HERE, not at the end of the batch
+    {
+      std::lock_guard<std::mutex> lk(mu_);  // an arena record frees under it
+      batch.pop_front();  // frees this payload HERE, not at the end of the batch
+    }
     inflight_bytes_.fetch_sub(bytes, std::memory_order_relaxed);
   }
 }
@@ -287,6 +325,8 @@ McapWriterStats McapWriterEndpoint::stats() const {
   s.dropped = dropped_.load(std::memory_order_relaxed);
   s.unmapped = unmapped_.load(std::memory_order_relaxed);
   s.max_pending_bytes = stat_max_pending_bytes_.load(std::memory_order_relaxed);
+  s.arena_fallbacks = stat_arena_fallbacks_.load(std::memory_order_relaxed);
+  s.arena_capacity_bytes = arena_.capacity();
   return s;
 }
 

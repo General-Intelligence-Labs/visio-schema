@@ -4,7 +4,8 @@
 // drains it to disk, so the blocking SD write never touches the bus. Resolution
 // happens on the Send() caller (dispatch, serialized) and is snapshotted, so the
 // writer thread never touches the (non-thread-safe) ChannelRegistry. Ignores
-// on_inbound (write-only). Mirrors python/visio_schema/mcap/writer_endpoint.py.
+// on_inbound (write-only). Mirrors python/visio_schema/mcap/writer_endpoint.py,
+// except that a byte-bounded queue here keeps its payloads in a PayloadArena.
 #pragma once
 
 #include <atomic>
@@ -16,11 +17,14 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <unordered_map>
+#include <variant>
 
+#include "visio_schema/mcap/payload_arena.hpp"
 #include "visio_schema/mcap/writer.hpp"
 #include "visio_schema/routing/channel.hpp"   // Channel
 #include "visio_schema/transport/endpoint.hpp"
@@ -49,6 +53,13 @@ struct McapWriterStats {
   // to max_bytes is the recording's proven margin against loss.
   // Peak bytes QUEUED (not including a batch in flight — see inflight_bytes_).
   std::uint64_t max_pending_bytes = 0;
+  // Frames queued in the producer's own buffer because the endpoint's arena
+  // (PayloadArena) had no room or the frame was larger than its chunk: heap
+  // the process may keep after the backlog drains. 0 while the arena copes.
+  std::uint64_t arena_fallbacks = 0;
+  // Address space the arena reserved; 0 when the policy has no byte bound or
+  // the reservation failed, and every frame is held in its producer's buffer.
+  std::uint64_t arena_capacity_bytes = 0;
   // Frames discarded because their stream id resolved to no channel. A
   // DIFFERENT failure from `dropped`, and it must not be folded into it: that
   // one means storage is too slow, this one means the recording is missing a
@@ -121,10 +132,19 @@ class McapWriterEndpoint : public transport::Endpoint {
   bool storage_fault() const;
 
  private:
+  // A queued frame. Its payload is a copy in arena_, so the producer's buffer
+  // is freed at Send(), or, when the arena has no room, the producer's buffer.
+  // An arena record frees itself when its Entry is destroyed, which happens
+  // only under mu_ (the arena is not thread-safe).
   struct Entry {
     std::shared_ptr<const Channel> channel;  // snapshot — writer-thread safe
-    Message msg;
+    google_protobuf_Timestamp timestamp = google_protobuf_Timestamp_init_zero;
+    std::uint32_t seq = 0;
+    bool keyframe = false;
+    std::size_t size = 0;
+    std::variant<PayloadArena::Record, wire::Payload> payload;
   };
+  static std::string_view PayloadOf(const Entry& e);
   void WriterLoop();
   void DrainBatch(std::deque<Entry>& batch);  // timed writer_->Write
   void NoteDrop(std::size_t n);
@@ -142,15 +162,23 @@ class McapWriterEndpoint : public transport::Endpoint {
   // Send()-caller-thread-only (the serialized bus dispatch thread); no lock.
   std::unordered_map<std::uint32_t, std::shared_ptr<const Channel>> channel_cache_;
 
-  mutable std::mutex mu_;       // guards queue_, queue_bytes_, stop_
+  // guards arena_, queue_, queue_bytes_, batch_ (pop/clear), stop_
+  mutable std::mutex mu_;
   std::condition_variable cv_;
+  // Sized for a full queue plus a full batch in flight, so every backlog
+  // the policy allows is held here rather than in the producers' heap.
+  // Declared before the queues: their records free into it on destruction.
+  PayloadArena arena_;
   std::deque<Entry> queue_;
   std::size_t queue_bytes_ = 0;
+  // The batch the writer thread swapped out and is writing. Only that thread
+  // touches it; it pops and clears under mu_, because that frees arena_.
+  std::deque<Entry> batch_;
   bool stop_ = false;
   std::thread thread_;
 
-  // Bytes of the swapped-out batch still resident, i.e. taken off queue_ but
-  // not yet written. Written ONLY by the writer thread (relaxed: it is a
+  // Bytes of the swapped-out batch not yet written, i.e. taken off queue_
+  // and still held. Written ONLY by the writer thread (relaxed: it is a
   // gauge, not a handshake) and read by pending_bytes(), so honest accounting
   // across the swap costs no lock and nothing at all on the Send() path.
   // Deliberately NOT part of the shed decision or of max_pending_bytes. Both
@@ -171,6 +199,7 @@ class McapWriterEndpoint : public transport::Endpoint {
   std::atomic<std::uint64_t> stat_blocked_ns_{0};
   std::atomic<std::uint64_t> stat_max_block_ns_{0};
   std::atomic<std::uint64_t> stat_slow_writes_{0};
+  std::atomic<std::uint64_t> stat_arena_fallbacks_{0};
 };
 
 }  // namespace visio_schema::mcap

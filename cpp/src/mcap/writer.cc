@@ -563,6 +563,11 @@ void McapWriter::Roll() {
 }
 
 void McapWriter::Write(const Channel& channel, const Message& msg) {
+  Write(channel, RecordedMessage{msg.timestamp, msg.seq, msg.keyframe,
+                                 msg.payload.str()});
+}
+
+void McapWriter::Write(const Channel& channel, const RecordedMessage& msg) {
   if (closed_) return;
 
   const bool is_video = channel.schema_name == kCompressedVideoSchema;

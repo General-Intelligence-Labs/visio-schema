@@ -65,6 +65,7 @@ add_library(visio_schema STATIC
   src/routing/registry.cc
   src/mcap/writer.cc
   src/mcap/writer_endpoint.cc
+  src/mcap/payload_arena.cc
   src/mcap/span_readback.cc
   src/mcap/part_readback_file.cc
   # transport: links + endpoints + framing
@@ -126,6 +127,8 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT CMAKE_CROSSCOMPILI
     tests/test_channel_registry.cc
     tests/test_mcap_writer.cc
     tests/test_mcap_writer_endpoint.cc
+    tests/test_mcap_writer_endpoint_arena.cc
+    tests/test_payload_arena.cc
     tests/test_mcap_readback.cc
     tests/test_mcap_readback_faults.cc
     tests/test_io.cc

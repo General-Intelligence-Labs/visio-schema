@@ -6,6 +6,28 @@ bump the MINOR version.
 
 ## Unreleased
 
+### A recorder's write backlog no longer stays in the heap after storage catches up
+
+`McapWriterEndpoint` with a byte-bounded policy (`WritePolicy::stale_eviction`)
+now copies each queued payload into its own `PayloadArena`: address space
+reserved up front (twice the policy's byte bound, at most 64 MiB, no RAM until
+written), cut into 256 KiB chunks. The producer's buffer is released at
+`Send()`, and once a storage stall's backlog has been written every chunk it
+filled beyond the first two goes back to the kernel. Before, the queue held
+references to the producers' buffers, so a stall grew the heap and most
+allocators kept that memory for the life of the process. A frame larger than
+a chunk, or one arriving with the arena full, is held in its producer's
+buffer as before; `McapWriterStats::arena_fallbacks` counts those and
+`arena_capacity_bytes` reports the reservation (0: no arena). Policies with
+no byte bound are unchanged.
+
+`McapWriter::Write(const Channel&, const RecordedMessage&)` is new: the
+fields the writer records, with the payload as a view the caller keeps alive
+across the call. The `Message` overload is unchanged.
+
+A build that lists the C++ sources by hand must add
+`cpp/src/mcap/payload_arena.cc`.
+
 ### Fuel-gauge voltage without a battery profile
 
 `SystemHealth.battery_voltage_v` (optional float, tag 14) reports measured
