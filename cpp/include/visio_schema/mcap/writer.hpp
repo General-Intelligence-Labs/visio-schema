@@ -125,6 +125,15 @@ class McapWriter {
     return bytes_written_.load(std::memory_order_relaxed);
   }
 
+  // Video frames the keyframe gate dropped after a part rotation, before the
+  // new part saw the stream's next keyframe: a hole in the recording. The
+  // frames before a stream's first keyframe of the whole recording are not
+  // counted — the recording starts there. Monotonic; safe to poll from
+  // another thread.
+  std::uint64_t keyframe_gated() const {
+    return keyframe_gated_.load(std::memory_order_relaxed);
+  }
+
   // Read-back pull API (see readback.hpp). ReadbackStep verifies at most
   // one span — resuming one a previous budget left unfinished — and
   // returns true if it did any work, false when nothing is ready or queued.
@@ -188,6 +197,7 @@ class McapWriter {
   bool part_write_failure_logged_ = false;
   // Lifetime total (never reset on rotation); see bytes_written().
   std::atomic<std::uint64_t> bytes_written_{0};
+  std::atomic<std::uint64_t> keyframe_gated_{0};
   std::chrono::steady_clock::time_point part_start_;
 
   // Caches (reset per part): schema id per schema_name, channel id per Channel id.
@@ -202,6 +212,9 @@ class McapWriter {
   // cuts only on a keyframe strictly newer than it (+guard), which is what keeps a
   // co-phased pair whole across a rotation boundary.
   std::unordered_set<std::uint32_t> primed_video_channels_;
+  // Every video channel primed in ANY part of this writer: what tells a
+  // rotation's gated frames (a hole) from a stream's start (not one).
+  std::unordered_set<std::uint32_t> ever_primed_video_channels_;
   // Frames refused by the keyframe gate on a channel that has not primed yet,
   // keyed by TOPIC. Deliberately outside the per-part block above and NOT reset
   // by OpenPart: the question it answers ("is this topic absent from the whole

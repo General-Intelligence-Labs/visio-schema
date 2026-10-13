@@ -67,6 +67,10 @@ struct McapWriterStats {
   // until an Ego Pro recording was found to be silently missing every relayed
   // limb camera while every health field read clean.
   std::uint64_t unmapped = 0;
+  // Video frames the writer's keyframe gate dropped at a part rotation (a
+  // part opens each video stream on a keyframe). Missing from the recording,
+  // and not `dropped`: storage speed has nothing to do with it.
+  std::uint64_t keyframe_gated = 0;
 };
 
 class McapWriterEndpoint : public transport::Endpoint {

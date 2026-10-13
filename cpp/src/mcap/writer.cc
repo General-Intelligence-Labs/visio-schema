@@ -619,9 +619,16 @@ void McapWriter::Write(const Channel& channel, const RecordedMessage& msg) {
             "relayed, its device may predate the wire keyframe flag.",
             channel.topic.c_str(), static_cast<unsigned long long>(n));
       }
-      return;  // pre-keyframe P-frame — drop, don't count
+      // Counted only for a stream this recording already carried: a rotation
+      // that opened mid-GOP leaves a hole. The frames before a stream's very
+      // first keyframe precede the recording's start for that stream and are
+      // no gap in it.
+      if (ever_primed_video_channels_.count(channel.id) != 0)
+        keyframe_gated_.fetch_add(1, std::memory_order_relaxed);
+      return;  // pre-keyframe P-frame — dropped
     }
     primed_video_channels_.insert(channel.id);
+    ever_primed_video_channels_.insert(channel.id);
     unprimed_video_frames_.erase(channel.topic);
   }
 

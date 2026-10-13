@@ -327,6 +327,7 @@ McapWriterStats McapWriterEndpoint::stats() const {
   s.max_pending_bytes = stat_max_pending_bytes_.load(std::memory_order_relaxed);
   s.arena_fallbacks = stat_arena_fallbacks_.load(std::memory_order_relaxed);
   s.arena_capacity_bytes = arena_.capacity();
+  s.keyframe_gated = writer_ ? writer_->keyframe_gated() : 0;
   return s;
 }
 

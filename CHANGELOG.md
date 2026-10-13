@@ -6,6 +6,16 @@ bump the MINOR version.
 
 ## Unreleased
 
+### The recorder counts the video frames its keyframe gate drops
+
+A part opens each video stream on a keyframe, so after a part rotation the
+frames before the stream's next keyframe are dropped — a hole in the
+recording that nothing counted. `McapWriter::keyframe_gated()` and
+`McapWriterStats::keyframe_gated` now count them, so a take that lost frames
+this way says so. The frames before a stream's first keyframe of the whole
+recording are not counted: the recording starts there. Not folded into
+`dropped`: storage speed has nothing to do with it.
+
 ### A recorder's write backlog no longer stays in the heap after storage catches up
 
 `McapWriterEndpoint` with a byte-bounded policy (`WritePolicy::stale_eviction`)
