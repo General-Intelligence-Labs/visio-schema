@@ -1182,20 +1182,31 @@ class Session:
         # same slack `_reorder`'s watermark waits out. Without this the pass decoded
         # every remaining frame to EOF (and opened later chunks) only to have
         # `_in_window` drop them, which is pathological for video: an end-bounded 2 s
-        # window paid to decode the rest of the recording. `start_ns` is deliberately
-        # NOT pushed down — a decoder entering a chunk mid-GOP has no keyframe, so the
-        # read must begin at each chunk's head and `_in_window` trims the front.
+        # window paid to decode the rest of the recording.
+        #
+        # `start_ns` is symmetric but ONLY at whole-file granularity: a file that
+        # ends before the window cannot hold an in-window element, so it is skipped
+        # unopened (see `_one_stream`). It is still NOT pushed INTO the reader — a
+        # decoder entering a chunk mid-GOP has no keyframe, so the file that CONTAINS
+        # `start_ns` is read from its head and `_in_window` trims the front. Widen by
+        # the reorder window on this side too: an element whose `t_ns` is in-window
+        # can arrive (log_time, which bounds the file's summary) up to `reorder_ns`
+        # earlier, so a file ending within that slack of `start_ns` may still carry
+        # one. Without this a sparse window late in a long sharded recording decoded
+        # every preceding shard — the mirror of the end-bound pathology above.
         end_read = None if end_ns is None else end_ns + reorder_ns
+        start_read = None if start_ns is None else start_ns - reorder_ns
 
         def _one_stream(members: list[int]) -> Iterator[tuple[Ns, Ns, Element]]:
             # Sequential: a stream's chunks do not overlap, and decoders reset per
             # chunk (each carries its own keyframes).
             for i in members:
                 idx = self._index[i]
-                # A whole file past the bound holds nothing in-window and no later
-                # file depends on its decoder state (decoders reset per chunk), so
-                # skip it unopened rather than open it for an empty read.
-                if end_read is not None and not _spans_window(idx, None, end_read):
+                # A whole file outside the [start, end] bound holds nothing in-window
+                # and no other file depends on its decoder state (decoders reset per
+                # chunk), so skip it unopened rather than open it for an empty read.
+                if ((start_read is not None or end_read is not None)
+                        and not _spans_window(idx, start_read, end_read)):
                     continue
                 yield from self._iter_file(
                     self._files[i], idx, want, make_decoders, raw_all,
