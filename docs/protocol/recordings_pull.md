@@ -35,6 +35,15 @@ TCP supplies order, delivery and flow control, so the socket carries nothing but
 
 Listing is allowed on every link and while recording.
 
+Managed storage also returns `catalogue_generation` and `RecordingsList.complete`.
+A nonzero generation identifies this firmware/mount epoch; an incomplete census
+answers `storage_indexing`. Older firmware returns zero, so clients must treat
+these fields as unavailable there. Each file exposes `object_version`, lifecycle
+(`writing`, `finalizing`, `saved`, `failed`, `legacy`), independent integrity
+(`unchecked`, `verified`, `damaged`, `unverifiable`), `checkpointed_bytes` and
+`recovered`. A successful Stop detaches capture; checked finalization continues
+before `saved` is published. `saved` does not mean payload integrity was verified.
+
 ## 2. Opening a file
 
 `OpenRecordingFile` (Command body 43) answers with `CommandResult.file_open`, a `RecordingFileOpen`.
@@ -60,6 +69,13 @@ The device checks, and refuses with the first failing code:
 
 On success the answer carries `port`, `offset` (equal to the request's), `length` (`file_size −
 offset`, possibly 0), `file_size` and `mtime_ns`.
+
+Managed opens also return `object_version` and `catalogue_generation`. Nonzero
+`expect_object_version` and `expect_catalogue_generation` must match, or the device
+answers `changed`, even when size and FAT mtime match. A required container repair
+answers `recovery_pending` and queues idle work; opening does not perform repair.
+Original encrypted bytes remain exportable without a decryption key. Capture,
+format and mount invalidation fence existing reader leases.
 
 An accepted open is a **lease**: it belongs to the requesting host's network address, is consumed
 by that host's next connection to `port`, and lapses unused after 10 seconds. A new open from the
@@ -92,6 +108,10 @@ away bytes still in flight.
 - **Resume** after a short read by opening again with `offset` = bytes now held, and
   `expect_size`/`expect_mtime_ns` set to the first open's `file_size`/`mtime_ns`. A host MUST NOT
   join bytes from two opens whose identity differs; `changed` means start the file again.
+- Managed clients additionally bind both version fields from the first open on
+  every retry and persist them beside partial files across process restarts.
+  `list_session_files_with_generation` exposes the listed epoch in the Python
+  facade; its existing `list_session_files` wrapper still returns one entry.
 - A host MUST keep reading its bus link while bytes arrive on the data socket. A transfer can
   run for minutes, and the device aborts a bus connection whose receive window stays closed for
   10 seconds (`TCP_USER_TIMEOUT`) — which is what a single-threaded host that only reads the data

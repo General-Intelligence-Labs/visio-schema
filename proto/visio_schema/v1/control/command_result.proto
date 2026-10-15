@@ -107,6 +107,26 @@ message RecordingFile {
 
   // An .mcap part is VREC ciphertext; a pull carries it unchanged.
   bool encrypted = 6;
+  uint64 object_version = 7; // scoped to catalogue_generation
+  enum Lifecycle {
+    LIFECYCLE_UNKNOWN = 0;
+    WRITING = 1;
+    FINALIZING = 2;
+    SAVED = 3;
+    FAILED = 4;
+    LEGACY = 5;
+  }
+  Lifecycle lifecycle = 8;
+  enum Integrity {
+    INTEGRITY_UNKNOWN = 0;
+    UNCHECKED = 1;
+    VERIFIED = 2;
+    DAMAGED = 3;
+    UNVERIFIABLE = 4;
+  }
+  Integrity integrity = 9; // independent of save or transfer completion
+  uint64 checkpointed_bytes = 10;
+  bool recovered = 11; // recovered data may still be damaged
 }
 
 message RecordingsList {
@@ -119,6 +139,8 @@ message RecordingsList {
   // false, OpenRecordingFile answers "busy_recording" during a recording and a
   // recording that starts mid-pull closes the transfer.
   bool read_while_recording = 3;
+  uint64 catalogue_generation = 4;
+  bool catalogue_complete = 5;
 }
 
 // Answer to OpenRecordingFile: where and how much to read.
@@ -128,6 +150,8 @@ message RecordingFileOpen {
   uint64 length    = 3;  // exact byte count the socket carries: file_size - offset
   uint64 file_size = 4;
   uint64 mtime_ns  = 5;  // keep beside a partial download for a later resume
+  uint64 object_version = 6;
+  uint64 catalogue_generation = 7;
 }
 
 // The device's operational-state snapshot — the GET /info payload. Fields that

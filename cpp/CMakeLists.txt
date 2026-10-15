@@ -63,6 +63,7 @@ add_library(visio_schema STATIC
   # routing (id<->Channel table) + the MCAP container codec + its writer sink
   # + the sink's write-time read-back (verify the media against RAM)
   src/routing/registry.cc
+  src/mcap/storage.cc
   src/mcap/writer.cc
   src/mcap/writer_endpoint.cc
   src/mcap/span_readback.cc
@@ -125,6 +126,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT CMAKE_CROSSCOMPILI
     tests/test_frame_roundtrip.cc
     tests/test_channel_registry.cc
     tests/test_mcap_writer.cc
+    tests/test_mcap_writer_storage.cc
     tests/test_mcap_writer_endpoint.cc
     tests/test_mcap_readback.cc
     tests/test_mcap_readback_faults.cc
@@ -160,4 +162,15 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT CMAKE_CROSSCOMPILI
   # Bound each test so a hung endpoint/thread join fails the test instead of
   # wedging CI (these tests spawn I/O threads + ptys/sockets).
   gtest_discover_tests(visio_schema_tests PROPERTIES TIMEOUT 60)
+
+  # The firmware fault contracts use Linux /proc and libc interposition.
+  # Isolate them from the portable functional suite (also run on macOS).
+  # Strict assertions intentionally expose current recording error gaps.
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(visio_schema_mcap_io_tests
+      tests/test_mcap_io_contract.cc tests/mcap_io_fault.cc)
+    target_link_libraries(visio_schema_mcap_io_tests PRIVATE
+      visio_schema GTest::gtest_main ${CMAKE_DL_LIBS})
+    gtest_discover_tests(visio_schema_mcap_io_tests PROPERTIES TIMEOUT 30)
+  endif()
 endif()

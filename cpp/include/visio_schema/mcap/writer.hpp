@@ -29,6 +29,7 @@
 #include <optional>
 #include <string_view>
 
+#include "visio_schema/mcap/storage.hpp"
 #include "visio_schema/mcap/readback.hpp"
 #include "visio_schema/mcap/recording_crypto.hpp"
 #include <unordered_map>
@@ -85,7 +86,9 @@ class McapWriter {
                       std::int64_t pair_guard_ns = 0,
                       std::uint64_t sync_span_bytes = 0,
                       std::optional<RecordingKey> recording_key = std::nullopt,
-                      McapReadbackOptions readback = {});
+                      McapReadbackOptions readback = {},
+                      std::shared_ptr<WriterStorage> storage = {},
+                      std::chrono::milliseconds checkpoint_interval = {});
   ~McapWriter();
 
   McapWriter(const McapWriter&) = delete;
@@ -134,7 +137,7 @@ class McapWriter {
   void OpenPart();          // throws on open failure
   bool ShouldRoll() const;
   void Roll();
-  // Close the current part and fsync it to physical media before moving on.
+  // Close the current part through checked durability and namespace barriers.
   void CloseCurrentPart();
   // Emit the stored Metadata record into the current part (no-op if none set).
   void WriteStoredMetadata();
@@ -152,6 +155,12 @@ class McapWriter {
   // Set once at construction: a recording cannot change key mid-file, because
   // each part's header names the key that opens it. A rotation picks it up.
   const std::optional<RecordingKey> recording_key_;
+
+  std::atomic<bool> io_fault_{false};
+  const std::shared_ptr<WriterStorage> storage_;
+  const std::chrono::milliseconds checkpoint_interval_;
+  IoResult last_io_;
+  std::uint64_t physical_closed_ = 0;
 
   // Write-time read-back; null when off. Declared before file_: the
   // writable holds a raw pointer into it and reports its tail from end(),

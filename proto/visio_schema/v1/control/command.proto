@@ -660,6 +660,10 @@ message OpenRecordingFile {
   // unchecked; otherwise both must match or the open answers "changed".
   uint64 expect_size     = 4;
   uint64 expect_mtime_ns = 5;
+  // Optional identity from the master catalogue, including across firmware
+  // restarts. Zero keeps compatibility with older size/mtime-only clients.
+  uint64 expect_object_version = 6;
+  uint64 expect_catalogue_generation = 7;
 }
 
 // Delete one whole recorded session from local storage. Command.target_device

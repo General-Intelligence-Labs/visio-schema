@@ -72,7 +72,9 @@ class McapWriterEndpoint : public transport::Endpoint {
                      // plaintext MCAP. Passthrough; see McapWriter.
                      std::optional<RecordingKey> recording_key = std::nullopt,
                      // Write-time read-back. Passthrough; see McapWriter.
-                     McapReadbackOptions readback = {});
+                     McapReadbackOptions readback = {},
+                     std::shared_ptr<WriterStorage> storage = {},
+                     std::chrono::milliseconds checkpoint_interval = {});
   ~McapWriterEndpoint() override;
 
   McapWriterEndpoint(const McapWriterEndpoint&) = delete;
@@ -108,7 +110,7 @@ class McapWriterEndpoint : public transport::Endpoint {
   //
   // Deliberately NOT reported through on_closed: that contract means "fixed
   // link hit EOF, detach me", and a write-only sink ignores both callbacks.
-  bool write_failed() const { return failed_.load(std::memory_order_relaxed); }
+  bool write_failed() const { return failed_.load(std::memory_order_relaxed) || writer_->storage_fault(); }
 
   // Write-time read-back passthrough (see McapReadbackOptions). Step from
   // any ONE thread of the caller's choosing while recording; the writer

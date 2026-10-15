@@ -102,7 +102,7 @@ inline int WritebackAndEvict(int fd, std::uint64_t off, std::uint64_t len) {
 // degradation already surfaces, cf. McapWriterEndpoint::NoteDrop) but
 // never thrown — the file is already finalized on disk, and turning that
 // into an exception on the stop path would be strictly worse.
-inline void FsyncPathBestEffort(const std::string& path,
+inline bool FsyncPathBestEffort(const std::string& path,
                                 int extra_open_flags) {
   const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | extra_open_flags);
   if (fd < 0) {
@@ -110,14 +110,17 @@ inline void FsyncPathBestEffort(const std::string& path,
         log::Severity::kWarning,
         "McapWriter: cannot open %s to fsync (data may not be durable): %s",
         path.c_str(), std::strerror(errno));
-    return;
+    return false;
   }
+  bool ok = true;
   if (::fsync(fd) != 0) {
+    ok = false;
     log::Write(log::Severity::kWarning,
                "McapWriter: fsync %s failed (data may not be durable): %s",
                path.c_str(), std::strerror(errno));
   }
-  ::close(fd);
+  if (::close(fd) != 0) ok = false;
+  return ok;
 }
 
 // Push a finished MCAP part's data — and the directory entry recording it —
@@ -136,13 +139,14 @@ inline std::string ParentDir(const std::string& path) {
 // Make a directory entry durable on its own — the half of FsyncPart that
 // matters when the entry is being REMOVED rather than written, where fsyncing
 // the file first would only make the state we are discarding durable.
-inline void FsyncDirEntry(const std::string& path) {
-  FsyncPathBestEffort(ParentDir(path), O_DIRECTORY);
+inline bool FsyncDirEntry(const std::string& path) {
+  return FsyncPathBestEffort(ParentDir(path), O_DIRECTORY);
 }
 
-inline void FsyncPart(const std::string& path) {
-  FsyncPathBestEffort(path, 0);
-  FsyncDirEntry(path);
+inline bool FsyncPart(const std::string& path) {
+  const bool file = FsyncPathBestEffort(path, 0);
+  const bool dir = FsyncDirEntry(path);
+  return file && dir;
 }
 
 }  // namespace visio_schema::mcap::file_sync

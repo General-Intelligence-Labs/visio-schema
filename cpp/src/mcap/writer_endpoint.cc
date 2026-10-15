@@ -25,11 +25,14 @@ McapWriterEndpoint::McapWriterEndpoint(std::string_view path, StreamResolver res
                                        bool rotate_on_keyframe, std::int64_t pair_guard_ns,
                                        std::uint64_t sync_span_bytes,
                                        std::optional<RecordingKey> recording_key,
-                                       McapReadbackOptions readback)
+                                       McapReadbackOptions readback,
+                                       std::shared_ptr<WriterStorage> storage,
+                                       std::chrono::milliseconds checkpoint_interval)
     : resolve_(std::move(resolve)),
       writer_(std::make_unique<visio_schema::mcap::McapWriter>(
           path, max_bytes, max_duration_s, rotate_on_keyframe, pair_guard_ns,
-          sync_span_bytes, std::move(recording_key), std::move(readback))),
+          sync_span_bytes, std::move(recording_key), std::move(readback),
+          std::move(storage), checkpoint_interval)),
       policy_(policy) {
   // Written on this (constructing) thread, before Start() spawns the writer
   // thread — so it lands in the file ahead of any message, no locking needed.
@@ -63,6 +66,7 @@ void McapWriterEndpoint::Stop() {
   if (writer_) {
     try {
       writer_->Close();
+      if (writer_->storage_fault()) NoteFailure("storage completion failed");
     } catch (...) {
       NoteFailure("finalize failed");
     }
