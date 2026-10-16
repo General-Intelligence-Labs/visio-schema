@@ -32,6 +32,11 @@ message SystemHealth {
   // or no battery present.
   optional float battery_pct = 5;
 
+  // Voltage measured at the fuel gauge's cell input, in volts. Independent
+  // of battery_pct: voltage can be reported without a calibrated cell profile.
+  // Unset when the gauge is absent or its reading is unavailable.
+  optional float battery_voltage_v = 14;
+
   // Free disk space on the recording volume, in bytes.
   optional uint64 disk_free_bytes = 6;
 

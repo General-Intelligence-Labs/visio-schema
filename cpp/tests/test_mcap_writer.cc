@@ -295,10 +295,12 @@ TEST(McapWriterGate, DropsLeadingPFramesUntilFirstKeyframe) {
   McapWriter w(path);
   w.Write(v, VideoMsg(kFirstDynamic, std::string(3, 'a'), /*kf=*/false, 1000));
   EXPECT_EQ(w.bytes_written(), 0u);   // pre-keyframe P-frame dropped
+  EXPECT_EQ(w.keyframe_gated(), 0u);  // the stream's start: not a hole
   w.Write(v, VideoMsg(kFirstDynamic, std::string(9, 'a'), /*kf=*/true, 2000));
   EXPECT_EQ(w.bytes_written(), 9u);   // first IDR primes + writes
   w.Write(v, VideoMsg(kFirstDynamic, std::string(5, 'a'), /*kf=*/false, 3000));
   EXPECT_EQ(w.bytes_written(), 14u);  // subsequent P-frames flow
+  EXPECT_EQ(w.keyframe_gated(), 0u);  // a primed stream is never gated
   w.Close();
   std::remove(path.c_str());
 }
@@ -331,6 +333,7 @@ TEST(McapWriterGate, RotationReDropsUntilKeyframe) {
     w.Write(v, VideoMsg(kFirstDynamic, std::string(10, 'a'), false, 2000));  // part0, pb=20
     w.Write(v, VideoMsg(kFirstDynamic, std::string(5, 'a'), false, 3000));   // roll → part1, drop
     EXPECT_EQ(w.bytes_written(), 20u);
+    EXPECT_EQ(w.keyframe_gated(), 1u);  // a rotation's drop IS a hole
     w.Write(v, VideoMsg(kFirstDynamic, std::string(7, 'a'), true, 4000));    // part1 prime
     EXPECT_EQ(w.bytes_written(), 27u);
     w.Close();

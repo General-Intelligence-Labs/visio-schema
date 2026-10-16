@@ -65,3 +65,16 @@ def test_no_camera_temps_logs_nothing_for_cameras() -> None:
     logged = _render(SystemHealth(cpu_temp_c=71.0))
 
     assert logged == {"ego/system_health/cpu_temp_c": pytest.approx(71.0)}
+
+
+def test_battery_voltage_without_percentage() -> None:
+    health = SystemHealth(battery_voltage_v=3.399)
+
+    assert not health.HasField("battery_pct")
+    assert _render(health) == {
+        "ego/system_health/battery_voltage_v": pytest.approx(3.399)
+    }
+
+
+def test_unavailable_battery_voltage_is_omitted() -> None:
+    assert _render(SystemHealth()) == {}

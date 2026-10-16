@@ -15,7 +15,6 @@
 
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -23,6 +22,7 @@
 #include <mutex>
 #include <vector>
 
+#include "visio_schema/transport/monotonic_cv.hpp"
 #include "visio_schema/transport/write_policy.hpp"
 #include "visio_schema/wire/message.hpp"
 
@@ -109,7 +109,7 @@ class MessageInbox {
 
  private:
   mutable std::mutex mu_;
-  std::condition_variable cv_;
+  MonotonicConditionVariable cv_;  // a clock step must not stall a read
   WritePolicy policy_;
   std::deque<wire::Message> queue_;
   std::size_t bytes_ = 0;
