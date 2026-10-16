@@ -152,6 +152,18 @@ _STRINGS: dict[str, dict[str, str]] = {
     },
     "mustBeHttpUrl": {
         "en": "must be an http(s) URL", "zh": "必须为 http(s) URL"},
+    "notForIngest": {
+        "en": "not used by an Ingest API destination (visio+https://)",
+        "zh": "Ingest API 目的地（visio+https://）不使用此字段",
+    },
+    "ingestNeedsHost": {
+        "en": "must name a host after visio+https://",
+        "zh": "visio+https:// 之后必须带主机名",
+    },
+    "deviceSecretFormat": {
+        "en": "must be a 32-byte key in base64url (43 characters)",
+        "zh": "必须为 base64url 编码的 32 字节密钥（43 个字符）",
+    },
     "regionNotDerivable": {
         "en": "required (not derivable from the endpoint)",
         "zh": "必填（无法从 endpoint 推断）",

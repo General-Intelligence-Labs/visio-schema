@@ -229,6 +229,13 @@ message DeviceState {
   // The status-report key prefix (see SetStorage.status_prefix). Echoed so the
   // app can show where health reports land; empty means the device default.
   string storage_status_prefix = 32;
+  // Ingest API mode only: the stored SetStorage.destination_hint.
+  string storage_destination_hint = 45;
+  // True when this firmware can upload through an Ingest API (a
+  // `visio+https://` SetStorage endpoint). The capability probe: false or
+  // absent means older firmware, which would misread such an endpoint as an
+  // S3 host, so an app must not offer the mode to it.
+  bool ingest_api_supported = 46;
 
   // ── upload queue ──
   uint32 upload_pending             = 14;
@@ -446,6 +453,8 @@ message CommandResult {
     RecordingsList    recordings = 12;
     RecordingFileOpen file_open  = 13;
     Snapshot          snapshot   = 14;
+    IngestSignature   ingest_signature   = 15;
+    IngestCredentials ingest_credentials = 16;
   }
 }
 
@@ -462,4 +471,18 @@ message Snapshot {
   // clock. This is not UTC and is not shifted by hop-level header timesync.
   uint64 capture_pts_us = 5;
   uint32 total_bytes = 6; // 1..131072; fixed bound on the full JPEG
+}
+
+// IngestSign's answer: the request's Authorization header value,
+// "VISIO-HMAC-SHA256 Credential=<key_id>, Signature=<hex>".
+message IngestSignature {
+  string authorization = 1;
+}
+
+// IngestOpenCredentials' answer: the secret half of the storage credentials,
+// for the app's uploads under that upload only. Short-lived; the app keeps it
+// in memory and never stores it.
+message IngestCredentials {
+  string secret_access_key = 1;
+  string session_token     = 2;  // empty for `static` credentials
 }

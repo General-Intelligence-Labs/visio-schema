@@ -36,6 +36,11 @@ from .fields import (
     _is_whole_number,
     _string,
 )
+from .ingest import (
+    INGEST_STORAGE_FIELDS,
+    is_ingest_endpoint,
+    validate_ingest_storage,
+)
 
 __all__ = [
     "BITRATE_KBPS",
@@ -142,6 +147,7 @@ DEVICE_MAX_SIZE = {
     "SetStorage.access_key_id": 64,
     "SetStorage.secret_access_key": 64,
     "SetStorage.prefix": 128,
+    "SetStorage.destination_hint": 64,
     "ConnectWifi.ssid": 33,
     "ConnectWifi.passphrase": 64,
 }
@@ -161,7 +167,7 @@ META_MAX_BYTES = {
     f: _usable_bytes(f"SetRecordingMeta.{f}") for f in META_FIELDS}
 STORAGE_MAX_BYTES = {
     f: _usable_bytes(f"SetStorage.{f}")
-    for f in STORAGE_FIELDS[PLAINTEXT_VERSION]}
+    for f in {*STORAGE_FIELDS[PLAINTEXT_VERSION], *INGEST_STORAGE_FIELDS}}
 WIFI_MAX_BYTES = {
     "ssid": _usable_bytes("ConnectWifi.ssid"),
     "passphrase": _usable_bytes("ConnectWifi.passphrase")}
@@ -388,6 +394,11 @@ def _validate_storage(errs: list, storage, version: int) -> None:
     if not isinstance(storage, dict):
         _err(errs, "storage", "mustBeObject")
         return
+    if is_ingest_endpoint(storage.get("endpoint_url")):
+        validate_ingest_storage(errs, storage, version,
+                                plaintext=version == PLAINTEXT_VERSION,
+                                max_bytes=STORAGE_MAX_BYTES)
+        return
     allowed = STORAGE_FIELDS[version]
     for f in storage:
         if f in allowed:
@@ -532,6 +543,8 @@ def normalize_storage_prefix(cfg: dict) -> None:
     storage = cfg.get("storage")
     if not isinstance(storage, dict):
         return
+    if is_ingest_endpoint(storage.get("endpoint_url")):
+        return  # the service chooses the folder, so there is no prefix
     prefix = storage.get("prefix")
     if prefix is None or prefix == "":
         prefix = DEFAULT_STORAGE_PREFIX

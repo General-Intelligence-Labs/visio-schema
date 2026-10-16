@@ -15,10 +15,16 @@ but only when the sibling checkout is present — which its CI does not do.
 """
 from __future__ import annotations
 
+import json
+import math
 import re
 from pathlib import Path
 
 import pytest
+
+from visio_schema.ingest import authorization_header
+from visio_schema.ingest.seal import NONCE_LEN, TAG_LEN
+from visio_schema.ingest.signing import SESSION_KEY_HEX_LEN
 
 _OPTIONS = Path(__file__).resolve().parents[2] / "proto" / "nanopb.options"
 
@@ -63,6 +69,13 @@ def test_set_and_test_storage_caps_agree(sizes: dict[str, int]) -> None:
 # into its form; a smaller cap here would silently truncate what was just set.
 def test_device_state_can_report_the_key_it_accepted(sizes: dict[str, int]) -> None:
     assert sizes["DeviceState.storage_access_key_id"] == sizes["SetStorage.access_key_id"]
+
+
+def test_device_state_can_report_the_destination_hint(sizes: dict[str, int]) -> None:
+    assert (
+        sizes["DeviceState.storage_destination_hint"]
+        == sizes["SetStorage.destination_hint"]
+    )
 
 
 def test_access_key_id_fits_a_tencent_secret_id(sizes: dict[str, int]) -> None:
@@ -232,3 +245,43 @@ def test_recording_name_caps_agree(sizes: dict[str, int]) -> None:
               "DeleteRecording.session_name")
     caps = {f: sizes[f] for f in fields}
     assert len(set(caps.values())) == 1, caps
+
+
+
+# The app relays an initiate reply's `storage.sealed` to the device to open.
+# Whatever the device can hand back (IngestCredentials) must also fit, sealed
+# and base64url-expanded, through the field it arrives in — or the largest
+# legal session token fails pb_decode and the device answers nothing.
+def test_sealed_ingest_credentials_fit_what_they_open_to(
+    sizes: dict[str, int],
+) -> None:
+    plaintext = json.dumps(
+        {
+            "secret_access_key": "x" * (sizes["IngestCredentials.secret_access_key"] - 1),
+            "session_token": "x" * (sizes["IngestCredentials.session_token"] - 1),
+        },
+        separators=(",", ":"),
+    )
+    blob = NONCE_LEN + len(plaintext) + TAG_LEN
+    assert math.ceil(blob * 4 / 3) <= sizes["IngestOpenCredentials.sealed_credentials"] - 1
+
+
+_HEX_SHA256 = 64 + 1
+
+
+# The same value crosses several Ingest commands; one field a byte short would
+# drop the whole Command for exactly the longest legal value.
+def test_ingest_shared_fields_agree(sizes: dict[str, int]) -> None:
+    for field in ("IngestSign.body_sha256", "IngestOpenCredentials.reply_body_sha256",
+                  "IngestOpenCredentials.reply_signature",
+                  "IngestCheckReceipt.content_digest", "IngestCheckReceipt.receipt"):
+        assert sizes[field] == _HEX_SHA256, field
+    assert sizes["IngestOpenCredentials.upload_id"] == sizes["IngestCheckReceipt.upload_id"]
+    assert sizes["IngestOpenCredentials.request_date"] == sizes["IngestSign.date"]
+    assert sizes["IngestCheckReceipt.session_key"] == SESSION_KEY_HEX_LEN + 1
+
+
+def test_ingest_authorization_fits_the_longest_key_id(sizes: dict[str, int]) -> None:
+    longest = authorization_header(
+        "k" * (sizes["SetStorage.access_key_id"] - 1), "0" * 64)
+    assert len(longest) <= sizes["IngestSignature.authorization"] - 1

@@ -45,6 +45,34 @@ the setting" and "firmware predating the command", so a host hides the control.
 from a completed camera apply. UNKNOWN means both apply and rollback failed;
 hosts leave the control available for an explicit retry.
 
+### A destination can be a customer's own Ingest API
+
+`SetStorage` / `TestStorage` accept an endpoint of the form
+`visio+https://host/base`, which names a customer **Ingest API**
+([`docs/protocol/ingest-api.md`](docs/protocol/ingest-api.md)) instead of a
+bucket. The scheme selects the mode, so there is still no provider field. New,
+all optional (PATCH):
+
+- `SetStorage.destination_hint` / `TestStorage.destination_hint` (9): free
+  text passed to the service; cap 64.
+- `DeviceState.storage_destination_hint` (45): its echo.
+- `DeviceState.ingest_api_supported` (46): the capability probe. Offer the
+  mode only to a device that sets it.
+
+When recordings reach the companion app first, the app uploads them on the
+device's behalf and holds no key: three new commands ask the connected device
+to sign a request (`IngestSign` 49 → `CommandResult.ingest_signature` 15),
+check an initiate reply and open its sealed credentials
+(`IngestOpenCredentials` 50 → `ingest_credentials` 16), and check a session
+receipt (`IngestCheckReceipt` 51). The device refuses them while recording.
+
+`visio_schema.ingest` is the reference implementation of the protocol's
+request signing, signed receipts and sealed credentials, pinned by
+`tests/golden/ingest_vectors.txt`. The settings QR gains an ingest `storage`
+section (`endpoint_url`, `access_key_id`, `destination_hint`); the device key
+is sealed as `sk` exactly like a bucket secret, so a v2 code still carries no
+readable secret. Bucket-mode codes are byte-identical to before.
+
 ### The recorder counts the video frames its keyframe gate drops
 
 A part opens each video stream on a keyframe, so after a part rotation the

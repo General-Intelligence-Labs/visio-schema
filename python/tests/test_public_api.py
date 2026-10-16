@@ -66,6 +66,10 @@ REQUIRED_COMMAND_BODIES = frozenset(
         "set_gps_tagging",
         "set_ble",
         "set_anti_flicker",
+        "capture_snapshot",
+        "ingest_sign",
+        "ingest_open_credentials",
+        "ingest_check_receipt",
     }
 )
 
@@ -74,6 +78,29 @@ def test_facade_all_is_frozen():
     """``visio_schema.__all__`` is exactly the curated set — additions and removals both fail."""
     assert frozenset(visio_schema.__all__) == FACADE_API
     assert len(visio_schema.__all__) == len(set(visio_schema.__all__)), "duplicate in __all__"
+
+
+def test_camera_and_ingest_wire_numbers_coexist():
+    from visio_schema.v1.control import command_pb2, command_result_pb2
+
+    expected = {
+        command_pb2.Command: {
+            "set_anti_flicker": 47, "capture_snapshot": 48,
+            "ingest_sign": 49, "ingest_open_credentials": 50,
+            "ingest_check_receipt": 51,
+        },
+        command_result_pb2.CommandResult: {
+            "snapshot": 14, "ingest_signature": 15, "ingest_credentials": 16,
+        },
+        command_result_pb2.DeviceState: {
+            "anti_flicker": 42, "anti_flicker_pending": 43,
+            "snapshot_supported": 44, "storage_destination_hint": 45,
+            "ingest_api_supported": 46,
+        },
+    }
+    for message, fields in expected.items():
+        for name, number in fields.items():
+            assert message.DESCRIPTOR.fields_by_name[name].number == number
 
 
 def test_facade_names_resolve():
