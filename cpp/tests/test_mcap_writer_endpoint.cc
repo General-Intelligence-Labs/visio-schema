@@ -10,10 +10,12 @@
 #include <atomic>
 
 #include <unistd.h>
+#include <time.h>
 
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cerrno>
 #include <filesystem>
 #include <string>
 #include <thread>
@@ -41,6 +43,18 @@ using visio_schema::kHeartbeat;
 using visio_schema::routing::ChannelRegistry;
 using visio_schema::wire::Message;
 namespace fs = std::filesystem;
+
+namespace {
+void ExpectIdleCpu() {
+  timespec before{}, after{};
+  ASSERT_EQ(clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &before), 0);
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  ASSERT_EQ(clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &after), 0);
+  const double cpu_s = after.tv_sec - before.tv_sec +
+                       (after.tv_nsec - before.tv_nsec) / 1e9;
+  EXPECT_LT(cpu_s, 0.05) << "empty recorder consumed CPU instead of sleeping";
+}
+}  // namespace
 
 TEST(McapWriterEndpoint, RecordsResolvedChannel) {
   const std::string path = TempPath("visio_mcap_test_basic.mcap");
@@ -597,4 +611,100 @@ TEST(McapWriterEndpoint, ReadbackOverrunUnderAConcurrentStepperNeverFaults) {
     RemoveParts(on);
   }
   RemoveParts(ref);
+}
+
+
+TEST(McapWriterEndpoint, EmptyQueueSleepsAndWakesForAnotherRecord) {
+  for (bool continuation : {false, true}) {
+    SCOPED_TRACE(continuation);
+    const std::string path = TempPath("endpoint_rotation_sleep.mcap");
+    auto channel = MakeChannel(16, "/imu");
+    auto resolve = [&](std::uint32_t) { return &channel; };
+    const auto rotation = continuation ? std::optional<McapRotationPolicy>{McapRotationPolicy{}}
+                                       : std::nullopt;
+    McapWriterEndpoint ep(path, resolve, 0, 0, WritePolicy::lossless(), {},
+                          true, 0, 0, {}, {}, {}, {}, rotation);
+    ep.Start(nullptr, nullptr);
+    ep.Send(Data(16, "first"));
+    for (unsigned i = 0; i < 500 && ep.bytes_written() != 5; ++i)
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    ASSERT_EQ(ep.bytes_written(), 5u);
+    ExpectIdleCpu();
+    ep.Send(Data(16, "second"));
+    for (unsigned i = 0; i < 500 && ep.bytes_written() != 11; ++i)
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    EXPECT_EQ(ep.bytes_written(), 11u);
+    ep.Stop();
+    EXPECT_EQ(ep.bytes_written(), 11u);
+    EXPECT_FALSE(ep.write_failed());
+    std::remove(path.c_str());
+  }
+}
+
+TEST(McapWriterEndpoint, IdleContinuationDeadlineFlushesWithoutAnotherSend) {
+  RemoveParts("endpoint_rotation_idle");
+  auto a=MakeChannel(16,"/a"), b=MakeChannel(17,"/b");
+  a.schema_name=b.schema_name="foxglove.CompressedVideo";
+  auto resolve=[&](std::uint32_t id) { return id==16 ? &a : &b; };
+  McapRotationPolicy rotation;
+  rotation.local_video_ids={16,17};
+  rotation.max_wait=std::chrono::milliseconds(100);
+  McapWriterEndpoint ep(TempPath("endpoint_rotation_idle.mcap"),resolve,10000,0,
+                        WritePolicy::lossless(),{},true,0,0,{}, {}, {}, {},rotation);
+  ep.Start(nullptr,nullptr);
+  auto ma=Data(16,std::string(5000,'a')); ma.keyframe=true;
+  auto mb=Data(17,std::string(5000,'b')); mb.keyframe=true;
+  ep.Send(ma); ep.Send(mb);
+  auto idr=Data(16,"next-idr"); idr.keyframe=true;
+  ep.Send(idr);
+  for (unsigned i=0;i<500;++i) {
+    if (ep.stats().rotation.cancelled==1 && ep.bytes_written()==10008 && ep.pending_bytes()==0) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  EXPECT_EQ(ep.stats().rotation.cancelled,1u);
+  EXPECT_EQ(ep.bytes_written(),10008u);
+  EXPECT_EQ(ep.pending_bytes(),0u);
+  ep.Stop();
+  EXPECT_FALSE(ep.write_failed());
+  EXPECT_EQ(PartCount("endpoint_rotation_idle"),1);
+  RemoveParts("endpoint_rotation_idle");
+}
+
+namespace {
+class RejectSecondPart final : public WriterStorage {
+ public:
+  std::unique_ptr<OutputFile> Create(const std::string& path,IoResult& result) override {
+    if (++opens>1) { result={IoStep::open,ENOSPC,0,false}; return {}; }
+    return LocalWriterStorage()->Create(path,result);
+  }
+  IoResult SyncParent(const std::string& path) override { return LocalWriterStorage()->SyncParent(path); }
+  IoResult Remove(const std::string& path) override { return LocalWriterStorage()->Remove(path); }
+  unsigned opens=0;
+};
+}
+TEST(McapWriterEndpoint, ContinuationOpenFailureCanStopWithExpiredCandidate) {
+  RemoveParts("endpoint_rotation_failed");
+  auto a=MakeChannel(16,"/a"), b=MakeChannel(17,"/b");
+  a.schema_name=b.schema_name="foxglove.CompressedVideo";
+  auto resolve=[&](std::uint32_t id) { return id==16 ? &a : &b; };
+  McapRotationPolicy rotation; rotation.local_video_ids={16,17};
+  rotation.max_wait=std::chrono::milliseconds(10);
+  auto storage=std::make_shared<RejectSecondPart>();
+  McapWriterEndpoint ep(TempPath("endpoint_rotation_failed.mcap"),resolve,10000,0,
+                        WritePolicy::lossless(),{},true,0,0,{}, {},storage,{},rotation);
+  ep.Start(nullptr,nullptr);
+  auto ma=Data(16,std::string(5000,'a')); ma.keyframe=true;
+  auto mb=Data(17,std::string(5000,'b')); mb.keyframe=true;
+  ep.Send(ma);ep.Send(mb);
+  ma.payload="a-idr";mb.payload="b-idr";
+  ep.Send(ma);ep.Send(mb);
+  for (unsigned i=0;i<500 && !ep.write_failed();++i)
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  ASSERT_TRUE(ep.write_failed());
+  std::this_thread::sleep_for(std::chrono::milliseconds(30));
+  ExpectIdleCpu();
+  ep.Stop();
+  EXPECT_EQ(ep.pending_bytes(),0u);
+  EXPECT_TRUE(ep.write_failed());
+  RemoveParts("endpoint_rotation_failed");
 }

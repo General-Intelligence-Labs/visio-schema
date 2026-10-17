@@ -27,12 +27,13 @@ McapWriterEndpoint::McapWriterEndpoint(std::string_view path, StreamResolver res
                                        std::optional<RecordingKey> recording_key,
                                        McapReadbackOptions readback,
                                        std::shared_ptr<WriterStorage> storage,
-                                       std::chrono::milliseconds checkpoint_interval)
+                                       std::chrono::milliseconds checkpoint_interval,
+                                       std::optional<McapRotationPolicy> rotation_policy)
     : resolve_(std::move(resolve)),
       writer_(std::make_unique<visio_schema::mcap::McapWriter>(
           path, max_bytes, max_duration_s, rotate_on_keyframe, pair_guard_ns,
           sync_span_bytes, std::move(recording_key), std::move(readback),
-          std::move(storage), checkpoint_interval)),
+          std::move(storage), checkpoint_interval, std::move(rotation_policy))),
       policy_(policy) {
   // Written on this (constructing) thread, before Start() spawns the writer
   // thread — so it lands in the file ahead of any message, no locking needed.
@@ -169,7 +170,14 @@ void McapWriterEndpoint::WriterLoop() {
     std::deque<Entry> batch;
     {
       std::unique_lock<std::mutex> lk(mu_);
-      cv_.wait(lk, [this] { return stop_ || !queue_.empty(); });
+      const auto deadline = writer_->rotation_deadline();
+      const auto ready = [this] { return stop_ || !queue_.empty(); };
+      // time_point::max() is not an infinite pthread timeout: converting it
+      // through the board's 32-bit time_t overflows and spins while idle.
+      if (deadline && !failed_.load(std::memory_order_relaxed))
+        cv_.wait_until(lk, *deadline, ready);
+      else
+        cv_.wait(lk, ready);
       batch.swap(queue_);
       // The bytes just taken are exactly what the queue was holding; they stay
       // counted (as in-flight) until each one is written and freed, so
@@ -188,6 +196,7 @@ void McapWriterEndpoint::WriterLoop() {
       NoteDrop(batch.size());
     } else {
       try {
+        writer_->FlushDue();
         DrainBatch(batch);
       } catch (const std::exception& e) {
         NoteFailure(e.what());
@@ -254,7 +263,7 @@ std::size_t McapWriterEndpoint::pending_bytes() const {
   std::lock_guard<std::mutex> lk(mu_);
   return queue_bytes_ +
          static_cast<std::size_t>(
-             inflight_bytes_.load(std::memory_order_relaxed));
+             inflight_bytes_.load(std::memory_order_relaxed)) + writer_->rotation_pending_bytes();
 }
 
 std::uint64_t McapWriterEndpoint::bytes_written() const {
@@ -284,6 +293,7 @@ bool McapWriterEndpoint::storage_fault() const {
 
 McapWriterStats McapWriterEndpoint::stats() const {
   McapWriterStats s;
+  s.rotation = writer_->rotation_stats();
   s.writes = stat_writes_.load(std::memory_order_relaxed);
   s.blocked_ns = stat_blocked_ns_.load(std::memory_order_relaxed);
   s.max_block_ns = stat_max_block_ns_.load(std::memory_order_relaxed);

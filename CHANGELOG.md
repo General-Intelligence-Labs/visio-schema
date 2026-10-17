@@ -6,6 +6,16 @@ bump the MINOR version.
 
 ## Unreleased
 
+### Loss-preserving MCAP continuation parts
+
+The C++ writer can opt into bounded local-camera IDR alignment while retaining
+all accepted records at forced cuts, including attached-camera P-frames. New
+`visio.rotation` metadata identifies the part chain. `Session.stream` retains
+per-camera CPU/GPU codec state across these marked parts and resets it on a
+missing part or source discontinuity. Deploy the updated reader with firmware
+that enables this policy; isolated forced parts may require the next IDR.
+See [the continuation contract](docs/protocol/mcap_rotation.md).
+
 ### Manual camera snapshots
 
 Added the `CaptureSnapshot` command (tag 48), the bounded

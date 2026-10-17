@@ -525,9 +525,24 @@ class Session:
             flat.extend(g)
             owner.extend([sid] * len(g))
         index = [_FileIndex(p, require_index=require_index) for p in flat]
-        # Globally ordered by first-message timestamp: `topics`, calibration and
-        # metadata read the flat list and want the recording's own order.
-        order = sorted(range(len(flat)), key=lambda i: index[i].start_ns or 0)
+        self._truncated = frozenset(p for p, ix in zip(flat, index, strict=True) if ix.truncated)
+        self._rotation_ids = {ix.path: self._rotation_identity(ix) for ix in index}
+        # A retained remote backlog can predate the predecessor's first message.
+        # Explicit recording identity takes precedence over summary timestamps.
+        chain_start = {}
+        for i, ix in enumerate(index):
+            rotation = self._rotation_ids[ix.path]
+            if rotation is not None:
+                key = (owner[i], rotation[0])
+                chain_start[key] = min(chain_start.get(key, ix.start_ns or 0), ix.start_ns or 0)
+
+        def file_order(i):
+            rotation = self._rotation_ids[flat[i]]
+            if rotation is None:
+                return index[i].start_ns or 0, owner[i], "", 0
+            return chain_start[owner[i], rotation[0]], owner[i], rotation[0], rotation[1]
+
+        order = sorted(range(len(flat)), key=file_order)
         self._files = [flat[i] for i in order]
         self._index = [index[i] for i in order]
         owner = [owner[i] for i in order]
@@ -628,7 +643,11 @@ class Session:
                 # streams also START together; chunks start a chunk apart.
                 span = ia.end_ns - ia.start_ns
                 started_together = abs(ib.start_ns - ia.start_ns) < overlap
-                if started_together and overlap > span * _PARALLEL_OVERLAP_FRAC:
+                ra = self._rotation_ids[ia.path]
+                rb = self._rotation_ids[ib.path]
+                same_chain = (ra is not None and rb is not None and
+                              ra[0] == rb[0] and rb[1] == ra[1] + 1)
+                if not same_chain and started_together and overlap > span * _PARALLEL_OVERLAP_FRAC:
                     _log.warning(
                         "%s and %s overlap over %.0f%% of their span — these look "
                         "like PARALLEL streams flattened into one list, not chunks "
@@ -1188,18 +1207,25 @@ class Session:
         end_read = None if end_ns is None else end_ns + reorder_ns
 
         def _one_stream(members: list[int]) -> Iterator[tuple[Ns, Ns, Element]]:
-            # Sequential: a stream's chunks do not overlap, and decoders reset per
-            # chunk (each carries its own keyframes).
+            state = None
+            previous = None
             for i in members:
                 idx = self._index[i]
-                # A whole file past the bound holds nothing in-window and no later
-                # file depends on its decoder state (decoders reset per chunk), so
-                # skip it unopened rather than open it for an empty read.
                 if end_read is not None and not _spans_window(idx, None, end_read):
                     continue
+                rotation = self._rotation_ids[idx.path]
+                continuing = (rotation is not None and previous is not None and
+                              rotation[0] == previous[0] and rotation[1] == previous[1] + 1)
+                if not continuing:
+                    if state is not None and "flush" in state:
+                        yield from state["flush"]()
+                    state = {} if rotation is not None and not raw_all else None
                 yield from self._iter_file(
                     self._files[i], idx, want, make_decoders, raw_all,
-                    end_ns=end_read, raw_set=raw_set)
+                    end_ns=end_read, raw_set=raw_set, decoder_state=state)
+                previous = rotation
+            if state is not None and "flush" in state:
+                yield from state["flush"]()
 
         def _raw() -> Iterator[tuple[Ns, Ns, Element]]:
             # Merged ACROSS streams by arrival, concatenated within one. Only one
@@ -1222,6 +1248,27 @@ class Session:
         for el in ordered:
             if _in_window(el.t_ns, start_ns, end_ns):
                 yield el
+
+    def _rotation_identity(self, idx: _FileIndex):
+        if idx.metadata_names is not None and "visio.rotation" not in idx.metadata_names:
+            return None
+        rows = [m.metadata for m in self._iter_file_metadata(idx.path)
+                if m.name == "visio.rotation"]
+        if not rows:
+            return None
+        if len(rows) != 1:
+            raise ValueError(f"{idx.path}: duplicate rotation metadata")
+        row = rows[0]
+        try:
+            part = int(row["part_index"])
+            identity = row["recording_id"]
+            valid = (row["version"] == "1" and row["video_continuation"] == "true"
+                     and identity and part >= 0)
+        except (KeyError, ValueError) as exc:
+            raise ValueError(f"{idx.path}: invalid rotation metadata") from exc
+        if not valid:
+            raise ValueError(f"{idx.path}: invalid rotation metadata")
+        return identity, part
 
     def _wanted_prefixed(
         self, idx: _FileIndex, want: set[str] | None, raw_all: bool = False
@@ -1312,7 +1359,7 @@ class Session:
     def _iter_file(
         self, path: Path, idx: _FileIndex, want: set[str] | None,
         make_decoders, raw_all: bool = False, *, end_ns: Ns | None = None,
-        raw_set: frozenset[str] = frozenset(),
+        raw_set: frozenset[str] = frozenset(), decoder_state: dict | None = None,
     ) -> Iterator[tuple[Ns, Ns, Element]]:
         # Topic-filtered read: skip the discarded majority (IMU-quat, audio, …)
         # instead of building a Python object per message like read_mcap. The
@@ -1335,7 +1382,16 @@ class Session:
         # both kinds, which is what makes a single ordered stream possible.
         decoded = {t for t in wanted
                    if strip_device_topic_prefix(t, self._device) not in raw_set}
-        adapters = self._build_adapters(idx, decoded, make_decoders)
+        carry_video = decoder_state is not None and VIDEO_SCHEMA not in self._adapters
+
+        def bind(proto):
+            if not carry_video or proto.DESCRIPTOR.full_name != VIDEO_SCHEMA:
+                return make_decoders(proto)
+            emit, flush = make_decoders(proto, state=decoder_state)
+            decoder_state["flush"] = flush
+            return emit, flush
+
+        adapters = self._build_adapters(idx, decoded, bind)
         for schema, ch, msg in self._read_messages(
             path, topics=wanted, end_ns=end_ns):
             if schema is None:
@@ -1348,9 +1404,19 @@ class Session:
             adapter = adapters.get(schema.name)
             if adapter is None:
                 continue
+            if carry_video and schema.name == VIDEO_SCHEMA:
+                seqs = decoder_state.setdefault("sequences", {})
+                previous = seqs.get(canon)
+                if previous is not None and msg.sequence != (previous + 1) % (1 << 32):
+                    if "flush_topic" in decoder_state:
+                        yield from decoder_state["flush_topic"](canon)
+                    decoder_state.get("decoders", {}).pop(canon, None)
+                    decoder_state.get("formats", {}).pop(canon, None)
+                seqs[canon] = msg.sequence
             yield from adapter.emit(msg.data, canon, msg.log_time)
-        for adapter in adapters.values():
-            yield from adapter.flush()
+        for name, adapter in adapters.items():
+            if not carry_video or name != VIDEO_SCHEMA:
+                yield from adapter.flush()
 
     # --- sparse video: keyframes only, so P-frames are never decoded ----- #
     def keyframe_cadence(self, topic: str) -> KeyframeCadence | None:
@@ -1725,24 +1791,34 @@ class Session:
         if gpu and gray:
             raise ValueError(f"{what}(gpu=True) decodes RGB only; gray is CPU-path")
         if gpu:
-            if attach_exposure or not self._exposure_cams():
-                return self._gpu_video_decoders
-            return lambda proto: self._gpu_video_decoders(proto, attach_exposure=attach_exposure)
+            return lambda proto, *, state=None: self._gpu_video_decoders(
+                proto, attach_exposure=attach_exposure, state=state)
         pixel_format = "gray" if gray else "rgb24"
-        return lambda proto: cpu_video_decoders(
-            proto, pixel_format, self._exposure_at if attach_exposure else None
-        )
+        return lambda proto, *, state=None: cpu_video_decoders(
+            proto, pixel_format, self._exposure_at if attach_exposure else None,
+            state=state)
 
-    def _gpu_video_decoders(self, video, *, attach_exposure=True):
+    def _gpu_video_decoders(self, video, *, attach_exposure=True, state=None):
         """Per-camera NVDEC decoders: device RGB frames self-timestamped by PTS."""
         from ._gpu_decode import NvDecoder
 
-        decoders: dict[str, NvDecoder] = {}
-        frame_ids: dict[str, str] = {}
+        state = {} if state is None else state
+        decoders = state.setdefault("decoders", {})
+        frame_ids = state.setdefault("frame_ids", {})
+        formats = state.setdefault("formats", {})
 
         def emit(canon: str, t: Ns) -> Iterator[tuple[Ns, Ns, Element]]:
             dec = decoders.get(canon)
+            if dec is not None and formats.get(canon) != (video.format, video.frame_id):
+                yield from flush_topic(canon)
+                decoders.pop(canon)
+                formats.pop(canon)
+                dec = None
             if dec is None:
+                if (video.format.lower() in KEYFRAME_FORMATS and
+                        not is_keyframe(video.format, video.data)):
+                    return
+                formats[canon] = (video.format, video.frame_id)
                 dec = decoders[canon] = NvDecoder(video.format)
             frame_ids[canon] = video.frame_id
             # The decoder is deep-pipelined, so the frame coming out is an
@@ -1753,14 +1829,20 @@ class Session:
                 yield pts, t, Frame(canon, pts, img, frame_ids[canon],
                                     event=ev, exposure=exposure)
 
-        def flush() -> Iterator[tuple[Ns, Ns, Element]]:
-            for canon, dec in decoders.items():
-                for pts, img, ev in dec.flush():
-                    # These are the last frames of the chunk; arrival = their own
-                    # t is monotone-safe and they release in the reorder tail.
-                    exposure = self._exposure_at(canon, pts) if attach_exposure else None
-                    yield pts, pts, Frame(canon, pts, img, frame_ids.get(canon, ""),
-                                          event=ev, exposure=exposure)
+        def flush_topic(canon):
+            dec = decoders.get(canon)
+            if dec is None:
+                return
+            for pts, img, ev in dec.flush():
+                exposure = self._exposure_at(canon, pts) if attach_exposure else None
+                yield pts, pts, Frame(canon, pts, img, frame_ids[canon],
+                                      event=ev, exposure=exposure)
+
+        def flush():
+            for canon in decoders:
+                yield from flush_topic(canon)
+
+        state["flush_topic"] = flush_topic
 
         return emit, flush
 

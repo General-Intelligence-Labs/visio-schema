@@ -56,6 +56,7 @@ struct McapWriterStats {
   // until an Ego Pro recording was found to be silently missing every relayed
   // limb camera while every health field read clean.
   std::uint64_t unmapped = 0;
+  McapRotationStats rotation;
 };
 
 class McapWriterEndpoint : public transport::Endpoint {
@@ -74,7 +75,8 @@ class McapWriterEndpoint : public transport::Endpoint {
                      // Write-time read-back. Passthrough; see McapWriter.
                      McapReadbackOptions readback = {},
                      std::shared_ptr<WriterStorage> storage = {},
-                     std::chrono::milliseconds checkpoint_interval = {});
+                     std::chrono::milliseconds checkpoint_interval = {},
+                     std::optional<McapRotationPolicy> rotation_policy = std::nullopt);
   ~McapWriterEndpoint() override;
 
   McapWriterEndpoint(const McapWriterEndpoint&) = delete;

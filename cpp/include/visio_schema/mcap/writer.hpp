@@ -10,7 +10,7 @@
 // name (Channel::schema_name) and Schema.data is its FileDescriptorSet
 // (Channel::schema), so Foxglove resolves the type from the embedded set.
 //
-// Rotation: pass max_bytes and/or max_duration_s to split into self-contained
+// Rotation: pass max_bytes and/or max_duration_s to split into numbered
 // numbered parts <stem>_0000<ext>, <stem>_0001<ext>, … max_bytes counts written
 // payload bytes (approximate).
 //
@@ -24,6 +24,8 @@
 #include <chrono>
 #include <cstdint>
 #include <map>
+#include <deque>
+#include <vector>
 #include <memory>
 #include <string>
 #include <optional>
@@ -50,6 +52,20 @@ using visio_schema::wire::Message;
 
 class SpanReadback;
 
+// Firmware opts in explicitly: only local cameras guide a preferred cut.
+// All continuation records survive even when a cut cannot be aligned.
+struct McapRotationPolicy {
+  std::vector<std::uint32_t> local_video_ids;
+  std::int64_t tolerance_ns = 1'000'000;
+  std::size_t max_staged_bytes = 2 * 1024 * 1024;
+  std::chrono::milliseconds max_wait{100};
+};
+
+struct McapRotationStats {
+  std::uint64_t aligned = 0, forced = 0, cancelled = 0;
+  std::uint64_t startup_dropped = 0, max_staged_bytes = 0;
+};
+
 class McapWriter {
  public:
   // Record to a filesystem path. With max_bytes > 0 and/or max_duration_s > 0,
@@ -64,6 +80,15 @@ class McapWriter {
   // per rotation). pair_guard_ns (≈ half a frame period) separates a pair's
   // µs-skewed sibling keyframe from the next GOP's keyframe. Both default off, so
   // a caller that does not opt in keeps the plain byte-exact roll.
+  //
+  // rotation_policy (opt-in): use loss-preserving continuation parts. Only the
+  // explicit local camera ids guide a preferred aligned-IDR cut. Bound staging
+  // by max_staged_bytes/max_wait; cancel an incomplete candidate into the old
+  // part. At the byte ceiling (+1/8), force a cut and retain P-frames. Readers
+  // must decode the marked recording chain across parts. Initial local video
+  // warm-up still waits for its first IDR; attached cameras never gate a cut.
+  // pair_guard_ns above belongs to the legacy policy, not this timestamp-spread
+  // comparison. Descriptors and payload timestamps/sequences remain unchanged.
   //
   // sync_span_bytes (opt-in, 0 = off): hand the part file's bytes to kernel
   // writeback in spans of at least this many bytes as they are written
@@ -88,7 +113,8 @@ class McapWriter {
                       std::optional<RecordingKey> recording_key = std::nullopt,
                       McapReadbackOptions readback = {},
                       std::shared_ptr<WriterStorage> storage = {},
-                      std::chrono::milliseconds checkpoint_interval = {});
+                      std::chrono::milliseconds checkpoint_interval = {},
+                      std::optional<McapRotationPolicy> rotation_policy = std::nullopt);
   ~McapWriter();
 
   McapWriter(const McapWriter&) = delete;
@@ -98,6 +124,12 @@ class McapWriter {
   // channel records — declare-before-write).
   void Write(const Channel& channel, const Message& msg);
   void Close();
+  // Only the writer worker mutates staging. Polling gauges are atomic.
+  void FlushDue();
+  std::optional<std::chrono::steady_clock::time_point> rotation_deadline() const;
+  std::uint64_t rotation_pending_bytes() const { return staged_bytes_.load(); }
+  McapRotationStats rotation_stats() const;
+
 
   // Carry an MCAP Metadata record (`name` + key/values) in the file — e.g. the
   // capture metadata (task/location/…). Call once after construction; it's
@@ -133,6 +165,14 @@ class McapWriter {
   bool storage_fault() const;
 
  private:
+  struct Pending { Channel channel; Message msg; std::size_t bytes; };
+  void WriteRecord(const Channel& channel, const Message& msg);
+  void WriteContinuation(const Channel& channel, const Message& msg);
+  void FlushStaged(bool rotate, bool allow_forced = true);
+  void ForceRollIfDue();
+  bool LocalVideo(const Channel& channel) const;
+  bool ForcedCutDue() const;
+  void WriteRotationMetadata();
   std::string PartPath() const;
   void OpenPart();          // throws on open failure
   bool ShouldRoll() const;
@@ -145,6 +185,15 @@ class McapWriter {
   std::string meta_name_;
   std::map<std::string, std::string> meta_;
 
+  const std::optional<McapRotationPolicy> rotation_policy_;
+  std::string recording_id_, cut_reason_ = "initial";
+  std::deque<Pending> staged_;
+  std::unordered_set<std::uint32_t> candidate_ids_;
+  std::int64_t candidate_min_ns_ = 0, candidate_max_ns_ = 0;
+  std::uint64_t staged_payload_bytes_ = 0;
+  std::chrono::steady_clock::time_point candidate_deadline_;
+  std::atomic<std::uint64_t> staged_bytes_{0}, aligned_cuts_{0}, forced_cuts_{0};
+  std::atomic<std::uint64_t> cancelled_cuts_{0}, startup_dropped_{0}, stage_peak_{0};
   const std::string base_path_;
   const std::uint64_t max_bytes_;
   const std::int64_t max_duration_ns_;
