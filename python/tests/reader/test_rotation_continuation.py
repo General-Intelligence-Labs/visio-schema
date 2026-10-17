@@ -4,14 +4,14 @@ import sys
 
 import numpy as np
 import pytest
-from _helpers import RecBuilder, indexed_frames
+from _helpers import FRAME_DT, T0, VIDEO, RecBuilder, indexed_frames
 from mcap.writer import Writer
 
 from visio_schema import make_channel
 from visio_schema.reader import Session, sync
 
 
-def write_rows(path, rows, part, recording="test-recording", metadata=True):
+def write_rows(path, rows, part, recording="test-recording", metadata=True, declared=()):
     with path.open("wb") as f:
         w = Writer(f)
         w.start()
@@ -27,13 +27,19 @@ def write_rows(path, rows, part, recording="test-recording", metadata=True):
                 },
             )
         channels = {}
-        for topic, schema_name, t, payload, seq in rows:
+
+        def register(topic, schema_name):
             if topic not in channels:
                 ch = make_channel(topic, schema_name, stream_id=16)
                 sid = w.register_schema(name=schema_name, encoding="protobuf", data=ch.schema)
                 channels[topic] = w.register_channel(
                     topic=topic, message_encoding="protobuf", schema_id=sid
                 )
+
+        for topic, schema_name in declared:
+            register(topic, schema_name)
+        for topic, schema_name, t, payload, seq in rows:
+            register(topic, schema_name)
             w.add_message(
                 channel_id=channels[topic], log_time=t, publish_time=t, data=payload, sequence=seq
             )
@@ -41,11 +47,12 @@ def write_rows(path, rows, part, recording="test-recording", metadata=True):
     return path
 
 
-def fixture_rows(tmp_path, *, h=64, w=96):
+def fixture_rows(tmp_path, *, h=64, w=96, wrist_keyint=12, n=16):
     builder = RecBuilder(tmp_path / "unused.mcap")
-    frames = indexed_frames(16, h=h, w=w)
+    base = indexed_frames(16, h=h, w=w)
+    frames = [base[i % len(base)] for i in range(n)]
     builder.add_camera("/ego/camera/0", frames, keyint=12)
-    builder.add_camera("/wrist/camera/0", frames, keyint=12, skew=8000)
+    builder.add_camera("/wrist/camera/0", frames, keyint=wrist_keyint, skew=8000)
     counters = {}
     rows = []
     for topic, schema, t, data in sorted(builder._rows, key=lambda r: r[2]):
@@ -328,3 +335,149 @@ def test_parameter_sets_on_p_frame_do_not_prime_a_reset_decoder(tmp_path, gpu):
     frames = list(Session([first, second]).stream(gpu=gpu))
     assert sum(f.topic == "/ego/camera/0" for f in frames) == 16
     assert sum(f.topic == "/wrist/camera/0" for f in frames) == 9
+
+
+@pytest.mark.parametrize("raw", [False, True, {"/wrist/camera/0"}])
+def test_bounded_window_preserves_required_independent_camera_preroll(tmp_path, monkeypatch, raw):
+    rows = fixture_rows(tmp_path, wrist_keyint=8)
+    spans = [(0, 4), (4, 8), (8, 12), (12, 14), (14, 16)]
+    parts = [write_rows(tmp_path / f"part{i}.mcap",
+                        [r for r in rows if lo <= r[4] < hi], i)
+             for i, (lo, hi) in enumerate(spans)]
+    session = Session(parts)
+    keys = sorted({r[0] for r in rows})
+    expected = [f for f in session.stream(topics=keys, raw=raw)
+                if f.t_ns >= rows[-2][2]]
+    opened = []
+    original = session._read_messages
+
+    def read(path, *args, **kwargs):
+        opened.append(path.name)
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(session, "_read_messages", read)
+    actual = list(session.stream(topics=keys, start_ns=rows[-2][2], raw=raw))
+    assert [(f.topic, f.t_ns) for f in actual] == [(f.topic, f.t_ns) for f in expected]
+    for a, b in zip(actual, expected, strict=True):
+        if hasattr(a, "image"):
+            np.testing.assert_array_equal(a.image, b.image)
+        else:
+            assert a.data == b.data
+    assert not {"part0.mcap", "part1.mcap"} & set(opened)
+    if raw is True:
+        assert set(opened) == {"part4.mcap"}
+    elif raw is False:
+        assert "part2.mcap" in opened  # wrist's earlier independent IDR
+
+
+def test_bounded_window_does_not_preroll_across_missing_part(tmp_path):
+    rows = fixture_rows(tmp_path)
+    parts = [write_rows(tmp_path / f"part{i}.mcap",
+                        [r for r in rows if lo <= r[4] < hi], part)
+             for i, (lo, hi, part) in enumerate([(0, 5, 0), (9, 16, 2)])]
+    session = Session(parts)
+    start = rows[18][2]
+    expected = [f for f in session.stream() if f.t_ns >= start]
+    actual = list(session.stream(start_ns=start))
+    assert [(f.topic, f.t_ns) for f in actual] == [(f.topic, f.t_ns) for f in expected]
+    for a, b in zip(actual, expected, strict=True):
+        np.testing.assert_array_equal(a.image, b.image)
+
+
+def test_bounded_preroll_ignores_silent_late_and_foreign_cameras(tmp_path, monkeypatch):
+    device = "GILABS-SELECTED"
+    cam, late = "/ego/camera/0", "/ego/camera/8"
+    rows = []
+    for topic, schema, t, payload, seq in fixture_rows(tmp_path):
+        if topic == cam:
+            rows.append((f"/{device}{topic}", schema, t, payload, seq))
+        elif seq not in (0, 12):
+            rows.append(("/GILABS-OTHER/ego/camera/9", schema, t, payload, seq))
+    builder = RecBuilder(tmp_path / "late-unused.mcap", device=device)
+    builder.add_camera(late, indexed_frames(2), t0=T0 + 14 * FRAME_DT)
+    rows.extend((*row, seq + 14) for seq, row in enumerate(builder._rows))
+    rows.sort(key=lambda row: row[2])
+    spans = [(0, 4), (4, 8), (8, 12), (12, 14), (14, 16)]
+    parts = [write_rows(tmp_path / f"part{i}.mcap",
+                        [r for r in rows if lo <= r[4] < hi], i,
+                        declared=[(f"/{device}/ego/camera/7", VIDEO)])
+             for i, (lo, hi) in enumerate(spans)]
+    session = Session(parts, device=device)
+    start, end = T0 + 15 * FRAME_DT, T0 + 16 * FRAME_DT
+    expected = [f for f in session.stream() if start <= f.t_ns < end]
+    opened = []
+    original = session._read_messages
+
+    def read(path, **kwargs):
+        opened.append(path.name)
+        return original(path, **kwargs)
+
+    monkeypatch.setattr(session, "_read_messages", read)
+    actual = list(session.stream(start_ns=start, end_ns=end))
+    assert [(f.topic, f.t_ns) for f in actual] == [(cam, start), (late, start)]
+    for a, b in zip(actual, expected, strict=True):
+        np.testing.assert_array_equal(a.image, b.image)
+    assert set(opened) == {"part3.mcap", "part4.mcap"}
+
+
+@pytest.mark.parametrize("real_gpu", [False, True], ids=["delayed-host", "nvdec"])
+def test_bounded_gpu_window_preserves_independent_wrist_and_exclusive_end(
+        tmp_path, monkeypatch, real_gpu):
+    made = []
+    if real_gpu:
+        cupy = pytest.importorskip("cupy", reason="real NVDEC validation requires GPU bindings")
+        pytest.importorskip("PyNvVideoCodec",
+                            reason="real NVDEC validation requires codec bindings")
+        to_host = cupy.asnumpy
+    else:
+        from visio_schema.reader import _gpu_decode
+        from visio_schema.reader._decode import HevcDecoder
+
+        class Delayed:
+            def __init__(self, fmt):
+                self.decoder = HevcDecoder(fmt)
+                self.pending = []
+                self.flushes = 0
+                made.append(self)
+
+            def decode(self, data, t):
+                image = self.decoder.decode(data)
+                if image is not None:
+                    self.pending.append((t, image, None))
+                return [self.pending.pop(0)] if len(self.pending) > 4 else []
+
+            def flush(self):
+                self.flushes += 1
+                out, self.pending = self.pending, []
+                return out
+
+        monkeypatch.setattr(_gpu_decode, "NvDecoder", Delayed)
+        to_host = np.asarray
+    rows = fixture_rows(tmp_path, h=256, w=384, wrist_keyint=20, n=96)
+    whole = write_rows(tmp_path / "whole.mcap", rows, 0)
+    parts = [write_rows(tmp_path / f"part{i}.mcap",
+                        [r for r in rows if 8 * i <= r[4] < 8 * (i + 1)], i)
+             for i in range(12)]
+    start, end = T0 + 54 * FRAME_DT, T0 + 57 * FRAME_DT
+    expected = [f for f in Session([whole]).stream(gpu=True) if start <= f.t_ns < end]
+    made.clear()
+    session = Session(parts)
+    opened = []
+    original = session._read_messages
+
+    def read(path, **kwargs):
+        opened.append(path.name)
+        return original(path, **kwargs)
+
+    monkeypatch.setattr(session, "_read_messages", read)
+    actual = list(session.stream(start_ns=start, end_ns=end, gpu=True))
+    assert [(f.topic, f.t_ns) for f in actual] == [(f.topic, f.t_ns) for f in expected]
+    assert len(actual) == 6
+    assert all(start <= f.t_ns < end for f in actual)
+    for a, b in zip(actual, expected, strict=True):
+        np.testing.assert_array_equal(to_host(a.image), to_host(b.image))
+    assert "part2.mcap" in opened  # wrist IDR precedes the head's by 16 frames
+    assert not {"part0.mcap", "part1.mcap", "part10.mcap", "part11.mcap"} & set(opened)
+    if not real_gpu:
+        assert len(made) == 2
+        assert [decoder.flushes for decoder in made] == [1, 1]

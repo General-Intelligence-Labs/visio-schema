@@ -344,10 +344,12 @@ TEST(McapWriterGate, DropsLeadingPFramesUntilFirstKeyframe) {
   McapWriter w(path);
   w.Write(v, VideoMsg(kFirstDynamic, std::string(3, 'a'), /*kf=*/false, 1000));
   EXPECT_EQ(w.bytes_written(), 0u);   // pre-keyframe P-frame dropped
+  EXPECT_EQ(w.keyframe_gated(), 0u);  // the stream's start: not a hole
   w.Write(v, VideoMsg(kFirstDynamic, std::string(9, 'a'), /*kf=*/true, 2000));
   EXPECT_EQ(w.bytes_written(), 9u);   // first IDR primes + writes
   w.Write(v, VideoMsg(kFirstDynamic, std::string(5, 'a'), /*kf=*/false, 3000));
   EXPECT_EQ(w.bytes_written(), 14u);  // subsequent P-frames flow
+  EXPECT_EQ(w.keyframe_gated(), 0u);  // a primed stream is never gated
   w.Close();
   std::remove(path.c_str());
 }
@@ -380,6 +382,7 @@ TEST(McapWriterGate, RotationReDropsUntilKeyframe) {
     w.Write(v, VideoMsg(kFirstDynamic, std::string(10, 'a'), false, 2000));  // part0, pb=20
     w.Write(v, VideoMsg(kFirstDynamic, std::string(5, 'a'), false, 3000));   // roll → part1, drop
     EXPECT_EQ(w.bytes_written(), 20u);
+    EXPECT_EQ(w.keyframe_gated(), 1u);  // a rotation's drop IS a hole
     w.Write(v, VideoMsg(kFirstDynamic, std::string(7, 'a'), true, 4000));    // part1 prime
     EXPECT_EQ(w.bytes_written(), 27u);
     w.Close();
@@ -1006,5 +1009,35 @@ TEST(McapWriterContinuation, DurationGraceCannotBeRenewedByUnpairedIdrs) {
   EXPECT_GT(PartCount(stem),1);
   EXPECT_EQ(writer.bytes_written(),1500u);
   EXPECT_EQ(ContinuationRows(stem).size(),3u);
+  RemoveParts(stem);
+}
+
+
+TEST(McapWriterContinuation, BorrowedPayloadSurvivesCallerReuseBeforePairedCut) {
+  const std::string stem = "rotation_borrowed";
+  RemoveParts(stem);
+  const Channel a = VideoChannel(16, "/ego/camera/0");
+  const Channel b = VideoChannel(17, "/ego/camera/1");
+  visio_schema::mcap::McapRotationPolicy policy;
+  policy.local_video_ids = {a.id, b.id};
+  McapWriter writer(TempPath(stem + ".mcap"), 1000, 0, true, 0,
+                    0, {}, {}, {}, {}, policy);
+  writer.Write(a, VideoMsg(a.id, std::string(500, 'a'), true, 0));
+  writer.Write(b, VideoMsg(b.id, std::string(500, 'b'), true, 0));
+  std::string bytes(32, 'c');
+  auto message = VideoMsg(a.id, "", true, 33333333, 1);
+  const visio_schema::mcap::RecordedMessage borrowed{
+      message.timestamp, message.seq, message.keyframe, bytes};
+  writer.Write(a, borrowed);
+  ASSERT_GT(writer.rotation_pending_bytes(), 0u);
+  bytes.assign(32, 'x');
+  writer.Write(b, VideoMsg(b.id, std::string(32, 'd'), true, 33333333, 1));
+  writer.Close();
+  const auto rows = ContinuationRows(stem);
+  ASSERT_EQ(rows.size(), 4u);
+  EXPECT_EQ(rows[2], a.topic + ":1:33333333:" + std::string(32, 'c'));
+  EXPECT_EQ(writer.rotation_stats().aligned, 1u);
+  EXPECT_EQ(writer.keyframe_gated(), 0u);
+  EXPECT_EQ(writer.rotation_pending_bytes(), 0u);
   RemoveParts(stem);
 }

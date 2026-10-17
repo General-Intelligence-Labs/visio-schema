@@ -254,6 +254,45 @@ def test_exposure_unions_across_chunks(tmp_path):
     assert not any(f.exposure.interpolated for f in frames)
 
 
+@pytest.mark.parametrize("future_info", [False, True])
+def test_bounded_exposure_keeps_previous_shard_context_without_old_video(tmp_path, monkeypatch,
+                                                                      future_info):
+    info = CAM0 + "/frame_info"
+    first = RecBuilder(tmp_path / "first.mcap")
+    first.add_camera(CAM0, indexed_frames(2))
+    first.add_frame_info(CAM0, n=1, exposures_us=[1000], gains=[1.0])
+    start = T0 + 500_000_000
+    end = start + 2 * FRAME_DT
+    window = RecBuilder(tmp_path / "window.mcap")
+    window.add_camera(CAM0, indexed_frames(3), t0=start)
+    parts = [first.write(), window.write()]
+    if future_info:
+        following = RecBuilder(tmp_path / "following.mcap")
+        following.add_frame_info(CAM0, n=1, t0=T0 + 800_000_000,
+                                 exposures_us=[9000], gains=[9.0])
+        parts.append(following.write())
+    session = Session(parts)
+    expected = [f for f in session.stream([CAM0]) if start <= f.t_ns < end]
+    reads = []
+    original = session._read_messages
+
+    def read(path, **kwargs):
+        reads.append((path.name, set(kwargs.get("topics") or ())))
+        return original(path, **kwargs)
+
+    monkeypatch.setattr(session, "_read_messages", read)
+    actual = list(session.stream([CAM0], start_ns=start, end_ns=end))
+    assert [f.t_ns for f in actual] == [start, start + FRAME_DT]
+    assert [f.exposure for f in actual] == [f.exposure for f in expected]
+    assert all(f.exposure.interpolated for f in actual)
+    assert actual[0].exposure.exposure_ns == (6_000_000 if future_info else 1_000_000)
+    for a, b in zip(actual, expected, strict=True):
+        np.testing.assert_array_equal(a.image, b.image)
+    assert [topics for name, topics in reads if name == "first.mcap"] == [{info}]
+    if future_info:
+        assert "following.mcap" in {name for name, _ in reads}
+
+
 def test_interleaved_chunks_are_sorted_before_bisect(tmp_path):
     """The re-sort earns its place only here: RecBuilder sorts within a file, so
     a single chunk can never produce an unordered track. Two chunks whose frames

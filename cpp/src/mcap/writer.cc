@@ -538,12 +538,17 @@ void McapWriter::Roll() {
 }
 
 void McapWriter::Write(const Channel& channel, const Message& msg) {
+  Write(channel, RecordedMessage{msg.timestamp, msg.seq, msg.keyframe,
+                                 msg.payload.str()});
+}
+
+void McapWriter::Write(const Channel& channel, const RecordedMessage& msg) {
   if (closed_ || io_fault_.load()) return;
   if (rotation_policy_) WriteContinuation(channel, msg);
   else WriteRecord(channel, msg);
 }
 
-void McapWriter::WriteRecord(const Channel& channel, const Message& msg) {
+void McapWriter::WriteRecord(const Channel& channel, const RecordedMessage& msg) {
   if (closed_ || io_fault_.load()) return;
 
   const bool is_video = channel.schema_name == kCompressedVideoSchema;
@@ -594,9 +599,16 @@ void McapWriter::WriteRecord(const Channel& channel, const Message& msg) {
             "relayed, its device may predate the wire keyframe flag.",
             channel.topic.c_str(), static_cast<unsigned long long>(n));
       }
-      return;  // pre-keyframe P-frame — drop, don't count
+      // Counted only for a stream this recording already carried: a rotation
+      // that opened mid-GOP leaves a hole. The frames before a stream's very
+      // first keyframe precede the recording's start for that stream and are
+      // no gap in it.
+      if (ever_primed_video_channels_.count(channel.id) != 0)
+        keyframe_gated_.fetch_add(1, std::memory_order_relaxed);
+      return;  // pre-keyframe P-frame — dropped
     }
     primed_video_channels_.insert(channel.id);
+    ever_primed_video_channels_.insert(channel.id);
     unprimed_video_frames_.erase(channel.topic);
   }
 
@@ -728,7 +740,9 @@ void McapWriter::FlushStaged(bool rotate, bool allow_forced) {
   while (!staged_.empty()) {
     const auto& entry = staged_.front();
     if (allow_forced) ForceRollIfDue();
-    WriteRecord(entry.channel, entry.msg);
+    const auto& message = entry.msg;
+    WriteRecord(entry.channel, RecordedMessage{message.timestamp, message.seq,
+                                               message.keyframe, message.payload.str()});
     staged_bytes_.fetch_sub(entry.bytes);
     staged_payload_bytes_ -= entry.msg.payload.size();
     staged_.pop_front();
@@ -736,7 +750,7 @@ void McapWriter::FlushStaged(bool rotate, bool allow_forced) {
   candidate_ids_.clear();
 }
 
-void McapWriter::WriteContinuation(const Channel& channel, const Message& msg) {
+void McapWriter::WriteContinuation(const Channel& channel, const RecordedMessage& msg) {
   FlushDue();
   const bool local = LocalVideo(channel);
   const auto stamp = TimestampNs(msg.timestamp);
@@ -781,8 +795,13 @@ void McapWriter::WriteContinuation(const Channel& channel, const Message& msg) {
     WriteRecord(channel, msg);
     return;
   }
-  Message retained = msg;
-  retained.framed.reset(); // the recording never consumes the wire fanout cache
+  // RecordedMessage borrows bytes only across Write(). Rotation may wait for
+  // another camera after this call, when the endpoint has recycled its arena.
+  Message retained;
+  retained.timestamp = msg.timestamp;
+  retained.seq = msg.seq;
+  retained.keyframe = msg.keyframe;
+  retained.payload = wire::Payload(msg.payload);
   staged_.push_back({channel, std::move(retained), bytes});
   staged_payload_bytes_ += msg.payload.size();
   const auto resident = staged_bytes_.fetch_add(bytes) + bytes;

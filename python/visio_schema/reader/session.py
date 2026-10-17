@@ -1201,18 +1201,29 @@ class Session:
         # same slack `_reorder`'s watermark waits out. Without this the pass decoded
         # every remaining frame to EOF (and opened later chunks) only to have
         # `_in_window` drop them, which is pathological for video: an end-bounded 2 s
-        # window paid to decode the rest of the recording. `start_ns` is deliberately
-        # NOT pushed down — a decoder entering a chunk mid-GOP has no keyframe, so the
-        # read must begin at each chunk's head and `_in_window` trims the front.
-        end_read = None if end_ns is None else end_ns + reorder_ns
+        # window paid to decode the rest of the recording.
+        #
+        # `start_ns` is symmetric but ONLY at whole-file granularity: a file that
+        # ends before the window cannot hold an in-window element, so it is skipped
+        # unopened (see `_one_stream`). It is still NOT pushed INTO the reader — a
+        # decoder entering a chunk mid-GOP has no keyframe, so the file that CONTAINS
+        # `start_ns` is read from its head and `_in_window` trims the front. Widen by
+        # the reorder window on this side too: an element whose `t_ns` is in-window
+        # can arrive (log_time, which bounds the file's summary) up to `reorder_ns`
+        # earlier, so a file ending within that slack of `start_ns` may still carry
+        # one. Without this a sparse window late in a long sharded recording decoded
+        # every preceding shard — the mirror of the end-bound pathology above.
+        context_ns = max(1_000_000_000, reorder_ns) if exposure_cameras else reorder_ns
+        end_read = None if end_ns is None else end_ns + context_ns
+        start_read = None if start_ns is None else start_ns - reorder_ns
+        info_start = None if start_ns is None else start_ns - context_ns
 
         def _one_stream(members: list[int]) -> Iterator[tuple[Ns, Ns, Element]]:
             state = None
             previous = None
-            for i in members:
+            for i, file_want in self._window_members(
+                    members, start_read, end_read, want, raw_all, raw_set, info_start):
                 idx = self._index[i]
-                if end_read is not None and not _spans_window(idx, None, end_read):
-                    continue
                 rotation = self._rotation_ids[idx.path]
                 continuing = (rotation is not None and previous is not None and
                               rotation[0] == previous[0] and rotation[1] == previous[1] + 1)
@@ -1221,7 +1232,7 @@ class Session:
                         yield from state["flush"]()
                     state = {} if rotation is not None and not raw_all else None
                 yield from self._iter_file(
-                    self._files[i], idx, want, make_decoders, raw_all,
+                    self._files[i], idx, file_want, make_decoders, raw_all,
                     end_ns=end_read, raw_set=raw_set, decoder_state=state)
                 previous = rotation
             if state is not None and "flush" in state:
@@ -1248,6 +1259,96 @@ class Session:
         for el in ordered:
             if _in_window(el.t_ns, start_ns, end_ns):
                 yield el
+
+    def _selected_video(self, idx, want, raw_set):
+        selected = set(self._wanted_prefixed(idx, want))
+        return {
+            strip_device_topic_prefix(topic, self._device)
+            for topic, schema, count in idx.topics()
+            if count and topic in selected and schema == VIDEO_SCHEMA
+            and strip_device_topic_prefix(topic, self._device) not in raw_set
+        }
+
+    def _early_topics(self, idx, want, raw_set, info_start):
+        selected = set(self._wanted_prefixed(idx, want))
+        # IMU offsets have no schema upper bound; a bundle in an old shard can
+        # still emit in-window samples. Read those topics without old video.
+        return {
+            strip_device_topic_prefix(topic, self._device)
+            for topic, schema, count in idx.topics()
+            if count and topic in selected
+            and strip_device_topic_prefix(topic, self._device) not in raw_set
+            and (schema == IMU_RAW_SCHEMA or schema in self._adapters
+                 or (topic.endswith(FRAME_INFO_SUFFIX)
+                     and _spans_window(idx, info_start, None)))
+        }
+
+    def _window_members(self, members, start_ns, end_ns, want, raw_all, raw_set,
+                        info_start):
+        """Skip independent shards, retaining only required decode/sample context."""
+        chains = []
+        previous = None
+        for i in members:
+            rotation = self._rotation_ids[self._index[i].path]
+            if (rotation is None or previous is None or rotation[0] != previous[0]
+                    or rotation[1] != previous[1] + 1):
+                chains.append([])
+            chains[-1].append(i)
+            previous = rotation
+        selected = {}
+        for chain in chains:
+            overlaps = [pos for pos, i in enumerate(chain)
+                        if _spans_window(self._index[i], start_ns, end_ns)]
+            if not overlaps:
+                continue
+            first, last = overlaps[0], overlaps[-1]
+            marked = self._rotation_ids[self._index[chain[first]].path] is not None
+            if (marked and start_ns is not None and not raw_all
+                    and VIDEO_SCHEMA not in self._adapters):
+                preceding = set().union(*(
+                    self._selected_video(self._index[i], want, raw_set)
+                    for i in chain[:first]))
+                needed = preceding & set().union(*(
+                    self._selected_video(self._index[i], want, raw_set)
+                    for i in chain[first:last + 1]))
+                first = self._preroll_start(chain, first, start_ns, needed)
+            selected.update((i, want) for i in chain[first:last + 1])
+        if start_ns is not None and not raw_all:
+            for i in members:
+                idx = self._index[i]
+                if i in selected or _spans_window(idx, start_ns, end_ns):
+                    continue
+                if idx.end_ns is not None and idx.end_ns < start_ns:
+                    topics = self._early_topics(idx, want, raw_set, info_start)
+                    if topics:
+                        selected[i] = topics
+        for i in members:
+            if i in selected:
+                yield i, selected[i]
+
+    def _preroll_start(self, chain, first, start_ns, needed):
+        # Independent wrist cameras can need a different preceding keyframe.
+        # Inspect access units without decoding the preceding recording.
+        if not needed:
+            return first
+        for pos in range(first, -1, -1):
+            idx = self._index[chain[pos]]
+            names = {topic: strip_device_topic_prefix(topic, self._device)
+                     for topic, schema, count in idx.topics()
+                     if count and schema == VIDEO_SCHEMA
+                     and strip_device_topic_prefix(topic, self._device) in needed}
+            if not names:
+                continue
+            for _schema, channel, msg in self._read_messages(
+                    idx.path, topics=list(names), end_ns=start_ns + 1):
+                if names[channel.topic] not in needed:
+                    continue
+                video = message_class(VIDEO_SCHEMA).FromString(msg.data)
+                if is_keyframe(video.format, video.data):
+                    needed.discard(names[channel.topic])
+                    if not needed:
+                        return pos
+        return 0
 
     def _rotation_identity(self, idx: _FileIndex):
         if idx.metadata_names is not None and "visio.rotation" not in idx.metadata_names:
