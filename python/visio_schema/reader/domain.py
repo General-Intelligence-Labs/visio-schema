@@ -43,6 +43,7 @@ Ns = int  # nanoseconds on the heartbeat-synchronized clock (int64)
 VIDEO_SCHEMA = "foxglove.CompressedVideo"
 IMAGE_SCHEMA = "foxglove.CompressedImage"
 IMU_RAW_SCHEMA = "visio_schema.v1.sensor.ImuRaw"
+IMU_QUAT_SCHEMA = "visio_schema.v1.sensor.ImuQuat"
 FRAME_INFO_SCHEMA = "visio_schema.v1.sensor.CameraFrameInfo"
 CAM_CALIB_SCHEMA = "foxglove.CameraCalibration"
 FRAME_TF_SCHEMA = "foxglove.FrameTransform"
@@ -219,7 +220,8 @@ class Pose:
 @dataclass(frozen=True, eq=False)
 class Orientation:
     """A bare orientation, parsed from ``visio_schema.v1.ros.geometry_msgs.Quaternion``
-    — every device's fused IMU output (``/…/imu/<n>/quat``).
+    or one sample of ``visio_schema.v1.sensor.ImuQuat`` — every device's fused
+    IMU output (``/…/imu/<n>/quat``).
 
     Typed rather than left to the `Record` fallback for the same reason as `Pose`:
     interpolation dispatches on the element type, and an orientation stream is

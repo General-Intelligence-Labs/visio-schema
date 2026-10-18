@@ -50,6 +50,7 @@ proto-name distinction.
 | Visio proto | StreamKind | Why custom |
 |---|---|---|
 | `visio_schema.v1.sensor.ImuRaw` | `STREAM_IMU_RAW` | Foxglove has NO raw-IMU schema (verified against `foxglove-sdk` v0.24.0). Bundled per-IMU samples preserve per-tick fidelity that UMI's grid-ZOH discarded. |
+| `visio_schema.v1.sensor.ImuQuat` | — | Opt-in fused orientation bundles on the existing `/imu/<index>/quat` topic. Native Quaternion panels require an adapter; consumers must expand samples and use received-header time plus `t_offset_ns`. Individual Quaternion output remains the default. |
 | `visio_schema.v1.sensor.EncoderRaw` | `STREAM_ENCODER_RAW` | Raw count, magnetic-field magnitude, AGC, magnet-detection enum — diagnostics for bring-up. Foxglove has nothing like it; `foxglove.JointState` only covers cooked position/velocity/effort. |
 | `visio_schema.v1.sensor.SystemHealth` | `STREAM_SYSTEM_HEALTH` | CPU / RAM / battery / disk / stream-clients periodic telemetry. No Foxglove equivalent. |
 | `visio_schema.v1.sensor.AudioCompressed` | `STREAM_AUDIO_COMPRESSED` | `foxglove.RawAudio` only supports PCM-S16. We need AAC-LC ADTS / Opus / Vorbis for the UMI headset mic path. |

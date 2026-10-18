@@ -51,6 +51,7 @@ def test_builtins_are_registered():
         POSE_SCHEMA,
         JOINT_STATES_SCHEMA,
         QUATERNION_SCHEMA,
+        "visio_schema.v1.sensor.ImuQuat",
     }
 
 

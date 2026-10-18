@@ -27,6 +27,7 @@ inline constexpr const char* kDefaultEncoding = "protobuf";
 inline constexpr const char* kCompressedVideoSchema = "foxglove.CompressedVideo";
 inline constexpr const char* kQuaternionSchema =
     "visio_schema.v1.ros.geometry_msgs.Quaternion";
+inline constexpr const char* kImuQuatSchema = "visio_schema.v1.sensor.ImuQuat";
 inline constexpr const char* kCommandResultSchema =
     "visio_schema.v1.control.CommandResult";
 

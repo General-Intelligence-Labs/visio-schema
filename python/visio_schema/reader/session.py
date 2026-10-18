@@ -66,6 +66,7 @@ from .domain import (
     FRAME_TF_SCHEMA,
     IMAGE_SCHEMA,
     IMU_CALIB_SCHEMA,
+    IMU_QUAT_SCHEMA,
     IMU_RAW_SCHEMA,
     JOINT_STATES_SCHEMA,
     POSE_SCHEMA,
@@ -1278,7 +1279,7 @@ class Session:
             for topic, schema, count in idx.topics()
             if count and topic in selected
             and strip_device_topic_prefix(topic, self._device) not in raw_set
-            and (schema == IMU_RAW_SCHEMA or schema in self._adapters
+            and (schema in {IMU_RAW_SCHEMA, IMU_QUAT_SCHEMA} or schema in self._adapters
                  or (topic.endswith(FRAME_INFO_SUFFIX)
                      and _spans_window(idx, info_start, None)))
         }

@@ -29,6 +29,31 @@ fleet reflash to add a stream.
 `/<root>/<sensor-group>/<index>/<sub-field>` — e.g. `/glove_left/imu/3/raw`,
 `/glove_left/imu/3/quat`, `/gripper_left/camera/0`, `/ego/camera/0`.
 
+The fused IMU `/<root>/imu/<index>/quat` topic has two producer-selected
+formats. Its announced `Channel.schema_name` identifies the format:
+
+| Schema | Samples per message |
+|---|---|
+| `visio_schema.v1.ros.geometry_msgs.Quaternion` | One fused orientation |
+| `visio_schema.v1.sensor.ImuQuat` | A bundle of fused orientations |
+
+Firmware opts into the bundle with `[imu] quat_bundled=1` (default off).
+It follows `raw_bundle_ms` and the raw stream's sample windows; production ego
+configs currently use 33 ms, nominally about 30 bundles/s. Every fused sample
+is retained. The bundle's `first_sample_time` and outgoing header timestamp
+anchor the first sample; each `samples[].t_offset_ns` preserves acquisition
+time. Reconstruct aligned times from the received header (MCAP `log_time`)
+plus the offset, because the payload's first-sample timestamp stays in the
+producer clock. The shared Python reader expands either format into
+`Orientation` elements when the topic is selected. Consumers must inspect the
+schema instead of assuming every `/quat` message is one sample.
+
+The existing `quat_bundle_ms` option only groups individual Quaternion messages
+for transport. It applies when `quat_bundled=0`; with bundles enabled,
+`raw_bundle_ms` controls both outputs. Topic policies still match `/quat`;
+preview rate caps apply to whole bundle messages, while recordings retain all
+samples. Changing format requires restarting the producer.
+
 VIVE uses three fixed topics regardless of tracker count:
 `/<root>/vive/poses` (`VivePoseBatch`), `/<root>/vive/status` (`ViveStatus`),
 and `/<root>/vive/stations` (`foxglove.FrameTransforms`). Poses are bundled

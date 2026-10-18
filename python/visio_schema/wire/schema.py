@@ -30,6 +30,7 @@ __all__ = ["file_descriptor_set", "message_class"]
 # entry here and nothing else.
 _PAYLOAD_MODULES = (
     "visio_schema.v1.sensor.imu_raw_pb2",
+    "visio_schema.v1.sensor.imu_quat_pb2",
     "visio_schema.v1.sensor.encoder_raw_pb2",
     "visio_schema.v1.sensor.system_health_pb2",
     "visio_schema.v1.sensor.audio_compressed_pb2",

@@ -6,6 +6,16 @@ bump the MINOR version.
 
 ## Unreleased
 
+### Optional fused IMU orientation bundles
+
+Added `sensor.ImuQuat` and `ImuQuatSample`. Firmware may opt into one quaternion
+bundle per raw IMU flush on its existing `/imu/<index>/quat` topic, announcing
+the selected schema. Each sample retains its orientation and acquisition-time
+offset. The Python reader expands bundles into `Orientation` elements on the
+received header clock, including samples crossing recording-part windows.
+Individual Quaternion output remains the default. This additive schema belongs
+in the next minor release; native Quaternion viewers need a bundle adapter.
+
 ### Loss-preserving MCAP continuation parts
 
 The C++ writer can opt into bounded local-camera IDR alignment while retaining
