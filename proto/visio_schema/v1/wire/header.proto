@@ -80,4 +80,10 @@ message Header {
   // field still loses their video — see the pre-keyframe warning in
   // mcap/writer.cc, which makes that visible instead of silent.
   bool keyframe = 4;
+
+  // Hop-local clock estimate used for this capture. The receiver consumes and
+  // clears the tag after translating the header. Payload capture times remain
+  // on the original producer clock. Zero means no usable reference yet.
+  fixed64 clock_authority_epoch = 5;
+  uint32 clock_revision = 6;
 }

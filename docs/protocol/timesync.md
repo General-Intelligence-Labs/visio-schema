@@ -1,152 +1,106 @@
-# Visio Timesync — heartbeat beacon + offset filter
+# Capture clock synchronization
 
-Visio aligns peer clocks with an NTP-style exchange that rides the
-**heartbeat beacon** — there is no separate timesync stream. Every peer
-periodically beacons a `Heartbeat` on the hop-local
-`CONTROL_STREAM_HEARTBEAT` control stream; the beacon doubles as a
-liveness ping and one leg of a clock-offset exchange. Each peer maintains a
-per-neighbour offset and applies it to every inbound message's
-`Header.timestamp`, shifting it into the receiver's own clock domain.
+The producer supplies sensor capture time in `Header.timestamp` and in the
+sensor payload. Heartbeats and other control messages use send time. Payload
+capture times remain in the producer clock; the receiving bus translates data
+headers into its own clock. Optical exposure midpoint is outside this contract.
 
-**Producer contract.** A data stream's `Header.timestamp` MUST be the
-payload's **sensor capture time** — the instant the measurement was taken,
-in the producer's local monotonic clock, identical to the time the payload
-self-describes with (`CompressedVideo.timestamp`, `ImuRaw.first_sample_time`,
-…). It MUST NOT be the publish/encode/send instant: that latency jitters
-per-frame and per-stream, and would corrupt both intra-stream rate and
-inter-stream (stereo, cam↔IMU) alignment. Only control/transport messages
-with no sensor instant (heartbeat, DeviceInfo, command results) stamp the
-send time. With this contract the rx-rewrite (§4) turns a data header into
-"capture time in the receiver's clock" — directly fusable across devices,
-while the payload retains the producer-clock original.
+Every physical link has one clock authority: the receiving bus attaches a data
+producer as a source and estimates that producer's clock. The producer accepts
+that receiving bus as a sink and installs its authoritative mapping. A head owns
+each wrist link. A host receiving head data owns a separate head-to-host mapping.
+There is no independent reciprocal estimator on the same link, offset-only
+fallback, protocol negotiation, or legacy clock path.
 
-This document is canonical. Implementations MUST conform. For the client-side
-recipe — running the exchange and applying the offset, with a runnable example
-— see [`../timesync_client.md`](../timesync_client.md).
+Heartbeats are hop-local and keyed by the bus's connection ID. Periodic beacons
+carry a process `clock_epoch`; a changed peer epoch resets that link's estimator
+and history without reusing an authority revision. Client identity and liveness
+remain independent of clock readiness.
 
-> **History.** Earlier Visio used a dedicated `STREAM_TIMESYNC` with
-> `Request`/`Response` messages. That stream is gone; the exchange was
-> folded into the heartbeat beacon.
+## Measurement
 
-## 1. Addressing — keyed by endpoint, not device
-
-The wire `Header` carries only `{stream_id, seq, timestamp}` — there is no
-device field. Heartbeat rides a **control stream** (`stream_id <
-CONTROL_STREAM_FIRST_DYNAMIC`), which a receiver handles **hop-locally**
-and never relays. So a "peer" is simply the endpoint a beacon arrives on:
-all per-neighbour state (last-seen, the offset window) MUST be keyed by
-that connection. Links are point-to-point, so one endpoint == one neighbour.
-
-## 2. The exchange
+The four timestamps are T1 (initiator write), T2 (responder read), T3 (responder
+write), T4 (initiator read). The initiating receiver accepts only a response that
+matches one of its actual sent T1 values:
 
 ```
-Initiator                                          Responder
-─────────                                          ─────────
-beacon: tx_mono_ns = A1   ───────────────────►   rx at B (responder's clock)
-  (A's clock, stamped at wire)                   responder REPLIES immediately:
-                                                   echo_tx_mono_ns = A1   (echo)
-                                                   echo_rx_mono_ns = B    (its rx)
-                                                   tx_mono_ns      = B2   (its own send)
-rx at A4 = local_mono_now()  ◄───────────────────
-A matches echo_tx_mono_ns == A1 (a send it made)
-and closes the loop.
+processing = T3 - T2
+round_trip = (T4 - T1) - processing
+peer_observation = (T2 + T3) / 2
+reference_observation = (T1 + T4) / 2
 ```
 
-A beacon is an **initiating** beacon if `echo_tx_mono_ns == 0`, and a
-**response** beacon otherwise. A responder answers every initiating beacon
-immediately with a response; it does not answer response beacons (so there
-is no ping-pong). Both directions beacon, so sync is symmetric.
+Reads are stamped immediately after the read syscall, before frame decoding or
+the bus dispatch mutex. Heartbeat writes use a bounded timed transport lane:
+finalize and stamp immediately before the first successful write. An EAGAIN
+retry with zero committed bytes gets a new timestamp. A partially committed
+COBS frame is completed unchanged before another lane writes. Encoding and
+kernel queues remain between these software timestamps and physical USB edges.
 
-### Wire shape
+A two-state Kalman filter estimates phase and rate with large initial rate
+covariance. It rejects negative/over-100-ms RTT, old observations, and clock discontinuities beyond five sigma. Network-plausible innovations
+inflate observation noise using the round-trip delay bound. High-RTT samples
+are downweighted by their excess delay instead of resetting a learned clock
+when the network delay baseline changes. Four persistent
+clock discontinuities reacquire. A three-second gap enters holdover; recovery
+retains frequency and propagates covariance. A gap beyond 30 seconds reseeds. Acquisition requires eight accepted observations, five seconds of span,
+phase sigma at most 100 us and rate sigma at most 10 ppm. Covariance describes
+statistical uncertainty, not fixed path asymmetry or absolute accuracy.
 
-```proto
-package visio_schema.v1.service.heartbeat;
+## Immutable mapping revisions
 
-message Heartbeat {
-  uint64 tx_mono_ns      = 1;   // sender send time, stamped at the wire
-  uint64 echo_tx_mono_ns = 2;   // echoed peer tx (0 ⇒ initiating beacon)
-  uint64 echo_rx_mono_ns = 3;   // responder's rx of that peer beacon
-  uint32 queue_depth     = 4;   // optional backpressure hint
-}
-```
-
-All timestamps are **nanoseconds** in the **producer's local monotonic
-clock**, bare `uint64` (not `google.protobuf.Timestamp`) so the receiver
-reads the raw mono clock, immune to the `Header.timestamp` rewrite
-(section 4). Unix-epoch conversion is deferred to MCAP-write time.
-
-## 3. Derivation
-
-On receiving a response beacon whose `echo_tx_mono_ns` matches one of our
-own recent sends, the initiator computes (all in **its own** clock except
-`echo_rx_mono_ns`, which is the responder's):
+The authority publishes one affine `ClockMapping` per link on its regular beacon
+timer, independently of whether the latest response happened just before or
+after the previous publication:
 
 ```
-rtt    = now - echo_tx_mono_ns
-offset = (echo_tx_mono_ns + rtt / 2) - echo_rx_mono_ns
+reference = reference_epoch_ns
+          + (producer_capture - peer_epoch_ns) * (1 + rate_ppb / 1e9)
 ```
 
-- `rtt` is the full round trip (the responder replies immediately, so its
-  processing time is folded into the RTT — kept small by the immediate
-  reply).
-- `offset` is **ours minus the responder's** clock at the RTT **midpoint** —
-  the classic two-timestamp NTP estimate assuming a symmetric path. `Add` it
-  to a timestamp from that peer to convert it into our clock (§4): a peer
-  timestamp `T` maps to `T + offset = T + (ours - peer) = ours`. (The reverse
-  sign, `peer - ours`, would move the rewrite the wrong direction.)
+Activation is 500 ms in the future on the producer clock. Expiry is capped at three
+seconds after activation and at three seconds after the last accepted observation. Both ends retain 64 revisions. The producer selects a
+revision by capture time and tags outgoing data with its authority epoch and
+revision. The receiver resolves that exact revision and checks validity at
+capture time; delayed metadata and video therefore use the same transform.
+Unknown or expired-at-capture revisions are dropped and increment
+`rejected_frames`; raw producer-clock headers cannot leak into a reference-clock
+stream. Dynamically announced control/service replies remain deliverable before
+clock acquisition, with `source_aligned=false`; recording gates exclude those
+unmapped replies. Clock readiness cannot block a command or OTA reply.
+Tags are consumed on reception and replaced for
+the next physical hop. In-process recording sinks do not create a clock hop.
 
-### Sliding-window outlier filter
+New segments start at the previous acknowledged segment's extrapolated value.
+The estimator's phase discrepancy is removed by rate slew (500 ppm maximum
+phase contribution, 1000 ppm maximum combined rate). Revision changes do not
+step the capture time reference. The producer acknowledges the active revision
+on heartbeats; receipt of tagged data also acknowledges actual use.
 
-A single estimate is noisy (scheduling, USB/I2C jitter). Each neighbour's
-clock estimator keeps a sliding window (default 8) of `(rtt, offset)` samples
-and uses the **lowest-RTT** sample's offset — the low-RTT sample has the
-least queuing jitter, so its midpoint estimate is the most accurate.
-Samples with `rtt <= 0` or `rtt > 100 ms` are discarded as outliers.
+The head supplies its reference camera's VI capture phase, period and restart
+generation in each mapping. The wrist's capture-phase error and nominal local
+period come from the same snapshot used to tag that capture. Exactly one live,
+valid reference is required; ambiguous references are refused.
 
-This min-RTT window is the **minimum** conforming filter. An implementation MAY
-do better on the same samples — e.g. a drift-compensated windowed linear
-regression over the low-RTT samples (fit `offset = a + b·t`, drop the worst
-residual, refit, evaluate at now), which additionally tracks crystal drift
-between beacons. The wire exchange is identical either way.
+## Firmware controller and evidence
 
-## 4. Receive-side rewrite contract
+Capture feedback is posted after VI dequeue, before IDR work or encoder
+submission. The PI controller starts at nominal period and uses mapped rate as
+feedforward. A soft dead zone removes proportional correction inside 75 us
+while preserving integral rate trim. Wrist defaults are kp=0.08, ki=0.0008.
+Integral state advances only after successful, unsaturated actuation. Lost or
+stale references remove phase correction and hold learned rate; they cannot
+report lock. A reference epoch or grid restart resets integral and lock state.
 
-The rewrite runs on **every** inbound message, before per-stream handling
-and before any relay. It shifts `Header.timestamp` into the receiver's clock
-using the converged offset for the connection the message arrived on:
+Lock entry requires one continuous second inside period/167. Exit requires
+three consecutive violations or one error exceeding twice that window.
+This status window is a controller diagnostic, not a launch accuracy threshold.
 
-```python
-def rewrite_timestamp(msg, from_ep):
-    offset_ns = peer_offset(from_ep)
-    if offset_ns is None:
-        return                      # not converged → leave the timestamp as-is
-    msg.timestamp.FromNanoseconds(msg.timestamp.ToNanoseconds() + offset_ns)
-```
-
-The beacon's own T-values live in the **payload** (bare `uint64`), so this
-Header rewrite never corrupts them. Convergence MUST be **queryable** by
-consumers — "no offset yet" is a distinct state from an offset of zero, and
-a consumer that needs a single timeline gates on it.
-
-## 5. Wire-close stamping
-
-Sync accuracy depends on `tx_mono_ns` being stamped as close to the
-physical write as possible — queueing delay between stamping and the wire is
-one-way, so it biases the RTT and hence the offset by half of itself. A
-beacon MUST therefore bypass any send queue an implementation keeps for
-data, and stamp both `Header.timestamp` and the payload `tx_mono_ns` at the
-moment of the write.
-
-## 6. Roles
-
-Every peer beacons, so every peer is **both** initiator and responder —
-sync is symmetric. An embedded device need do nothing special: it beacons
-like everyone else and answers initiating beacons it receives.
-
-## 7. Convergence target
-
-On a healthy USB CDC link with ~1 ms RTT the filter converges within a
-handful of beacons. The immediate-reply, midpoint estimate is sufficient
-for cross-peer sensor alignment; it is not intended for sub-µs latency
-analysis. These bounds are the conformance target an implementation's
-convergence test should assert.
+`[exposure_sync] trace_enable=1` enables `/tmp/capture-sync.csv`. A nonblocking
+fixed queue feeds a normal-priority writer; the file is capped at 8 MiB, with
+queue/file loss counted. It records raw and mapped capture times, reference
+revision/grid, error, command, integral, covariance and readiness/lock state.
+A PWM sysfs period read is cached commanded state, not a waveform measurement.
+Firmware acceptance compares trace errors with recorded capture headers and
+checks delay, reconnection, load and thermal stability. Physical exposure
+synchronization requires an independent optical/electrical measurement.

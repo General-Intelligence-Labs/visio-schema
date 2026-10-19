@@ -1,42 +1,35 @@
-// visio/service/heartbeat/v1/heartbeat.proto
-//
-// Liveness beacon AND NTP-style timesync in one message, on the
-// CONTROL_STREAM_HEARTBEAT control stream (hop-local — never relayed;
-// each directly-connected peer runs its own liveness + sync).
-// Cadence ~1 Hz typical. The wire Header carries only stream_id/seq/
-// timestamp; a neighbour is identified by the endpoint its beacons arrive
-// on, so there is no device field here.
-//
-// Beacon timesync (replaces the retired standalone timesync exchange — see
-// docs/protocol/timesync.md). Two roles, both driven by this one message:
-//
-//   - Initiator: emits a beacon carrying only `tx_mono_ns` (its wire-stamped
-//     send time).
-//   - Responder: on receiving an initiating beacon, replies with a beacon
-//     that echoes the peer's send in `echo_tx_mono_ns` and stamps its own
-//     receive time in `echo_rx_mono_ns` (plus its own fresh `tx_mono_ns`).
-//
-// The initiator, on receiving the echo, closes the loop:
-//     rtt    = now - echo_tx_mono_ns                  (our clock both ends)
-//     offset = (echo_tx_mono_ns + rtt/2) - echo_rx_mono_ns
-// i.e. OUR clock minus the peer's at the RTT midpoint — ADD it to a
-// timestamp from that peer to bring it into our clock (the rewrite
-// contract in docs/protocol/timesync.md §4; the reverse sign moves
-// timestamps the wrong way). Per-peer offset uses min-RTT selection over
-// a sliding window. Client recipe: docs/timesync_client.md.
-//
-// `tx_mono_ns` is stamped as close to the wire as possible, bypassing any
-// send queue, so it isn't biased by queue latency. All three fields are
-// bare uint64 in the producer's local monotonic clock — immune to the
-// Header.timestamp offset-rewrite.
+// Hop-local liveness, four-timestamp clock observations, and immutable capture
+// mappings. The receiving reference estimates a producer's clock; that producer
+// installs the same mapping used to translate its incoming data on the receiver.
+// See docs/protocol/timesync.md for timestamp placement and revision ownership.
+// T1 = echo_tx, T2 = echo_rx, T3 = tx, T4 = local read;
+// network RTT = (T4-T1)-(T3-T2). Kernel queues/path asymmetry remain unobserved.
 
 syntax = "proto3";
 
 package visio_schema.v1.service.heartbeat;
 
+// Immutable producer-clock -> receiving-reference-clock transform. The receiver
+// (the head for a wrist link) owns the estimate. Activation/expiry are capture
+// times on the producer clock, not arrival times. Both ends apply this exact
+// revision: reference = reference_epoch_ns + (peer-peer_epoch_ns)*(1+rate_ppb/1e9).
+message ClockMapping {
+  fixed64 authority_epoch = 1;
+  uint32 revision = 2;
+  int64 peer_epoch_ns = 3;
+  int64 reference_epoch_ns = 4;
+  sint64 rate_ppb = 5;
+  int64 valid_until_peer_ns = 6;
+  uint64 phase_sigma_ns = 7;
+  uint64 rate_sigma_ppb = 8;
+  uint64 grid_phase_ns = 9;
+  uint64 grid_period_ns = 10;
+  uint64 grid_generation = 11;
+}
+
 message Heartbeat {
   // Sender's local monotonic clock (ns) at send, stamped at the moment of
-  // the write, ahead of any send queue. Always set.
+  // the first successful write, after the userspace send queue. Always set.
   uint64 tx_mono_ns = 1;
 
   // On a response beacon: the `tx_mono_ns` this sender is echoing back to
@@ -67,11 +60,16 @@ message Heartbeat {
   // accept, and occupancy is resolved when it does.
   string client_id = 5;
 
-  // Optional camera-sync hint. The sender's most recent camera frame capture
-  // time (ns) in its own monotonic clock, reported on a fixed grid at the
-  // shared frame cadence. A peer that runs its own camera can phase-lock onto
-  // this grid so the two sensors land on coincident capture instants. A bare
-  // uint64 in the sender's local clock, like the timesync fields above — immune
-  // to the Header.timestamp offset-rewrite. 0 = not reported.
+  // Unused: camera phase is carried only in the authoritative ClockMapping.
+  // No estimator or servo consumes this standalone hint.
   uint64 cam_grid_phase_ns = 6;
+
+  // Reference snapshot for THIS connection; never fan out a wrist's transform
+  // to another peer. No mapping is sent before the estimator has acquired.
+  ClockMapping clock_mapping = 7;
+  // The mapping actually active on the sender's capture clock.
+  fixed64 applied_authority_epoch = 8;
+  uint32 applied_revision = 9;
+  // Changes on process restart, including a peer reboot on a reopenable leg.
+  fixed64 clock_epoch = 10;
 }

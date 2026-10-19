@@ -50,6 +50,8 @@ class Message:
 
     seq: int = 0                                     # uint32, per stream_id
     timestamp: Timestamp = field(default_factory=Timestamp)
+    clock_authority_epoch: int = 0
+    clock_revision: int = 0
     # This bulk frame is an H.265 sync point (VPS/SPS/PPS + IDR). Carried on the
     # wire because a hub relays video it did not produce and a recorder opens a
     # video channel only on a decodable keyframe — see the Header.keyframe
@@ -64,6 +66,8 @@ class Message:
         h.seq = self.seq
         h.timestamp.CopyFrom(self.timestamp)
         h.keyframe = self.keyframe
+        h.clock_authority_epoch = self.clock_authority_epoch
+        h.clock_revision = self.clock_revision
         return h
 
     @classmethod
@@ -112,6 +116,8 @@ class Message:
             seq=header.seq,
             timestamp=ts,
             keyframe=header.keyframe,
+            clock_authority_epoch=header.clock_authority_epoch,
+            clock_revision=header.clock_revision,
         )
 
 

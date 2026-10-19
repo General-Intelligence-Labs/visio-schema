@@ -105,6 +105,11 @@ struct Message {
   std::uint32_t stream_id = 0;
   std::uint32_t seq = 0;
   google_protobuf_Timestamp timestamp = google_protobuf_Timestamp_init_zero;
+  std::uint64_t clock_authority_epoch = 0;
+  std::uint32_t clock_revision = 0;
+  // Local I/O receive time of the read completing this frame, before decode and
+  // dispatch. Never serialized and never used as a sensor capture timestamp.
+  std::int64_t receive_mono_ns = 0;
 
   // The inner message's serialized bytes — shared, immutable, copied by
   // refcount (see Payload above).
@@ -162,9 +167,9 @@ struct Message {
 
   // In-memory only (NOT serialized): cache of EncodeFramed(*this), filled by
   // the FIRST framed sink to send this message and reused by every other one.
-  // Outbound framed bytes are byte-identical across sinks (the header is
-  // stamped before fanout; per-link stream-id remap happens on hub INBOUND,
-  // never per-sink), so one COBS+CRC pass serves the whole fanout. Safe
+  // Framed bytes can be shared while headers match. A physical sink can add
+  // its own capture mapping tag; that copy invalidates the cache before send.
+  // Stream-id remapping still happens on hub INBOUND. Safe
   // without locking: Bus::Relay and Bus::FanoutBatch both hand the same Message
   // to sinks sequentially under one hold of the dispatch lock — batching inverts
   // the loop but not that. `mutable` so Send(const Message&) can fill it.

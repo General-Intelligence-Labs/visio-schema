@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file visio_schema/v1/wire/header.proto.
  */
 export const file_visio_schema_v1_wire_header: GenFile = /*@__PURE__*/
-  fileDesc("CiF2aXNpb19zY2hlbWEvdjEvd2lyZS9oZWFkZXIucHJvdG8SFHZpc2lvX3NjaGVtYS52MS53aXJlImkKBkhlYWRlchIRCglzdHJlYW1faWQYASABKA0SCwoDc2VxGAIgASgNEi0KCXRpbWVzdGFtcBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEAoIa2V5ZnJhbWUYBCABKAgqmwIKDUNvbnRyb2xTdHJlYW0SGgoWQ09OVFJPTF9TVFJFQU1fSU5WQUxJRBAAEh4KGkNPTlRST0xfU1RSRUFNX0RFVklDRV9JTkZPEAESHAoYQ09OVFJPTF9TVFJFQU1fSEVBUlRCRUFUEAMSGgoWQ09OVFJPTF9TVFJFQU1fQ09NTUFORBAEEhYKEkNPTlRST0xfU1RSRUFNX09UQRAFEhcKE0NPTlRST0xfU1RSRUFNX0RJQUcQBxIgChxDT05UUk9MX1NUUkVBTV9GSVJTVF9EWU5BTUlDEBAiBAgCEAIiBAgGEAYqF0NPTlRST0xfU1RSRUFNX1RJTUVTWU5DKhxDT05UUk9MX1NUUkVBTV9FWFBPU1VSRV9TWU5DYgZwcm90bzM", [file_google_protobuf_timestamp]);
+  fileDesc("CiF2aXNpb19zY2hlbWEvdjEvd2lyZS9oZWFkZXIucHJvdG8SFHZpc2lvX3NjaGVtYS52MS53aXJlIqABCgZIZWFkZXISEQoJc3RyZWFtX2lkGAEgASgNEgsKA3NlcRgCIAEoDRItCgl0aW1lc3RhbXAYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhAKCGtleWZyYW1lGAQgASgIEh0KFWNsb2NrX2F1dGhvcml0eV9lcG9jaBgFIAEoBhIWCg5jbG9ja19yZXZpc2lvbhgGIAEoDSqbAgoNQ29udHJvbFN0cmVhbRIaChZDT05UUk9MX1NUUkVBTV9JTlZBTElEEAASHgoaQ09OVFJPTF9TVFJFQU1fREVWSUNFX0lORk8QARIcChhDT05UUk9MX1NUUkVBTV9IRUFSVEJFQVQQAxIaChZDT05UUk9MX1NUUkVBTV9DT01NQU5EEAQSFgoSQ09OVFJPTF9TVFJFQU1fT1RBEAUSFwoTQ09OVFJPTF9TVFJFQU1fRElBRxAHEiAKHENPTlRST0xfU1RSRUFNX0ZJUlNUX0RZTkFNSUMQECIECAIQAiIECAYQBioXQ09OVFJPTF9TVFJFQU1fVElNRVNZTkMqHENPTlRST0xfU1RSRUFNX0VYUE9TVVJFX1NZTkNiBnByb3RvMw", [file_google_protobuf_timestamp]);
 
 /**
  * @generated from message visio_schema.v1.wire.Header
@@ -60,6 +60,20 @@ export type Header = Message<"visio_schema.v1.wire.Header"> & {
    * @generated from field: bool keyframe = 4;
    */
   keyframe: boolean;
+
+  /**
+   * Hop-local clock estimate used for this capture. The receiver consumes and
+   * clears the tag after translating the header. Payload capture times remain
+   * on the original producer clock. Zero means no usable reference yet.
+   *
+   * @generated from field: fixed64 clock_authority_epoch = 5;
+   */
+  clockAuthorityEpoch: bigint;
+
+  /**
+   * @generated from field: uint32 clock_revision = 6;
+   */
+  clockRevision: number;
 };
 
 /**

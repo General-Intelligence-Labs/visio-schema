@@ -14,6 +14,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -58,6 +59,7 @@ class FramedFdEndpoint : public Endpoint {
 
   void Start(InboundFn on_inbound, ClosedFn on_closed) override;
   void Send(const Message& msg) override;
+  void SendTimed(Message msg, TimedFinalize finalize, TimedSent sent) override;
   void SendBatch(const Message* msgs, std::size_t n) override;
   bool SupportsReliable() const override { return true; }
   SendResult TrySendReliable(const Message& msg) override;
@@ -140,6 +142,20 @@ class FramedFdEndpoint : public Endpoint {
  private:
   void Loop();           // the I/O thread body
   void Pump();           // drain outbox to the fd (I/O thread)
+  long PumpTimed();
+  void ClearTimed();
+  struct TimedFrame {
+    Message msg;
+    TimedFinalize finalize;
+    TimedSent sent;
+    std::vector<std::uint8_t> bytes;
+    std::size_t offset = 0;
+    std::int64_t stamp_ns = 0;
+  };
+  std::mutex timed_mu_;
+  std::deque<TimedFrame> timed_queue_;  // bounded to 16 uncommitted heartbeats
+  std::unique_ptr<TimedFrame> timed_active_;  // I/O thread only
+  std::atomic<std::size_t> timed_pending_{0};
   // Stall bookkeeping after each Pump: `accepted` is the bytes the fd took
   // this pass. With bytes pending and none accepted for stall_ns_ the link is
   // STALLED (a serial gadget nobody reads, a peer gone silent): Send then

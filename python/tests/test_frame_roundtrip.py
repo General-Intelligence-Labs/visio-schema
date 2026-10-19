@@ -117,3 +117,9 @@ class _OversizeHeader:
 def test_header_too_large_for_u8_raises() -> None:
     with pytest.raises(FrameError, match="HEADER_LEN"):
         encode_frame(_OversizeHeader(), b"")
+
+
+def test_capture_clock_revision_survives_wire() -> None:
+    msg = Message(stream_id=17, payload=b"frame", clock_authority_epoch=123456789,
+                  clock_revision=78)
+    assert decode_message(encode_message(msg)) == msg
