@@ -6,6 +6,16 @@ bump the MINOR version.
 
 ## Unreleased
 
+### Compressed firmware image envelopes
+
+Added VENC format 3 (gzip then AES-256-CTR) with expanded RKFW length and
+SHA-256, a bounded Python decoder and the shared C++ header contract. Format 1
+is unchanged; format 2 remains reserved. Only RV1126B firmware enables format 3.
+The existing OTA messages carry both formats unchanged. Heads embed raw leaf
+images in OEM and reconcile leaves after reboot; the universal tar package and
+its codecs are retired. Legacy wire values remain reserved.
+See [the image contract](docs/protocol/ota-image.md).
+
 ### Optional fused IMU orientation bundles
 
 Added `sensor.ImuQuat` and `ImuQuatSample`. Firmware may opt into one quaternion

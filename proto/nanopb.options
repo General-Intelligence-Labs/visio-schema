@@ -313,6 +313,9 @@ foxglove.PointsAnnotation.metadata            type:FT_IGNORE
 
 # "left" or "right" — the device rejects anything else.
 visio_schema.v1.control.SetCalibration.unit_side   max_size:8
+visio_schema.v1.calibration.AssemblyCalibration.result_id max_size:65
+visio_schema.v1.calibration.AssemblyCalibration.head_uid max_size:65
+visio_schema.v1.calibration.AssemblyCalibration.addon_uid max_size:65
 
 # ── Diagnostic-log service (service/diag/diag.proto) ─────────────────────────
 # DiagRequest is DECODED by the device, so every string on it must be sized or
