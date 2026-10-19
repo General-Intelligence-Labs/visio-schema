@@ -1,37 +1,50 @@
 # MCAP video continuation parts
 
-Firmware can opt into `McapRotationPolicy` on the C++ writer/endpoint. Generic
-callers retain the previous policy unless they opt in. No protobuf fields change.
+Firmware opts into `McapRotationPolicy` on the C++ writer/endpoint. Recording
+control remains outside `SyncService`; the service supplies the next regular IDR
+identity and the writer confirms the cut from received video.
 
-The writer prefers a cut on an actual local-camera IDR group. The caller supplies
-local camera stream IDs explicitly. Compare the group's maximum minus minimum
-corrected `Header.timestamp`; tolerance is the smaller of 1 ms and one quarter of
-the shortest configured local frame period. Attached cameras do not gate rotation.
-Their payloads, timestamps, sequences and legacy false keyframe flags survive.
+At start, the caller freezes the selected video stream IDs, including attached
+wrist cameras. Membership follows camera topics: reconnecting the same camera
+retains its recording channel despite a new bus stream ID. Cameras with new
+topics discovered during a take wait until the next take. Every
+selected camera must supply an actual independently decodable IDR carrying the
+same `Header.sync_point` (authority epoch, grid generation and frame index).
+The maximum minus minimum corrected `Header.timestamp` must be within 1 ms.
+Timestamp proximity alone cannot join different IDR groups.
 
-A candidate holds shared payloads on the writer thread, for at most 100 ms and a
-2 MiB accounted staging budget by default. Cancelled candidates drain back into
-the old part. The existing byte ceiling (configured payload limit plus one eighth,
-with an individual record allowed to cross it) forces a continuation cut even on a
-P-frame. Recording continues. A duration-only policy has a bounded 100 ms grace.
-Stop drains an incomplete candidate into the current part without opening an empty
-successor. Local cameras still wait for their first session IDR; that initial gate
-survives an early part cut. Attached cameras are retained from their first record.
+Storage preparation completes before the caller arms a future regular IDR slot.
+Delayed frames from earlier slots cannot open the take. Initial video before the
+target is discarded; the writer reports ready only after the complete group is
+staged. The start deadline is 1100 ms, including a default 100 ms arrival window;
+no extra IDR is requested. Missing cameras, identity changes, excessive timestamp
+spread, staging overflow or timeout fail the start. The caller closes the writer
+and removes its empty session so the command can be retried.
 
-Every opted-in part carries one standard MCAP Metadata record named
-`visio.rotation`:
+Rotation stages a candidate with shared payload ownership on the writer thread,
+within a default 8 MiB budget and 100 ms arrival window. Earlier frames for a
+camera stay in the old part; its matching IDR and successors enter the new part.
+A cancelled candidate drains back to the old part without dropping records.
+The payload byte ceiling (configured limit plus one eighth, with one record
+allowed to cross it) forces a continuation cut when alignment is unavailable.
+A duration-only policy has a bounded one-second IDR wait plus the arrival window.
+Stop drains an incomplete candidate to the current part without an empty successor.
+
+Every opted-in part carries a standard MCAP Metadata record named `visio.rotation`:
 
 | Field | Value |
 | --- | --- |
 | `version` | `1` |
 | `recording_id` | opaque random identity shared by this writer's parts |
 | `part_index` | decimal index, beginning at zero |
-| `video_continuation` | `true` |
+| `video_continuation` | `false` for initial/aligned parts; `true` for a forced cut |
 | `cut_reason` | `initial`, `aligned`, or `forced` |
+| `authority_epoch`, `grid_generation`, `frame_index` | confirmed identity for aligned cuts; ignore on forced cuts |
 
-`visio.rotation` is reserved for the writer. Existing `visio.capture` metadata,
-part names, schemas, payloads and durability/storage-authority operations remain
-unchanged. VREC encryption wraps the same MCAP metadata and message stream.
+A successful initial cut also writes `visio.sync.start` with the shared identity
+and selected stream IDs. `visio.rotation` is reserved for the writer. Existing
+`visio.capture` metadata, part names, schemas, payloads and durability/storage
+authority operations retain their contracts. VREC wraps the same MCAP stream.
 
 ## Reading
 

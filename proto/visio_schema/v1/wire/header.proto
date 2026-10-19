@@ -52,6 +52,14 @@ enum ControlStream {
   CONTROL_STREAM_FIRST_DYNAMIC = 16;
 }
 
+// End-to-end identity of a confirmed periodic, independently decodable IDR.
+// Unlike clock tags this identity survives timestamp translation and relay.
+message SyncPoint {
+  fixed64 authority_epoch = 1;
+  uint64 grid_generation = 2;
+  uint64 frame_index = 3;
+}
+
 message Header {
   uint32 stream_id = 1;
   uint32 seq = 2;
@@ -86,4 +94,5 @@ message Header {
   // on the original producer clock. Zero means no usable reference yet.
   fixed64 clock_authority_epoch = 5;
   uint32 clock_revision = 6;
+  SyncPoint sync_point = 7;
 }

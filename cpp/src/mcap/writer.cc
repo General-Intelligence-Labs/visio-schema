@@ -402,12 +402,16 @@ McapWriter::McapWriter(std::string_view path, std::uint64_t max_bytes,
                     : nullptr) {
   if (rotation_policy_) {
     if (rotation_policy_->tolerance_ns < 0 || rotation_policy_->max_staged_bytes == 0 ||
-        rotation_policy_->max_wait.count() < 0)
+        rotation_policy_->max_wait.count() < 0 || rotation_policy_->start_wait.count() <= 0)
       throw std::invalid_argument("invalid MCAP rotation policy");
-    std::unordered_set<std::uint32_t> ids(rotation_policy_->local_video_ids.begin(),
-                                          rotation_policy_->local_video_ids.end());
-    if (ids.size() != rotation_policy_->local_video_ids.size())
-      throw std::invalid_argument("duplicate local video id");
+    std::unordered_set<std::uint32_t> ids(rotation_policy_->video_ids.begin(),
+                                          rotation_policy_->video_ids.end());
+    if (ids.size() != rotation_policy_->video_ids.size())
+      throw std::invalid_argument("duplicate selected video id");
+    if(!ids.empty()) {
+      start_status_.store(StartStatus::Waiting);
+      start_deadline_=std::chrono::steady_clock::now()+rotation_policy_->start_wait;
+    }
     RecordingNonce nonce{};
     if (!RandomNonce(&nonce)) throw std::runtime_error("recording identity entropy unavailable");
     recording_id_ = HexOf(nonce.data(), nonce.size());
@@ -507,7 +511,8 @@ void McapWriter::CloseCurrentPart() {
   // Part 0 is exempt: it is the only part a short session has, and a session
   // directory holding no recording at all is a worse thing to hand a reader
   // than an empty but well-formed file.
-  const bool drop_part = part_index_ > 0 && part_bytes_ == 0 && !io_fault_.load();
+  const bool pending_start=rotation_policy_&&start_status_.load()!=StartStatus::Ready;
+  const bool drop_part = (part_index_ > 0||pending_start) && part_bytes_ == 0 && !io_fault_.load();
   writer_->close();
   physical_closed_ += last_io_.accepted;
   if (drop_part) {
@@ -539,7 +544,7 @@ void McapWriter::Roll() {
 
 void McapWriter::Write(const Channel& channel, const Message& msg) {
   Write(channel, RecordedMessage{msg.timestamp, msg.seq, msg.keyframe,
-                                 msg.payload.str()});
+                                 msg.payload.str(),msg.sync_point});
 }
 
 void McapWriter::Write(const Channel& channel, const RecordedMessage& msg) {
@@ -579,7 +584,7 @@ void McapWriter::WriteRecord(const Channel& channel, const RecordedMessage& msg)
   // Initial decoder warm-up: legacy callers repeat it per part; a continuation
   // chain repeats it only for each local camera's first-ever IDR. Continuation
   // P-frames reference the previous part and must be retained verbatim.
-  if (is_video && (!rotation_policy_ || LocalVideo(channel)) &&
+  if (is_video && (!rotation_policy_ || SelectedVideo(channel)) &&
       primed_video_channels_.find(channel.id) == primed_video_channels_.end()) {
     if (!msg.keyframe) {
       startup_dropped_.fetch_add(1, std::memory_order_relaxed);
@@ -671,7 +676,9 @@ void McapWriter::WriteRecord(const Channel& channel, const RecordedMessage& msg)
 
 void McapWriter::Close() {
   if (closed_) return;
-  FlushStaged(false, false);
+  if(start_status_.load()==StartStatus::Ready)FlushStaged(false,false);
+  else { staged_.clear();staged_bytes_.store(0);candidate_ids_.clear(); }
+
   closed_ = true;
   if (writer_) CloseCurrentPart();
   if (io_fault_.load(std::memory_order_relaxed))
@@ -682,9 +689,9 @@ void McapWriter::Close() {
 }
 
 
-bool McapWriter::LocalVideo(const Channel& channel) const {
+bool McapWriter::SelectedVideo(const Channel& channel) const {
   if (!rotation_policy_ || channel.schema_name != kCompressedVideoSchema) return false;
-  const auto& ids = rotation_policy_->local_video_ids;
+  const auto& ids = rotation_policy_->video_ids;
   return std::find(ids.begin(), ids.end(), channel.id) != ids.end();
 }
 
@@ -692,17 +699,46 @@ bool McapWriter::ForcedCutDue() const {
   if (max_bytes_ > 0) return part_bytes_ >= max_bytes_ + max_bytes_ / 8;
   return max_duration_ns_ > 0 && part_bytes_ > 0 &&
          std::chrono::steady_clock::now() - part_start_ >=
-             std::chrono::nanoseconds(max_duration_ns_) + rotation_policy_->max_wait;
+             std::chrono::nanoseconds(max_duration_ns_) +
+                 rotation_policy_->idr_wait + rotation_policy_->max_wait;
 }
 
-std::optional<std::chrono::steady_clock::time_point> McapWriter::rotation_deadline() const {
-  if (staged_.empty()) return std::nullopt;
-  return candidate_deadline_;
+std::optional<std::chrono::steady_clock::time_point>
+McapWriter::rotation_deadline() const {
+  if (!staged_.empty())
+    return candidate_deadline_;
+  if (start_status_.load() == StartStatus::Waiting)
+    return start_deadline_;
+  return std::nullopt;
 }
 
 void McapWriter::FlushDue() {
-  if (!staged_.empty() && std::chrono::steady_clock::now() >= candidate_deadline_)
-    FlushStaged(false);
+  const auto deadline = rotation_deadline();
+  if (!deadline || std::chrono::steady_clock::now() < *deadline)
+    return;
+  if (start_status_.load() == StartStatus::Waiting) {
+    FailStart();
+    return;
+  }
+  FlushStaged(false);
+}
+
+void McapWriter::FailStart() {
+  start_status_.store(StartStatus::TimedOut);
+  staged_.clear();
+  candidate_ids_.clear();
+  staged_bytes_.store(0);
+  staged_payload_bytes_ = 0;
+}
+
+void McapWriter::ArmStart(wire::SyncPoint target) {
+  if (start_status_.load() != StartStatus::Waiting)
+    return;
+  if (!candidate_ids_.empty())
+    throw std::logic_error("recording start already receiving frames");
+  start_target_ = target;
+  start_deadline_ =
+      std::chrono::steady_clock::now() + rotation_policy_->start_wait;
 }
 
 McapRotationStats McapWriter::rotation_stats() const {
@@ -711,107 +747,189 @@ McapRotationStats McapWriter::rotation_stats() const {
 }
 
 void McapWriter::WriteRotationMetadata() {
-  if (!rotation_policy_) return;
+  if (!rotation_policy_)
+    return;
   ::mcap::Metadata md;
   md.name = "visio.rotation";
-  md.metadata = {{"version", "1"}, {"recording_id", recording_id_},
-                 {"part_index", std::to_string(part_index_)},
-                 {"video_continuation", "true"}, {"cut_reason", cut_reason_}};
+  md.metadata = {
+      {"version", "1"},
+      {"recording_id", recording_id_},
+      {"part_index", std::to_string(part_index_)},
+      {"video_continuation", cut_reason_ == "forced" ? "true" : "false"},
+      {"cut_reason", cut_reason_},
+      {"authority_epoch", std::to_string(candidate_point_.authority_epoch)},
+      {"grid_generation", std::to_string(candidate_point_.grid_generation)},
+      {"frame_index", std::to_string(candidate_point_.frame_index)}};
   const auto status = writer_->write(md);
-  if (!status.ok()) throw std::runtime_error("rotation metadata: " + status.message);
+  if (!status.ok())
+    throw std::runtime_error("rotation metadata: " + status.message);
 }
 
 void McapWriter::ForceRollIfDue() {
-  if (!ForcedCutDue()) return;
+  if (!ForcedCutDue())
+    return;
   cut_reason_ = "forced";
   Roll();
   forced_cuts_.fetch_add(1);
 }
 
 void McapWriter::FlushStaged(bool rotate, bool allow_forced) {
-  if (staged_.empty()) return;
-  if (rotate) {
+  if (staged_.empty())
+    return;
+  const bool starting = start_status_.load() == StartStatus::Waiting;
+  if (rotate && !starting) {
     cut_reason_ = "aligned";
     Roll();
     aligned_cuts_.fetch_add(1);
-  } else {
+  } else if (!rotate)
     cancelled_cuts_.fetch_add(1);
+  if (starting && rotate) {
+    ::mcap::Metadata metadata;
+    metadata.name = "visio.sync.start";
+    std::string streams;
+    for (const auto id : rotation_policy_->video_ids) {
+      if (!streams.empty())
+        streams += ",";
+      streams += std::to_string(id);
+    }
+    metadata.metadata = {
+        {"authority_epoch", std::to_string(candidate_point_.authority_epoch)},
+        {"grid_generation", std::to_string(candidate_point_.grid_generation)},
+        {"frame_index", std::to_string(candidate_point_.frame_index)},
+        {"video_stream_ids", streams}};
+    const auto status = writer_->write(metadata);
+    if (!status.ok())
+      throw std::runtime_error("sync metadata: " + status.message);
+    start_status_.store(StartStatus::Ready);
   }
   while (!staged_.empty()) {
-    const auto& entry = staged_.front();
-    if (allow_forced) ForceRollIfDue();
-    const auto& message = entry.msg;
-    WriteRecord(entry.channel, RecordedMessage{message.timestamp, message.seq,
-                                               message.keyframe, message.payload.str()});
+    const auto &entry = staged_.front();
+    if (allow_forced && !rotate)
+      ForceRollIfDue();
+    const auto &message = entry.msg;
+    WriteRecord(entry.channel,
+                RecordedMessage{message.timestamp, message.seq,
+                                message.keyframe, message.payload.str(),
+                                message.sync_point});
     staged_bytes_.fetch_sub(entry.bytes);
-    staged_payload_bytes_ -= entry.msg.payload.size();
+    staged_payload_bytes_ -= message.payload.size();
     staged_.pop_front();
   }
   candidate_ids_.clear();
 }
 
-void McapWriter::WriteContinuation(const Channel& channel, const RecordedMessage& msg) {
+void McapWriter::WriteContinuation(const Channel &channel,
+                                   const RecordedMessage &msg) {
   FlushDue();
-  const bool local = LocalVideo(channel);
+  if (start_status_.load() == StartStatus::TimedOut)
+    return;
+  const bool video = channel.schema_name == kCompressedVideoSchema;
+  const bool selected = SelectedVideo(channel);
+  // Freeze the video membership for this take. Newly discovered cameras join
+  // the next recording; they cannot silently change an in-progress barrier.
+  if (video && !selected)
+    return;
   const auto stamp = TimestampNs(msg.timestamp);
-  if (!staged_.empty() && local && stamp < candidate_min_ns_ - rotation_policy_->tolerance_ns) {
-    // Preserve this camera's order without moving the candidate IDRs backwards.
-    // If the old part has reached its ceiling, cancel the candidate first.
-    if (ForcedCutDue()) {
-      FlushStaged(false);
-      ForceRollIfDue();
-    }
-    WriteRecord(channel, msg); // a lagging local camera's preceding GOP
+  const bool starting = start_status_.load() == StartStatus::Waiting;
+  if (starting && start_target_.valid() && selected &&
+      !candidate_ids_.count(channel.id) &&
+      (!msg.keyframe || msg.sync_point != start_target_)) {
+    startup_dropped_.fetch_add(1);
     return;
   }
-  if (!staged_.empty() && local && candidate_ids_.count(channel.id) == 0) {
-    const auto spread = std::max(stamp, candidate_max_ns_) - std::min(stamp, candidate_min_ns_);
-    if (!msg.keyframe || spread > rotation_policy_->tolerance_ns) FlushStaged(false);
+  const bool idr = selected && msg.keyframe && msg.sync_point.valid() &&
+                   (!candidate_ids_.empty() || starting ||
+                    msg.sync_point != candidate_point_);
+  if (!candidate_ids_.empty() && selected &&
+      !candidate_ids_.count(channel.id)) {
+    if (stamp < candidate_min_ns_ - rotation_policy_->tolerance_ns) {
+      if (starting)
+        startup_dropped_.fetch_add(1);
+      else {
+        if (ForcedCutDue()) {
+          FlushStaged(false);
+          ForceRollIfDue();
+        }
+        WriteRecord(channel, msg); // this camera's preceding frames stay old
+      }
+      return;
+    }
+    const auto spread =
+        std::max(stamp, candidate_max_ns_) - std::min(stamp, candidate_min_ns_);
+    if (!idr || msg.sync_point != candidate_point_ ||
+        spread > rotation_policy_->tolerance_ns) {
+      if (starting) {
+        FailStart();
+        return;
+      }
+      FlushStaged(false);
+    }
   }
-  if (staged_.empty() && rotating_ && ShouldRoll()) {
-    if (ForcedCutDue() || rotation_policy_->local_video_ids.empty() || !rotate_on_keyframe_) {
+  if (candidate_ids_.empty()) {
+    const bool due = starting || (rotating_ && ShouldRoll());
+    if (!starting && due &&
+        (ForcedCutDue() || rotation_policy_->video_ids.empty() ||
+         !rotate_on_keyframe_)) {
       cut_reason_ = "forced";
       Roll();
       forced_cuts_.fetch_add(1);
-    } else if (local && msg.keyframe) {
+    } else if (due && idr) {
+      candidate_point_ = msg.sync_point;
       candidate_min_ns_ = candidate_max_ns_ = stamp;
-      candidate_deadline_ = std::chrono::steady_clock::now() + rotation_policy_->max_wait;
-      if (max_bytes_ == 0)
-        candidate_deadline_ = std::min(candidate_deadline_, part_start_ +
-            std::chrono::nanoseconds(max_duration_ns_) + rotation_policy_->max_wait);
-      candidate_ids_.clear();
+      candidate_deadline_ =
+          std::chrono::steady_clock::now() + rotation_policy_->max_wait;
+      if (starting)
+        candidate_deadline_ = std::min(candidate_deadline_, start_deadline_);
+      else if (max_bytes_ == 0 && max_duration_ns_ > 0)
+        candidate_deadline_ = std::min(
+            candidate_deadline_,
+            part_start_ + std::chrono::nanoseconds(max_duration_ns_) +
+                rotation_policy_->idr_wait + rotation_policy_->max_wait);
       candidate_ids_.insert(channel.id);
     }
   }
-  const bool candidate = !staged_.empty() || !candidate_ids_.empty();
-  if (!candidate) { WriteRecord(channel, msg); return; }
-  const std::size_t bytes = sizeof(Pending) + msg.payload.size() + channel.schema.size() +
-                            channel.topic.size() + channel.schema_name.size();
+  if (candidate_ids_.empty()) {
+    if (starting) {
+      if (video)
+        startup_dropped_.fetch_add(1);
+      return;
+    }
+    WriteRecord(channel, msg);
+    return;
+  }
+  const std::size_t bytes = sizeof(Pending) + msg.payload.size() +
+                            channel.schema.size() + channel.topic.size() +
+                            channel.schema_name.size();
   if (bytes > rotation_policy_->max_staged_bytes ||
       staged_bytes_.load() > rotation_policy_->max_staged_bytes - bytes) {
+    if (starting) {
+      FailStart();
+      return;
+    }
     FlushStaged(false);
-    candidate_ids_.clear();
     ForceRollIfDue();
     WriteRecord(channel, msg);
     return;
   }
-  // RecordedMessage borrows bytes only across Write(). Rotation may wait for
-  // another camera after this call, when the endpoint has recycled its arena.
   Message retained;
   retained.timestamp = msg.timestamp;
   retained.seq = msg.seq;
   retained.keyframe = msg.keyframe;
+  retained.sync_point = msg.sync_point;
   retained.payload = wire::Payload(msg.payload);
   staged_.push_back({channel, std::move(retained), bytes});
   staged_payload_bytes_ += msg.payload.size();
   const auto resident = staged_bytes_.fetch_add(bytes) + bytes;
   stage_peak_.store(std::max(stage_peak_.load(), resident));
-  if (local && msg.keyframe && candidate_ids_.insert(channel.id).second) {
+  if (idr && msg.sync_point == candidate_point_ &&
+      candidate_ids_.insert(channel.id).second) {
     candidate_min_ns_ = std::min(candidate_min_ns_, stamp);
     candidate_max_ns_ = std::max(candidate_max_ns_, stamp);
   }
-  if (candidate_ids_.size() == rotation_policy_->local_video_ids.size()) FlushStaged(true);
-  else if (max_bytes_ && part_bytes_ + staged_payload_bytes_ >= max_bytes_ + max_bytes_ / 8)
+  if (candidate_ids_.size() == rotation_policy_->video_ids.size())
+    FlushStaged(true);
+  else if (!starting && max_bytes_ &&
+           part_bytes_ + staged_payload_bytes_ >= max_bytes_ + max_bytes_ / 8)
     FlushStaged(false);
 }
 

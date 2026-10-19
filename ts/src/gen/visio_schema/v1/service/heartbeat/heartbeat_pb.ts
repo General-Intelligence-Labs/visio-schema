@@ -17,7 +17,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file visio_schema/v1/service/heartbeat/heartbeat.proto.
  */
 export const file_visio_schema_v1_service_heartbeat_heartbeat: GenFile = /*@__PURE__*/
-  fileDesc("CjF2aXNpb19zY2hlbWEvdjEvc2VydmljZS9oZWFydGJlYXQvaGVhcnRiZWF0LnByb3RvEiF2aXNpb19zY2hlbWEudjEuc2VydmljZS5oZWFydGJlYXQikwIKDENsb2NrTWFwcGluZxIXCg9hdXRob3JpdHlfZXBvY2gYASABKAYSEAoIcmV2aXNpb24YAiABKA0SFQoNcGVlcl9lcG9jaF9ucxgDIAEoAxIaChJyZWZlcmVuY2VfZXBvY2hfbnMYBCABKAMSEAoIcmF0ZV9wcGIYBSABKBISGwoTdmFsaWRfdW50aWxfcGVlcl9ucxgGIAEoAxIWCg5waGFzZV9zaWdtYV9ucxgHIAEoBBIWCg5yYXRlX3NpZ21hX3BwYhgIIAEoBBIVCg1ncmlkX3BoYXNlX25zGAkgASgEEhYKDmdyaWRfcGVyaW9kX25zGAogASgEEhcKD2dyaWRfZ2VuZXJhdGlvbhgLIAEoBCKsAgoJSGVhcnRiZWF0EhIKCnR4X21vbm9fbnMYASABKAQSFwoPZWNob190eF9tb25vX25zGAIgASgEEhcKD2VjaG9fcnhfbW9ub19ucxgDIAEoBBITCgtxdWV1ZV9kZXB0aBgEIAEoDRIRCgljbGllbnRfaWQYBSABKAkSGQoRY2FtX2dyaWRfcGhhc2VfbnMYBiABKAQSRgoNY2xvY2tfbWFwcGluZxgHIAEoCzIvLnZpc2lvX3NjaGVtYS52MS5zZXJ2aWNlLmhlYXJ0YmVhdC5DbG9ja01hcHBpbmcSHwoXYXBwbGllZF9hdXRob3JpdHlfZXBvY2gYCCABKAYSGAoQYXBwbGllZF9yZXZpc2lvbhgJIAEoDRITCgtjbG9ja19lcG9jaBgKIAEoBmIGcHJvdG8z");
+  fileDesc("CjF2aXNpb19zY2hlbWEvdjEvc2VydmljZS9oZWFydGJlYXQvaGVhcnRiZWF0LnByb3RvEiF2aXNpb19zY2hlbWEudjEuc2VydmljZS5oZWFydGJlYXQiyAIKDENsb2NrTWFwcGluZxIXCg9hdXRob3JpdHlfZXBvY2gYASABKAYSEAoIcmV2aXNpb24YAiABKA0SFQoNcGVlcl9lcG9jaF9ucxgDIAEoAxIaChJyZWZlcmVuY2VfZXBvY2hfbnMYBCABKAMSEAoIcmF0ZV9wcGIYBSABKBISGwoTdmFsaWRfdW50aWxfcGVlcl9ucxgGIAEoAxIWCg5waGFzZV9zaWdtYV9ucxgHIAEoBBIWCg5yYXRlX3NpZ21hX3BwYhgIIAEoBBIVCg1ncmlkX3BoYXNlX25zGAkgASgEEhYKDmdyaWRfcGVyaW9kX25zGAogASgEEhcKD2dyaWRfZ2VuZXJhdGlvbhgLIAEoBBIYChBncmlkX2ZyYW1lX2luZGV4GAwgASgEEhkKEWlkcl9wZXJpb2RfZnJhbWVzGA0gASgNIo0BCg9DYW1lcmFTeW5jU3RhdGUSFAoMY2FtZXJhX2luZGV4GAEgASgNEhoKEmNhcHR1cmVfZ2VuZXJhdGlvbhgCIAEoBBIaChJlbmNvZGVyX2dlbmVyYXRpb24YAyABKAQSFAoMcGhhc2VfbG9ja2VkGAQgASgIEhYKDmxhc3RfaWRyX2ZyYW1lGAUgASgEIvUCCglIZWFydGJlYXQSEgoKdHhfbW9ub19ucxgBIAEoBBIXCg9lY2hvX3R4X21vbm9fbnMYAiABKAQSFwoPZWNob19yeF9tb25vX25zGAMgASgEEhMKC3F1ZXVlX2RlcHRoGAQgASgNEhEKCWNsaWVudF9pZBgFIAEoCRIZChFjYW1fZ3JpZF9waGFzZV9ucxgGIAEoBBJGCg1jbG9ja19tYXBwaW5nGAcgASgLMi8udmlzaW9fc2NoZW1hLnYxLnNlcnZpY2UuaGVhcnRiZWF0LkNsb2NrTWFwcGluZxIfChdhcHBsaWVkX2F1dGhvcml0eV9lcG9jaBgIIAEoBhIYChBhcHBsaWVkX3JldmlzaW9uGAkgASgNEhMKC2Nsb2NrX2Vwb2NoGAogASgGEkcKC2NhbWVyYV9zeW5jGAsgAygLMjIudmlzaW9fc2NoZW1hLnYxLnNlcnZpY2UuaGVhcnRiZWF0LkNhbWVyYVN5bmNTdGF0ZWIGcHJvdG8z");
 
 /**
  * Immutable producer-clock -> receiving-reference-clock transform. The receiver
@@ -82,6 +82,18 @@ export type ClockMapping = Message<"visio_schema.v1.service.heartbeat.ClockMappi
    * @generated from field: uint64 grid_generation = 11;
    */
   gridGeneration: bigint;
+
+  /**
+   * Stable reference-camera frame number associated with grid_phase_ns.
+   *
+   * @generated from field: uint64 grid_frame_index = 12;
+   */
+  gridFrameIndex: bigint;
+
+  /**
+   * @generated from field: uint32 idr_period_frames = 13;
+   */
+  idrPeriodFrames: number;
 };
 
 /**
@@ -90,6 +102,43 @@ export type ClockMapping = Message<"visio_schema.v1.service.heartbeat.ClockMappi
  */
 export const ClockMappingSchema: GenMessage<ClockMapping> = /*@__PURE__*/
   messageDesc(file_visio_schema_v1_service_heartbeat_heartbeat, 0);
+
+/**
+ * @generated from message visio_schema.v1.service.heartbeat.CameraSyncState
+ */
+export type CameraSyncState = Message<"visio_schema.v1.service.heartbeat.CameraSyncState"> & {
+  /**
+   * @generated from field: uint32 camera_index = 1;
+   */
+  cameraIndex: number;
+
+  /**
+   * @generated from field: uint64 capture_generation = 2;
+   */
+  captureGeneration: bigint;
+
+  /**
+   * @generated from field: uint64 encoder_generation = 3;
+   */
+  encoderGeneration: bigint;
+
+  /**
+   * @generated from field: bool phase_locked = 4;
+   */
+  phaseLocked: boolean;
+
+  /**
+   * @generated from field: uint64 last_idr_frame = 5;
+   */
+  lastIdrFrame: bigint;
+};
+
+/**
+ * Describes the message visio_schema.v1.service.heartbeat.CameraSyncState.
+ * Use `create(CameraSyncStateSchema)` to create a new message.
+ */
+export const CameraSyncStateSchema: GenMessage<CameraSyncState> = /*@__PURE__*/
+  messageDesc(file_visio_schema_v1_service_heartbeat_heartbeat, 1);
 
 /**
  * @generated from message visio_schema.v1.service.heartbeat.Heartbeat
@@ -181,6 +230,11 @@ export type Heartbeat = Message<"visio_schema.v1.service.heartbeat.Heartbeat"> &
    * @generated from field: fixed64 clock_epoch = 10;
    */
   clockEpoch: bigint;
+
+  /**
+   * @generated from field: repeated visio_schema.v1.service.heartbeat.CameraSyncState camera_sync = 11;
+   */
+  cameraSync: CameraSyncState[];
 };
 
 /**
@@ -188,5 +242,5 @@ export type Heartbeat = Message<"visio_schema.v1.service.heartbeat.Heartbeat"> &
  * Use `create(HeartbeatSchema)` to create a new message.
  */
 export const HeartbeatSchema: GenMessage<Heartbeat> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_service_heartbeat_heartbeat, 1);
+  messageDesc(file_visio_schema_v1_service_heartbeat_heartbeat, 2);
 

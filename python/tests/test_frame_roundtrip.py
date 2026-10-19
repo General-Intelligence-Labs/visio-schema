@@ -123,3 +123,11 @@ def test_capture_clock_revision_survives_wire() -> None:
     msg = Message(stream_id=17, payload=b"frame", clock_authority_epoch=123456789,
                   clock_revision=78)
     assert decode_message(encode_message(msg)) == msg
+
+
+def test_confirmed_idr_identity_survives_wire() -> None:
+    from visio_schema.v1.wire.header_pb2 import SyncPoint
+    msg = Message(stream_id=17, payload=b"frame", keyframe=True,
+                  sync_point=SyncPoint(authority_epoch=0x123456789abcdef,
+                                       grid_generation=42, frame_index=0))
+    assert decode_message(encode_message(msg)) == msg

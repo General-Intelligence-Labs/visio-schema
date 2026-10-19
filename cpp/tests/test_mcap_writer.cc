@@ -81,6 +81,7 @@ Message VideoMsg(std::uint32_t id, std::string payload, bool keyframe,
   m.payload = std::move(payload);
   m.bulk = true;
   m.keyframe = keyframe;
+  if(keyframe)m.sync_point={1,1,static_cast<std::uint64_t>((ts_ns+16666666)/33333333)};
   SetTimestampNs(&m.timestamp, ts_ns);
   return m;
 }
@@ -105,7 +106,7 @@ std::vector<std::string> ContinuationRows(const std::string& stem,
       if (metadata.name != "visio.rotation") return;
       ++metadata_count;
       EXPECT_EQ(metadata.metadata.at("part_index"),std::to_string(part));
-      EXPECT_EQ(metadata.metadata.at("video_continuation"),"true");
+      EXPECT_EQ(metadata.metadata.at("video_continuation"),metadata.metadata.at("cut_reason")=="forced"?"true":"false");
       if (identity.empty()) identity = metadata.metadata.at("recording_id");
       EXPECT_EQ(metadata.metadata.at("recording_id"),identity);
       EXPECT_FALSE(identity.empty());
@@ -843,11 +844,11 @@ TEST(McapWriterContinuation, ForcedCutPreservesEveryNonIdr) {
   const Channel local = VideoChannel(kFirstDynamic, "/ego/camera/0");
   const Channel wrist = VideoChannel(kFirstDynamic + 1, "/wrist/camera/0");
   visio_schema::mcap::McapRotationPolicy policy;
-  policy.local_video_ids = {local.id};
+  policy.video_ids = {local.id,wrist.id};
   McapWriter w(TempPath("rotation_continuation.mcap"), 40, 0, true, 500,
                0, std::nullopt, {}, {}, {}, policy);
   w.Write(local, VideoMsg(local.id, std::string(20, 'a'), true, 0));
-  w.Write(wrist, VideoMsg(wrist.id, std::string(20, 'b'), false, 0));
+  w.Write(wrist, VideoMsg(wrist.id, std::string(20, 'b'), true, 0));
   for (int i = 1; i <= 40; ++i)
     w.Write(local, VideoMsg(local.id, std::string(10, 'c'), false, i * 33333333LL, i));
   w.Close();
@@ -862,25 +863,26 @@ TEST(McapWriterContinuation, ForcedCutPreservesEveryNonIdr) {
   RemoveParts("rotation_continuation");
 }
 
-TEST(McapWriterContinuation, WaitsForLocalPairAndKeepsWristFrames) {
+TEST(McapWriterContinuation, WaitsForEverySelectedCameraIncludingWrist) {
   RemoveParts("rotation_pair");
   const Channel a = VideoChannel(kFirstDynamic, "/ego/camera/0");
   const Channel b = VideoChannel(kFirstDynamic + 1, "/ego/camera/1");
   const Channel wrist = VideoChannel(kFirstDynamic + 2, "/wrist/camera/0");
   visio_schema::mcap::McapRotationPolicy policy;
-  policy.local_video_ids = {a.id, b.id};
-  McapWriter w(TempPath("rotation_pair.mcap"), 1000, 0, true, 500,
+  policy.video_ids = {a.id, b.id,wrist.id};
+  McapWriter w(TempPath("rotation_pair.mcap"), 1500, 0, true, 500,
                0, std::nullopt, {}, {}, {}, policy);
   w.Write(a, VideoMsg(a.id, std::string(500, 'a'), true, 0));
   w.Write(b, VideoMsg(b.id, std::string(500, 'b'), true, 0));
+  w.Write(wrist,VideoMsg(wrist.id,std::string(500,'w'),true,0));
   w.Write(a, VideoMsg(a.id, std::string(10, 'c'), true, 33333333));
   EXPECT_EQ(PartCount("rotation_pair"), 1);
-  w.Write(wrist, VideoMsg(wrist.id, std::string(10, 'd'), false, 33333333));
+  w.Write(wrist, VideoMsg(wrist.id, std::string(10, 'd'), true, 33333333));
   w.Write(b, VideoMsg(b.id, std::string(10, 'e'), false, 1000)); // late prior frame
   w.Write(b, VideoMsg(b.id, std::string(10, 'f'), true, 33341333));
   EXPECT_EQ(PartCount("rotation_pair"), 2);
   w.Close();
-  EXPECT_EQ(w.bytes_written(), 1040u);
+  EXPECT_EQ(w.bytes_written(), 1540u);
   EXPECT_EQ(w.rotation_stats().aligned, 1u);
   EXPECT_EQ(w.rotation_stats().forced, 0u);
   RemoveParts("rotation_pair");
@@ -891,7 +893,7 @@ TEST(McapWriterContinuation, StopCancelsIncompleteCutWithoutLosingStagedFrames) 
   const Channel a = VideoChannel(kFirstDynamic, "/a");
   const Channel b = VideoChannel(kFirstDynamic + 1, "/b");
   visio_schema::mcap::McapRotationPolicy policy;
-  policy.local_video_ids = {a.id,b.id};
+  policy.video_ids = {a.id,b.id};
   McapWriter w(TempPath("rotation_stop.mcap"), 1000, 0, true, 500,
                0, std::nullopt, {}, {}, {}, policy);
   w.Write(a, VideoMsg(a.id, std::string(500,'a'), true, 0));
@@ -908,7 +910,7 @@ TEST(McapWriterContinuation, FullGroupSpreadMustFitTolerance) {
   RemoveParts("rotation_spread");
   const auto a = VideoChannel(16,"/a"), b = VideoChannel(17,"/b"), c = VideoChannel(18,"/c");
   visio_schema::mcap::McapRotationPolicy policy;
-  policy.local_video_ids = {16,17,18}; policy.tolerance_ns = 10;
+  policy.video_ids = {16,17,18}; policy.tolerance_ns = 10;
   McapWriter w(TempPath("rotation_spread.mcap"), 3000, 0, true, 0, 0, {}, {}, {}, {}, policy);
   for (auto ch : {a,b,c}) w.Write(ch,VideoMsg(ch.id,std::string(1000,'x'),true,0));
   w.Write(a,VideoMsg(16,"a",true,100));
@@ -926,15 +928,15 @@ TEST(McapWriterContinuation, TimeoutAndByteBoundPreserveEncryptedRecords) {
     const auto a = VideoChannel(16,"/a"), b = VideoChannel(17,"/b");
     const auto imu = MakeChannel(18,"/imu");
     visio_schema::mcap::McapRotationPolicy policy;
-    policy.local_video_ids = {16,17}; policy.max_staged_bytes = 1024;
+    policy.video_ids = {16,17}; policy.max_staged_bytes = 2048;
     policy.max_wait = std::chrono::milliseconds(2);
-    McapWriter w(TempPath("rotation_bounded.mcap"), 10000, 0, true, 0, 0, TestKey(3), {}, {}, {}, policy);
-    w.Write(a,VideoMsg(16,std::string(5000,'a'),true,0));
-    w.Write(b,VideoMsg(17,std::string(5000,'b'),true,0));
+    McapWriter w(TempPath("rotation_bounded.mcap"), 400, 0, true, 0, 0, TestKey(3), {}, {}, {}, policy);
+    w.Write(a,VideoMsg(16,std::string(200,'a'),true,0));
+    w.Write(b,VideoMsg(17,std::string(200,'b'),true,0));
     w.Write(a,VideoMsg(16,"idr",true,33333333));
     ASSERT_GT(w.rotation_pending_bytes(),0u);
     if (timeout) { std::this_thread::sleep_for(std::chrono::milliseconds(4)); w.FlushDue(); }
-    w.Write(imu,Data(18,std::string(1500,'m')));
+    w.Write(imu,Data(18,std::string(3000,'m')));
     w.Write(b,VideoMsg(17,"delta",false,33341333));
     w.Close();
     const auto rows = ContinuationRows("rotation_bounded",TestKey(3));
@@ -942,7 +944,7 @@ TEST(McapWriterContinuation, TimeoutAndByteBoundPreserveEncryptedRecords) {
     EXPECT_EQ(rows[2],"/a:0:33333333:idr");
     EXPECT_EQ(rows[4],"/b:0:33341333:delta");
     EXPECT_EQ(w.rotation_pending_bytes(),0u);
-    EXPECT_LE(w.rotation_stats().max_staged_bytes,1024u);
+    EXPECT_LE(w.rotation_stats().max_staged_bytes,2048u);
     EXPECT_GT(w.rotation_stats().cancelled,0u);
     RemoveParts("rotation_bounded");
   }
@@ -952,7 +954,7 @@ TEST(McapWriterContinuation, ThousandPartsRetainExactMixedCameraRecords) {
   const std::string stem="rotation_many_parts";
   RemoveParts(stem);
   const auto a=VideoChannel(16,"/a"), b=VideoChannel(17,"/b"), wrist=VideoChannel(18,"/wrist");
-  visio_schema::mcap::McapRotationPolicy policy; policy.local_video_ids={16,17};
+  visio_schema::mcap::McapRotationPolicy policy; policy.video_ids={16,17,18};
   McapWriter writer(TempPath(stem+".mcap"),2048,0,true,0,0,{}, {}, {}, {},policy);
   std::vector<std::string> expected;
   for (unsigned i=0;i<10000;++i) {
@@ -960,7 +962,7 @@ TEST(McapWriterContinuation, ThousandPartsRetainExactMixedCameraRecords) {
     const auto seq=i/3;
     const auto timestamp=seq*33333333LL+(i%3)*8000;
     auto message=VideoMsg(channel.id,std::string(256,static_cast<char>(32+seq%80)),
-                          i%3!=2 && seq%30==0,timestamp,seq);
+                          seq%30==0,timestamp,seq);
     expected.push_back(channel.topic+":"+std::to_string(seq)+":"+std::to_string(timestamp)+":"+message.payload.str());
     writer.Write(channel,message);
   }
@@ -976,29 +978,29 @@ TEST(McapWriterContinuation, ThousandPartsRetainExactMixedCameraRecords) {
   RemoveParts(stem);
 }
 
-TEST(McapWriterContinuation, LocalStartupGateSurvivesAnEarlyForcedCut) {
+TEST(McapWriterContinuation, StartupRejectsIncompleteAndUnmatchedGroup) {
   const std::string stem="rotation_initial_gate"; RemoveParts(stem);
   const auto a=VideoChannel(16,"/a"), b=VideoChannel(17,"/b"), wrist=VideoChannel(18,"/wrist");
-  visio_schema::mcap::McapRotationPolicy policy;policy.local_video_ids={16,17};
+  visio_schema::mcap::McapRotationPolicy policy;policy.video_ids={16,17};
   McapWriter writer(TempPath(stem+".mcap"),128,0,true,0,0,{}, {}, {}, {},policy);
   writer.Write(a,VideoMsg(16,std::string(128,'a'),true,0));
   writer.Write(wrist,VideoMsg(18,std::string(128,'w'),false,0));
   writer.Write(b,VideoMsg(17,std::string(128,'p'),false,33333333,0));
   writer.Write(b,VideoMsg(17,std::string(128,'b'),true,66666666,1));
   writer.Close();
-  EXPECT_EQ(writer.rotation_stats().startup_dropped,1u);
-  EXPECT_EQ(writer.bytes_written(),384u);
+  EXPECT_EQ(writer.start_status(),McapWriter::StartStatus::TimedOut);
+  EXPECT_EQ(writer.bytes_written(),0u);
   const auto rows=ContinuationRows(stem);
-  ASSERT_EQ(rows.size(),3u);
-  EXPECT_EQ(rows[2],"/b:1:66666666:"+std::string(128,'b'));
+  ASSERT_EQ(rows.size(),0u);
   RemoveParts(stem);
 }
 
 TEST(McapWriterContinuation, DurationGraceCannotBeRenewedByUnpairedIdrs) {
   const std::string stem="rotation_duration_grace";RemoveParts(stem);
   const auto a=VideoChannel(16,"/a"), b=VideoChannel(17,"/b");
-  visio_schema::mcap::McapRotationPolicy policy;policy.local_video_ids={16,17};
+  visio_schema::mcap::McapRotationPolicy policy;policy.video_ids={16,17};
   policy.max_wait=std::chrono::milliseconds(2);
+  policy.idr_wait=std::chrono::milliseconds(2);
   McapWriter writer(TempPath(stem+".mcap"),0,0.002,true,0,0,{}, {}, {}, {},policy);
   writer.Write(a,VideoMsg(16,std::string(500,'a'),true,0));
   writer.Write(b,VideoMsg(17,std::string(500,'b'),true,0));
@@ -1019,7 +1021,7 @@ TEST(McapWriterContinuation, BorrowedPayloadSurvivesCallerReuseBeforePairedCut) 
   const Channel a = VideoChannel(16, "/ego/camera/0");
   const Channel b = VideoChannel(17, "/ego/camera/1");
   visio_schema::mcap::McapRotationPolicy policy;
-  policy.local_video_ids = {a.id, b.id};
+  policy.video_ids = {a.id, b.id};
   McapWriter writer(TempPath(stem + ".mcap"), 1000, 0, true, 0,
                     0, {}, {}, {}, {}, policy);
   writer.Write(a, VideoMsg(a.id, std::string(500, 'a'), true, 0));
@@ -1027,7 +1029,7 @@ TEST(McapWriterContinuation, BorrowedPayloadSurvivesCallerReuseBeforePairedCut) 
   std::string bytes(32, 'c');
   auto message = VideoMsg(a.id, "", true, 33333333, 1);
   const visio_schema::mcap::RecordedMessage borrowed{
-      message.timestamp, message.seq, message.keyframe, bytes};
+      message.timestamp, message.seq, message.keyframe, bytes,message.sync_point};
   writer.Write(a, borrowed);
   ASSERT_GT(writer.rotation_pending_bytes(), 0u);
   bytes.assign(32, 'x');
@@ -1039,5 +1041,104 @@ TEST(McapWriterContinuation, BorrowedPayloadSurvivesCallerReuseBeforePairedCut) 
   EXPECT_EQ(writer.rotation_stats().aligned, 1u);
   EXPECT_EQ(writer.keyframe_gated(), 0u);
   EXPECT_EQ(writer.rotation_pending_bytes(), 0u);
+  RemoveParts(stem);
+}
+
+TEST(McapWriterSync, StartUsesSharedIdentityWithSkewAndReverseArrival) {
+  const std::string stem="sync_start_reverse";RemoveParts(stem);
+  const auto a=VideoChannel(16,"/ego/camera/0"),b=VideoChannel(17,"/wrist/camera/0");
+  const auto imu=MakeChannel(18,"/imu");
+  visio_schema::mcap::McapRotationPolicy policy;policy.video_ids={16,17};
+  McapWriter writer(TempPath(stem+".mcap"),1'000'000,0,true,0,0,{}, {}, {}, {},policy);
+  auto first=VideoMsg(17,"wrist-idr",true,1'000'050'000);first.sync_point={42,7,60};
+  writer.Write(b,first);
+  EXPECT_EQ(writer.start_status(),McapWriter::StartStatus::Waiting);
+  writer.Write(imu,Data(18,"imu"));
+  writer.Write(a,VideoMsg(16,"preceding",false,966'666'667));
+  auto second=VideoMsg(16,"ego-idr",true,1'000'000'000);second.sync_point=first.sync_point;
+  writer.Write(a,second);
+  EXPECT_EQ(writer.start_status(),McapWriter::StartStatus::Ready);
+  writer.Close();
+  const auto rows=ContinuationRows(stem);
+  ASSERT_EQ(rows.size(),3u);
+  EXPECT_NE(rows[0].find("wrist-idr"),std::string::npos);
+  EXPECT_NE(rows[2].find("ego-idr"),std::string::npos);
+  EXPECT_EQ(writer.rotation_stats().startup_dropped,1u);
+  RemoveParts(stem);
+}
+TEST(McapWriterSync, TimestampEqualityCannotJoinDifferentIdrGroups) {
+  const std::string stem="sync_start_mismatch";RemoveParts(stem);
+  const auto a=VideoChannel(16,"/a"),b=VideoChannel(17,"/b");
+  visio_schema::mcap::McapRotationPolicy policy;policy.video_ids={16,17};
+  McapWriter writer(TempPath(stem+".mcap"),1'000'000,0,true,0,0,{}, {}, {}, {},policy);
+  auto ma=VideoMsg(16,"a",true,1'000'000'000);ma.sync_point={42,7,60};
+  auto mb=ma;mb.stream_id=17;mb.sync_point.frame_index=90;
+  writer.Write(a,ma);writer.Write(b,mb);
+  EXPECT_EQ(writer.start_status(),McapWriter::StartStatus::TimedOut);
+  writer.Close();EXPECT_EQ(writer.bytes_written(),0u);
+  EXPECT_EQ(PartCount(stem),0);RemoveParts(stem);
+}
+TEST(McapWriterSync, NewCamerasWaitForNextTake) {
+  const std::string stem="sync_fixed_membership";RemoveParts(stem);
+  const auto a=VideoChannel(16,"/a"),late=VideoChannel(17,"/late");
+  visio_schema::mcap::McapRotationPolicy policy;policy.video_ids={16};
+  McapWriter writer(TempPath(stem+".mcap"),1'000'000,0,true,0,0,{}, {}, {}, {},policy);
+  writer.Write(a,VideoMsg(16,"selected",true,1'000'000'000));
+  writer.Write(late,VideoMsg(17,"late",true,1'000'000'000));
+  writer.Close();EXPECT_EQ(ContinuationRows(stem).size(),1u);RemoveParts(stem);
+}
+TEST(McapWriterSync, PreparedStartIgnoresDelayedEarlierIdrGroup) {
+  const std::string stem="sync_future_target";RemoveParts(stem);
+  const auto a=VideoChannel(16,"/a");
+  visio_schema::mcap::McapRotationPolicy policy;policy.video_ids={16};
+  McapWriter writer(TempPath(stem+".mcap"),1'000'000,0,true,0,0,{}, {}, {}, {},policy);
+  writer.ArmStart({42,7,60});
+  auto old=VideoMsg(16,"old",true,1'000'000'000);old.sync_point={42,7,30};writer.Write(a,old);
+  EXPECT_EQ(writer.start_status(),McapWriter::StartStatus::Waiting);
+  old.payload="target";old.sync_point.frame_index=60;writer.Write(a,old);
+  EXPECT_EQ(writer.start_status(),McapWriter::StartStatus::Ready);
+  writer.Close();const auto rows=ContinuationRows(stem);ASSERT_EQ(rows.size(),1u);
+  EXPECT_NE(rows[0].find("target"),std::string::npos);RemoveParts(stem);
+}
+
+TEST(McapWriterSync, PreparedStartRetainsFramesAfterAnArrivedCameraIdr) {
+  const std::string stem="sync_target_delayed_peer";RemoveParts(stem);
+  const auto a=VideoChannel(16,"/a"),b=VideoChannel(17,"/b");
+  visio_schema::mcap::McapRotationPolicy policy;policy.video_ids={16,17};
+  McapWriter writer(TempPath(stem+".mcap"),1'000'000,0,true,0,0,{}, {}, {}, {},policy);
+  writer.ArmStart({42,7,60});
+  auto ma=VideoMsg(16,"a-idr",true,1'000'000'000);ma.sync_point={42,7,60};writer.Write(a,ma);
+  writer.Write(a,VideoMsg(16,"a-next",false,1'033'333'333));
+  writer.Write(b,VideoMsg(17,"b-preceding",false,966'666'667));
+  auto mb=ma;mb.stream_id=17;mb.payload="b-idr";writer.Write(b,mb);
+  EXPECT_EQ(writer.start_status(),McapWriter::StartStatus::Ready);
+  writer.Close();const auto rows=ContinuationRows(stem);ASSERT_EQ(rows.size(),3u);
+  EXPECT_NE(rows[1].find("a-next"),std::string::npos);
+  EXPECT_EQ(writer.rotation_stats().startup_dropped,1u);RemoveParts(stem);
+}
+
+TEST(McapWriterSync, PreparedStartOverflowClearsStagingAndRemovesEmptyPart) {
+  const std::string stem = "sync_start_overflow";
+  RemoveParts(stem);
+  const auto a = VideoChannel(16, "/a"), b = VideoChannel(17, "/b");
+  visio_schema::mcap::McapRotationPolicy policy;
+  policy.video_ids = {16, 17};
+  policy.max_staged_bytes = 4096;
+  McapWriter writer(TempPath(stem + ".mcap"), 1'000'000, 0, true, 0,
+                    0, {}, {}, {}, {}, policy);
+  writer.ArmStart({42, 7, 60});
+  auto first = VideoMsg(16, "first", true, 1'000'000'000);
+  first.sync_point = {42, 7, 60};
+  writer.Write(a, first);
+  ASSERT_GT(writer.rotation_pending_bytes(), 0u);
+  auto overflow = first;
+  overflow.stream_id = 17;
+  overflow.payload = std::string(4096, 'x');
+  writer.Write(b, overflow);
+  EXPECT_EQ(writer.start_status(), McapWriter::StartStatus::TimedOut);
+  EXPECT_EQ(writer.rotation_pending_bytes(), 0u);
+  EXPECT_EQ(writer.bytes_written(), 0u);
+  writer.Close();
+  EXPECT_EQ(PartCount(stem), 0);
   RemoveParts(stem);
 }

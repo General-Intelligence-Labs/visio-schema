@@ -358,3 +358,5 @@ visio_schema.v1.sensor.ViveStatus.station_map_id             max_size:40
 visio_schema.v1.sensor.ViveStatus.detail                     max_size:160
 visio_schema.v1.sensor.ViveStatus.Tracker.tracker_serial     max_size:24
 visio_schema.v1.sensor.ViveStatus.Tracker.detail             max_size:128
+
+visio_schema.v1.service.heartbeat.Heartbeat.camera_sync max_count:8

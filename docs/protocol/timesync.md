@@ -82,6 +82,32 @@ generation in each mapping. The wrist's capture-phase error and nominal local
 period come from the same snapshot used to tag that capture. Exactly one live,
 valid reference is required; ambiguous references are refused.
 
+## Shared capture and IDR grid
+
+The bus owns one `SyncService` for clock mappings, capture phase control and IDR
+bookkeeping. `HeartbeatService` carries its snapshots and camera status while
+retaining peer identity and liveness. Firmware bridges VI/VENC and PWM actuation
+to this service; it does not keep another estimator or frame-grid authority.
+
+The slowest selected local camera publishes the head's observed capture grid.
+Faster cameras use its coincident edges. Grid snapshots include a stable frame
+index and periodic IDR cadence. Clock mapping revision updates preserve cadence;
+reference epoch or capture restart changes invalidate the old grid. A follower
+selects slots only while its capture phase is locked to that reference.
+
+`Header.sync_point` identifies a confirmed periodic IDR by authority epoch, grid
+generation and frame index. Unlike hop clock tags, it survives timestamp rewriting
+and relay. Producers verify H.265 IDR NAL types 19/20 and supply VPS/SPS/PPS; an
+intra-slice flag alone is insufficient. Encoder status counts selected, confirmed
+and missed slots. Recording and viewers wait for the regular one-second slots;
+start, rotation and recovery do not request additional IDRs.
+
+Firmware selects an IDR immediately before submitting the chosen VI frame. The
+current SDK's `SendFrameEx` path on RV1126B drops `enFrameType`, so firmware fences
+earlier encoder input with the drain's completed PTS, then uses `RequestIDR` and
+`SendFrame`. A fence timeout skips that selection and exposes a missed slot;
+it never shifts the request onto an arbitrary later capture.
+
 ## Firmware controller and evidence
 
 Capture feedback is posted after VI dequeue, before IDR work or encoder

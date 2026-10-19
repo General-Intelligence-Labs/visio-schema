@@ -51,9 +51,14 @@ McapWriterEndpoint::McapWriterEndpoint(std::string_view path, StreamResolver res
       writer_(std::make_unique<visio_schema::mcap::McapWriter>(
           path, max_bytes, max_duration_s, rotate_on_keyframe, pair_guard_ns,
           sync_span_bytes, std::move(recording_key), std::move(readback),
-          std::move(storage), checkpoint_interval, std::move(rotation_policy))),
+          std::move(storage), checkpoint_interval, rotation_policy)),
       policy_(policy),
       arena_(ArenaCapacity(policy), kArenaChunkBytes, kArenaResidentChunks) {
+  if (rotation_policy) {
+    freeze_video_membership_ = true;
+    selected_video_ids_.insert(rotation_policy->video_ids.begin(),
+                               rotation_policy->video_ids.end());
+  }
   // Written on this (constructing) thread, before Start() spawns the writer
   // thread — so it lands in the file ahead of any message, no locking needed.
   if (!metadata.empty()) writer_->SetMetadata("visio.capture", std::move(metadata));
@@ -74,6 +79,7 @@ void McapWriterEndpoint::Stop() {
     std::lock_guard<std::mutex> lk(mu_);
     if (stop_) return;
     stop_ = true;
+    start_cv_.notify_all();
   }
   cv_.notify_one();
   if (thread_.joinable()) thread_.join();  // drains the remaining queue
@@ -146,9 +152,19 @@ void McapWriterEndpoint::Send(const Message& msg) {
       if (!IsControlStream(msg.stream_id)) NoteUnmapped(msg.stream_id);
       return;  // drop-until-mapped
     }
-    ch = std::make_shared<const Channel>(*resolved);
+    if (resolved->schema_name == visio_schema::kCompressedVideoSchema) {
+      const auto original = selected_video_topics_.find(resolved->topic);
+      if (original != selected_video_topics_.end()) ch = original->second;
+    }
+    if (!ch) ch = std::make_shared<const Channel>(*resolved);
+    if (selected_video_ids_.count(ch->id))
+      selected_video_topics_.emplace(ch->topic, ch);
     channel_cache_.emplace(msg.stream_id, ch);
   }
+
+  if (freeze_video_membership_ &&
+      ch->schema_name == visio_schema::kCompressedVideoSchema &&
+      !selected_video_ids_.count(ch->id)) return;
 
   const std::size_t len = msg.payload.size();
   bool was_empty = false;
@@ -161,7 +177,7 @@ void McapWriterEndpoint::Send(const Message& msg) {
       return;
     }
     if (const std::size_t evicted = before - queue_.size()) NoteDrop(evicted);
-    Entry e{std::move(ch), msg.timestamp, msg.seq, msg.keyframe, len,
+    Entry e{std::move(ch), msg.timestamp, msg.seq, msg.keyframe, msg.sync_point, len,
             msg.payload};
     if (auto record = arena_.Put(msg.payload.str())) {
       e.payload = std::move(*record);
@@ -234,6 +250,7 @@ void McapWriterEndpoint::WriterLoop() {
     {
       std::lock_guard<std::mutex> lk(mu_);
       batch_.clear();
+      start_cv_.notify_all();
     }
     inflight_bytes_.store(0, std::memory_order_relaxed);
   }
@@ -271,7 +288,7 @@ void McapWriterEndpoint::DrainBatch(std::deque<Entry>& batch) {
     const Entry& e = batch.front();
     const std::size_t bytes = e.size;
     if (e.channel) {
-      const RecordedMessage m{e.timestamp, e.seq, e.keyframe, PayloadOf(e)};
+      const RecordedMessage m{e.timestamp, e.seq, e.keyframe, PayloadOf(e),e.sync_point};
       const std::uint64_t t0 = SteadyNs();
       writer_->Write(*e.channel, m);
       const std::uint64_t dt = SteadyNs() - t0;
@@ -345,3 +362,13 @@ McapWriterStats McapWriterEndpoint::stats() const {
 }
 
 }  // namespace visio_schema::mcap
+
+namespace visio_schema::mcap {
+bool McapWriterEndpoint::WaitForStart(std::chrono::milliseconds timeout) {
+  std::unique_lock<std::mutex> lock(mu_);
+  start_cv_.wait_for(lock,timeout,[this] {
+    return stop_||failed_.load()||writer_->start_status()!=McapWriter::StartStatus::Waiting;
+  });
+  return !stop_&&!failed_.load()&&writer_->start_status()==McapWriter::StartStatus::Ready;
+}
+}

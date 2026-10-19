@@ -98,6 +98,16 @@ class Payload {
   std::shared_ptr<const std::string> bytes_;
 };
 
+struct SyncPoint {
+  std::uint64_t authority_epoch = 0, grid_generation = 0, frame_index = 0;
+  bool valid() const { return authority_epoch != 0 && grid_generation != 0; }
+  friend bool operator==(const SyncPoint& a, const SyncPoint& b) {
+    return a.authority_epoch == b.authority_epoch &&
+           a.grid_generation == b.grid_generation && a.frame_index == b.frame_index;
+  }
+  friend bool operator!=(const SyncPoint& a, const SyncPoint& b) { return !(a == b); }
+};
+
 // A stream is named globally by a topic string and labelled on the wire by a
 // compact per-link `stream_id` (control ids < CONTROL_STREAM_FIRST_DYNAMIC are
 // hop-local; data ids are negotiated and hub-remapped).
@@ -107,6 +117,7 @@ struct Message {
   google_protobuf_Timestamp timestamp = google_protobuf_Timestamp_init_zero;
   std::uint64_t clock_authority_epoch = 0;
   std::uint32_t clock_revision = 0;
+  SyncPoint sync_point;
   // Local I/O receive time of the read completing this frame, before decode and
   // dispatch. Never serialized and never used as a sensor capture timestamp.
   std::int64_t receive_mono_ns = 0;

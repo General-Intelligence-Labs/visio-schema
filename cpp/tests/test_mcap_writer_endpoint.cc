@@ -647,15 +647,15 @@ TEST(McapWriterEndpoint, IdleContinuationDeadlineFlushesWithoutAnotherSend) {
   a.schema_name=b.schema_name="foxglove.CompressedVideo";
   auto resolve=[&](std::uint32_t id) { return id==16 ? &a : &b; };
   McapRotationPolicy rotation;
-  rotation.local_video_ids={16,17};
+  rotation.video_ids={16,17};
   rotation.max_wait=std::chrono::milliseconds(100);
   McapWriterEndpoint ep(TempPath("endpoint_rotation_idle.mcap"),resolve,10000,0,
                         WritePolicy::lossless(),{},true,0,0,{}, {}, {}, {},rotation);
   ep.Start(nullptr,nullptr);
-  auto ma=Data(16,std::string(5000,'a')); ma.keyframe=true;
-  auto mb=Data(17,std::string(5000,'b')); mb.keyframe=true;
+  auto ma=Data(16,std::string(5000,'a')); ma.keyframe=true;ma.sync_point={1,1,0};
+  auto mb=Data(17,std::string(5000,'b')); mb.keyframe=true;mb.sync_point={1,1,0};
   ep.Send(ma); ep.Send(mb);
-  auto idr=Data(16,"next-idr"); idr.keyframe=true;
+  auto idr=Data(16,"next-idr"); idr.keyframe=true;idr.sync_point={1,1,30};
   ep.Send(idr);
   for (unsigned i=0;i<500;++i) {
     if (ep.stats().rotation.cancelled==1 && ep.bytes_written()==10008 && ep.pending_bytes()==0) break;
@@ -687,16 +687,17 @@ TEST(McapWriterEndpoint, ContinuationOpenFailureCanStopWithExpiredCandidate) {
   auto a=MakeChannel(16,"/a"), b=MakeChannel(17,"/b");
   a.schema_name=b.schema_name="foxglove.CompressedVideo";
   auto resolve=[&](std::uint32_t id) { return id==16 ? &a : &b; };
-  McapRotationPolicy rotation; rotation.local_video_ids={16,17};
+  McapRotationPolicy rotation; rotation.video_ids={16,17};
   rotation.max_wait=std::chrono::milliseconds(10);
   auto storage=std::make_shared<RejectSecondPart>();
   McapWriterEndpoint ep(TempPath("endpoint_rotation_failed.mcap"),resolve,10000,0,
                         WritePolicy::lossless(),{},true,0,0,{}, {},storage,{},rotation);
   ep.Start(nullptr,nullptr);
-  auto ma=Data(16,std::string(5000,'a')); ma.keyframe=true;
-  auto mb=Data(17,std::string(5000,'b')); mb.keyframe=true;
+  auto ma=Data(16,std::string(5000,'a')); ma.keyframe=true;ma.sync_point={1,1,0};
+  auto mb=Data(17,std::string(5000,'b')); mb.keyframe=true;mb.sync_point={1,1,0};
   ep.Send(ma);ep.Send(mb);
   ma.payload="a-idr";mb.payload="b-idr";
+  ma.sync_point.frame_index=mb.sync_point.frame_index=30;
   ep.Send(ma);ep.Send(mb);
   for (unsigned i=0;i<500 && !ep.write_failed();++i)
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
@@ -707,4 +708,67 @@ TEST(McapWriterEndpoint, ContinuationOpenFailureCanStopWithExpiredCandidate) {
   EXPECT_EQ(ep.pending_bytes(),0u);
   EXPECT_TRUE(ep.write_failed());
   RemoveParts("endpoint_rotation_failed");
+}
+
+TEST(McapWriterEndpoint, PendingStartExpiresWithoutAnyTraffic) {
+  const std::string stem="sync_endpoint_empty";RemoveParts(stem);
+  auto a=MakeChannel(16,"/a");a.schema_name="foxglove.CompressedVideo";
+  McapRotationPolicy policy;policy.video_ids={16};policy.start_wait=std::chrono::milliseconds(25);
+  McapWriterEndpoint endpoint(TempPath(stem+".mcap"),[&](std::uint32_t){return &a;},
+      1'000'000,0,WritePolicy::lossless(),{},true,0,0,{}, {}, {}, {},policy);
+  const auto started=std::chrono::steady_clock::now();endpoint.Start(nullptr,nullptr);
+  EXPECT_FALSE(endpoint.WaitForStart(std::chrono::milliseconds(500)));
+  EXPECT_LT(std::chrono::steady_clock::now()-started,std::chrono::milliseconds(400));
+  EXPECT_EQ(endpoint.start_status(),McapWriter::StartStatus::TimedOut);
+  endpoint.Stop();EXPECT_EQ(PartCount(stem),0);RemoveParts(stem);
+}
+
+TEST(McapWriterEndpoint, ReconnectedCameraKeepsFrozenMembershipAndCanAlignAgain) {
+  const std::string stem="endpoint_reconnected_camera";RemoveParts(stem);
+  auto a=MakeChannel(16,"/head/camera/0"),b=MakeChannel(17,"/wrist/camera/0");
+  a.schema_name=b.schema_name=visio_schema::kCompressedVideoSchema;
+  auto reconnected=b;reconnected.id=18;
+  auto newcomer=b;newcomer.id=19;newcomer.topic="/new-wrist/camera/0";
+  std::unordered_map<std::uint32_t,Channel> channels{{16,a},{17,b},{18,reconnected},{19,newcomer}};
+  McapRotationPolicy policy;policy.video_ids={16,17};
+  McapWriterEndpoint ep(TempPath(stem+".mcap"),[&](std::uint32_t id)->const Channel* {
+    const auto i=channels.find(id);return i==channels.end()?nullptr:&i->second;
+  },1000,0,WritePolicy::lossless(),{},true,0,0,{}, {}, {}, {},policy);
+  auto idr=[](std::uint32_t id,std::string data,std::uint64_t frame) {
+    auto m=Data(id,std::move(data));m.keyframe=true;m.sync_point={42,7,frame};
+    m.timestamp.seconds=frame/30;return m;
+  };
+  ep.Start(nullptr,nullptr);
+  ep.Send(idr(16,"first-head",30));ep.Send(idr(17,"first-wrist",30));
+  ASSERT_TRUE(ep.WaitForStart(std::chrono::milliseconds(500)));
+  ep.Send(Data(16,std::string(990,'p')));
+  ep.Send(idr(16,"next-head",60));ep.Send(idr(18,"after-reconnect",60));
+  ep.Send(idr(19,"newcomer-must-wait",60));
+  ep.Stop();EXPECT_FALSE(ep.write_failed());ASSERT_EQ(PartCount(stem),2);
+  const auto tail=SlurpFile(PartPath(stem,1));
+  EXPECT_NE(tail.find("after-reconnect"),std::string::npos);
+  EXPECT_EQ(tail.find("newcomer-must-wait"),std::string::npos);
+  RemoveParts(stem);
+}
+
+TEST(McapWriterEndpoint, UnselectedVideoCannotEvictSelectedRecordingData) {
+  const std::string stem = "endpoint_unselected_admission";
+  RemoveParts(stem);
+  auto selected = MakeChannel(16, "/head/camera/0");
+  auto newcomer = MakeChannel(17, "/new-wrist/camera/0");
+  selected.schema_name = newcomer.schema_name = visio_schema::kCompressedVideoSchema;
+  McapRotationPolicy rotation;
+  rotation.video_ids = {16};
+  auto policy = WritePolicy::stale_eviction(128, std::chrono::microseconds(0));
+  McapWriterEndpoint endpoint(TempPath(stem + ".mcap"), [&](std::uint32_t id) {
+    return id == 16 ? &selected : &newcomer;
+  }, 1'000'000, 0, policy, {}, true, 0, 0, {}, {}, {}, {}, rotation);
+  endpoint.Send(Data(16, std::string(32, 'a')));
+  for (int i = 0; i < 4; ++i)
+    endpoint.Send(Data(17, std::string(64, 'x')));
+  EXPECT_EQ(endpoint.pending_frames(), 1u);
+  EXPECT_EQ(endpoint.pending_bytes(), 32u);
+  EXPECT_EQ(endpoint.stats().dropped, 0u);
+  endpoint.Stop();
+  RemoveParts(stem);
 }

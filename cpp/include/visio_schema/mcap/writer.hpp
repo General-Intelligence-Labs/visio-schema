@@ -58,17 +58,20 @@ struct RecordedMessage {
   std::uint32_t seq = 0;
   bool keyframe = false;
   std::string_view payload;
+  wire::SyncPoint sync_point;
 };
 
 class SpanReadback;
 
-// Firmware opts in explicitly: only local cameras guide a preferred cut.
+// Firmware freezes all selected video streams, including relayed cameras.
 // All continuation records survive even when a cut cannot be aligned.
 struct McapRotationPolicy {
-  std::vector<std::uint32_t> local_video_ids;
+  std::vector<std::uint32_t> video_ids;
   std::int64_t tolerance_ns = 1'000'000;
-  std::size_t max_staged_bytes = 2 * 1024 * 1024;
+  std::size_t max_staged_bytes = 8 * 1024 * 1024;
   std::chrono::milliseconds max_wait{100};
+  std::chrono::milliseconds start_wait{1100};
+  std::chrono::milliseconds idr_wait{1000};
 };
 
 struct McapRotationStats {
@@ -92,11 +95,11 @@ class McapWriter {
   // a caller that does not opt in keeps the plain byte-exact roll.
   //
   // rotation_policy (opt-in): use loss-preserving continuation parts. Only the
-  // explicit local camera ids guide a preferred aligned-IDR cut. Bound staging
+  // selected video ids must confirm one shared SyncPoint. Bound staging
   // by max_staged_bytes/max_wait; cancel an incomplete candidate into the old
   // part. At the byte ceiling (+1/8), force a cut and retain P-frames. Readers
-  // must decode the marked recording chain across parts. Initial local video
-  // warm-up still waits for its first IDR; attached cameras never gate a cut.
+  // must decode the marked recording chain across forced cuts. Initial video
+  // waits for a complete confirmed group under a bounded start deadline.
   // pair_guard_ns above belongs to the legacy policy, not this timestamp-spread
   // comparison. Descriptors and payload timestamps/sequences remain unchanged.
   //
@@ -139,6 +142,10 @@ class McapWriter {
   void Close();
   // Only the writer worker mutates staging. Polling gauges are atomic.
   void FlushDue();
+  enum class StartStatus { Waiting, Ready, TimedOut };
+  StartStatus start_status() const { return start_status_.load(); }
+  // Preparation-time only, before the worker receives any frames.
+  void ArmStart(wire::SyncPoint target);
   std::optional<std::chrono::steady_clock::time_point> rotation_deadline() const;
   std::uint64_t rotation_pending_bytes() const { return staged_bytes_.load(); }
   McapRotationStats rotation_stats() const;
@@ -191,8 +198,9 @@ class McapWriter {
   void WriteRecord(const Channel& channel, const RecordedMessage& msg);
   void WriteContinuation(const Channel& channel, const RecordedMessage& msg);
   void FlushStaged(bool rotate, bool allow_forced = true);
+  void FailStart();
   void ForceRollIfDue();
-  bool LocalVideo(const Channel& channel) const;
+  bool SelectedVideo(const Channel& channel) const;
   bool ForcedCutDue() const;
   void WriteRotationMetadata();
   std::string PartPath() const;
@@ -211,6 +219,9 @@ class McapWriter {
   std::string recording_id_, cut_reason_ = "initial";
   std::deque<Pending> staged_;
   std::unordered_set<std::uint32_t> candidate_ids_;
+  wire::SyncPoint candidate_point_,start_target_;
+  std::atomic<StartStatus> start_status_{StartStatus::Ready};
+  std::chrono::steady_clock::time_point start_deadline_;
   std::int64_t candidate_min_ns_ = 0, candidate_max_ns_ = 0;
   std::uint64_t staged_payload_bytes_ = 0;
   std::chrono::steady_clock::time_point candidate_deadline_;

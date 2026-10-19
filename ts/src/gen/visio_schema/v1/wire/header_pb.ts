@@ -12,7 +12,37 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file visio_schema/v1/wire/header.proto.
  */
 export const file_visio_schema_v1_wire_header: GenFile = /*@__PURE__*/
-  fileDesc("CiF2aXNpb19zY2hlbWEvdjEvd2lyZS9oZWFkZXIucHJvdG8SFHZpc2lvX3NjaGVtYS52MS53aXJlIqABCgZIZWFkZXISEQoJc3RyZWFtX2lkGAEgASgNEgsKA3NlcRgCIAEoDRItCgl0aW1lc3RhbXAYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhAKCGtleWZyYW1lGAQgASgIEh0KFWNsb2NrX2F1dGhvcml0eV9lcG9jaBgFIAEoBhIWCg5jbG9ja19yZXZpc2lvbhgGIAEoDSqbAgoNQ29udHJvbFN0cmVhbRIaChZDT05UUk9MX1NUUkVBTV9JTlZBTElEEAASHgoaQ09OVFJPTF9TVFJFQU1fREVWSUNFX0lORk8QARIcChhDT05UUk9MX1NUUkVBTV9IRUFSVEJFQVQQAxIaChZDT05UUk9MX1NUUkVBTV9DT01NQU5EEAQSFgoSQ09OVFJPTF9TVFJFQU1fT1RBEAUSFwoTQ09OVFJPTF9TVFJFQU1fRElBRxAHEiAKHENPTlRST0xfU1RSRUFNX0ZJUlNUX0RZTkFNSUMQECIECAIQAiIECAYQBioXQ09OVFJPTF9TVFJFQU1fVElNRVNZTkMqHENPTlRST0xfU1RSRUFNX0VYUE9TVVJFX1NZTkNiBnByb3RvMw", [file_google_protobuf_timestamp]);
+  fileDesc("CiF2aXNpb19zY2hlbWEvdjEvd2lyZS9oZWFkZXIucHJvdG8SFHZpc2lvX3NjaGVtYS52MS53aXJlIlIKCVN5bmNQb2ludBIXCg9hdXRob3JpdHlfZXBvY2gYASABKAYSFwoPZ3JpZF9nZW5lcmF0aW9uGAIgASgEEhMKC2ZyYW1lX2luZGV4GAMgASgEItUBCgZIZWFkZXISEQoJc3RyZWFtX2lkGAEgASgNEgsKA3NlcRgCIAEoDRItCgl0aW1lc3RhbXAYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhAKCGtleWZyYW1lGAQgASgIEh0KFWNsb2NrX2F1dGhvcml0eV9lcG9jaBgFIAEoBhIWCg5jbG9ja19yZXZpc2lvbhgGIAEoDRIzCgpzeW5jX3BvaW50GAcgASgLMh8udmlzaW9fc2NoZW1hLnYxLndpcmUuU3luY1BvaW50KpsCCg1Db250cm9sU3RyZWFtEhoKFkNPTlRST0xfU1RSRUFNX0lOVkFMSUQQABIeChpDT05UUk9MX1NUUkVBTV9ERVZJQ0VfSU5GTxABEhwKGENPTlRST0xfU1RSRUFNX0hFQVJUQkVBVBADEhoKFkNPTlRST0xfU1RSRUFNX0NPTU1BTkQQBBIWChJDT05UUk9MX1NUUkVBTV9PVEEQBRIXChNDT05UUk9MX1NUUkVBTV9ESUFHEAcSIAocQ09OVFJPTF9TVFJFQU1fRklSU1RfRFlOQU1JQxAQIgQIAhACIgQIBhAGKhdDT05UUk9MX1NUUkVBTV9USU1FU1lOQyocQ09OVFJPTF9TVFJFQU1fRVhQT1NVUkVfU1lOQ2IGcHJvdG8z", [file_google_protobuf_timestamp]);
+
+/**
+ * End-to-end identity of a confirmed periodic, independently decodable IDR.
+ * Unlike clock tags this identity survives timestamp translation and relay.
+ *
+ * @generated from message visio_schema.v1.wire.SyncPoint
+ */
+export type SyncPoint = Message<"visio_schema.v1.wire.SyncPoint"> & {
+  /**
+   * @generated from field: fixed64 authority_epoch = 1;
+   */
+  authorityEpoch: bigint;
+
+  /**
+   * @generated from field: uint64 grid_generation = 2;
+   */
+  gridGeneration: bigint;
+
+  /**
+   * @generated from field: uint64 frame_index = 3;
+   */
+  frameIndex: bigint;
+};
+
+/**
+ * Describes the message visio_schema.v1.wire.SyncPoint.
+ * Use `create(SyncPointSchema)` to create a new message.
+ */
+export const SyncPointSchema: GenMessage<SyncPoint> = /*@__PURE__*/
+  messageDesc(file_visio_schema_v1_wire_header, 0);
 
 /**
  * @generated from message visio_schema.v1.wire.Header
@@ -74,6 +104,11 @@ export type Header = Message<"visio_schema.v1.wire.Header"> & {
    * @generated from field: uint32 clock_revision = 6;
    */
   clockRevision: number;
+
+  /**
+   * @generated from field: visio_schema.v1.wire.SyncPoint sync_point = 7;
+   */
+  syncPoint?: SyncPoint | undefined;
 };
 
 /**
@@ -81,7 +116,7 @@ export type Header = Message<"visio_schema.v1.wire.Header"> & {
  * Use `create(HeaderSchema)` to create a new message.
  */
 export const HeaderSchema: GenMessage<Header> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_wire_header, 0);
+  messageDesc(file_visio_schema_v1_wire_header, 1);
 
 /**
  * @generated from enum visio_schema.v1.wire.ControlStream

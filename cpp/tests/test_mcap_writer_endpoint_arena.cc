@@ -41,7 +41,7 @@ class EndpointArena : public ::testing::Test {
   };
 
   void SetUp() override {
-    path = TempPath("visio_mcap_test_arena.mcap");
+    path = TempPath(std::string("visio_mcap_test_arena_")+::testing::UnitTest::GetInstance()->current_test_info()->name()+".mcap");
     std::remove(path.c_str());
   }
   void TearDown() override { std::remove(path.c_str()); }
@@ -203,7 +203,7 @@ TEST_F(EndpointArena, DeferredRotationOwnsPayloadsAfterTheirArenaChunkIsReused) 
       return id == a.id ? &a : id == b.id ? &b : &imu;
     };
     McapRotationPolicy rotation;
-    rotation.local_video_ids = {a.id, b.id};
+    rotation.video_ids = {a.id, b.id};
     rotation.max_wait = finish == "quiet" ? std::chrono::milliseconds(250)
                                           : std::chrono::seconds(5);
     rotation.max_staged_bytes = 256u << 10;
@@ -233,6 +233,7 @@ TEST_F(EndpointArena, DeferredRotationOwnsPayloadsAfterTheirArenaChunkIsReused) 
       message.stream_id = id;
       message.seq = seq;
       message.keyframe = keyframe;
+      if(keyframe)message.sync_point={1,1,seq};
       message.payload = Payload(producer);
       visio_schema::SetTimestampNs(&message.timestamp, seq * 33333333LL);
       ep.Send(message);
@@ -241,7 +242,7 @@ TEST_F(EndpointArena, DeferredRotationOwnsPayloadsAfterTheirArenaChunkIsReused) 
     ep.Start(nullptr, nullptr);
     for (unsigned seq = 0; seq < 8; ++seq) {
       send(a.id, kPrimeBytes, seq == 0, seq);
-      ASSERT_TRUE(wait_for([&] { return ep.pending_bytes() == 0; }));
+      if(seq)ASSERT_TRUE(wait_for([&] { return ep.pending_bytes() == 0; }));
       send(b.id, kPrimeBytes, seq == 0, seq);
       ASSERT_TRUE(wait_for([&] { return ep.pending_bytes() == 0; }));
     }

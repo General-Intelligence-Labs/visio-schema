@@ -29,6 +29,9 @@ visio_schema_v1_wire_Header ToHeader(const Message& msg) {
   h.keyframe = msg.keyframe;
   h.clock_authority_epoch = msg.clock_authority_epoch;
   h.clock_revision = msg.clock_revision;
+  h.has_sync_point = msg.sync_point.valid();
+  h.sync_point = {msg.sync_point.authority_epoch, msg.sync_point.grid_generation,
+                  msg.sync_point.frame_index};
   return h;
 }
 
@@ -92,6 +95,9 @@ FrameStatus DecodeFrame(std::string_view frame, Message* out) {
   out->keyframe = header.keyframe;
   out->clock_authority_epoch = header.clock_authority_epoch;
   out->clock_revision = header.clock_revision;
+  out->sync_point = header.has_sync_point
+      ? SyncPoint{header.sync_point.authority_epoch, header.sync_point.grid_generation,
+                  header.sync_point.frame_index} : SyncPoint{};
   out->payload = std::string_view(frame.data() + payload_end,
                                   frame.size() - payload_end - 2);
   return FrameStatus::kOk;

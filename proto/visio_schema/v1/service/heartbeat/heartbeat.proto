@@ -25,6 +25,17 @@ message ClockMapping {
   uint64 grid_phase_ns = 9;
   uint64 grid_period_ns = 10;
   uint64 grid_generation = 11;
+  // Stable reference-camera frame number associated with grid_phase_ns.
+  uint64 grid_frame_index = 12;
+  uint32 idr_period_frames = 13;
+}
+
+message CameraSyncState {
+  uint32 camera_index = 1;
+  uint64 capture_generation = 2;
+  uint64 encoder_generation = 3;
+  bool phase_locked = 4;
+  uint64 last_idr_frame = 5;
 }
 
 message Heartbeat {
@@ -72,4 +83,5 @@ message Heartbeat {
   uint32 applied_revision = 9;
   // Changes on process restart, including a peer reboot on a reopenable leg.
   fixed64 clock_epoch = 10;
+  repeated CameraSyncState camera_sync = 11;
 }

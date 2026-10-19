@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from google.protobuf.message import Message as ProtoMessage
 from google.protobuf.timestamp_pb2 import Timestamp
 
-from visio_schema.v1.wire.header_pb2 import Header
+from visio_schema.v1.wire.header_pb2 import Header, SyncPoint
 from visio_schema.wire.codec.frame import decode_frame, encode_frame
 
 
@@ -52,6 +52,7 @@ class Message:
     timestamp: Timestamp = field(default_factory=Timestamp)
     clock_authority_epoch: int = 0
     clock_revision: int = 0
+    sync_point: SyncPoint | None = None
     # This bulk frame is an H.265 sync point (VPS/SPS/PPS + IDR). Carried on the
     # wire because a hub relays video it did not produce and a recorder opens a
     # video channel only on a decodable keyframe — see the Header.keyframe
@@ -68,6 +69,8 @@ class Message:
         h.keyframe = self.keyframe
         h.clock_authority_epoch = self.clock_authority_epoch
         h.clock_revision = self.clock_revision
+        if self.sync_point is not None:
+            h.sync_point.CopyFrom(self.sync_point)
         return h
 
     @classmethod
@@ -118,6 +121,8 @@ class Message:
             keyframe=header.keyframe,
             clock_authority_epoch=header.clock_authority_epoch,
             clock_revision=header.clock_revision,
+            sync_point=SyncPoint.FromString(header.sync_point.SerializeToString())
+            if header.HasField("sync_point") else None,
         )
 
 

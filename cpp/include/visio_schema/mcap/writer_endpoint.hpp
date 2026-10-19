@@ -22,6 +22,7 @@
 #include <string_view>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <variant>
 
 #include "visio_schema/mcap/payload_arena.hpp"
@@ -128,6 +129,10 @@ class McapWriterEndpoint : public transport::Endpoint {
   //
   // Deliberately NOT reported through on_closed: that contract means "fixed
   // link hit EOF, detach me", and a write-only sink ignores both callbacks.
+  // Wait only on the command worker. SD I/O and bus dispatch never wait here.
+  bool WaitForStart(std::chrono::milliseconds timeout);
+  void ArmStart(wire::SyncPoint target) { writer_->ArmStart(target); }
+  McapWriter::StartStatus start_status() const { return writer_->start_status(); }
   bool write_failed() const { return failed_.load(std::memory_order_relaxed) || writer_->storage_fault(); }
 
   // Write-time read-back passthrough (see McapReadbackOptions). Step from
@@ -150,6 +155,7 @@ class McapWriterEndpoint : public transport::Endpoint {
     google_protobuf_Timestamp timestamp = google_protobuf_Timestamp_init_zero;
     std::uint32_t seq = 0;
     bool keyframe = false;
+    wire::SyncPoint sync_point;
     std::size_t size = 0;
     std::variant<PayloadArena::Record, wire::Payload> payload;
   };
@@ -170,10 +176,15 @@ class McapWriterEndpoint : public transport::Endpoint {
   transport::WritePolicy policy_;
   // Send()-caller-thread-only (the serialized bus dispatch thread); no lock.
   std::unordered_map<std::uint32_t, std::shared_ptr<const Channel>> channel_cache_;
+  // Recording membership is logical: a reconnect changes the bus link/id,
+  // while the same camera topic retains its original recording channel.
+  std::unordered_set<std::uint32_t> selected_video_ids_;
+  bool freeze_video_membership_ = false;
+  std::unordered_map<std::string, std::shared_ptr<const Channel>> selected_video_topics_;
 
   // guards arena_, queue_, queue_bytes_, batch_ (pop/clear), stop_
   mutable std::mutex mu_;
-  transport::MonotonicConditionVariable cv_;
+  transport::MonotonicConditionVariable cv_, start_cv_;
   // Sized for a full queue plus a full batch in flight, so every backlog
   // the policy allows is held here rather than in the producers' heap.
   // Declared before the queues: their records free into it on destruction.
