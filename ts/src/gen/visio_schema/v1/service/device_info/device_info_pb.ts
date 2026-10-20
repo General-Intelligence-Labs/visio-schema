@@ -155,11 +155,11 @@ export type DeviceInfo = Message<"visio_schema.v1.service.device_info.DeviceInfo
   bootUnixSeconds: bigint;
 
   /**
-   * Logical role / kind of this device — e.g. "ego", "glove_left",
-   * "glove_right", "gripper_left", "gripper_right". Unlike `device_name` this is
-   * NOT unique (many units share a role); it is the leading topic segment for
-   * this device's channels (e.g. "/glove_left/imu/3/raw"), so recordings and
-   * pipelines group by it. Empty if a device does not declare a role.
+   * Logical role / kind, e.g. "ego", "glove", "gripper", "wrist" or
+   * "stereo_addon". Unlike device_name it is not unique. Handed devices derive
+   * their topic root from the role plus their assigned side or unit code, e.g.
+   * "/wrist_left/camera/0" or "/wrist_aB3xY9pQ/camera/0". The hardware/image
+   * revision is separate (e.g. "compact_wrist"). Empty if undeclared.
    *
    * @generated from field: string equipment_type = 7;
    */

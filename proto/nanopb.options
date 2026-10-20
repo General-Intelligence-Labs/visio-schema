@@ -360,3 +360,26 @@ visio_schema.v1.sensor.ViveStatus.Tracker.tracker_serial     max_size:24
 visio_schema.v1.sensor.ViveStatus.Tracker.detail             max_size:128
 
 visio_schema.v1.service.heartbeat.Heartbeat.camera_sync max_count:8
+
+# Per-board validated capture modes (small bounded allowlist).
+visio_schema.v1.control.DeviceState.supported_video_modes max_count:16
+
+# Authoritative capture state; rig sizes remain bounded on embedded targets.
+visio_schema.v1.sensor.CaptureState.capture_id max_size:64
+visio_schema.v1.sensor.CaptureState.stop_reason max_size:64
+visio_schema.v1.sensor.CaptureState.frozen_members max_count:16 max_size:128
+visio_schema.v1.sensor.CaptureState.changed_members max_count:16 max_size:128
+
+visio_schema.v1.sensor.CaptureState.attached_members max_count:16 max_size:128
+
+visio_schema.v1.control.CameraRotation.rotation type:FT_STATIC
+visio_schema.v1.control.CalibrationMemberUpdate.device_name max_size:128
+visio_schema.v1.control.CalibrationMemberUpdate.uid max_size:65
+visio_schema.v1.control.CalibrationMemberUpdate.expected_geometry_hash max_size:65
+visio_schema.v1.control.CalibrationMemberUpdate.rotations max_count:5
+visio_schema.v1.control.ApplyCalibrationGroup.transaction_id max_size:65
+visio_schema.v1.control.ApplyCalibrationGroup.members max_count:2
+visio_schema.v1.control.CalibrationStep.transaction_id max_size:65
+visio_schema.v1.control.DeviceState.calibration_geometry_hash max_size:65
+visio_schema.v1.control.DeviceState.calibration_transaction_id max_size:65
+visio_schema.v1.control.DeviceState.calibration_transaction_state max_size:24

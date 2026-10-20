@@ -69,13 +69,20 @@ libsurvive's subsequent refinements.
 
 The root is **always exactly one path segment** — it never contains a `/`. It is
 *derived from*, but not identical to, the device's `equipment_type` (its logical
-role: `gripper`, `glove`, `ego`, `suit`):
+role: `gripper`, `glove`, `wrist`, `ego`, `suit`, `stereo_addon`):
 
 | device | root | example |
 |---|---|---|
 | unhanded | `equipment_type` | `/ego/`, `/suit/` |
-| handed, assigned | `equipment_type` + `_` + side | `/gripper_left/`, `/glove_right/` |
-| handed, unassigned | `equipment_type` + `_` + `code8` | `/gripper_aB3xY9pQ/` |
+| handed, assigned | `equipment_type` + `_` + side | `/gripper_left/`, `/glove_right/`, `/wrist_left/` |
+| handed, unassigned | `equipment_type` + `_` + `code8` | `/gripper_aB3xY9pQ/`, `/wrist_aB3xY9pQ/` |
+
+The single-camera wrist unit announces `equipment_type="wrist"` with the
+canonical hardware/image revision `compact_wrist`. Earlier firmware used
+`compact_wristcam` for this same hardware and announced the role `gripper`.
+Consumers accept the old revision only as a compatibility alias; new configs,
+presets and support classifications use `wrist`. Keep actual announced hardware
+revisions and the topics stored in old recordings as provenance.
 
 Role and root answer different questions, which is why they are not one string.
 The **role** says what a board *is*: it is what a hub roster (`[hub] expect=`)

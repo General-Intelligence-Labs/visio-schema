@@ -33,6 +33,7 @@ _PAYLOAD_MODULES = (
     "visio_schema.v1.sensor.imu_quat_pb2",
     "visio_schema.v1.sensor.encoder_raw_pb2",
     "visio_schema.v1.sensor.system_health_pb2",
+    "visio_schema.v1.sensor.capture_state_pb2",
     "visio_schema.v1.sensor.audio_compressed_pb2",
     "visio_schema.v1.sensor.button_pb2",
     "visio_schema.v1.sensor.camera_frame_info_pb2",

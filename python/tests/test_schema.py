@@ -48,3 +48,10 @@ def test_file_descriptor_set_decodes_target_type():
     fds.ParseFromString(schema.file_descriptor_set("foxglove.CompressedVideo"))
     msgs = {m.name for f in fds.file for m in f.message_type}
     assert "CompressedVideo" in msgs
+
+
+def test_capture_state_is_a_registered_self_describing_payload():
+    from visio_schema.wire import schema
+    message = schema.message_class("visio_schema.v1.sensor.CaptureState")
+    capture = message(roster_generation=7, capture_id="take-1", frozen_members=["head", "addon"])
+    assert message.FromString(capture.SerializeToString()).roster_generation == 7

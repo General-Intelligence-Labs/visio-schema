@@ -15,7 +15,7 @@ export const file_visio_schema_v1_calibration_assembly: GenFile = /*@__PURE__*/
   fileDesc("Cip2aXNpb19zY2hlbWEvdjEvY2FsaWJyYXRpb24vYXNzZW1ibHkucHJvdG8SG3Zpc2lvX3NjaGVtYS52MS5jYWxpYnJhdGlvbiJ9ChNBc3NlbWJseUNhbGlicmF0aW9uEhEKCXJlc3VsdF9pZBgBIAEoCRIQCghoZWFkX3VpZBgCIAEoCRIRCglhZGRvbl91aWQYAyABKAkSLgoWdF9oZWFkX2NhbTBfYWRkb25fY2FtMBgEIAEoCzIOLmZveGdsb3ZlLlBvc2ViBnByb3RvMw", [file_foxglove_Pose]);
 
 /**
- * One rigid Ego2 Pro solution, stored and reported by BOTH physical boards.
+ * One rigid Ego Pro solution, stored and reported by BOTH physical boards.
  * Native camera indices remain local to each board. The pose maps addon cam0
  * coordinates into head cam0: p_head_cam0 = R * p_addon_cam0 + t.
  * An empty message explicitly invalidates the assembly solution.

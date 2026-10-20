@@ -15,6 +15,8 @@ syntax = "proto3";
 
 package visio_schema.v1.control;
 
+import "visio_schema/v1/sensor/capture_state.proto";
+
 // One Wi-Fi access point seen in a scan.
 message WifiScanResult {
   string ssid     = 1;
@@ -159,7 +161,19 @@ message RecordingFileOpen {
 // (recording, disk_free_bytes, disk_total_bytes) already report are
 // intentionally NOT duplicated
 // here. Carried only inside CommandResult; it has no own stream.
+message VideoMode {
+  uint32 width = 1;
+  uint32 height = 2;
+}
+
 message DeviceState {
+  visio_schema.v1.sensor.CaptureState capture_state = 46;
+  string calibration_geometry_hash = 47;
+  string calibration_transaction_id = 48;
+  string calibration_transaction_state = 49;
+  // Validated against the sensors actually probed on this board. Empty means
+  // this firmware cannot advertise modes; clients must not guess leaf modes.
+  repeated VideoMode supported_video_modes = 45;
   // A working primary-camera JPEG tap, independent of cloud status reporting
   // and hand detection. False on older firmware or camera-less devices.
   bool snapshot_supported = 44;

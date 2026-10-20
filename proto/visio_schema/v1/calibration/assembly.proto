@@ -4,7 +4,7 @@ package visio_schema.v1.calibration;
 
 import "foxglove/Pose.proto";
 
-// One rigid Ego2 Pro solution, stored and reported by BOTH physical boards.
+// One rigid Ego Pro solution, stored and reported by BOTH physical boards.
 // Native camera indices remain local to each board. The pose maps addon cam0
 // coordinates into head cam0: p_head_cam0 = R * p_addon_cam0 + t.
 // An empty message explicitly invalidates the assembly solution.
