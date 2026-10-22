@@ -6,6 +6,24 @@ bump the MINOR version.
 
 ## Unreleased
 
+### A part's own storage error keeps the part and the recording
+
+The C++ writer no longer ends a recording on a part's own I/O failure. A
+failed checkpoint, fsync, writeback, write, close, directory sync or
+completion keeps the part (nothing handed to storage is discarded) with its
+durability unconfirmed: storage completion is told so, the failure is logged
+once and counted in the new `McapWriterStats::unconfirmed_parts`, and the
+recording goes on into the next part. A failure that may have lost bytes
+(`LosesBytes`: a write, flush, close, checkpoint or writeback) also cuts the
+part at its next record, since its offsets no longer match its file. A part
+that will not open (its file, or an encrypted part's header) is tried again
+a few times on a short doubling wait, its failed file removed (it holds no
+recorded data) and its number kept so part numbers stay contiguous, counted
+in `McapWriterStats::part_open_retries`. Only `EROFS`, `ENOSPC`, `ENODEV`,
+or every attempt at a part failing ends it: `write_failed()` and the new
+`storage_refused()` report exactly that, and the part open at that moment is
+kept too. No proto change.
+
 ### Loss-preserving MCAP continuation parts
 
 The C++ writer can opt into bounded local-camera IDR alignment while retaining

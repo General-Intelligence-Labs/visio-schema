@@ -14,9 +14,11 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 
 #include "file_sync.hpp"
+#include "part_outcome.hpp"
 #include "span_readback.hpp"
 
 // Vendored header-only mcap, lz4/zstd compiled out (we only ever use
@@ -58,15 +60,23 @@ constexpr const char* kCompressedVideoSchema = "foxglove.CompressedVideo";
 // to fire inside a short session.
 constexpr std::uint64_t kUnprimedVideoWarnFrames = 300;
 
+// What one attempt to open a part came to, at the writable.
+struct PartOpening {
+  IoResult failure;      // none when the part is open
+  bool created = false;  // a file was made for it: removed if it failed
+};
+
 // MCAP framing and VREC encryption use the same checked device backend.
+// Every failed step is reported to the part's outcome (part_outcome.hpp),
+// which decides whether it costs the part or ends the recording.
 class CloexecFileWriter final : public ::mcap::IWritable {
  public:
   explicit CloexecFileWriter(std::uint64_t sync_span_bytes,
                              const RecordingKey* key, SpanReadback* readback,
-                             std::atomic<bool>* fault, IoResult* result,
+                             PartOutcome* outcome,
                              std::shared_ptr<WriterStorage> storage,
                              std::chrono::milliseconds checkpoint_interval)
-      : fault_(fault), result_(result), storage_(std::move(storage)),
+      : outcome_(outcome), storage_(std::move(storage)),
         checkpoint_interval_(checkpoint_interval), encrypting_(key != nullptr),
         readback_(readback), sync_span_bytes_(sync_span_bytes ?
           std::max<std::uint64_t>(sync_span_bytes, file_sync::kPageBytes) : 0) {
@@ -74,20 +84,27 @@ class CloexecFileWriter final : public ::mcap::IWritable {
   }
   ~CloexecFileWriter() override { end(); }
 
-  ::mcap::Status open(const std::string& filename) {
-    IoResult result;
-    file_ = storage_->Create(filename, result);
-    if (!file_) return ::mcap::Status(::mcap::StatusCode::OpenFailed,
-                                      std::strerror(result.error));
+  // Make `filename` the open part: created, and for an encrypted recording
+  // its VREC header written. A failed attempt says its step and errno; a
+  // file it made is closed (Discard) for the owner to remove, holding no
+  // recorded data.
+  PartOpening open(const std::string& filename) {
+    PartOpening opening;
+    file_ = storage_->Create(filename, opening.failure);
+    if (!file_) {
+      opening.failure = outcome_->Explained(opening.failure);
+      return opening;
+    }
+    opening.created = true;
+    opening.failure = {};
     checkpoint_at_ = std::chrono::steady_clock::now();
-    if (!encrypting_) return ::mcap::StatusCode::Success;
-    const auto status = BeginVrec(filename);
-    if (!status.ok()) end();
-    return status;
+    if (encrypting_) opening.failure = BeginVrec(filename);
+    if (opening.failure.error) Discard();
+    return opening;
   }
 
   void handleWrite(const std::byte* data, uint64_t size) override {
-    if (!file_ || (fault_ && fault_->load(std::memory_order_relaxed))) return;
+    if (!file_ || outcome_->refused()) return;
     if (!cipher_) {
       WriteBytes(data, size);
       return;
@@ -104,13 +121,10 @@ class CloexecFileWriter final : public ::mcap::IWritable {
       // Keystream position is the PLAINTEXT offset, which is size_ — so a
       // short write leaves the next call correctly positioned.
       if (!cipher_->XorAt(size_, src + done, n, scratch_.get())) {
-        NoteFault();
-        if (!write_err_logged_) {
-          write_err_logged_ = true;
-          log::Write(log::Severity::kError,
-                     "mcap: VREC encrypt failed at offset %llu",
-                     static_cast<unsigned long long>(size_));
-        }
+        // Nothing of this slice landed: the part has lost bytes.
+        outcome_->Note({IoStep::append, EIO, 0, true},
+                       "VREC encrypt failed at offset " +
+                           std::to_string(size_));
         return;
       }
       const size_t landed =
@@ -125,18 +139,11 @@ class CloexecFileWriter final : public ::mcap::IWritable {
   size_t WriteBytes(const std::byte* data, uint64_t size) {
     const auto result = file_->Append(data, static_cast<std::size_t>(size));
     const size_t wrote = result.accepted;
-    Check(result);
     // A short write is an SD/ENOSPC failure stdio may otherwise defer to
     // fclose; a silently short part would still carry plausible offsets.
     // Advance by what actually landed so every downstream offset (sync
-    // spans included) matches the file, and say so once.
-    if (wrote != size) NoteFault();
-    if (wrote != size && !write_err_logged_) {
-      write_err_logged_ = true;
-      log::Write(log::Severity::kError, "mcap: short write (%zu of %llu): %s",
-                 wrote, static_cast<unsigned long long>(size),
-                 std::strerror(errno));
-    }
+    // spans included) matches the file; the part is kept, unconfirmed.
+    if (!result || wrote != size) outcome_->Note(result);
     // The read-back's copy of what just landed, keyed by FILE offset —
     // below the cipher, so it is the bytes as they are on disk. This
     // memcpy is the read-back's entire cost on the write path.
@@ -144,9 +151,10 @@ class CloexecFileWriter final : public ::mcap::IWritable {
     size_ += wrote;
     if (sync_span_bytes_ > 0 && file_size() - synced_off_ >= sync_span_bytes_)
       SyncSpan();
+    // Periodic, and never fatal by itself: a failed one costs the part.
     if (checkpoint_interval_.count() > 0 &&
         std::chrono::steady_clock::now() - checkpoint_at_ >= checkpoint_interval_) {
-      Check(file_->Checkpoint());
+      Report(file_->Checkpoint());
       checkpoint_at_ = std::chrono::steady_clock::now();
     }
     return wrote;
@@ -155,17 +163,31 @@ class CloexecFileWriter final : public ::mcap::IWritable {
   void end() override {
     if (file_) {
       const uint64_t final_size = file_size();
-      Check(file_->Checkpoint());
+      Report(file_->Checkpoint());
       const auto closed = file_->Close();
-      Check(closed);
+      Report(closed);
       file_.reset();
-      result_->accepted = closed.accepted;
+      outcome_->Closed(closed.accepted);
       // Everything past the last evicted span — the span synced but not
       // yet waited on, plus the partial tail — is on disk now but not
       // verified; the owner posts it once the part is fsynced.
       if (readback_)
         readback_->NotePartEnd(evicted_end_, final_size, sync_disabled_);
     }
+    ResetPart();
+  }
+
+  uint64_t size() const override { return size_; }
+
+ private:
+  // A part that never opened, closed with nothing reported: the owner
+  // removes it, and nothing of it belongs to the recording.
+  void Discard() {
+    if (file_) file_->Close();  // moot: the file is removed
+    file_.reset();
+    ResetPart();
+  }
+  void ResetPart() {
     cipher_.reset();
     scratch_.reset();  // nothing between parts holds a part's staging buffer
     header_bytes_ = 0;
@@ -175,24 +197,11 @@ class CloexecFileWriter final : public ::mcap::IWritable {
     prev_len_ = 0;
     evicted_end_ = 0;
     sync_disabled_ = false;
-    write_err_logged_ = false;
   }
-
-  uint64_t size() const override { return size_; }
-
- private:
-  void Check(const IoResult& result) {
-    if (!result) {
-      if (result_->error == 0) *result_ = result;
-      NoteFault();
-    }
+  void Report(const IoResult& result) {
+    if (!result) outcome_->Note(result);
   }
-  void NoteFault() {
-    if (result_->error == 0) *result_ = {IoStep::append, EIO, 0, true};
-    fault_->store(true, std::memory_order_relaxed);
-  }
-  std::atomic<bool>* const fault_;
-  IoResult* const result_;
+  PartOutcome* const outcome_;
   const std::shared_ptr<WriterStorage> storage_;
   const std::chrono::milliseconds checkpoint_interval_;
   std::chrono::steady_clock::time_point checkpoint_at_;
@@ -204,44 +213,42 @@ class CloexecFileWriter final : public ::mcap::IWritable {
   uint64_t file_size() const { return size_ + header_bytes_; }
 
   // Mint a nonce, write the 32-byte plaintext header, arm the cipher. Called
-  // from open() before any MCAP byte reaches the file.
-  ::mcap::Status BeginVrec(const std::string& filename) {
+  // from open() before any MCAP byte reaches the file. The failure, if any.
+  IoResult BeginVrec(const std::string& filename) {
     RecordingNonce nonce{};
     if (!RandomNonce(&nonce)) {
       // Never fall back to a fixed nonce: two parts sharing key+nonce share a
       // keystream, and XORing them recovers both plaintexts with no key.
-      return ::mcap::Status(::mcap::StatusCode::OpenFailed,
-                            "VREC: no CSPRNG for a part nonce, refusing to "
-                            "encrypt \"" +
-                                filename + "\"");
+      log::Write(log::Severity::kError,
+                 "mcap: %s: no CSPRNG for a part nonce, refusing to encrypt",
+                 filename.c_str());
+      return {IoStep::open, EIO, 0, true};
     }
     VrecHeader header;
     header.key_fp = RecordingKeyFingerprint(key_);
     header.nonce = nonce;
     std::array<std::uint8_t, kVrecHeaderBytes> raw{};
     WriteVrecHeader(header, raw.data());
+    // A part that cannot take its header is a part that cannot be opened
+    // (McapWriter::OpenPart), not a part failure to note.
     const auto wrote = file_->Append(raw.data(), raw.size());
-    Check(wrote);
-    if (!wrote) {
-      return ::mcap::Status(::mcap::StatusCode::OpenFailed,
-                            "VREC: cannot write header to \"" + filename +
-                                "\": " + std::strerror(errno));
-    }
+    if (!wrote || wrote.accepted != raw.size())
+      return outcome_->Explained(wrote);
     // The header is on-disk bytes like any other: the read-back compares
     // the file from offset 0.
     if (readback_) readback_->OnBytesWritten(0, raw.data(), raw.size());
     header_bytes_ = raw.size();
     auto cipher = std::make_unique<RecordingCipher>(key_, nonce);
     if (!cipher->valid()) {
-      return ::mcap::Status(
-          ::mcap::StatusCode::OpenFailed,
-          "VREC: cipher init failed for \"" + filename + "\"");
+      log::Write(log::Severity::kError, "mcap: %s: VREC cipher init failed",
+                 filename.c_str());
+      return {IoStep::open, EIO, 0, true};
     }
     // Staged before the cipher is armed, so `cipher_ != nullptr` (what
     // handleWrite branches on) can never outrun the buffer it writes into.
     scratch_ = std::make_unique<std::uint8_t[]>(kCipherScratchBytes);
     cipher_ = std::move(cipher);
-    return ::mcap::StatusCode::Success;
+    return {};
   }
 
   const bool encrypting_ = false;
@@ -269,23 +276,17 @@ class CloexecFileWriter final : public ::mcap::IWritable {
   // while storage keeps up (the span in flight had a full fill period of
   // head start) and bounds the stall to one span's write time when it does
   // not. The previous span is waited on and evicted in one go
-  // (file_sync::WritebackAndEvict explains the flag triple). Failures are
-  // Unsupported writeback disables the optimization. Other failures belong
-  // to the part's final save result even if a later fsync succeeds.
+  // (file_sync::WritebackAndEvict explains the flag triple). Writeback the
+  // storage does not offer stops the bounding for the rest of the part, and
+  // costs nothing else. Any other failure may have lost the span (a later
+  // fsync succeeds over pages marked clean): the part is cut, and bounding
+  // goes on until it is.
   void SyncSpan() {
     // 4 KiB on every kernel we ship (RV1106/RV1126B); a larger-page target
     // would only strand a few clean pages per span, not corrupt anything.
     const auto flushed = file_->Flush();
-    Check(flushed);
     if (!flushed) {
-      if (!sync_disabled_) {
-        sync_disabled_ = true;
-        log::Write(log::Severity::kWarning,
-                   "mcap: fflush in SyncSpan failed (%s) — dirty-set bounding "
-                   "disabled for this part",
-                   std::strerror(errno));
-        if (readback_) readback_->OnSyncDisabled();
-      }
+      outcome_->Note(flushed);  // lossy: the part is cut at the next record
       // Aligned like the happy path, or the next span's fadvise would round
       // the unaligned start UP and strand the straddling page for good.
       synced_off_ = file_sync::RoundDownToPage(file_size());
@@ -304,26 +305,35 @@ class CloexecFileWriter final : public ::mcap::IWritable {
     if (end <= synced_off_) return;
     const uint64_t off = synced_off_;
     const uint64_t len = end - synced_off_;
-    int err = 0;
-    err = file_->Writeback(off, len, false);
+    int err = file_->Writeback(off, len, false);
     if (err == 0 && prev_len_ > 0) err = EvictPreviousSpan();
-    if (err != 0 && err != ENOSYS && err != EINVAL && err != EOPNOTSUPP)
-      Check({IoStep::checkpoint, err, 0, true});
-    if (err != 0 && !sync_disabled_) {
-      sync_disabled_ = true;
-      log::Write(
-          log::Severity::kWarning,
-          "mcap: span writeback failed (%s) — dirty-set bounding disabled "
-          "for this part",
-          std::strerror(err));
-      if (readback_) readback_->OnSyncDisabled();
-    }
+    if (err != 0) WritebackFailed(err);
     prev_off_ = off;
     prev_len_ = len;
     synced_off_ = end;
 #else
     synced_off_ = file_sync::RoundDownToPage(file_size());
 #endif
+  }
+
+  // A span's writeback failed with `err`: see SyncSpan for what it costs.
+  void WritebackFailed(int err) {
+    if (!file_sync::WritebackUnsupported(err)) {
+      outcome_->Note({IoStep::writeback, err, 0, true});
+      return;
+    }
+    if (!sync_disabled_)
+      log::Write(log::Severity::kWarning,
+                 "mcap: span writeback unsupported (%s): dirty-set bounding "
+                 "disabled for this part",
+                 std::strerror(err));
+    StopBounding();
+  }
+
+  void StopBounding() {
+    if (sync_disabled_) return;
+    sync_disabled_ = true;
+    if (readback_) readback_->OnSyncDisabled();
   }
 
   const std::uint64_t sync_span_bytes_;
@@ -348,7 +358,6 @@ class CloexecFileWriter final : public ::mcap::IWritable {
   // spans stay contiguous, kept explicit for the part-end accounting.
   uint64_t evicted_end_ = 0;
   bool sync_disabled_ = false;
-  bool write_err_logged_ = false;
 };
 
 // The two sizing invariants this writable rests on, pinned where they cannot
@@ -397,6 +406,7 @@ McapWriter::McapWriter(std::string_view path, std::uint64_t max_bytes,
       recording_key_(std::move(recording_key)),
       storage_(storage ? std::move(storage) : LocalWriterStorage()),
       checkpoint_interval_(checkpoint_interval),
+      part_(std::make_unique<PartOutcome>()),
       readback_(readback.ring_bytes > 0
                     ? std::make_unique<SpanReadback>(std::move(readback))
                     : nullptr) {
@@ -424,7 +434,98 @@ std::string McapWriter::PartPath() const {
   return rotating_ ? NumberedPart(base_path_, part_index_) : base_path_;
 }
 
+// A part that will not open for a reason storage may get past is tried
+// again, up to kPartOpenAttempts in all on a doubling wait, its failed file
+// removed (it holds no recorded data). The retry keeps the part's number --
+// a reader takes a gap in part numbers for a lost part, and resets a
+// continuation chain at it -- unless the name is taken: by another file
+// (EEXIST), tried again at once under the next number, which costs no
+// attempt (up to kPartNamesSkipped); or by the failed file, which could not
+// be removed. A name is never reused over a file. Only a failure no part
+// could escape (EndsRecording), a taken name with no next number (not
+// rotating), or every attempt failing ends the recording: the throw the
+// endpoint latches as write_failed().
 void McapWriter::OpenPart() {
+  auto wait = kPartOpenFirstWait;
+  int attempts = 0;
+  int names_skipped = 0;
+  for (;;) {
+    const std::string tried = PartPath();
+    const PartAttempt opened =
+        TryOpenPart(attempts + 1 == kPartOpenAttempts);
+    if (!opened.failure.error) return;
+    attempts += opened.costs_attempt ? 1 : 0;
+    names_skipped += opened.costs_attempt ? 0 : 1;
+    if (!OpenMayRetry(opened, attempts, names_skipped))
+      EndOpening(tried, opened.failure);
+    if (opened.name_taken) ++part_index_;
+    NotePartRetry(tried, opened.failure);
+    if (!opened.costs_attempt) continue;
+    std::this_thread::sleep_for(wait);
+    wait *= 2;
+  }
+}
+
+bool McapWriter::OpenMayRetry(const PartAttempt& opened, int attempts,
+                              int names_skipped) const {
+  if (EndsRecording(opened.failure.error)) return false;
+  if (opened.name_taken && !rotating_) return false;  // no next name
+  return attempts < kPartOpenAttempts && names_skipped <= kPartNamesSkipped;
+}
+
+// No part could be opened: the recording ends here (write_failed()), and a
+// volume that refused it says so (storage_refused()).
+void McapWriter::EndOpening(const std::string& tried, const IoResult& failed) {
+  if (EndsRecording(failed.error)) part_->Note(failed);
+  ended_.store(true, std::memory_order_relaxed);
+  throw std::runtime_error("McapWriter: cannot open " + tried + ": " +
+                           IoStepName(failed.step) + " failed: " +
+                           std::strerror(failed.error));
+}
+
+void McapWriter::NotePartRetry(const std::string& tried,
+                               const IoResult& failed) {
+  part_open_retries_.fetch_add(1, std::memory_order_relaxed);
+  if (part_retry_said_) return;
+  part_retry_said_ = true;
+  log::Write(log::Severity::kWarning,
+             "McapWriter: %s: %s failed (%s): trying %s (retries for this "
+             "part are counted, not logged again)",
+             tried.c_str(), IoStepName(failed.step),
+             std::strerror(failed.error), PartPath().c_str());
+}
+
+// Remove `path` and, when `sync`, make the removal durable. The failure,
+// if any.
+IoResult McapWriter::RemoveDurably(const std::string& path, bool sync) {
+  const IoResult removed = storage_->Remove(path);
+  if (!removed || !sync) return removed;
+  return storage_->SyncParent(path);
+}
+
+// An empty part that could not be dropped cleanly: said and counted
+// (storage_fault). It holds no records, so no data rides on it.
+void McapWriter::NoteDropFailure(const std::string& path,
+                                 const IoResult& failed) {
+  drop_failures_.fetch_add(1, std::memory_order_relaxed);
+  log::Write(log::Severity::kWarning,
+             "McapWriter: could not drop empty part %s: %s (%s)",
+             path.c_str(), IoStepName(failed.step),
+             std::strerror(failed.error));
+}
+
+// A file made for a part that never opened holds no recorded data: gone,
+// so it neither lingers nor reads as a part. Its removal is made durable
+// only when no attempt follows (`last`): one that does re-creates the name.
+// True once the name is free again.
+bool McapWriter::DropUnopenedPart(const std::string& path, bool last) {
+  const IoResult removed = RemoveDurably(path, last);
+  if (removed) return true;
+  NoteDropFailure(path, removed);
+  return removed.step != IoStep::remove;  // only its barrier failed
+}
+
+McapWriter::PartAttempt McapWriter::TryOpenPart(bool last) {
   // Each part re-registers its own schemas/channels so it stands alone.
   schema_ids_.clear();
   channel_ids_.clear();
@@ -436,6 +537,7 @@ void McapWriter::OpenPart() {
   part_write_failure_logged_ = false;
   part_start_ = std::chrono::steady_clock::now();
   const std::string p = PartPath();
+  part_->Begin(p);
 
   // Own the fd (O_CLOEXEC) via our IWritable instead of upstream's fopen(),
   // then hand it to the writer through the open(IWritable&) overload. See
@@ -447,17 +549,27 @@ void McapWriter::OpenPart() {
   if (readback_) readback_->BeginPart(p);
   auto fw = std::make_unique<CloexecFileWriter>(
       sync_span_bytes_, recording_key_ ? &*recording_key_ : nullptr,
-      readback_.get(), &io_fault_, &last_io_, storage_, checkpoint_interval_);
-  const ::mcap::Status status = fw->open(p);
-  if (!status.ok()) {
-    throw std::runtime_error("McapWriter: cannot open " + p + ": " +
-                             status.message);
+      readback_.get(), part_.get(), storage_, checkpoint_interval_);
+  const PartOpening opening = fw->open(p);
+  if (opening.failure.error) {
+    PartAttempt failed{opening.failure};
+    if (opening.created) {
+      const bool last_try = last || EndsRecording(opening.failure.error);
+      failed.name_taken = !DropUnopenedPart(p, last_try);
+      return failed;
+    }
+    // Another file holds the name: tried again at once, under the next.
+    failed.name_taken = opening.failure.error == EEXIST;
+    failed.costs_attempt = !failed.name_taken;
+    return failed;
   }
   writer_ = std::make_unique<::mcap::McapWriter>();
   writer_->open(*fw, MakeOptions());
   file_ = std::move(fw);
+  part_retry_said_ = false;  // the next part's retries are said again
   WriteStoredMetadata();  // re-emit capture metadata so each part stands alone
   WriteRotationMetadata();
+  return {};
 }
 
 void McapWriter::SetMetadata(std::string name,
@@ -481,9 +593,19 @@ void McapWriter::WriteStoredMetadata() {
                st.message.c_str());
 }
 
+// A part that may have lost bytes (PartOutcome::lost_bytes) is cut at its
+// next record: its byte count, offsets and keystream position no longer
+// match its file, so nothing more may go into it. The cut part is kept
+// (storage repairs its torn tail). A writer that does not rotate has no
+// next part to cut to.
+bool McapWriter::MustCut() const {
+  return rotating_ && part_bytes_ > 0 && part_->lost_bytes();
+}
+
 bool McapWriter::ShouldRoll() const {
   // Never roll an empty part (a stale duration would spin out empty files).
   if (part_bytes_ == 0) return false;
+  if (MustCut()) return true;
   if (max_bytes_ > 0 && part_bytes_ >= max_bytes_) return true;
   if (max_duration_ns_ > 0) {
     const auto elapsed = std::chrono::steady_clock::now() - part_start_;
@@ -507,32 +629,38 @@ void McapWriter::CloseCurrentPart() {
   // Part 0 is exempt: it is the only part a short session has, and a session
   // directory holding no recording at all is a worse thing to hand a reader
   // than an empty but well-formed file.
-  const bool drop_part = part_index_ > 0 && part_bytes_ == 0 && !io_fault_.load();
+  const bool drop_part =
+      part_index_ > 0 && part_bytes_ == 0 && !part_->failed();
+  if (drop_part) part_->Dropping();
   writer_->close();
-  physical_closed_ += last_io_.accepted;
+  physical_closed_ += part_->result().accepted;
   if (drop_part) {
     // Before any fsync or read-back post: syncing a file about to be unlinked
     // only makes the discarded state durable, and a tail posted here names a
     // path that no longer exists by the time the reader reaches it (an ENOENT
     // counted as a read failure). Finish() accounts for an unposted tail.
-    const auto removed = storage_->Remove(p);
-    const auto synced = removed ? storage_->SyncParent(p) : removed;
-    if (!synced) { last_io_ = synced; io_fault_.store(true); }
+    // A failure its close met is the drop's to say, removed or not.
+    const IoResult closed = part_->result();
+    const IoResult removed = RemoveDurably(p, true);
+    if (closed.error || removed.error)
+      NoteDropFailure(p, closed.error ? closed : removed);
     return;
   }
   const auto synced = storage_->SyncParent(p);
-  if (!synced && last_io_.error == 0) last_io_ = synced;
-  if (io_fault_.load() && last_io_.error == 0)
-    last_io_ = {IoStep::close, EIO, last_io_.accepted, true};
-  last_io_ = storage_->Completed(p, last_io_);
-  if (!last_io_) io_fault_.store(true);
+  if (!synced) part_->Note(synced);
+  part_->Complete(storage_->Completed(p, part_->result()));
   // Only now is the tail on the media: post it for read-back.
   if (readback_) readback_->CommitTail();
 }
 
+// The closed part's mcap writer goes with it, so a next part that cannot
+// be opened (OpenPart throws) leaves nothing a later Close() could close,
+// remove or complete a second time.
 void McapWriter::Roll() {
+  if (!writer_) return;
   CloseCurrentPart();
-  if (io_fault_.load()) return;
+  writer_.reset();
+  if (part_->refused()) return;  // the volume takes nothing more
   ++part_index_;
   OpenPart();
 }
@@ -542,14 +670,16 @@ void McapWriter::Write(const Channel& channel, const Message& msg) {
                                  msg.payload.str()});
 }
 
+// Nothing is written once the recording has ended (storage_refused(), which
+// the endpoint sheds and counts on).
 void McapWriter::Write(const Channel& channel, const RecordedMessage& msg) {
-  if (closed_ || io_fault_.load()) return;
+  if (closed_ || !writer_ || storage_refused()) return;
   if (rotation_policy_) WriteContinuation(channel, msg);
   else WriteRecord(channel, msg);
 }
 
 void McapWriter::WriteRecord(const Channel& channel, const RecordedMessage& msg) {
-  if (closed_ || io_fault_.load()) return;
+  if (closed_ || !writer_ || storage_refused()) return;
 
   const bool is_video = channel.schema_name == kCompressedVideoSchema;
   const std::int64_t msg_ts_ns = TimestampNs(msg.timestamp);
@@ -568,13 +698,14 @@ void McapWriter::WriteRecord(const Channel& channel, const RecordedMessage& msg)
         is_video && msg.keyframe && msg_ts_ns > part_max_video_ts_ + pair_guard_ns_;
     if (ShouldRoll() && starts_new_pair) {
       Roll();
-    } else if (max_bytes_ > 0 && part_bytes_ >= max_bytes_ + max_bytes_ / 8) {
+    } else if (MustCut() ||
+               (max_bytes_ > 0 && part_bytes_ >= max_bytes_ + max_bytes_ / 8)) {
       Roll();
     }
   } else if (!rotation_policy_ && rotating_ && ShouldRoll()) {
     Roll();  // opt-in off: original byte-exact roll
   }
-  if (io_fault_.load()) return;
+  if (!writer_ || part_->refused()) return;  // the roll ended the recording
 
   // Initial decoder warm-up: legacy callers repeat it per part; a continuation
   // chain repeats it only for each local camera's first-ever IDR. Continuation
@@ -658,7 +789,9 @@ void McapWriter::WriteRecord(const Channel& channel, const RecordedMessage& msg)
     }
     return;
   }
-  if (io_fault_.load(std::memory_order_relaxed)) return;
+  // A failed write costs its part, whose bytes still count toward the roll
+  // that ends it; one storage refused for good is not counted at all.
+  if (part_->refused()) return;
   part_bytes_ += msg.payload.size();
   // Track the newest video capture time WRITTEN this part — the rotate-on-keyframe
   // "starts a new pair" test compares against it (P-frames included, so the next
@@ -674,7 +807,8 @@ void McapWriter::Close() {
   FlushStaged(false, false);
   closed_ = true;
   if (writer_) CloseCurrentPart();
-  if (io_fault_.load(std::memory_order_relaxed))
+  // A part that lost bytes cannot have written more than its files hold.
+  if (part_->refused() || part_->unconfirmed_parts() > 0)
     bytes_written_.store(std::min(bytes_written_.load(), physical_closed_));
   // Bounded by close_flush_ms (0 = none); whatever is left is counted
   // skipped and the ring is released.
@@ -689,6 +823,7 @@ bool McapWriter::LocalVideo(const Channel& channel) const {
 }
 
 bool McapWriter::ForcedCutDue() const {
+  if (MustCut()) return true;
   if (max_bytes_ > 0) return part_bytes_ >= max_bytes_ + max_bytes_ / 8;
   return max_duration_ns_ > 0 && part_bytes_ > 0 &&
          std::chrono::steady_clock::now() - part_start_ >=
@@ -828,8 +963,21 @@ McapReadbackStats McapWriter::readback_stats() const {
 }
 
 bool McapWriter::storage_fault() const {
-  return io_fault_.load(std::memory_order_relaxed) ||
+  return storage_refused() || unconfirmed_parts() > 0 ||
+         drop_failures_.load(std::memory_order_relaxed) > 0 ||
          (readback_ && readback_->storage_fault());
+}
+
+bool McapWriter::storage_refused() const {
+  return part_->refused() || ended_.load(std::memory_order_relaxed);
+}
+
+std::uint64_t McapWriter::part_open_retries() const {
+  return part_open_retries_.load(std::memory_order_relaxed);
+}
+
+std::uint64_t McapWriter::unconfirmed_parts() const {
+  return part_->unconfirmed_parts();
 }
 
 }  // namespace visio_schema::mcap

@@ -85,8 +85,7 @@ void McapWriterEndpoint::Stop() {
   // one part's index; the uploader's torn-part repair recovers it.
   if (writer_) {
     try {
-      writer_->Close();
-      if (writer_->storage_fault()) NoteFailure("storage completion failed");
+      writer_->Close();  // an unconfirmed part is said by the writer
     } catch (...) {
       NoteFailure("finalize failed");
     }
@@ -197,8 +196,9 @@ void McapWriterEndpoint::WriterLoop() {
       std::unique_lock<std::mutex> lk(mu_);
       const auto deadline = writer_->rotation_deadline();
       const auto ready = [this] { return stop_ || !queue_.empty(); };
-      // An infinite pthread timeout can overflow 32-bit time_t on ARM.
-      if (deadline && !failed_.load(std::memory_order_relaxed))
+      // An infinite pthread timeout can overflow 32-bit time_t on ARM. A
+      // failed recording never flushes its staging, so it waits untimed.
+      if (deadline && !write_failed())
         cv_.wait_until(lk, *deadline, ready);
       else
         cv_.wait(lk, ready);
@@ -214,9 +214,10 @@ void McapWriterEndpoint::WriterLoop() {
     // std::terminate and takes the whole process down. McapWriter throws when
     // it cannot open the next part — a full card, or one the kernel flipped
     // read-only under us — so latch that instead and keep the thread alive to
-    // shed what is queued, leaving Send()/Stop() well-behaved. The owner polls
+    // shed what is queued, leaving Send()/Stop() well-behaved. Storage that
+    // refused a write for good sheds the same way. The owner polls
     // write_failed() and stops the recording.
-    if (failed_.load(std::memory_order_relaxed)) {
+    if (write_failed()) {
       NoteDrop(batch_.size());
     } else {
       try {
@@ -224,8 +225,10 @@ void McapWriterEndpoint::WriterLoop() {
         DrainBatch(batch_);
       } catch (const std::exception& e) {
         NoteFailure(e.what());
+        NoteDrop(batch_.size());  // the frame it threw on, and the rest
       } catch (...) {   // nothing may escape this frame; see above
         NoteFailure("unknown exception");
+        NoteDrop(batch_.size());
       }
     }
     // One release point for every path out of the batch (drained, shed by the
@@ -266,6 +269,12 @@ void McapWriterEndpoint::NoteFailure(const char* what) noexcept {
 // just swapped out is still resident.
 void McapWriterEndpoint::DrainBatch(std::deque<Entry>& batch) {
   while (!batch.empty()) {
+    // A recording that has ended writes nothing more: the rest are shed,
+    // counted, and freed by the caller.
+    if (writer_->storage_refused()) {
+      NoteDrop(batch.size());
+      return;
+    }
     // Read without mu_: only this thread pops `batch`, and nothing writes
     // or hands back an arena chunk that holds a live record.
     const Entry& e = batch.front();
@@ -341,6 +350,8 @@ McapWriterStats McapWriterEndpoint::stats() const {
   s.arena_fallbacks = stat_arena_fallbacks_.load(std::memory_order_relaxed);
   s.arena_capacity_bytes = arena_.capacity();
   s.keyframe_gated = writer_ ? writer_->keyframe_gated() : 0;
+  s.unconfirmed_parts = writer_ ? writer_->unconfirmed_parts() : 0;
+  s.part_open_retries = writer_ ? writer_->part_open_retries() : 0;
   return s;
 }
 

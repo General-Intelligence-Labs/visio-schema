@@ -73,6 +73,12 @@ struct McapWriterStats {
   // part opens each video stream on a keyframe). Missing from the recording,
   // and not `dropped`: storage speed has nothing to do with it.
   std::uint64_t keyframe_gated = 0;
+  // Parts closed with their durability unconfirmed
+  // (McapWriter::unconfirmed_parts): a storage step of theirs failed; the
+  // part was kept and the recording went on into the next part.
+  std::uint64_t unconfirmed_parts = 0;
+  // Part opens tried again as a fresh part (McapWriter::part_open_retries).
+  std::uint64_t part_open_retries = 0;
 };
 
 class McapWriterEndpoint : public transport::Endpoint {
@@ -121,14 +127,20 @@ class McapWriterEndpoint : public transport::Endpoint {
   std::uint64_t bytes_written() const;
   McapWriterStats stats() const;
 
-  // True once the writer thread hit an unrecoverable storage error (card full
-  // or flipped read-only). Everything sent afterwards is shed. LATCHED —
-  // recording cannot resume on this endpoint; the owner stops and reopens. The
-  // reason is logged by the endpoint, not stored (see NoteFailure).
+  // True once the recording cannot go on: storage refused a write for good
+  // (read-only, full, or its device gone) or the next part could not be
+  // opened. Everything sent afterwards is shed. LATCHED — recording cannot
+  // resume on this endpoint; the owner stops and reopens. The reason is
+  // logged where it happened, not stored (see NoteFailure). A part whose
+  // durability went unconfirmed does not set it: that part is kept, it is
+  // storage_fault(), and recording continues past it.
   //
   // Deliberately NOT reported through on_closed: that contract means "fixed
   // link hit EOF, detach me", and a write-only sink ignores both callbacks.
-  bool write_failed() const { return failed_.load(std::memory_order_relaxed) || writer_->storage_fault(); }
+  bool write_failed() const {
+    return failed_.load(std::memory_order_relaxed) ||
+           writer_->storage_refused();
+  }
 
   // Write-time read-back passthrough (see McapReadbackOptions). Step from
   // any ONE thread of the caller's choosing while recording; the writer
@@ -136,8 +148,9 @@ class McapWriterEndpoint : public transport::Endpoint {
   bool ReadbackStep(std::chrono::milliseconds budget);
   std::size_t readback_pending() const;
   McapReadbackStats readback_stats() const;
-  // Latched: the card did not hold what was written and a rewrite did not
-  // fix it. Unlike write_failed(), recording continues — the owner decides.
+  // Latched: a part's durability went unconfirmed, or storage did not hold
+  // what was written and a rewrite did not fix it (McapWriter::storage_fault).
+  // Unlike write_failed(), recording continues — the owner decides.
   bool storage_fault() const;
 
  private:

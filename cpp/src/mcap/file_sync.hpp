@@ -9,10 +9,7 @@
 
 #include <cerrno>
 #include <cstdint>
-#include <cstring>
 #include <string>
-
-#include "visio_schema/log.hpp"
 
 namespace visio_schema::mcap::file_sync {
 
@@ -96,39 +93,17 @@ inline int WritebackAndEvict(int fd, std::uint64_t off, std::uint64_t len) {
 
 // fsync a path (a file, or a directory with O_DIRECTORY) to push it to
 // physical media. Reopening read-only is enough — fsync flushes dirty pages
-// regardless of the open mode. Best-effort: a failure means the
-// just-finished recording may not survive an immediate power-down, so it
-// is logged with that implication (the device log is where storage
-// degradation already surfaces, cf. McapWriterEndpoint::NoteDrop) but
-// never thrown — the file is already finalized on disk, and turning that
-// into an exception on the stop path would be strictly worse.
-inline bool FsyncPathBestEffort(const std::string& path,
-                                int extra_open_flags) {
+// regardless of the open mode. Returns 0 or the errno of the first call
+// that failed, never thrown: the caller says what it costs (for a part,
+// that its durability is unconfirmed), and needs the errno to judge it.
+inline int FsyncPath(const std::string& path, int extra_open_flags) {
   const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | extra_open_flags);
-  if (fd < 0) {
-    log::Write(
-        log::Severity::kWarning,
-        "McapWriter: cannot open %s to fsync (data may not be durable): %s",
-        path.c_str(), std::strerror(errno));
-    return false;
-  }
-  bool ok = true;
-  if (::fsync(fd) != 0) {
-    ok = false;
-    log::Write(log::Severity::kWarning,
-               "McapWriter: fsync %s failed (data may not be durable): %s",
-               path.c_str(), std::strerror(errno));
-  }
-  if (::close(fd) != 0) ok = false;
-  return ok;
+  if (fd < 0) return errno;
+  const int synced = ::fsync(fd) == 0 ? 0 : errno;
+  const int closed = ::close(fd) == 0 ? 0 : errno;
+  return synced ? synced : closed;
 }
 
-// Push a finished MCAP part's data — and the directory entry recording it —
-// onto physical media. The upstream writer's close() ends in fclose(), which
-// only flushes stdio buffers into the kernel page cache; on the async-mounted
-// SD card a power-down within the writeback window (~30 s) would otherwise
-// truncate or corrupt the just-finalized file. fsync the file (its data +
-// size) and then the containing directory so the entry is durable too.
 inline std::string ParentDir(const std::string& path) {
   const std::size_t slash = path.find_last_of('/');
   return slash == std::string::npos ? "."
@@ -136,17 +111,17 @@ inline std::string ParentDir(const std::string& path) {
                                     : path.substr(0, slash);
 }
 
-// Make a directory entry durable on its own — the half of FsyncPart that
-// matters when the entry is being REMOVED rather than written, where fsyncing
-// the file first would only make the state we are discarding durable.
-inline bool FsyncDirEntry(const std::string& path) {
-  return FsyncPathBestEffort(ParentDir(path), O_DIRECTORY);
+// Bounded writeback the kernel or filesystem does not offer. It costs the
+// optimization alone: nothing was handed to writeback, so nothing was lost.
+inline bool WritebackUnsupported(int error) {
+  return error == ENOSYS || error == EINVAL || error == EOPNOTSUPP;
 }
 
-inline bool FsyncPart(const std::string& path) {
-  const bool file = FsyncPathBestEffort(path, 0);
-  const bool dir = FsyncDirEntry(path);
-  return file && dir;
+// Make the directory entry naming `path` durable: after a part is written
+// (so a power cut cannot lose its name) or removed (so it cannot come back).
+// 0 or errno, as FsyncPath.
+inline int FsyncDirEntry(const std::string& path) {
+  return FsyncPath(ParentDir(path), O_DIRECTORY);
 }
 
 }  // namespace visio_schema::mcap::file_sync

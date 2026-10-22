@@ -61,6 +61,7 @@ struct RecordedMessage {
 };
 
 class SpanReadback;
+class PartOutcome;
 
 // Firmware opts in explicitly: only local cameras guide a preferred cut.
 // All continuation records survive even when a cut cannot be aligned.
@@ -78,9 +79,18 @@ struct McapRotationStats {
 
 class McapWriter {
  public:
+  // A part that will not open is tried this many times in all, the wait
+  // between tries doubling from kPartOpenFirstWait; a name another file
+  // already holds is skipped at once, up to kPartNamesSkipped times per
+  // part, costing no try. See OpenPart in writer.cc.
+  static constexpr int kPartOpenAttempts = 4;
+  static constexpr std::chrono::milliseconds kPartOpenFirstWait{25};
+  static constexpr int kPartNamesSkipped = 16;
+
   // Record to a filesystem path. With max_bytes > 0 and/or max_duration_s > 0,
   // rotate into numbered parts (path becomes <stem>_NNN<ext>); 0 disables that
-  // axis. Throws std::runtime_error if a part can't be opened.
+  // axis. Throws std::runtime_error if no part can be opened (see Storage
+  // failures below).
   //
   // rotate_on_keyframe (opt-in): when rotating by size, defer the cut to the next
   // compressed-video keyframe that begins a pair not yet started in the current
@@ -116,6 +126,22 @@ class McapWriter {
   //
   // readback (opt-in): verify each writeback span against the medium while
   // its bytes are still in RAM; see readback.hpp.
+  //
+  // Storage failures: a failed write, checkpoint, writeback, close,
+  // directory sync or storage completion leaves its part kept but with its
+  // durability unconfirmed (storage completion is told; the failure is
+  // logged once and counted in unconfirmed_parts), and recording carries on
+  // into the next part. One that may have lost bytes (LosesBytes) also cuts
+  // the part at its next record. Nothing handed to storage is discarded.
+  //
+  // A part that will not open (its file, or an encrypted part's header) for
+  // any other reason is tried again -- under the same number, its failed
+  // file removed (it holds no recorded data), so part numbers stay
+  // contiguous; the next number only while that name is taken -- on a
+  // short, doubling wait (kPartOpenAttempts, part_open_retries). Only
+  // storage_refused() (the volume read-only, full or gone), or every attempt
+  // at a part failing (a throw), ends the recording; the first part of a
+  // recording follows the same rule.
   explicit McapWriter(std::string_view path, std::uint64_t max_bytes = 0,
                       double max_duration_s = 0.0, bool rotate_on_keyframe = false,
                       std::int64_t pair_guard_ns = 0,
@@ -182,9 +208,22 @@ class McapWriter {
   // span is waiting for settle_bytes of further writes.
   std::size_t readback_pending() const;
   McapReadbackStats readback_stats() const;
-  // Latched once a span stayed wrong after its rewrite (or the rewrite
-  // itself failed). Recording continues; the owner decides what to do.
+  // Latched once storage refused a write, a part's durability went
+  // unconfirmed, or a read-back span stayed wrong after its rewrite (or the
+  // rewrite itself failed). Only a refusal ends the recording; the owner
+  // decides the rest.
   bool storage_fault() const;
+  // Latched once a step failed with EndsRecording (storage.hpp) -- the
+  // volume is read-only, full or gone -- or no part could be opened at all.
+  // Nothing more is written and no further part is opened; the owner ends
+  // the recording. Safe from any thread.
+  bool storage_refused() const;
+  // Parts closed with their durability unconfirmed (kept all the same).
+  // Monotonic; safe from any thread.
+  std::uint64_t unconfirmed_parts() const;
+  // Part opens that failed for a reason storage may get past and were
+  // tried again as a fresh part. Monotonic; safe from any thread.
+  std::uint64_t part_open_retries() const;
 
  private:
   struct Pending { Channel channel; Message msg; std::size_t bytes; };
@@ -196,7 +235,26 @@ class McapWriter {
   bool ForcedCutDue() const;
   void WriteRotationMetadata();
   std::string PartPath() const;
-  void OpenPart();          // throws on open failure
+  // Opens the next part, trying again on a failure storage may get past;
+  // throws when the recording cannot go on.
+  void OpenPart();
+  // What one attempt at opening a part came to.
+  struct PartAttempt {
+    IoResult failure;           // none when the part is open
+    bool name_taken = false;    // its name holds a file: never reused
+    bool costs_attempt = true;  // false for a name another file holds
+  };
+  // One attempt at PartPath(); `last` when no attempt would follow.
+  PartAttempt TryOpenPart(bool last);
+  bool OpenMayRetry(const PartAttempt& opened, int attempts,
+                    int names_skipped) const;
+  [[noreturn]] void EndOpening(const std::string& tried,
+                               const IoResult& failed);
+  void NotePartRetry(const std::string& tried, const IoResult& failed);
+  IoResult RemoveDurably(const std::string& path, bool sync);
+  void NoteDropFailure(const std::string& path, const IoResult& failed);
+  bool DropUnopenedPart(const std::string& path, bool last);
+  bool MustCut() const;
   bool ShouldRoll() const;
   void Roll();
   // Close the current part through checked durability and namespace barriers.
@@ -227,11 +285,18 @@ class McapWriter {
   // each part's header names the key that opens it. A rotation picks it up.
   const std::optional<RecordingKey> recording_key_;
 
-  std::atomic<bool> io_fault_{false};
   const std::shared_ptr<WriterStorage> storage_;
   const std::chrono::milliseconds checkpoint_interval_;
-  IoResult last_io_;
+  // The current part's storage outcome. Declared before file_: the part's
+  // writable reports into it, up to and including its own destruction.
+  const std::unique_ptr<PartOutcome> part_;
   std::uint64_t physical_closed_ = 0;
+  std::atomic<std::uint64_t> part_open_retries_{0};
+  bool part_retry_said_ = false;  // per part; the opening thread's only
+  // Empty parts that could not be dropped cleanly (NoteDropFailure).
+  std::atomic<std::uint64_t> drop_failures_{0};
+  // No part could be opened: the recording has ended (storage_refused).
+  std::atomic<bool> ended_{false};
 
   // Write-time read-back; null when off. Declared before file_: the
   // writable holds a raw pointer into it and reports its tail from end(),

@@ -10,7 +10,7 @@
 
 namespace visio_schema::mcap {
 namespace {
-IoResult Error(IoStep step) { return {step, errno ? errno : EIO, 0, true}; }
+IoResult Error(IoStep step) { return {step, errno, 0, true}; }
 
 class LocalFile final : public OutputFile {
  public:
@@ -20,7 +20,7 @@ class LocalFile final : public OutputFile {
     if (!file_) return {IoStep::append, EBADF};
     errno = 0;
     const auto n = std::fwrite(bytes, 1, size, file_);
-    return {IoStep::append, n == size ? 0 : (errno ? errno : EIO), n, n != size};
+    return {IoStep::append, n == size ? 0 : errno, n, n != size};
   }
   IoResult Flush() override {
     if (!file_) return {IoStep::flush, EBADF};
@@ -35,7 +35,7 @@ class LocalFile final : public OutputFile {
     if (!file_) return {};
     struct stat64 st{};
     const bool measured = ::fstat64(::fileno(file_), &st) == 0;
-    const int measure_error = measured ? 0 : (errno ? errno : EIO);
+    const int measure_error = measured ? 0 : errno;
     auto* file = file_;
     file_ = nullptr;  // fclose consumes it even when it reports an error
     auto result = std::fclose(file) == 0 ? IoResult{} : Error(IoStep::close);
@@ -73,7 +73,9 @@ class LocalStorage final : public WriterStorage {
     return std::make_unique<LocalFile>(file);
   }
   IoResult SyncParent(const std::string& path) override {
-    return file_sync::FsyncDirEntry(path) ? IoResult{} : Error(IoStep::namespace_sync);
+    const int error = file_sync::FsyncDirEntry(path);
+    if (error == 0) return {};
+    return {IoStep::namespace_sync, error, 0, true};
   }
   IoResult Remove(const std::string& path) override {
     return ::unlink(path.c_str()) == 0 || errno == ENOENT ? IoResult{} : Error(IoStep::remove);
