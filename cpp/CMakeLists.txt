@@ -64,7 +64,9 @@ add_library(visio_schema STATIC
   # + the sink's write-time read-back (verify the media against RAM)
   src/routing/registry.cc
   src/mcap/storage.cc
-  src/mcap/writer.cc
+  src/mcap/writer/parts.cc
+  src/mcap/writer/record.cc
+  src/mcap/writer/continuation.cc
   src/mcap/writer_endpoint.cc
   src/mcap/payload_arena.cc
   src/mcap/span_readback.cc
@@ -99,6 +101,10 @@ target_include_directories(visio_schema PUBLIC
 )
 # mcap is an implementation detail of mcap_writer.cc (the header hides it).
 target_include_directories(visio_schema PRIVATE "${MCAP_INCLUDE_DIR}")
+# src/mcap/writer's pieces reach the mcap module's private headers by path
+# from src ("mcap/file_sync.hpp"), never by a relative one.
+target_include_directories(visio_schema PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/src")
 # DeviceInfo (its repeated Channel list + each Channel's strings/bytes) uses
 # nanopb FT_POINTER fields, which require malloc support to encode/decode.
 # PUBLIC so pb_decode.c, the generated *.pb.c, and every consumer (the
