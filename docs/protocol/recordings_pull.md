@@ -27,18 +27,22 @@ TCP supplies order, delivery and flow control, so the socket carries nothing but
   the files that make a complete copy of the session. Upload tombstones, temporary and repair files
   are not listed. `file_count` is always set.
 - **`writing`.** A file the device has open for write is listed with `writing=true` and is not
-  pullable: the part currently being recorded, and the active session's `session.json` (rewritten
-  when the recording stops). Every other file of an active session is a finished file.
+  pullable: the part currently being recorded (and a just-rotated one whose end has not landed
+  yet), and the active session's `session.json` (rewritten when the recording stops). Every other
+  file of an active session is a finished file.
 - **`complete`** is true for an MCAP part carrying its end magic and for `session.json`;
   **`encrypted`** is true for a `VREC` part. An encrypted part is pulled as ciphertext.
 - **`read_while_recording`** reports the device's policy (section 6).
 
 Listing is allowed on every link and while recording.
 
-Managed storage also returns `catalogue_generation` and `RecordingsList.complete`.
-A nonzero generation identifies this firmware/mount epoch; an incomplete census
-answers `storage_indexing`. Older firmware returns zero, so clients must treat
-these fields as unavailable there. Each file exposes `object_version`, lifecycle
+Managed storage also returns `catalogue_generation` and `RecordingsList.catalogue_complete`.
+A nonzero generation identifies this firmware/mount epoch. A device indexes its storage after it
+starts or a card is inserted; while it does, a listing is still answered: it names every session,
+some with their size, duration and labels still to come, and `catalogue_complete` is false until
+the index is done. One session's files are answered in full at any time. Older firmware returns
+zero for both, so clients must treat these fields as unavailable there. Each file exposes
+`object_version` (0 for a file of a session the device has not indexed yet), lifecycle
 (`writing`, `finalizing`, `saved`, `failed`, `legacy`), independent integrity
 (`unchecked`, `verified`, `damaged`, `unverifiable`), `checkpointed_bytes` and
 `recovered`. A successful Stop detaches capture; checked finalization continues
@@ -72,10 +76,13 @@ offset`, possibly 0), `file_size` and `mtime_ns`.
 
 Managed opens also return `object_version` and `catalogue_generation`. Nonzero
 `expect_object_version` and `expect_catalogue_generation` must match, or the device
-answers `changed`, even when size and FAT mtime match. A required container repair
-answers `recovery_pending` and queues idle work; opening does not perform repair.
-Original encrypted bytes remain exportable without a decryption key. Capture,
-format and mount invalidation fence existing reader leases.
+answers `changed`, even when size and FAT mtime match. Every file is served as stored, a
+part missing its end magic (cut short by a power loss) included; opening never repairs. A
+format or a card change ends a transfer; a recording ends one only where section 6 says so.
+
+`storage_indexing` and `recovery_pending` are no longer answered by any path: an earlier
+development revision used them for an index in progress and a part awaiting repair. A
+client that meets one should treat it as `busy`.
 
 An accepted open is a **lease**: it belongs to the requesting host's network address, is consumed
 by that host's next connection to `port`, and lapses unused after 10 seconds. A new open from the
