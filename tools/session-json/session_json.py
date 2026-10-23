@@ -251,6 +251,11 @@ def session_json_text(meta: dict[str, str]) -> str:
         # MCAP record too, so a rebuild recovers it. Empty on a session
         # recorded before it existed.
         ("session_key", _quote(meta.get("session_key", ""))),
+        # When the calibration the session was shot under was last updated,
+        # in UTC Unix microseconds. The record omits it when unknown, so it
+        # renders as the firmware's zero.
+        ("calibration_updated_at_us",
+         _integer(meta, "calibration_updated_at_us")),
     )
     return "{" + ",".join(f"{_quote(k)}:{v}" for k, v in fields) + "}\n"
 

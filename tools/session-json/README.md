@@ -73,7 +73,8 @@ Fields the device didn't record (no GPS fix, no task typed in) come back as the 
 blanks the sidecar always carried: `""`, `0`, `0.0000000`.
 
 Fields that came *later* than the frozen layout — `operator_id`, `environment_id`,
-`recording_key_fingerprint`, `stop_cause`, and `duration_s` — are written at the end,
+`recording_key_fingerprint`, `stop_cause`, `duration_s`, `session_key`, and
+`calibration_updated_at_us` — are written at the end,
 so a session from before they existed rebuilds to the old file plus those blank/zero
 keys. Everything ahead of them is unchanged. `stop_cause` and `duration_s` are written
 by the device only when it closes the session; the opening MCAP metadata cannot recover
@@ -84,6 +85,11 @@ empty when they are plaintext. There is deliberately no separate `encrypted` fla
 two fields could disagree and nothing would say which wins. The value is
 `SHA-256(key)[:8]` — it identifies the key, it cannot decrypt anything, and the same
 bytes already sit in each part's `VREC` header.
+
+`calibration_updated_at_us` is when the unit's calibration was last updated, in UTC
+Unix microseconds, as it stood when the session opened. `0` means unknown: a unit
+calibrated before firmware kept the date, or a calibration pushed while the unit's
+clock was unset.
 
 **GPS coordinates lose their last digit.** The sidecar wrote latitude and longitude
 with 7 decimals; the firmware embeds them in the MCAP with 6. A session recorded at

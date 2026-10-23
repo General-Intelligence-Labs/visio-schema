@@ -6,6 +6,14 @@ bump the MINOR version.
 
 ## Unreleased
 
+### Calibration date in every recording
+
+A recording's capture metadata (the `visio.capture` MCAP record and
+`session.json`) carries `calibration_updated_at_us`: when the unit's
+calibration was last updated, UTC Unix microseconds. The record omits it when
+unknown; `session.json` appends it after `session_key`, `0` when unknown. The
+`tools/session-json` rebuild renders it. No proto change.
+
 ### A part's own storage error keeps the part and the recording
 
 The C++ writer no longer ends a recording on a part's own I/O failure. A
