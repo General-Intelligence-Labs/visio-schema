@@ -70,6 +70,7 @@ REQUIRED_COMMAND_BODIES = frozenset(
         "ingest_sign",
         "ingest_open_credentials",
         "ingest_check_receipt",
+        "set_max_recording_duration",
     }
 )
 
@@ -297,6 +298,24 @@ def test_proto_command_schema_present():
     # muted instead of unsupported; pin it where the contract lives.
     nv = state.DESCRIPTOR.fields_by_name["notice_volume"]
     assert nv.has_presence and nv.number == 34
+
+    # ── max recording time ──
+    # Presence on the limit for notice_volume's reason: absent hides the app
+    # control, 0 is "no limit". Devices write the stop reasons by value and
+    # apps map them, so renumbering one changes what a stop means.
+    body = command_pb2.Command.DESCRIPTOR.fields_by_name["set_max_recording_duration"]
+    assert body.number == 52
+    limit = command_pb2.SetMaxRecordingDuration.DESCRIPTOR.fields_by_name
+    assert limit["max_duration_s"].number == 1
+    mrd = state.DESCRIPTOR.fields_by_name["max_recording_duration_s"]
+    assert mrd.has_presence and mrd.number == 47
+    last = state.DESCRIPTOR.fields_by_name["last_recording_stop"]
+    assert last.number == 48 and last.message_type.name == "RecordingStop"
+    stop = command_result_pb2.RecordingStop
+    assert stop.REASON_UNSPECIFIED == 0
+    assert stop.REASON_REQUESTED == 1
+    assert stop.REASON_MAX_DURATION == 2
+    assert stop.REASON_DEVICE == 3
 
     # ── sealed provisioning (0.8.0) ──
     # Both consumers hardcode these numbers: visio-embedded through the nanopb

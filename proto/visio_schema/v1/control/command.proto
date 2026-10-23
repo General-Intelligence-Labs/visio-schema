@@ -71,6 +71,7 @@ message Command {
     IngestSign ingest_sign = 49;
     IngestOpenCredentials ingest_open_credentials = 50;
     IngestCheckReceipt ingest_check_receipt = 51;
+    SetMaxRecordingDuration set_max_recording_duration = 52;
   }
 }
 
@@ -135,6 +136,38 @@ message SetAntiFlicker {
 // re-upgraded.
 message SetRecordingHeartbeat {
   bool enabled = 1;
+}
+
+// The longest a recording this device writes to its card may run. A recording
+// that reaches it stops on its own, closed exactly as StopRecording closes one,
+// and a device with a speaker says why ("maximum recording time reached,
+// recording stopped") in place of its usual stop notice.
+// DeviceState.last_recording_stop then reports REASON_MAX_DURATION for it.
+//
+// Every recording the card takes is held to it, whatever started it: a host,
+// the device's button or switch, or its setup page. A phone-destination
+// recording (SetRecordingDestination PHONE) is not written to the card and is
+// not limited.
+//
+// Persisted to a device-side sidecar and applied LIVE: a change made during a
+// recording governs that recording, and a limit below the time it has already
+// run stops it within a fraction of a second, with the same notice. 0, the
+// default, means no limit.
+//
+// Only a device that records to a card accepts this; every other device
+// rejects it ("unsupported"), which is EXPECTED. A non-zero value outside
+// 10-86400 is rejected ("out_of_range"). The value in force is reported in
+// DeviceState.max_recording_duration_s, whose presence also tells the app
+// whether to offer the control at all.
+//
+// Address it to one device: an empty Command.target_device is a broadcast,
+// which behind a hub sets every recording board at once.
+//
+// Note on downgrade: the sidecar survives a rollback to firmware that predates
+// this command, and such firmware ignores it, so a limited device records
+// without a limit until re-upgraded.
+message SetMaxRecordingDuration {
+  uint32 max_duration_s = 1;  // seconds; 0 = no limit, else 10-86400 (24 h)
 }
 
 // Select where recording controls write. PHONE is deliberately a short lease:

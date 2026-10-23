@@ -31,7 +31,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file visio_schema/v1/control/command.proto.
  */
 export const file_visio_schema_v1_control_command: GenFile = /*@__PURE__*/
-  fileDesc("CiV2aXNpb19zY2hlbWEvdjEvY29udHJvbC9jb21tYW5kLnByb3RvEhd2aXNpb19zY2hlbWEudjEuY29udHJvbCLfFgoHQ29tbWFuZBIVCg10YXJnZXRfZGV2aWNlGAEgASgJEhIKCmNvbW1hbmRfaWQYAiABKAQSQgoPc3RhcnRfcmVjb3JkaW5nGAogASgLMicudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU3RhcnRSZWNvcmRpbmdIABJACg5zdG9wX3JlY29yZGluZxgLIAEoCzImLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlN0b3BSZWNvcmRpbmdIABI1CghpZGVudGlmeRgMIAEoCzIhLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLklkZW50aWZ5SAASPwoOc2V0X2F1dG9fc3RhcnQYDSABKAsyJS52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRBdXRvU3RhcnRIABI8Cgxjb25uZWN0X3dpZmkYDiABKAsyJC52aXNpb19zY2hlbWEudjEuY29udHJvbC5Db25uZWN0V2lmaUgAEjYKCXNjYW5fd2lmaRgPIAEoCzIhLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNjYW5XaWZpSAASOgoLc2V0X3N0b3JhZ2UYECABKAsyIy52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRTdG9yYWdlSAASPAoMdGVzdF9zdG9yYWdlGBEgASgLMiQudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuVGVzdFN0b3JhZ2VIABJCCg9saXN0X3JlY29yZGluZ3MYEiABKAsyJy52aXNpb19zY2hlbWEudjEuY29udHJvbC5MaXN0UmVjb3JkaW5nc0gAEjYKCWdldF9zdGF0ZRgTIAEoCzIhLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLkdldFN0YXRlSAASQgoPc2V0X2NhbGlicmF0aW9uGBQgASgLMicudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0Q2FsaWJyYXRpb25IABI0CghzZXRfdGltZRgVIAEoCzIgLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFRpbWVIABJHChJzZXRfcmVjb3JkaW5nX21ldGEYFiABKAsyKS52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRSZWNvcmRpbmdNZXRhSAASTQoTc2V0X3ZpZGVvX3N0cmVhbWluZxgXIAEoCzIqLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFZpZGVvU3RyZWFtaW5nQgIYAUgAEjoKC3NldF9iaXRyYXRlGBggASgLMiMudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0Qml0cmF0ZUgAEkAKDmZvcm1hdF9zdG9yYWdlGBkgASgLMiYudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuRm9ybWF0U3RvcmFnZUgAEkEKD3NldF9hdXRvX3VwbG9hZBgaIAEoCzImLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldEF1dG9VcGxvYWRIABJBCg9zZXRfbm90aWNlX2xhbmcYGyABKAsyJi52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXROb3RpY2VMYW5nSAASQAoOc2V0X3Jlc29sdXRpb24YHCABKAsyJi52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRSZXNvbHV0aW9uSAASOQoLcmVzZXRfdG9fYXAYHSABKAsyIi52aXNpb19zY2hlbWEudjEuY29udHJvbC5SZXNldFRvQXBIABJJChNzZXRfYXVkaW9fcmVjb3JkaW5nGB4gASgLMioudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0QXVkaW9SZWNvcmRpbmdIABJIChFzZXRfaW11X2xpdmVfcmF0ZRgfIAEoCzInLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldEltdUxpdmVSYXRlQgIYAUgAEkUKEXNldF9zdHJlYW1fcG9saWN5GCAgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0U3RyZWFtUG9saWN5SAASOgoLZm9yZ2V0X3dpZmkYISABKAsyIy52aXNpb19zY2hlbWEudjEuY29udHJvbC5Gb3JnZXRXaWZpSAASRQoRc2V0X3N0YXR1c19yZXBvcnQYIiABKAsyKC52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRTdGF0dXNSZXBvcnRIABJJChNjbGVhcl9jYW1lcmFfdHVuaW5nGCMgASgLMioudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuQ2xlYXJDYW1lcmFUdW5pbmdIABJVChlzZXRfcmVjb3JkaW5nX2Rlc3RpbmF0aW9uGCQgASgLMjAudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0UmVjb3JkaW5nRGVzdGluYXRpb25IABJRChdzZXRfcmVjb3JkaW5nX2hlYXJ0YmVhdBglIAEoCzIuLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFJlY29yZGluZ0hlYXJ0YmVhdEgAEkUKEXNldF9ub3RpY2Vfdm9sdW1lGCYgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0Tm90aWNlVm9sdW1lSAASRQoRc2V0X3JlY29yZGluZ19rZXkYJyABKAsyKC52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRSZWNvcmRpbmdLZXlIABJHChJzZXRfaGFuZF9kZXRlY3Rpb24YKCABKAsyKS52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRIYW5kRGV0ZWN0aW9uSAASQQoPc2V0X2dwc190YWdnaW5nGCkgASgLMiYudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0R3BzVGFnZ2luZ0gAEkcKEnNldF9kaWFnX3ZlcmJvc2l0eRgqIAEoCzIpLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldERpYWdWZXJib3NpdHlIABJJChNvcGVuX3JlY29yZGluZ19maWxlGCsgASgLMioudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuT3BlblJlY29yZGluZ0ZpbGVIABJEChBkZWxldGVfcmVjb3JkaW5nGCwgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuRGVsZXRlUmVjb3JkaW5nSAASMgoHc2V0X2JsZRgtIAEoCzIfLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldEJsZUgAEkEKD2pvaW5fc2F2ZWRfd2lmaRguIAEoCzImLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLkpvaW5TYXZlZFdpZmlIABJDChBzZXRfYW50aV9mbGlja2VyGC8gASgLMicudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0QW50aUZsaWNrZXJIABJEChBjYXB0dXJlX3NuYXBzaG90GDAgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuQ2FwdHVyZVNuYXBzaG90SAASOgoLaW5nZXN0X3NpZ24YMSABKAsyIy52aXNpb19zY2hlbWEudjEuY29udHJvbC5Jbmdlc3RTaWduSAASUQoXaW5nZXN0X29wZW5fY3JlZGVudGlhbHMYMiABKAsyLi52aXNpb19zY2hlbWEudjEuY29udHJvbC5Jbmdlc3RPcGVuQ3JlZGVudGlhbHNIABJLChRpbmdlc3RfY2hlY2tfcmVjZWlwdBgzIAEoCzIrLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLkluZ2VzdENoZWNrUmVjZWlwdEgAQgYKBGJvZHkiEQoPQ2FwdHVyZVNuYXBzaG90IoYBCg5TZXRBbnRpRmxpY2tlchI8CgVtYWlucxgBIAEoDjItLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldEFudGlGbGlja2VyLk1haW5zIjYKBU1haW5zEg0KCU1BSU5TX09GRhAAEg4KCk1BSU5TXzUwSFoQARIOCgpNQUlOU182MEhaEAIiKAoVU2V0UmVjb3JkaW5nSGVhcnRiZWF0Eg8KB2VuYWJsZWQYASABKAgivAEKF1NldFJlY29yZGluZ0Rlc3RpbmF0aW9uElEKC2Rlc3RpbmF0aW9uGAEgASgOMjwudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0UmVjb3JkaW5nRGVzdGluYXRpb24uRGVzdGluYXRpb24SEAoIbGVhc2VfbXMYAiABKA0iPAoLRGVzdGluYXRpb24SFgoSREVTVElOQVRJT05fREVWSUNFEAASFQoRREVTVElOQVRJT05fUEhPTkUQASKvAQoOU3RhcnRSZWNvcmRpbmcSFAoMc2Vzc2lvbl9uYW1lGAEgASgJEgwKBHRhc2sYAiABKAkSEAoIbG9jYXRpb24YAyABKAkSEAoIbGF0aXR1ZGUYBCABKAESEQoJbG9uZ2l0dWRlGAUgASgBEhYKDmNsaWVudF91bml4X3VzGAYgASgDEh0KFWNsaWVudF91dGNfb2Zmc2V0X21pbhgHIAEoERILCgNmcHMYCCABKA0iDwoNU3RvcFJlY29yZGluZyIKCghJZGVudGlmeSKJAQoPU2V0U3RyZWFtUG9saWN5EjwKBXJ1bGVzGAEgAygLMi0udmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0U3RyZWFtUG9saWN5LlJ1bGUaOAoEUnVsZRINCgV0b3BpYxgBIAEoCRIMCgRkcm9wGAIgASgIEhMKC21heF9yYXRlX2h6GAMgASgNIigKEVNldFZpZGVvU3RyZWFtaW5nEg8KB2VuYWJsZWQYASABKAg6AhgBIiUKDlNldEltdUxpdmVSYXRlEg8KB3JhdGVfaHoYASABKA06AhgBIiIKDFNldEF1dG9TdGFydBISCgphdXRvX3N0YXJ0GAEgASgIIiIKD1NldFN0YXR1c1JlcG9ydBIPCgdlbmFibGVkGAEgASgIIiAKDVNldEF1dG9VcGxvYWQSDwoHZW5hYmxlZBgBIAEoCCIkChFTZXRBdWRpb1JlY29yZGluZxIPCgdlbmFibGVkGAEgASgIIiMKEFNldEhhbmREZXRlY3Rpb24SDwoHZW5hYmxlZBgBIAEoCCIZCgZTZXRCbGUSDwoHZW5hYmxlZBgBIAEoCCIgCg1TZXRHcHNUYWdnaW5nEg8KB2VuYWJsZWQYASABKAgiIQoQU2V0RGlhZ1ZlcmJvc2l0eRINCgVsZXZlbBgBIAEoDSIiCgpTZXRCaXRyYXRlEhQKDGJpdHJhdGVfa2JwcxgBIAEoDSIuCg1TZXRSZXNvbHV0aW9uEg0KBXdpZHRoGAEgASgNEg4KBmhlaWdodBgCIAEoDSKqAwoQU2V0UmVjb3JkaW5nTWV0YRIRCgR0YXNrGAEgASgJSACIAQESFQoIbG9jYXRpb24YAiABKAlIAYgBARIUCgdtZXNzYWdlGAMgASgJSAKIAQESFQoIY2FwdHVyZXIYCCABKAlIA4gBARIVCghsYXRpdHVkZRgEIAEoAUgEiAEBEhYKCWxvbmdpdHVkZRgFIAEoAUgFiAEBEhsKDmNsaWVudF91bml4X3VzGAYgASgDSAaIAQESIgoVY2xpZW50X3V0Y19vZmZzZXRfbWluGAcgASgRSAeIAQESGAoLb3BlcmF0b3JfaWQYCSABKAlICIgBARIbCg5lbnZpcm9ubWVudF9pZBgKIAEoCUgJiAEBQgcKBV90YXNrQgsKCV9sb2NhdGlvbkIKCghfbWVzc2FnZUILCglfY2FwdHVyZXJCCwoJX2xhdGl0dWRlQgwKCl9sb25naXR1ZGVCEQoPX2NsaWVudF91bml4X3VzQhgKFl9jbGllbnRfdXRjX29mZnNldF9taW5CDgoMX29wZXJhdG9yX2lkQhEKD19lbnZpcm9ubWVudF9pZCJ8CgdTZXRUaW1lEg8KB3VuaXhfdXMYASABKAMSFgoOdXRjX29mZnNldF9taW4YAiABKBESFQoIbGF0aXR1ZGUYAyABKAFIAIgBARIWCglsb25naXR1ZGUYBCABKAFIAYgBAUILCglfbGF0aXR1ZGVCDAoKX2xvbmdpdHVkZSIvCgtDb25uZWN0V2lmaRIMCgRzc2lkGAEgASgJEhIKCnBhc3NwaHJhc2UYAiABKAkiHQoNSm9pblNhdmVkV2lmaRIMCgRzc2lkGAEgASgJIgoKCFNjYW5XaWZpIhoKCkZvcmdldFdpZmkSDAoEc3NpZBgBIAEoCSILCglSZXNldFRvQXAi7gIKClNldFN0b3JhZ2USGQoMZW5kcG9pbnRfdXJsGAEgASgJSACIAQESEwoGcmVnaW9uGAIgASgJSAGIAQESEwoGYnVja2V0GAMgASgJSAKIAQESGgoNYWNjZXNzX2tleV9pZBgEIAEoCUgDiAEBEh4KEXNlY3JldF9hY2Nlc3Nfa2V5GAUgASgJSASIAQESEwoGcHJlZml4GAYgASgJSAWIAQESGgoNc3RhdHVzX3ByZWZpeBgHIAEoCUgGiAEBEg4KBnNlYWxlZBgIIAEoDBIdChBkZXN0aW5hdGlvbl9oaW50GAkgASgJSAeIAQFCDwoNX2VuZHBvaW50X3VybEIJCgdfcmVnaW9uQgkKB19idWNrZXRCEAoOX2FjY2Vzc19rZXlfaWRCFAoSX3NlY3JldF9hY2Nlc3Nfa2V5QgkKB19wcmVmaXhCEAoOX3N0YXR1c19wcmVmaXhCEwoRX2Rlc3RpbmF0aW9uX2hpbnQi7wIKC1Rlc3RTdG9yYWdlEhkKDGVuZHBvaW50X3VybBgBIAEoCUgAiAEBEhMKBnJlZ2lvbhgCIAEoCUgBiAEBEhMKBmJ1Y2tldBgDIAEoCUgCiAEBEhoKDWFjY2Vzc19rZXlfaWQYBCABKAlIA4gBARIeChFzZWNyZXRfYWNjZXNzX2tleRgFIAEoCUgEiAEBEhMKBnByZWZpeBgGIAEoCUgFiAEBEhoKDXN0YXR1c19wcmVmaXgYByABKAlIBogBARIOCgZzZWFsZWQYCCABKAwSHQoQZGVzdGluYXRpb25faGludBgJIAEoCUgHiAEBQg8KDV9lbmRwb2ludF91cmxCCQoHX3JlZ2lvbkIJCgdfYnVja2V0QhAKDl9hY2Nlc3Nfa2V5X2lkQhQKEl9zZWNyZXRfYWNjZXNzX2tleUIJCgdfcHJlZml4QhAKDl9zdGF0dXNfcHJlZml4QhMKEV9kZXN0aW5hdGlvbl9oaW50IqwBCgpJbmdlc3RTaWduEhEKBGRhdGUYASABKAlIAIgBARITCgZtZXRob2QYAiABKAlIAYgBARIRCgRwYXRoGAMgASgJSAKIAQESEgoFcXVlcnkYBCABKAlIA4gBARIYCgtib2R5X3NoYTI1NhgFIAEoCUgEiAEBQgcKBV9kYXRlQgkKB19tZXRob2RCBwoFX3BhdGhCCAoGX3F1ZXJ5Qg4KDF9ib2R5X3NoYTI1NiKJAgoVSW5nZXN0T3BlbkNyZWRlbnRpYWxzEhkKDHJlcXVlc3RfZGF0ZRgBIAEoCUgAiAEBEh4KEXJlcGx5X2JvZHlfc2hhMjU2GAIgASgJSAGIAQESHAoPcmVwbHlfc2lnbmF0dXJlGAMgASgJSAKIAQESFgoJdXBsb2FkX2lkGAQgASgJSAOIAQESHwoSc2VhbGVkX2NyZWRlbnRpYWxzGAUgASgJSASIAQFCDwoNX3JlcXVlc3RfZGF0ZUIUChJfcmVwbHlfYm9keV9zaGEyNTZCEgoQX3JlcGx5X3NpZ25hdHVyZUIMCgpfdXBsb2FkX2lkQhUKE19zZWFsZWRfY3JlZGVudGlhbHMitgEKEkluZ2VzdENoZWNrUmVjZWlwdBIWCgl1cGxvYWRfaWQYASABKAlIAIgBARIYCgtzZXNzaW9uX2tleRgCIAEoCUgBiAEBEhsKDmNvbnRlbnRfZGlnZXN0GAMgASgJSAKIAQESFAoHcmVjZWlwdBgEIAEoCUgDiAEBQgwKCl91cGxvYWRfaWRCDgoMX3Nlc3Npb25fa2V5QhEKD19jb250ZW50X2RpZ2VzdEIKCghfcmVjZWlwdCJFCg5MaXN0UmVjb3JkaW5ncxINCgVsaW1pdBgBIAEoDRIOCgZjdXJzb3IYAiABKAkSFAoMc2Vzc2lvbl9uYW1lGAMgASgJIr4BChFPcGVuUmVjb3JkaW5nRmlsZRIUCgxzZXNzaW9uX25hbWUYASABKAkSEQoJZmlsZV9uYW1lGAIgASgJEg4KBm9mZnNldBgDIAEoBBITCgtleHBlY3Rfc2l6ZRgEIAEoBBIXCg9leHBlY3RfbXRpbWVfbnMYBSABKAQSHQoVZXhwZWN0X29iamVjdF92ZXJzaW9uGAYgASgEEiMKG2V4cGVjdF9jYXRhbG9ndWVfZ2VuZXJhdGlvbhgHIAEoBCInCg9EZWxldGVSZWNvcmRpbmcSFAoMc2Vzc2lvbl9uYW1lGAEgASgJIgoKCEdldFN0YXRlIiAKDUZvcm1hdFN0b3JhZ2USDwoHZnNfdHlwZRgBIAEoCSIdCg1TZXROb3RpY2VMYW5nEgwKBGxhbmcYASABKAkiIQoPU2V0Tm90aWNlVm9sdW1lEg4KBnZvbHVtZRgBIAEoDSKTBQoOU2V0Q2FsaWJyYXRpb24SRwoLc2Vuc29yX2tpbmQYASABKA4yMi52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRDYWxpYnJhdGlvbi5TZW5zb3JLaW5kEhQKDHNlbnNvcl9pbmRleBgCIAEoDRIxCgppbnRyaW5zaWNzGAsgASgLMhsuZm94Z2xvdmUuQ2FtZXJhQ2FsaWJyYXRpb25IABIuCgpleHRyaW5zaWNzGAwgASgLMhguZm94Z2xvdmUuRnJhbWVUcmFuc2Zvcm1IABI/CghpbXVfaW5mbxgNIAEoCzIrLnZpc2lvX3NjaGVtYS52MS5jYWxpYnJhdGlvbi5JbXVDYWxpYnJhdGlvbkgAEkcKDGVuY29kZXJfaW5mbxgOIAEoCzIvLnZpc2lvX3NjaGVtYS52MS5jYWxpYnJhdGlvbi5FbmNvZGVyQ2FsaWJyYXRpb25IABJCCg1jYW1lcmFfdHVuaW5nGA8gASgLMikudmlzaW9fc2NoZW1hLnYxLmNhbGlicmF0aW9uLkNhbWVyYVR1bmluZ0gAEhMKCXVuaXRfc2lkZRgQIAEoCUgAEjIKDnRjcF9leHRyaW5zaWNzGBEgASgLMhguZm94Z2xvdmUuRnJhbWVUcmFuc2Zvcm1IABJFCglmaWR1Y2lhbHMYEiABKAsyMC52aXNpb19zY2hlbWEudjEuY2FsaWJyYXRpb24uRmlkdWNpYWxDYWxpYnJhdGlvbkgAIlUKClNlbnNvcktpbmQSGwoXU0VOU09SX0tJTkRfVU5TUEVDSUZJRUQQABIKCgZDQU1FUkEQARIHCgNJTVUQAhILCgdFTkNPREVSEAMSCAoEVU5JVBAEQgoKCGFydGlmYWN0IhMKEUNsZWFyQ2FtZXJhVHVuaW5nIiEKD1NldFJlY29yZGluZ0tleRIOCgZzZWFsZWQYASABKAxiBnByb3RvMw", [file_foxglove_CameraCalibration, file_foxglove_FrameTransform, file_visio_schema_v1_calibration_imu, file_visio_schema_v1_calibration_encoder, file_visio_schema_v1_calibration_camera_tuning, file_visio_schema_v1_calibration_fiducial]);
+  fileDesc("CiV2aXNpb19zY2hlbWEvdjEvY29udHJvbC9jb21tYW5kLnByb3RvEhd2aXNpb19zY2hlbWEudjEuY29udHJvbCK3FwoHQ29tbWFuZBIVCg10YXJnZXRfZGV2aWNlGAEgASgJEhIKCmNvbW1hbmRfaWQYAiABKAQSQgoPc3RhcnRfcmVjb3JkaW5nGAogASgLMicudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU3RhcnRSZWNvcmRpbmdIABJACg5zdG9wX3JlY29yZGluZxgLIAEoCzImLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlN0b3BSZWNvcmRpbmdIABI1CghpZGVudGlmeRgMIAEoCzIhLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLklkZW50aWZ5SAASPwoOc2V0X2F1dG9fc3RhcnQYDSABKAsyJS52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRBdXRvU3RhcnRIABI8Cgxjb25uZWN0X3dpZmkYDiABKAsyJC52aXNpb19zY2hlbWEudjEuY29udHJvbC5Db25uZWN0V2lmaUgAEjYKCXNjYW5fd2lmaRgPIAEoCzIhLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNjYW5XaWZpSAASOgoLc2V0X3N0b3JhZ2UYECABKAsyIy52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRTdG9yYWdlSAASPAoMdGVzdF9zdG9yYWdlGBEgASgLMiQudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuVGVzdFN0b3JhZ2VIABJCCg9saXN0X3JlY29yZGluZ3MYEiABKAsyJy52aXNpb19zY2hlbWEudjEuY29udHJvbC5MaXN0UmVjb3JkaW5nc0gAEjYKCWdldF9zdGF0ZRgTIAEoCzIhLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLkdldFN0YXRlSAASQgoPc2V0X2NhbGlicmF0aW9uGBQgASgLMicudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0Q2FsaWJyYXRpb25IABI0CghzZXRfdGltZRgVIAEoCzIgLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFRpbWVIABJHChJzZXRfcmVjb3JkaW5nX21ldGEYFiABKAsyKS52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRSZWNvcmRpbmdNZXRhSAASTQoTc2V0X3ZpZGVvX3N0cmVhbWluZxgXIAEoCzIqLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFZpZGVvU3RyZWFtaW5nQgIYAUgAEjoKC3NldF9iaXRyYXRlGBggASgLMiMudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0Qml0cmF0ZUgAEkAKDmZvcm1hdF9zdG9yYWdlGBkgASgLMiYudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuRm9ybWF0U3RvcmFnZUgAEkEKD3NldF9hdXRvX3VwbG9hZBgaIAEoCzImLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldEF1dG9VcGxvYWRIABJBCg9zZXRfbm90aWNlX2xhbmcYGyABKAsyJi52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXROb3RpY2VMYW5nSAASQAoOc2V0X3Jlc29sdXRpb24YHCABKAsyJi52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRSZXNvbHV0aW9uSAASOQoLcmVzZXRfdG9fYXAYHSABKAsyIi52aXNpb19zY2hlbWEudjEuY29udHJvbC5SZXNldFRvQXBIABJJChNzZXRfYXVkaW9fcmVjb3JkaW5nGB4gASgLMioudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0QXVkaW9SZWNvcmRpbmdIABJIChFzZXRfaW11X2xpdmVfcmF0ZRgfIAEoCzInLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldEltdUxpdmVSYXRlQgIYAUgAEkUKEXNldF9zdHJlYW1fcG9saWN5GCAgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0U3RyZWFtUG9saWN5SAASOgoLZm9yZ2V0X3dpZmkYISABKAsyIy52aXNpb19zY2hlbWEudjEuY29udHJvbC5Gb3JnZXRXaWZpSAASRQoRc2V0X3N0YXR1c19yZXBvcnQYIiABKAsyKC52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRTdGF0dXNSZXBvcnRIABJJChNjbGVhcl9jYW1lcmFfdHVuaW5nGCMgASgLMioudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuQ2xlYXJDYW1lcmFUdW5pbmdIABJVChlzZXRfcmVjb3JkaW5nX2Rlc3RpbmF0aW9uGCQgASgLMjAudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0UmVjb3JkaW5nRGVzdGluYXRpb25IABJRChdzZXRfcmVjb3JkaW5nX2hlYXJ0YmVhdBglIAEoCzIuLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFJlY29yZGluZ0hlYXJ0YmVhdEgAEkUKEXNldF9ub3RpY2Vfdm9sdW1lGCYgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0Tm90aWNlVm9sdW1lSAASRQoRc2V0X3JlY29yZGluZ19rZXkYJyABKAsyKC52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRSZWNvcmRpbmdLZXlIABJHChJzZXRfaGFuZF9kZXRlY3Rpb24YKCABKAsyKS52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRIYW5kRGV0ZWN0aW9uSAASQQoPc2V0X2dwc190YWdnaW5nGCkgASgLMiYudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0R3BzVGFnZ2luZ0gAEkcKEnNldF9kaWFnX3ZlcmJvc2l0eRgqIAEoCzIpLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldERpYWdWZXJib3NpdHlIABJJChNvcGVuX3JlY29yZGluZ19maWxlGCsgASgLMioudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuT3BlblJlY29yZGluZ0ZpbGVIABJEChBkZWxldGVfcmVjb3JkaW5nGCwgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuRGVsZXRlUmVjb3JkaW5nSAASMgoHc2V0X2JsZRgtIAEoCzIfLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldEJsZUgAEkEKD2pvaW5fc2F2ZWRfd2lmaRguIAEoCzImLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLkpvaW5TYXZlZFdpZmlIABJDChBzZXRfYW50aV9mbGlja2VyGC8gASgLMicudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0QW50aUZsaWNrZXJIABJEChBjYXB0dXJlX3NuYXBzaG90GDAgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuQ2FwdHVyZVNuYXBzaG90SAASOgoLaW5nZXN0X3NpZ24YMSABKAsyIy52aXNpb19zY2hlbWEudjEuY29udHJvbC5Jbmdlc3RTaWduSAASUQoXaW5nZXN0X29wZW5fY3JlZGVudGlhbHMYMiABKAsyLi52aXNpb19zY2hlbWEudjEuY29udHJvbC5Jbmdlc3RPcGVuQ3JlZGVudGlhbHNIABJLChRpbmdlc3RfY2hlY2tfcmVjZWlwdBgzIAEoCzIrLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLkluZ2VzdENoZWNrUmVjZWlwdEgAElYKGnNldF9tYXhfcmVjb3JkaW5nX2R1cmF0aW9uGDQgASgLMjAudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0TWF4UmVjb3JkaW5nRHVyYXRpb25IAEIGCgRib2R5IhEKD0NhcHR1cmVTbmFwc2hvdCKGAQoOU2V0QW50aUZsaWNrZXISPAoFbWFpbnMYASABKA4yLS52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRBbnRpRmxpY2tlci5NYWlucyI2CgVNYWlucxINCglNQUlOU19PRkYQABIOCgpNQUlOU181MEhaEAESDgoKTUFJTlNfNjBIWhACIigKFVNldFJlY29yZGluZ0hlYXJ0YmVhdBIPCgdlbmFibGVkGAEgASgIIjEKF1NldE1heFJlY29yZGluZ0R1cmF0aW9uEhYKDm1heF9kdXJhdGlvbl9zGAEgASgNIrwBChdTZXRSZWNvcmRpbmdEZXN0aW5hdGlvbhJRCgtkZXN0aW5hdGlvbhgBIAEoDjI8LnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFJlY29yZGluZ0Rlc3RpbmF0aW9uLkRlc3RpbmF0aW9uEhAKCGxlYXNlX21zGAIgASgNIjwKC0Rlc3RpbmF0aW9uEhYKEkRFU1RJTkFUSU9OX0RFVklDRRAAEhUKEURFU1RJTkFUSU9OX1BIT05FEAEirwEKDlN0YXJ0UmVjb3JkaW5nEhQKDHNlc3Npb25fbmFtZRgBIAEoCRIMCgR0YXNrGAIgASgJEhAKCGxvY2F0aW9uGAMgASgJEhAKCGxhdGl0dWRlGAQgASgBEhEKCWxvbmdpdHVkZRgFIAEoARIWCg5jbGllbnRfdW5peF91cxgGIAEoAxIdChVjbGllbnRfdXRjX29mZnNldF9taW4YByABKBESCwoDZnBzGAggASgNIg8KDVN0b3BSZWNvcmRpbmciCgoISWRlbnRpZnkiiQEKD1NldFN0cmVhbVBvbGljeRI8CgVydWxlcxgBIAMoCzItLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFN0cmVhbVBvbGljeS5SdWxlGjgKBFJ1bGUSDQoFdG9waWMYASABKAkSDAoEZHJvcBgCIAEoCBITCgttYXhfcmF0ZV9oehgDIAEoDSIoChFTZXRWaWRlb1N0cmVhbWluZxIPCgdlbmFibGVkGAEgASgIOgIYASIlCg5TZXRJbXVMaXZlUmF0ZRIPCgdyYXRlX2h6GAEgASgNOgIYASIiCgxTZXRBdXRvU3RhcnQSEgoKYXV0b19zdGFydBgBIAEoCCIiCg9TZXRTdGF0dXNSZXBvcnQSDwoHZW5hYmxlZBgBIAEoCCIgCg1TZXRBdXRvVXBsb2FkEg8KB2VuYWJsZWQYASABKAgiJAoRU2V0QXVkaW9SZWNvcmRpbmcSDwoHZW5hYmxlZBgBIAEoCCIjChBTZXRIYW5kRGV0ZWN0aW9uEg8KB2VuYWJsZWQYASABKAgiGQoGU2V0QmxlEg8KB2VuYWJsZWQYASABKAgiIAoNU2V0R3BzVGFnZ2luZxIPCgdlbmFibGVkGAEgASgIIiEKEFNldERpYWdWZXJib3NpdHkSDQoFbGV2ZWwYASABKA0iIgoKU2V0Qml0cmF0ZRIUCgxiaXRyYXRlX2ticHMYASABKA0iLgoNU2V0UmVzb2x1dGlvbhINCgV3aWR0aBgBIAEoDRIOCgZoZWlnaHQYAiABKA0iqgMKEFNldFJlY29yZGluZ01ldGESEQoEdGFzaxgBIAEoCUgAiAEBEhUKCGxvY2F0aW9uGAIgASgJSAGIAQESFAoHbWVzc2FnZRgDIAEoCUgCiAEBEhUKCGNhcHR1cmVyGAggASgJSAOIAQESFQoIbGF0aXR1ZGUYBCABKAFIBIgBARIWCglsb25naXR1ZGUYBSABKAFIBYgBARIbCg5jbGllbnRfdW5peF91cxgGIAEoA0gGiAEBEiIKFWNsaWVudF91dGNfb2Zmc2V0X21pbhgHIAEoEUgHiAEBEhgKC29wZXJhdG9yX2lkGAkgASgJSAiIAQESGwoOZW52aXJvbm1lbnRfaWQYCiABKAlICYgBAUIHCgVfdGFza0ILCglfbG9jYXRpb25CCgoIX21lc3NhZ2VCCwoJX2NhcHR1cmVyQgsKCV9sYXRpdHVkZUIMCgpfbG9uZ2l0dWRlQhEKD19jbGllbnRfdW5peF91c0IYChZfY2xpZW50X3V0Y19vZmZzZXRfbWluQg4KDF9vcGVyYXRvcl9pZEIRCg9fZW52aXJvbm1lbnRfaWQifAoHU2V0VGltZRIPCgd1bml4X3VzGAEgASgDEhYKDnV0Y19vZmZzZXRfbWluGAIgASgREhUKCGxhdGl0dWRlGAMgASgBSACIAQESFgoJbG9uZ2l0dWRlGAQgASgBSAGIAQFCCwoJX2xhdGl0dWRlQgwKCl9sb25naXR1ZGUiLwoLQ29ubmVjdFdpZmkSDAoEc3NpZBgBIAEoCRISCgpwYXNzcGhyYXNlGAIgASgJIh0KDUpvaW5TYXZlZFdpZmkSDAoEc3NpZBgBIAEoCSIKCghTY2FuV2lmaSIaCgpGb3JnZXRXaWZpEgwKBHNzaWQYASABKAkiCwoJUmVzZXRUb0FwIu4CCgpTZXRTdG9yYWdlEhkKDGVuZHBvaW50X3VybBgBIAEoCUgAiAEBEhMKBnJlZ2lvbhgCIAEoCUgBiAEBEhMKBmJ1Y2tldBgDIAEoCUgCiAEBEhoKDWFjY2Vzc19rZXlfaWQYBCABKAlIA4gBARIeChFzZWNyZXRfYWNjZXNzX2tleRgFIAEoCUgEiAEBEhMKBnByZWZpeBgGIAEoCUgFiAEBEhoKDXN0YXR1c19wcmVmaXgYByABKAlIBogBARIOCgZzZWFsZWQYCCABKAwSHQoQZGVzdGluYXRpb25faGludBgJIAEoCUgHiAEBQg8KDV9lbmRwb2ludF91cmxCCQoHX3JlZ2lvbkIJCgdfYnVja2V0QhAKDl9hY2Nlc3Nfa2V5X2lkQhQKEl9zZWNyZXRfYWNjZXNzX2tleUIJCgdfcHJlZml4QhAKDl9zdGF0dXNfcHJlZml4QhMKEV9kZXN0aW5hdGlvbl9oaW50Iu8CCgtUZXN0U3RvcmFnZRIZCgxlbmRwb2ludF91cmwYASABKAlIAIgBARITCgZyZWdpb24YAiABKAlIAYgBARITCgZidWNrZXQYAyABKAlIAogBARIaCg1hY2Nlc3Nfa2V5X2lkGAQgASgJSAOIAQESHgoRc2VjcmV0X2FjY2Vzc19rZXkYBSABKAlIBIgBARITCgZwcmVmaXgYBiABKAlIBYgBARIaCg1zdGF0dXNfcHJlZml4GAcgASgJSAaIAQESDgoGc2VhbGVkGAggASgMEh0KEGRlc3RpbmF0aW9uX2hpbnQYCSABKAlIB4gBAUIPCg1fZW5kcG9pbnRfdXJsQgkKB19yZWdpb25CCQoHX2J1Y2tldEIQCg5fYWNjZXNzX2tleV9pZEIUChJfc2VjcmV0X2FjY2Vzc19rZXlCCQoHX3ByZWZpeEIQCg5fc3RhdHVzX3ByZWZpeEITChFfZGVzdGluYXRpb25faGludCKsAQoKSW5nZXN0U2lnbhIRCgRkYXRlGAEgASgJSACIAQESEwoGbWV0aG9kGAIgASgJSAGIAQESEQoEcGF0aBgDIAEoCUgCiAEBEhIKBXF1ZXJ5GAQgASgJSAOIAQESGAoLYm9keV9zaGEyNTYYBSABKAlIBIgBAUIHCgVfZGF0ZUIJCgdfbWV0aG9kQgcKBV9wYXRoQggKBl9xdWVyeUIOCgxfYm9keV9zaGEyNTYiiQIKFUluZ2VzdE9wZW5DcmVkZW50aWFscxIZCgxyZXF1ZXN0X2RhdGUYASABKAlIAIgBARIeChFyZXBseV9ib2R5X3NoYTI1NhgCIAEoCUgBiAEBEhwKD3JlcGx5X3NpZ25hdHVyZRgDIAEoCUgCiAEBEhYKCXVwbG9hZF9pZBgEIAEoCUgDiAEBEh8KEnNlYWxlZF9jcmVkZW50aWFscxgFIAEoCUgEiAEBQg8KDV9yZXF1ZXN0X2RhdGVCFAoSX3JlcGx5X2JvZHlfc2hhMjU2QhIKEF9yZXBseV9zaWduYXR1cmVCDAoKX3VwbG9hZF9pZEIVChNfc2VhbGVkX2NyZWRlbnRpYWxzIrYBChJJbmdlc3RDaGVja1JlY2VpcHQSFgoJdXBsb2FkX2lkGAEgASgJSACIAQESGAoLc2Vzc2lvbl9rZXkYAiABKAlIAYgBARIbCg5jb250ZW50X2RpZ2VzdBgDIAEoCUgCiAEBEhQKB3JlY2VpcHQYBCABKAlIA4gBAUIMCgpfdXBsb2FkX2lkQg4KDF9zZXNzaW9uX2tleUIRCg9fY29udGVudF9kaWdlc3RCCgoIX3JlY2VpcHQiRQoOTGlzdFJlY29yZGluZ3MSDQoFbGltaXQYASABKA0SDgoGY3Vyc29yGAIgASgJEhQKDHNlc3Npb25fbmFtZRgDIAEoCSK+AQoRT3BlblJlY29yZGluZ0ZpbGUSFAoMc2Vzc2lvbl9uYW1lGAEgASgJEhEKCWZpbGVfbmFtZRgCIAEoCRIOCgZvZmZzZXQYAyABKAQSEwoLZXhwZWN0X3NpemUYBCABKAQSFwoPZXhwZWN0X210aW1lX25zGAUgASgEEh0KFWV4cGVjdF9vYmplY3RfdmVyc2lvbhgGIAEoBBIjChtleHBlY3RfY2F0YWxvZ3VlX2dlbmVyYXRpb24YByABKAQiJwoPRGVsZXRlUmVjb3JkaW5nEhQKDHNlc3Npb25fbmFtZRgBIAEoCSIKCghHZXRTdGF0ZSIgCg1Gb3JtYXRTdG9yYWdlEg8KB2ZzX3R5cGUYASABKAkiHQoNU2V0Tm90aWNlTGFuZxIMCgRsYW5nGAEgASgJIiEKD1NldE5vdGljZVZvbHVtZRIOCgZ2b2x1bWUYASABKA0ikwUKDlNldENhbGlicmF0aW9uEkcKC3NlbnNvcl9raW5kGAEgASgOMjIudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0Q2FsaWJyYXRpb24uU2Vuc29yS2luZBIUCgxzZW5zb3JfaW5kZXgYAiABKA0SMQoKaW50cmluc2ljcxgLIAEoCzIbLmZveGdsb3ZlLkNhbWVyYUNhbGlicmF0aW9uSAASLgoKZXh0cmluc2ljcxgMIAEoCzIYLmZveGdsb3ZlLkZyYW1lVHJhbnNmb3JtSAASPwoIaW11X2luZm8YDSABKAsyKy52aXNpb19zY2hlbWEudjEuY2FsaWJyYXRpb24uSW11Q2FsaWJyYXRpb25IABJHCgxlbmNvZGVyX2luZm8YDiABKAsyLy52aXNpb19zY2hlbWEudjEuY2FsaWJyYXRpb24uRW5jb2RlckNhbGlicmF0aW9uSAASQgoNY2FtZXJhX3R1bmluZxgPIAEoCzIpLnZpc2lvX3NjaGVtYS52MS5jYWxpYnJhdGlvbi5DYW1lcmFUdW5pbmdIABITCgl1bml0X3NpZGUYECABKAlIABIyCg50Y3BfZXh0cmluc2ljcxgRIAEoCzIYLmZveGdsb3ZlLkZyYW1lVHJhbnNmb3JtSAASRQoJZmlkdWNpYWxzGBIgASgLMjAudmlzaW9fc2NoZW1hLnYxLmNhbGlicmF0aW9uLkZpZHVjaWFsQ2FsaWJyYXRpb25IACJVCgpTZW5zb3JLaW5kEhsKF1NFTlNPUl9LSU5EX1VOU1BFQ0lGSUVEEAASCgoGQ0FNRVJBEAESBwoDSU1VEAISCwoHRU5DT0RFUhADEggKBFVOSVQQBEIKCghhcnRpZmFjdCITChFDbGVhckNhbWVyYVR1bmluZyIhCg9TZXRSZWNvcmRpbmdLZXkSDgoGc2VhbGVkGAEgASgMYgZwcm90bzM", [file_foxglove_CameraCalibration, file_foxglove_FrameTransform, file_visio_schema_v1_calibration_imu, file_visio_schema_v1_calibration_encoder, file_visio_schema_v1_calibration_camera_tuning, file_visio_schema_v1_calibration_fiducial]);
 
 /**
  * @generated from message visio_schema.v1.control.Command
@@ -311,6 +311,12 @@ export type Command = Message<"visio_schema.v1.control.Command"> & {
      */
     value: IngestCheckReceipt;
     case: "ingestCheckReceipt";
+  } | {
+    /**
+     * @generated from field: visio_schema.v1.control.SetMaxRecordingDuration set_max_recording_duration = 52;
+     */
+    value: SetMaxRecordingDuration;
+    case: "setMaxRecordingDuration";
   } | { case: undefined; value?: undefined };
 };
 
@@ -448,6 +454,54 @@ export const SetRecordingHeartbeatSchema: GenMessage<SetRecordingHeartbeat> = /*
   messageDesc(file_visio_schema_v1_control_command, 3);
 
 /**
+ * The longest a recording this device writes to its card may run. A recording
+ * that reaches it stops on its own, closed exactly as StopRecording closes one,
+ * and a device with a speaker says why ("maximum recording time reached,
+ * recording stopped") in place of its usual stop notice.
+ * DeviceState.last_recording_stop then reports REASON_MAX_DURATION for it.
+ *
+ * Every recording the card takes is held to it, whatever started it: a host,
+ * the device's button or switch, or its setup page. A phone-destination
+ * recording (SetRecordingDestination PHONE) is not written to the card and is
+ * not limited.
+ *
+ * Persisted to a device-side sidecar and applied LIVE: a change made during a
+ * recording governs that recording, and a limit below the time it has already
+ * run stops it within a fraction of a second, with the same notice. 0, the
+ * default, means no limit.
+ *
+ * Only a device that records to a card accepts this; every other device
+ * rejects it ("unsupported"), which is EXPECTED. A non-zero value outside
+ * 10-86400 is rejected ("out_of_range"). The value in force is reported in
+ * DeviceState.max_recording_duration_s, whose presence also tells the app
+ * whether to offer the control at all.
+ *
+ * Address it to one device: an empty Command.target_device is a broadcast,
+ * which behind a hub sets every recording board at once.
+ *
+ * Note on downgrade: the sidecar survives a rollback to firmware that predates
+ * this command, and such firmware ignores it, so a limited device records
+ * without a limit until re-upgraded.
+ *
+ * @generated from message visio_schema.v1.control.SetMaxRecordingDuration
+ */
+export type SetMaxRecordingDuration = Message<"visio_schema.v1.control.SetMaxRecordingDuration"> & {
+  /**
+   * seconds; 0 = no limit, else 10-86400 (24 h)
+   *
+   * @generated from field: uint32 max_duration_s = 1;
+   */
+  maxDurationS: number;
+};
+
+/**
+ * Describes the message visio_schema.v1.control.SetMaxRecordingDuration.
+ * Use `create(SetMaxRecordingDurationSchema)` to create a new message.
+ */
+export const SetMaxRecordingDurationSchema: GenMessage<SetMaxRecordingDuration> = /*@__PURE__*/
+  messageDesc(file_visio_schema_v1_control_command, 4);
+
+/**
  * Select where recording controls write. PHONE is deliberately a short lease:
  * the app refreshes it while a lossless USB connection is alive; expiry, app
  * crash, or disconnect safely restores DEVICE/SD behavior.
@@ -473,7 +527,7 @@ export type SetRecordingDestination = Message<"visio_schema.v1.control.SetRecord
  * Use `create(SetRecordingDestinationSchema)` to create a new message.
  */
 export const SetRecordingDestinationSchema: GenMessage<SetRecordingDestination> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 4);
+  messageDesc(file_visio_schema_v1_control_command, 5);
 
 /**
  * @generated from enum visio_schema.v1.control.SetRecordingDestination.Destination
@@ -494,7 +548,7 @@ export enum SetRecordingDestination_Destination {
  * Describes the enum visio_schema.v1.control.SetRecordingDestination.Destination.
  */
 export const SetRecordingDestination_DestinationSchema: GenEnum<SetRecordingDestination_Destination> = /*@__PURE__*/
-  enumDesc(file_visio_schema_v1_control_command, 4, 0);
+  enumDesc(file_visio_schema_v1_control_command, 5, 0);
 
 /**
  * Begin a recording session on the target.
@@ -574,7 +628,7 @@ export type StartRecording = Message<"visio_schema.v1.control.StartRecording"> &
  * Use `create(StartRecordingSchema)` to create a new message.
  */
 export const StartRecordingSchema: GenMessage<StartRecording> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 5);
+  messageDesc(file_visio_schema_v1_control_command, 6);
 
 /**
  * End the current recording session on the target.
@@ -589,7 +643,7 @@ export type StopRecording = Message<"visio_schema.v1.control.StopRecording"> & {
  * Use `create(StopRecordingSchema)` to create a new message.
  */
 export const StopRecordingSchema: GenMessage<StopRecording> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 6);
+  messageDesc(file_visio_schema_v1_control_command, 7);
 
 /**
  * Ask the target to publish its DeviceInfo immediately, out of the
@@ -605,7 +659,7 @@ export type Identify = Message<"visio_schema.v1.control.Identify"> & {
  * Use `create(IdentifySchema)` to create a new message.
  */
 export const IdentifySchema: GenMessage<Identify> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 7);
+  messageDesc(file_visio_schema_v1_control_command, 8);
 
 /**
  * Select which streams this connection wants, and how fast — the one
@@ -666,7 +720,7 @@ export type SetStreamPolicy = Message<"visio_schema.v1.control.SetStreamPolicy">
  * Use `create(SetStreamPolicySchema)` to create a new message.
  */
 export const SetStreamPolicySchema: GenMessage<SetStreamPolicy> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 8);
+  messageDesc(file_visio_schema_v1_control_command, 9);
 
 /**
  * @generated from message visio_schema.v1.control.SetStreamPolicy.Rule
@@ -707,7 +761,7 @@ export type SetStreamPolicy_Rule = Message<"visio_schema.v1.control.SetStreamPol
  * Use `create(SetStreamPolicy_RuleSchema)` to create a new message.
  */
 export const SetStreamPolicy_RuleSchema: GenMessage<SetStreamPolicy_Rule> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 8, 0);
+  messageDesc(file_visio_schema_v1_control_command, 9, 0);
 
 /**
  * DEPRECATED — use SetStreamPolicy, which expresses this as
@@ -743,7 +797,7 @@ export type SetVideoStreaming = Message<"visio_schema.v1.control.SetVideoStreami
  * @deprecated
  */
 export const SetVideoStreamingSchema: GenMessage<SetVideoStreaming> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 9);
+  messageDesc(file_visio_schema_v1_control_command, 10);
 
 /**
  * DEPRECATED — use SetStreamPolicy, which expresses this as
@@ -778,7 +832,7 @@ export type SetImuLiveRate = Message<"visio_schema.v1.control.SetImuLiveRate"> &
  * @deprecated
  */
 export const SetImuLiveRateSchema: GenMessage<SetImuLiveRate> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 10);
+  messageDesc(file_visio_schema_v1_control_command, 11);
 
 /**
  * Set the auto-start-at-boot recording policy (persisted; next-boot effect,
@@ -798,7 +852,7 @@ export type SetAutoStart = Message<"visio_schema.v1.control.SetAutoStart"> & {
  * Use `create(SetAutoStartSchema)` to create a new message.
  */
 export const SetAutoStartSchema: GenMessage<SetAutoStart> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 11);
+  messageDesc(file_visio_schema_v1_control_command, 12);
 
 /**
  * Enable/disable automatic S3 upload of finished recordings. Persisted to a
@@ -825,7 +879,7 @@ export type SetStatusReport = Message<"visio_schema.v1.control.SetStatusReport">
  * Use `create(SetStatusReportSchema)` to create a new message.
  */
 export const SetStatusReportSchema: GenMessage<SetStatusReport> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 12);
+  messageDesc(file_visio_schema_v1_control_command, 13);
 
 /**
  * @generated from message visio_schema.v1.control.SetAutoUpload
@@ -842,7 +896,7 @@ export type SetAutoUpload = Message<"visio_schema.v1.control.SetAutoUpload"> & {
  * Use `create(SetAutoUploadSchema)` to create a new message.
  */
 export const SetAutoUploadSchema: GenMessage<SetAutoUpload> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 13);
+  messageDesc(file_visio_schema_v1_control_command, 14);
 
 /**
  * Enable/disable microphone capture reaching recordings. Persisted to a
@@ -879,7 +933,7 @@ export type SetAudioRecording = Message<"visio_schema.v1.control.SetAudioRecordi
  * Use `create(SetAudioRecordingSchema)` to create a new message.
  */
 export const SetAudioRecordingSchema: GenMessage<SetAudioRecording> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 14);
+  messageDesc(file_visio_schema_v1_control_command, 15);
 
 /**
  * Enable/disable the on-device NPU hand detector (the boxes the app overlays on
@@ -917,7 +971,7 @@ export type SetHandDetection = Message<"visio_schema.v1.control.SetHandDetection
  * Use `create(SetHandDetectionSchema)` to create a new message.
  */
 export const SetHandDetectionSchema: GenMessage<SetHandDetection> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 15);
+  messageDesc(file_visio_schema_v1_control_command, 16);
 
 /**
  * Enable/disable the BLE control transport on this device.
@@ -951,7 +1005,7 @@ export type SetBle = Message<"visio_schema.v1.control.SetBle"> & {
  * Use `create(SetBleSchema)` to create a new message.
  */
 export const SetBleSchema: GenMessage<SetBle> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 16);
+  messageDesc(file_visio_schema_v1_control_command, 17);
 
 /**
  * Enable/disable geo-tagging of recordings on this device.
@@ -987,7 +1041,7 @@ export type SetGpsTagging = Message<"visio_schema.v1.control.SetGpsTagging"> & {
  * Use `create(SetGpsTaggingSchema)` to create a new message.
  */
 export const SetGpsTaggingSchema: GenMessage<SetGpsTagging> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 17);
+  messageDesc(file_visio_schema_v1_control_command, 18);
 
 /**
  * How much the device's diagnostic log records to the SD-card tier
@@ -1013,7 +1067,7 @@ export type SetDiagVerbosity = Message<"visio_schema.v1.control.SetDiagVerbosity
  * Use `create(SetDiagVerbositySchema)` to create a new message.
  */
 export const SetDiagVerbositySchema: GenMessage<SetDiagVerbosity> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 18);
+  messageDesc(file_visio_schema_v1_control_command, 19);
 
 /**
  * Persist the camera H.265 target bitrate to a device-side sidecar, applied to
@@ -1038,7 +1092,7 @@ export type SetBitrate = Message<"visio_schema.v1.control.SetBitrate"> & {
  * Use `create(SetBitrateSchema)` to create a new message.
  */
 export const SetBitrateSchema: GenMessage<SetBitrate> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 19);
+  messageDesc(file_visio_schema_v1_control_command, 20);
 
 /**
  * Persist the camera capture resolution to a device-side sidecar, applied to
@@ -1072,7 +1126,7 @@ export type SetResolution = Message<"visio_schema.v1.control.SetResolution"> & {
  * Use `create(SetResolutionSchema)` to create a new message.
  */
 export const SetResolutionSchema: GenMessage<SetResolution> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 20);
+  messageDesc(file_visio_schema_v1_control_command, 21);
 
 /**
  * Persist default recording metadata to a device-side sidecar. Applied to
@@ -1187,7 +1241,7 @@ export type SetRecordingMeta = Message<"visio_schema.v1.control.SetRecordingMeta
  * Use `create(SetRecordingMetaSchema)` to create a new message.
  */
 export const SetRecordingMetaSchema: GenMessage<SetRecordingMeta> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 21);
+  messageDesc(file_visio_schema_v1_control_command, 22);
 
 /**
  * Set the device's wall clock + UTC offset. The boards have no RTC and boot
@@ -1242,7 +1296,7 @@ export type SetTime = Message<"visio_schema.v1.control.SetTime"> & {
  * Use `create(SetTimeSchema)` to create a new message.
  */
 export const SetTimeSchema: GenMessage<SetTime> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 22);
+  messageDesc(file_visio_schema_v1_control_command, 23);
 
 /**
  * Provision Wi-Fi STA credentials and (re)associate. Replaces POST /wifi.
@@ -1274,7 +1328,7 @@ export type ConnectWifi = Message<"visio_schema.v1.control.ConnectWifi"> & {
  * Use `create(ConnectWifiSchema)` to create a new message.
  */
 export const ConnectWifiSchema: GenMessage<ConnectWifi> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 23);
+  messageDesc(file_visio_schema_v1_control_command, 24);
 
 /**
  * Join an SSID from DeviceState.wifi_networks using its stored credential.
@@ -1298,7 +1352,7 @@ export type JoinSavedWifi = Message<"visio_schema.v1.control.JoinSavedWifi"> & {
  * Use `create(JoinSavedWifiSchema)` to create a new message.
  */
 export const JoinSavedWifiSchema: GenMessage<JoinSavedWifi> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 24);
+  messageDesc(file_visio_schema_v1_control_command, 25);
 
 /**
  * Trigger a Wi-Fi scan; the CommandResult carries WifiScanResults. Replaces
@@ -1314,7 +1368,7 @@ export type ScanWifi = Message<"visio_schema.v1.control.ScanWifi"> & {
  * Use `create(ScanWifiSchema)` to create a new message.
  */
 export const ScanWifiSchema: GenMessage<ScanWifi> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 25);
+  messageDesc(file_visio_schema_v1_control_command, 26);
 
 /**
  * Forget ONE remembered Wi-Fi network, by SSID. ResetToAp forgets them all;
@@ -1349,7 +1403,7 @@ export type ForgetWifi = Message<"visio_schema.v1.control.ForgetWifi"> & {
  * Use `create(ForgetWifiSchema)` to create a new message.
  */
 export const ForgetWifiSchema: GenMessage<ForgetWifi> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 26);
+  messageDesc(file_visio_schema_v1_control_command, 27);
 
 /**
  * Forget ALL remembered Wi-Fi STA credentials and return to the setup soft-AP.
@@ -1374,7 +1428,7 @@ export type ResetToAp = Message<"visio_schema.v1.control.ResetToAp"> & {
  * Use `create(ResetToApSchema)` to create a new message.
  */
 export const ResetToApSchema: GenMessage<ResetToAp> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 27);
+  messageDesc(file_visio_schema_v1_control_command, 28);
 
 /**
  * Persist S3 storage credentials. Replaces POST /storage.
@@ -1473,7 +1527,7 @@ export type SetStorage = Message<"visio_schema.v1.control.SetStorage"> & {
  * Use `create(SetStorageSchema)` to create a new message.
  */
 export const SetStorageSchema: GenMessage<SetStorage> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 28);
+  messageDesc(file_visio_schema_v1_control_command, 29);
 
 /**
  * Validate S3 credentials WITHOUT persisting (a max-keys=1 list under the
@@ -1549,7 +1603,7 @@ export type TestStorage = Message<"visio_schema.v1.control.TestStorage"> & {
  * Use `create(TestStorageSchema)` to create a new message.
  */
 export const TestStorageSchema: GenMessage<TestStorage> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 29);
+  messageDesc(file_visio_schema_v1_control_command, 30);
 
 /**
  * Sign one request the app is about to send. Answered by a CommandResult
@@ -1601,7 +1655,7 @@ export type IngestSign = Message<"visio_schema.v1.control.IngestSign"> & {
  * Use `create(IngestSignSchema)` to create a new message.
  */
 export const IngestSignSchema: GenMessage<IngestSign> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 30);
+  messageDesc(file_visio_schema_v1_control_command, 31);
 
 /**
  * Check an initiate reply and open its sealed storage credentials. The device
@@ -1655,7 +1709,7 @@ export type IngestOpenCredentials = Message<"visio_schema.v1.control.IngestOpenC
  * Use `create(IngestOpenCredentialsSchema)` to create a new message.
  */
 export const IngestOpenCredentialsSchema: GenMessage<IngestOpenCredentials> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 31);
+  messageDesc(file_visio_schema_v1_control_command, 32);
 
 /**
  * Check one session receipt from a commit reply. ok = the receipt is genuine
@@ -1698,7 +1752,7 @@ export type IngestCheckReceipt = Message<"visio_schema.v1.control.IngestCheckRec
  * Use `create(IngestCheckReceiptSchema)` to create a new message.
  */
 export const IngestCheckReceiptSchema: GenMessage<IngestCheckReceipt> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 32);
+  messageDesc(file_visio_schema_v1_control_command, 33);
 
 /**
  * List recorded sessions + their upload state; the CommandResult carries
@@ -1740,7 +1794,7 @@ export type ListRecordings = Message<"visio_schema.v1.control.ListRecordings"> &
  * Use `create(ListRecordingsSchema)` to create a new message.
  */
 export const ListRecordingsSchema: GenMessage<ListRecordings> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 33);
+  messageDesc(file_visio_schema_v1_control_command, 34);
 
 /**
  * Open one recording file for a pull. The CommandResult carries
@@ -1810,7 +1864,7 @@ export type OpenRecordingFile = Message<"visio_schema.v1.control.OpenRecordingFi
  * Use `create(OpenRecordingFileSchema)` to create a new message.
  */
 export const OpenRecordingFileSchema: GenMessage<OpenRecordingFile> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 34);
+  messageDesc(file_visio_schema_v1_control_command, 35);
 
 /**
  * Delete one whole recorded session from local storage. Command.target_device
@@ -1836,7 +1890,7 @@ export type DeleteRecording = Message<"visio_schema.v1.control.DeleteRecording">
  * Use `create(DeleteRecordingSchema)` to create a new message.
  */
 export const DeleteRecordingSchema: GenMessage<DeleteRecording> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 35);
+  messageDesc(file_visio_schema_v1_control_command, 36);
 
 /**
  * Pull the device's operational-state snapshot; the CommandResult carries
@@ -1852,7 +1906,7 @@ export type GetState = Message<"visio_schema.v1.control.GetState"> & {
  * Use `create(GetStateSchema)` to create a new message.
  */
 export const GetStateSchema: GenMessage<GetState> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 36);
+  messageDesc(file_visio_schema_v1_control_command, 37);
 
 /**
  * Reformat the recording SD card, then re-mount it. Manufacturing / quality-
@@ -1889,7 +1943,7 @@ export type FormatStorage = Message<"visio_schema.v1.control.FormatStorage"> & {
  * Use `create(FormatStorageSchema)` to create a new message.
  */
 export const FormatStorageSchema: GenMessage<FormatStorage> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 37);
+  messageDesc(file_visio_schema_v1_control_command, 38);
 
 /**
  * Select the language of the device's spoken voice notices (boards with a
@@ -1915,7 +1969,7 @@ export type SetNoticeLang = Message<"visio_schema.v1.control.SetNoticeLang"> & {
  * Use `create(SetNoticeLangSchema)` to create a new message.
  */
 export const SetNoticeLangSchema: GenMessage<SetNoticeLang> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 38);
+  messageDesc(file_visio_schema_v1_control_command, 39);
 
 /**
  * Set the loudness of the device's spoken voice notices. Persisted to a
@@ -1953,7 +2007,7 @@ export type SetNoticeVolume = Message<"visio_schema.v1.control.SetNoticeVolume">
  * Use `create(SetNoticeVolumeSchema)` to create a new message.
  */
 export const SetNoticeVolumeSchema: GenMessage<SetNoticeVolume> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 39);
+  messageDesc(file_visio_schema_v1_control_command, 40);
 
 /**
  * Persist one piece of sensor calibration (effective on next boot). The target
@@ -2085,7 +2139,7 @@ export type SetCalibration = Message<"visio_schema.v1.control.SetCalibration"> &
  * Use `create(SetCalibrationSchema)` to create a new message.
  */
 export const SetCalibrationSchema: GenMessage<SetCalibration> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 40);
+  messageDesc(file_visio_schema_v1_control_command, 41);
 
 /**
  * @generated from enum visio_schema.v1.control.SetCalibration.SensorKind
@@ -2127,7 +2181,7 @@ export enum SetCalibration_SensorKind {
  * Describes the enum visio_schema.v1.control.SetCalibration.SensorKind.
  */
 export const SetCalibration_SensorKindSchema: GenEnum<SetCalibration_SensorKind> = /*@__PURE__*/
-  enumDesc(file_visio_schema_v1_control_command, 40, 0);
+  enumDesc(file_visio_schema_v1_control_command, 41, 0);
 
 /**
  * Erase this unit's stored per-unit camera tuning (the camera_tuning record) and
@@ -2156,7 +2210,7 @@ export type ClearCameraTuning = Message<"visio_schema.v1.control.ClearCameraTuni
  * Use `create(ClearCameraTuningSchema)` to create a new message.
  */
 export const ClearCameraTuningSchema: GenMessage<ClearCameraTuning> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 41);
+  messageDesc(file_visio_schema_v1_control_command, 42);
 
 /**
  * Set, rotate or clear the symmetric key this unit encrypts its recordings
@@ -2197,5 +2251,5 @@ export type SetRecordingKey = Message<"visio_schema.v1.control.SetRecordingKey">
  * Use `create(SetRecordingKeySchema)` to create a new message.
  */
 export const SetRecordingKeySchema: GenMessage<SetRecordingKey> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 42);
+  messageDesc(file_visio_schema_v1_control_command, 43);
 

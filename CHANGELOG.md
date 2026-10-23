@@ -6,6 +6,23 @@ bump the MINOR version.
 
 ## Unreleased
 
+### A limit on how long a recording may run
+
+`Command.set_max_recording_duration = 52` (`SetMaxRecordingDuration
+{ max_duration_s }`) sets the longest a recording written to the device's card
+may run: 0 (the default) is no limit, otherwise 10-86400 s; anything else is
+refused `out_of_range`, and a device that does not record to a card answers
+`unsupported`. It is
+persisted and applied live, and every card recording is held to it however it
+was started; a phone-destination recording is not. A recording that reaches it
+stops cleanly, and a device with a speaker says why.
+
+`DeviceState.max_recording_duration_s = 47` (`optional`; absent hides the
+control) reports the limit in force. `DeviceState.last_recording_stop = 48`, a
+new `RecordingStop { session_name, reason }`, says how the last card recording
+since boot ended: `REASON_REQUESTED`, `REASON_MAX_DURATION` or `REASON_DEVICE`.
+Additive (MINOR).
+
 ### Calibration date in every recording
 
 A recording's capture metadata (the `visio.capture` MCAP record and

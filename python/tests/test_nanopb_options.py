@@ -238,11 +238,12 @@ def test_camera_temps_bound_reached_the_generated_header() -> None:
 
 # A name the listing reports must be one every recording command accepts: a
 # smaller cap on any of them fails pb_decode, and the device drops the whole
-# Command without answering.
+# Command without answering. DeviceState echoes the last stopped session by
+# the same name, so its cap must hold one too.
 def test_recording_name_caps_agree(sizes: dict[str, int]) -> None:
     fields = ("ListRecordings.cursor", "ListRecordings.session_name",
               "OpenRecordingFile.session_name", "OpenRecordingFile.file_name",
-              "DeleteRecording.session_name")
+              "DeleteRecording.session_name", "RecordingStop.session_name")
     caps = {f: sizes[f] for f in fields}
     assert len(set(caps.values())) == 1, caps
 

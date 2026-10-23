@@ -154,6 +154,24 @@ message RecordingFileOpen {
   uint64 catalogue_generation = 7;
 }
 
+// How a recording ended: the one fact a host needs to tell its user why a
+// recording it did not stop has stopped. Deliberately coarse; the device's own
+// record of each recording (its session.json) keeps the full reason.
+message RecordingStop {
+  // The recording's session name exactly as RecordingEntry.name lists it, so a
+  // host shows a notice for a given recording once.
+  string session_name = 1;
+
+  enum Reason {
+    REASON_UNSPECIFIED = 0;   // not one this host knows; treat as a plain stop
+    REASON_REQUESTED = 1;     // a host, the setup page, or the button/switch
+    REASON_MAX_DURATION = 2;  // it reached the SetMaxRecordingDuration limit
+    // The device ended it on its own: a storage, sensor or camera fault.
+    REASON_DEVICE = 3;
+  }
+  Reason reason = 2;
+}
+
 // The device's operational-state snapshot — the GET /info payload. Fields that
 // DeviceInfo (device_name/serial/firmware + channels) and SystemHealth
 // (recording, disk_free_bytes, disk_total_bytes) already report are
@@ -176,6 +194,16 @@ message DeviceState {
   string recording_meta_location = 21;
   string recording_meta_message  = 22;
   string recording_meta_capturer = 24;
+
+  // The SetMaxRecordingDuration limit in force, seconds; 0 = no limit.
+  // `optional` for notice_volume's reason: absence covers "this device does
+  // not record to a card" and "this firmware predates the setting", and lets
+  // the app HIDE the control; 0 is a legal value as well as the default.
+  optional uint32 max_recording_duration_s = 47;
+  // The most recent recording this device wrote to its card since it booted,
+  // and why it ended. Absent until one has ended, and on older firmware; not
+  // kept across a reboot.
+  RecordingStop last_recording_stop = 48;
 
   // ── disk ──
   sint32 disk_free_pct = 4;   // 0..100, or -1 = unknown
