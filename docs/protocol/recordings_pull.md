@@ -56,7 +56,7 @@ before `saved` is published. `saved` does not mean payload integrity was verifie
 The device checks, and refuses with the first failing code:
 
 1. the link: any direct IP link — USB-NCM, the device's setup hotspot, or the Wi-Fi network it
-   joined. `no_data_link` on a link with no IP path for the data socket (USB serial);
+   joined. `no_data_link` on a link with no IP path for the data socket (USB serial, BLE);
    `forbidden_link` on a link that is not the requesting host's own — a hub's leaf link, an
    unknown endpoint. A hub relays a command to its leaves over its own direct link, so a leaf
    would grant the file to the HUB's address: pull a leaf's recordings by connecting to the leaf;
@@ -132,7 +132,7 @@ away bytes still in flight.
 
 `DeleteRecording` (Command body 44) deletes one whole session. `Command.target_device` MUST name
 the unit; a broadcast delete answers `invalid_request`. A delete needs no data socket, so it is
-allowed on every direct link, USB serial included. Refusals: `forbidden_link` (a hub's leaf link or an
+allowed on every direct link, USB serial and BLE included. Refusals: `forbidden_link` (a hub's leaf link or an
 unknown endpoint), `no_sdcard`, `no_such_session`, `busy_recording`, `active_session`, `busy`, `protected`
 (encrypted parts, diagnostic files, or an upload of the session in progress), `delete_failed`. A
 session is deleted whole or not at all as far as any listing can see.
@@ -185,7 +185,7 @@ audio_ego_v3 (RTL8821CS Wi-Fi):
 | `active_session` | Delete of the session being recorded |
 | `busy` | Another host is pulling, OTA / format / storage recovery is running, or the file socket could not be opened |
 | `forbidden_link` | The link is not the host's own: a hub's leaf link, an unknown endpoint |
-| `no_data_link` | Open over a link with no IP path for the data socket (USB serial) |
+| `no_data_link` | Open over a link with no IP path for the data socket (USB serial, BLE) |
 | `no_sdcard` | No usable storage |
 | `no_such_session`, `no_such_file` | Not there (deleted, uploaded and removed, or a stale listing) |
 | `changed` | The file differs from `expect_size`/`expect_mtime_ns`, or is being repaired |
