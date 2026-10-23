@@ -166,7 +166,28 @@ message VideoMode {
   uint32 height = 2;
 }
 
+message CameraFrameRate {
+  uint32 camera_index = 1;
+  uint32 fps = 2;
+}
+
+message CapturePreset {
+  string id = 1;
+  repeated CameraFrameRate cameras = 2;
+}
+
+message CaptureSettings {
+  repeated CapturePreset supported_presets = 1;
+  string selected_preset = 2;
+  string active_preset = 3;
+  repeated CameraFrameRate active_camera_rates = 4;
+  // Empty after a successful apply; otherwise a machine-readable failure code.
+  string apply_error = 5;
+}
+
 message DeviceState {
+  // Absent on firmware that does not implement board capture presets.
+  CaptureSettings capture_settings = 50;
   visio_schema.v1.sensor.CaptureState capture_state = 46;
   string calibration_geometry_hash = 47;
   string calibration_transaction_id = 48;

@@ -33,6 +33,9 @@ struct Record {
   const char* format;
   // The line, without a line ending. text.data()[text.size()] is '\0'.
   std::string_view text;
+  // The caller already enforces a bounded sampling policy. A sink must keep
+  // these samples instead of applying a second, unrelated per-format budget.
+  bool sampled = false;
 };
 
 // Called on whichever thread reported, so it must be thread-safe, and it must
@@ -46,6 +49,13 @@ void SetSink(Sink sink);
 // printf-style. Line endings at the end are dropped; a line that cannot be
 // formatted is not delivered.
 void Write(Severity severity, const char* format, ...)
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((format(printf, 2, 3)))
+#endif
+    ;
+
+// For diagnostics with an explicit caller-owned rate/burst limit only.
+void WriteSampled(Severity severity, const char* format, ...)
 #if defined(__GNUC__) || defined(__clang__)
     __attribute__((format(printf, 2, 3)))
 #endif

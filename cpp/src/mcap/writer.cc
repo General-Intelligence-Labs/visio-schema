@@ -731,14 +731,15 @@ void McapWriter::FailStart() {
   staged_payload_bytes_ = 0;
 }
 
-void McapWriter::ArmStart(wire::SyncPoint target) {
+void McapWriter::ArmStart(wire::SyncPoint target, std::chrono::milliseconds wait) {
+  if (wait.count()<0) throw std::invalid_argument("negative recording start budget");
   if (start_status_.load() != StartStatus::Waiting)
     return;
   if (!candidate_ids_.empty())
     throw std::logic_error("recording start already receiving frames");
   start_target_ = target;
   start_deadline_ =
-      std::chrono::steady_clock::now() + rotation_policy_->start_wait;
+      std::chrono::steady_clock::now() + (wait.count()?wait:rotation_policy_->start_wait);
 }
 
 McapRotationStats McapWriter::rotation_stats() const {
@@ -800,7 +801,6 @@ void McapWriter::FlushStaged(bool rotate, bool allow_forced) {
     const auto status = writer_->write(metadata);
     if (!status.ok())
       throw std::runtime_error("sync metadata: " + status.message);
-    start_status_.store(StartStatus::Ready);
   }
   while (!staged_.empty()) {
     const auto &entry = staged_.front();
@@ -816,6 +816,8 @@ void McapWriter::FlushStaged(bool rotate, bool allow_forced) {
     staged_.pop_front();
   }
   candidate_ids_.clear();
+  if (starting && rotate)
+    start_status_.store(StartStatus::Ready);
 }
 
 void McapWriter::WriteContinuation(const Channel &channel,
@@ -879,7 +881,10 @@ void McapWriter::WriteContinuation(const Channel &channel,
       candidate_deadline_ =
           std::chrono::steady_clock::now() + rotation_policy_->max_wait;
       if (starting)
-        candidate_deadline_ = std::min(candidate_deadline_, start_deadline_);
+        // Wake/encoder/network arrival skew is not capture-time skew. The
+        // first complete IDR group uses the bounded recording-start budget;
+        // max_wait remains the independent steady-state rotation window.
+        candidate_deadline_ = start_deadline_;
       else if (max_bytes_ == 0 && max_duration_ns_ > 0)
         candidate_deadline_ = std::min(
             candidate_deadline_,

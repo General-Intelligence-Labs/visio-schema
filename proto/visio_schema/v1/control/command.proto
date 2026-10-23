@@ -73,7 +73,14 @@ message Command {
     CaptureSnapshot capture_snapshot = 48;
     ApplyCalibrationGroup apply_calibration_group = 49;
     CalibrationStep calibration_step = 50;
+    SetCapturePreset set_capture_preset = 51;
   }
+}
+
+// Persist a board-advertised capture preset. Applied after restart; resolution
+// and bitrate remain independent settings. Unknown preset IDs are rejected.
+message SetCapturePreset {
+  string preset_id = 1;
 }
 
 // Capture the primary camera as an upright 640x360 JPEG (quality 60). Must be

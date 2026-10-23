@@ -145,7 +145,10 @@ class McapWriter {
   enum class StartStatus { Waiting, Ready, TimedOut };
   StartStatus start_status() const { return start_status_.load(); }
   // Preparation-time only, before the worker receives any frames.
-  void ArmStart(wire::SyncPoint target);
+  // Called before input/worker start. A nonzero budget starts AFTER file
+  // creation; zero retains the rotation policy's configured start budget.
+  void ArmStart(wire::SyncPoint target,
+                std::chrono::milliseconds wait = std::chrono::milliseconds::zero());
   std::optional<std::chrono::steady_clock::time_point> rotation_deadline() const;
   std::uint64_t rotation_pending_bytes() const { return staged_bytes_.load(); }
   McapRotationStats rotation_stats() const;

@@ -36,6 +36,56 @@ message CameraSyncState {
   uint64 encoder_generation = 3;
   bool phase_locked = 4;
   uint64 last_idr_frame = 5;
+  // Actual producer-clock capture observations in the current generation.
+  uint64 first_capture_ns = 6;
+  uint64 latest_capture_ns = 7;
+  // First actual capture on the shared cadence; a faster local camera can
+  // produce an earlier interstitial frame, retained in first_capture_ns.
+  uint64 first_shared_capture_ns = 8;
+}
+
+// Hop-local capture coordination, owned by SyncService. Clock traffic remains
+// live in every phase. Generation and authority fence delayed launch replies.
+message CaptureSyncState {
+  enum LaunchMode {
+    SCHEDULED = 0;
+    RESET_ACQUIRE = 1;
+    RETAIN_PHASE = 2;
+  }
+  enum Phase {
+    AWAKE = 0;
+    PREPARING = 1;
+    ARMED = 2;
+    ASLEEP = 3;
+    FAILED = 4;
+    DRAINING = 5;
+  }
+  fixed64 authority_epoch = 1;
+  uint64 generation = 2;
+  uint64 roster_generation = 3;
+  Phase phase = 4;
+  bool demand = 5;
+  bool standby_supported = 6;
+  bool scheduled_launch_supported = 7;
+  int64 launch_reference_ns = 8;
+  fixed64 acknowledged_authority_epoch = 9;
+  uint64 acknowledged_generation = 10;
+  uint64 local_period_ns = 11;
+  bool launch_verified = 12;
+  string error = 13;
+  // Observed head grid for this launch, independent of clock-model activation.
+  // These are sensor capture stamps, never requested trigger timestamps.
+  uint64 grid_phase_ns = 14;
+  uint64 grid_period_ns = 15;
+  uint64 grid_generation = 16;
+  uint32 idr_period_frames = 17;
+  uint64 grid_frame_index = 18;
+  // Explicit wake requests remain distinguishable while demand stays asserted.
+  uint64 demand_revision = 19;
+  LaunchMode launch_mode = 20;
+  // Derived from the slowest local camera, independent of PWM's fastest rate.
+  // Used to align a member's first capture with the head's first shared slot.
+  uint64 first_frame_delay_ns = 21;
 }
 
 message Heartbeat {
@@ -84,4 +134,5 @@ message Heartbeat {
   // Changes on process restart, including a peer reboot on a reopenable leg.
   fixed64 clock_epoch = 10;
   repeated CameraSyncState camera_sync = 11;
+  CaptureSyncState capture_sync = 12;
 }

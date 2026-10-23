@@ -372,6 +372,16 @@ visio_schema.v1.sensor.CaptureState.changed_members max_count:16 max_size:128
 
 visio_schema.v1.sensor.CaptureState.attached_members max_count:16 max_size:128
 
+visio_schema.v1.control.SetCapturePreset.preset_id max_size:33
+visio_schema.v1.control.CapturePreset.id max_size:33
+visio_schema.v1.control.CapturePreset.cameras max_count:8
+visio_schema.v1.control.CaptureSettings.supported_presets max_count:2
+visio_schema.v1.control.CaptureSettings.selected_preset max_size:33
+visio_schema.v1.control.CaptureSettings.active_preset max_size:33
+visio_schema.v1.control.CaptureSettings.active_camera_rates max_count:8
+visio_schema.v1.control.CaptureSettings.apply_error max_size:129
+visio_schema.v1.service.heartbeat.CaptureSyncState.error max_size:129
+
 visio_schema.v1.control.CameraRotation.rotation type:FT_STATIC
 visio_schema.v1.control.CalibrationMemberUpdate.device_name max_size:128
 visio_schema.v1.control.CalibrationMemberUpdate.uid max_size:65

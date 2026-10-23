@@ -131,7 +131,10 @@ class McapWriterEndpoint : public transport::Endpoint {
   // link hit EOF, detach me", and a write-only sink ignores both callbacks.
   // Wait only on the command worker. SD I/O and bus dispatch never wait here.
   bool WaitForStart(std::chrono::milliseconds timeout);
-  void ArmStart(wire::SyncPoint target) { writer_->ArmStart(target); }
+  void ArmStart(wire::SyncPoint target,
+                std::chrono::milliseconds wait = std::chrono::milliseconds::zero()) {
+    writer_->ArmStart(target,wait);
+  }
   McapWriter::StartStatus start_status() const { return writer_->start_status(); }
   bool write_failed() const { return failed_.load(std::memory_order_relaxed) || writer_->storage_fault(); }
 

@@ -722,6 +722,30 @@ TEST(McapWriterEndpoint, PendingStartExpiresWithoutAnyTraffic) {
   EXPECT_EQ(endpoint.start_status(),McapWriter::StartStatus::TimedOut);
   endpoint.Stop();EXPECT_EQ(PartCount(stem),0);RemoveParts(stem);
 }
+TEST(McapWriterEndpoint, FirstGroupUsesStartDeadlineRatherThanRotationArrivalWindow) {
+  const std::string stem="endpoint_first_group_arrival";RemoveParts(stem);
+  auto a=MakeChannel(16,"/head/camera/0"),b=MakeChannel(17,"/wrist/camera/0");
+  a.schema_name=b.schema_name=visio_schema::kCompressedVideoSchema;
+  McapRotationPolicy policy;policy.video_ids={16,17};
+  policy.max_wait=std::chrono::milliseconds(20);
+  policy.start_wait=std::chrono::milliseconds(500);
+  McapWriterEndpoint endpoint(TempPath(stem+".mcap"),[&](std::uint32_t id) {
+    return id==16?&a:&b;
+  },1'000'000,0,WritePolicy::lossless(),{},true,0,0,{}, {}, {}, {},policy);
+  const visio_schema::wire::SyncPoint point{42,7,0};
+  endpoint.ArmStart(point);endpoint.Start(nullptr,nullptr);
+  auto first=Data(16,"head-idr");first.keyframe=true;first.sync_point=point;first.timestamp.seconds=1;
+  endpoint.Send(first);
+  for(unsigned i=0;i<1000 && !endpoint.stats().rotation.max_staged_bytes;++i)
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  ASSERT_GT(endpoint.stats().rotation.max_staged_bytes,0u);
+  EXPECT_FALSE(endpoint.WaitForStart(std::chrono::milliseconds(60)));
+  auto second=first;second.stream_id=17;second.payload="wrist-idr";
+  endpoint.Send(second);
+  EXPECT_TRUE(endpoint.WaitForStart(std::chrono::milliseconds(200)))
+      << "transport arrival delay does not change the common capture identity or timestamp";
+  endpoint.Stop();EXPECT_FALSE(endpoint.write_failed());RemoveParts(stem);
+}
 
 TEST(McapWriterEndpoint, ReconnectedCameraKeepsFrozenMembershipAndCanAlignAgain) {
   const std::string stem="endpoint_reconnected_camera";RemoveParts(stem);

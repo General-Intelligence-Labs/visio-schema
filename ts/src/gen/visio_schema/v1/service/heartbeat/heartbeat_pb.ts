@@ -9,15 +9,15 @@
 // @generated from file visio_schema/v1/service/heartbeat/heartbeat.proto (package visio_schema.v1.service.heartbeat, syntax proto3)
 /* eslint-disable */
 
-import type { GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
-import { fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
+import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
+import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file visio_schema/v1/service/heartbeat/heartbeat.proto.
  */
 export const file_visio_schema_v1_service_heartbeat_heartbeat: GenFile = /*@__PURE__*/
-  fileDesc("CjF2aXNpb19zY2hlbWEvdjEvc2VydmljZS9oZWFydGJlYXQvaGVhcnRiZWF0LnByb3RvEiF2aXNpb19zY2hlbWEudjEuc2VydmljZS5oZWFydGJlYXQiyAIKDENsb2NrTWFwcGluZxIXCg9hdXRob3JpdHlfZXBvY2gYASABKAYSEAoIcmV2aXNpb24YAiABKA0SFQoNcGVlcl9lcG9jaF9ucxgDIAEoAxIaChJyZWZlcmVuY2VfZXBvY2hfbnMYBCABKAMSEAoIcmF0ZV9wcGIYBSABKBISGwoTdmFsaWRfdW50aWxfcGVlcl9ucxgGIAEoAxIWCg5waGFzZV9zaWdtYV9ucxgHIAEoBBIWCg5yYXRlX3NpZ21hX3BwYhgIIAEoBBIVCg1ncmlkX3BoYXNlX25zGAkgASgEEhYKDmdyaWRfcGVyaW9kX25zGAogASgEEhcKD2dyaWRfZ2VuZXJhdGlvbhgLIAEoBBIYChBncmlkX2ZyYW1lX2luZGV4GAwgASgEEhkKEWlkcl9wZXJpb2RfZnJhbWVzGA0gASgNIo0BCg9DYW1lcmFTeW5jU3RhdGUSFAoMY2FtZXJhX2luZGV4GAEgASgNEhoKEmNhcHR1cmVfZ2VuZXJhdGlvbhgCIAEoBBIaChJlbmNvZGVyX2dlbmVyYXRpb24YAyABKAQSFAoMcGhhc2VfbG9ja2VkGAQgASgIEhYKDmxhc3RfaWRyX2ZyYW1lGAUgASgEIvUCCglIZWFydGJlYXQSEgoKdHhfbW9ub19ucxgBIAEoBBIXCg9lY2hvX3R4X21vbm9fbnMYAiABKAQSFwoPZWNob19yeF9tb25vX25zGAMgASgEEhMKC3F1ZXVlX2RlcHRoGAQgASgNEhEKCWNsaWVudF9pZBgFIAEoCRIZChFjYW1fZ3JpZF9waGFzZV9ucxgGIAEoBBJGCg1jbG9ja19tYXBwaW5nGAcgASgLMi8udmlzaW9fc2NoZW1hLnYxLnNlcnZpY2UuaGVhcnRiZWF0LkNsb2NrTWFwcGluZxIfChdhcHBsaWVkX2F1dGhvcml0eV9lcG9jaBgIIAEoBhIYChBhcHBsaWVkX3JldmlzaW9uGAkgASgNEhMKC2Nsb2NrX2Vwb2NoGAogASgGEkcKC2NhbWVyYV9zeW5jGAsgAygLMjIudmlzaW9fc2NoZW1hLnYxLnNlcnZpY2UuaGVhcnRiZWF0LkNhbWVyYVN5bmNTdGF0ZWIGcHJvdG8z");
+  fileDesc("CjF2aXNpb19zY2hlbWEvdjEvc2VydmljZS9oZWFydGJlYXQvaGVhcnRiZWF0LnByb3RvEiF2aXNpb19zY2hlbWEudjEuc2VydmljZS5oZWFydGJlYXQiyAIKDENsb2NrTWFwcGluZxIXCg9hdXRob3JpdHlfZXBvY2gYASABKAYSEAoIcmV2aXNpb24YAiABKA0SFQoNcGVlcl9lcG9jaF9ucxgDIAEoAxIaChJyZWZlcmVuY2VfZXBvY2hfbnMYBCABKAMSEAoIcmF0ZV9wcGIYBSABKBISGwoTdmFsaWRfdW50aWxfcGVlcl9ucxgGIAEoAxIWCg5waGFzZV9zaWdtYV9ucxgHIAEoBBIWCg5yYXRlX3NpZ21hX3BwYhgIIAEoBBIVCg1ncmlkX3BoYXNlX25zGAkgASgEEhYKDmdyaWRfcGVyaW9kX25zGAogASgEEhcKD2dyaWRfZ2VuZXJhdGlvbhgLIAEoBBIYChBncmlkX2ZyYW1lX2luZGV4GAwgASgEEhkKEWlkcl9wZXJpb2RfZnJhbWVzGA0gASgNIuMBCg9DYW1lcmFTeW5jU3RhdGUSFAoMY2FtZXJhX2luZGV4GAEgASgNEhoKEmNhcHR1cmVfZ2VuZXJhdGlvbhgCIAEoBBIaChJlbmNvZGVyX2dlbmVyYXRpb24YAyABKAQSFAoMcGhhc2VfbG9ja2VkGAQgASgIEhYKDmxhc3RfaWRyX2ZyYW1lGAUgASgEEhgKEGZpcnN0X2NhcHR1cmVfbnMYBiABKAQSGQoRbGF0ZXN0X2NhcHR1cmVfbnMYByABKAQSHwoXZmlyc3Rfc2hhcmVkX2NhcHR1cmVfbnMYCCABKAQitwYKEENhcHR1cmVTeW5jU3RhdGUSFwoPYXV0aG9yaXR5X2Vwb2NoGAEgASgGEhIKCmdlbmVyYXRpb24YAiABKAQSGQoRcm9zdGVyX2dlbmVyYXRpb24YAyABKAQSSAoFcGhhc2UYBCABKA4yOS52aXNpb19zY2hlbWEudjEuc2VydmljZS5oZWFydGJlYXQuQ2FwdHVyZVN5bmNTdGF0ZS5QaGFzZRIOCgZkZW1hbmQYBSABKAgSGQoRc3RhbmRieV9zdXBwb3J0ZWQYBiABKAgSIgoac2NoZWR1bGVkX2xhdW5jaF9zdXBwb3J0ZWQYByABKAgSGwoTbGF1bmNoX3JlZmVyZW5jZV9ucxgIIAEoAxIkChxhY2tub3dsZWRnZWRfYXV0aG9yaXR5X2Vwb2NoGAkgASgGEh8KF2Fja25vd2xlZGdlZF9nZW5lcmF0aW9uGAogASgEEhcKD2xvY2FsX3BlcmlvZF9ucxgLIAEoBBIXCg9sYXVuY2hfdmVyaWZpZWQYDCABKAgSDQoFZXJyb3IYDSABKAkSFQoNZ3JpZF9waGFzZV9ucxgOIAEoBBIWCg5ncmlkX3BlcmlvZF9ucxgPIAEoBBIXCg9ncmlkX2dlbmVyYXRpb24YECABKAQSGQoRaWRyX3BlcmlvZF9mcmFtZXMYESABKA0SGAoQZ3JpZF9mcmFtZV9pbmRleBgSIAEoBBIXCg9kZW1hbmRfcmV2aXNpb24YEyABKAQSUwoLbGF1bmNoX21vZGUYFCABKA4yPi52aXNpb19zY2hlbWEudjEuc2VydmljZS5oZWFydGJlYXQuQ2FwdHVyZVN5bmNTdGF0ZS5MYXVuY2hNb2RlEhwKFGZpcnN0X2ZyYW1lX2RlbGF5X25zGBUgASgEIkAKCkxhdW5jaE1vZGUSDQoJU0NIRURVTEVEEAASEQoNUkVTRVRfQUNRVUlSRRABEhAKDFJFVEFJTl9QSEFTRRACIlIKBVBoYXNlEgkKBUFXQUtFEAASDQoJUFJFUEFSSU5HEAESCQoFQVJNRUQQAhIKCgZBU0xFRVAQAxIKCgZGQUlMRUQQBBIMCghEUkFJTklORxAFIsADCglIZWFydGJlYXQSEgoKdHhfbW9ub19ucxgBIAEoBBIXCg9lY2hvX3R4X21vbm9fbnMYAiABKAQSFwoPZWNob19yeF9tb25vX25zGAMgASgEEhMKC3F1ZXVlX2RlcHRoGAQgASgNEhEKCWNsaWVudF9pZBgFIAEoCRIZChFjYW1fZ3JpZF9waGFzZV9ucxgGIAEoBBJGCg1jbG9ja19tYXBwaW5nGAcgASgLMi8udmlzaW9fc2NoZW1hLnYxLnNlcnZpY2UuaGVhcnRiZWF0LkNsb2NrTWFwcGluZxIfChdhcHBsaWVkX2F1dGhvcml0eV9lcG9jaBgIIAEoBhIYChBhcHBsaWVkX3JldmlzaW9uGAkgASgNEhMKC2Nsb2NrX2Vwb2NoGAogASgGEkcKC2NhbWVyYV9zeW5jGAsgAygLMjIudmlzaW9fc2NoZW1hLnYxLnNlcnZpY2UuaGVhcnRiZWF0LkNhbWVyYVN5bmNTdGF0ZRJJCgxjYXB0dXJlX3N5bmMYDCABKAsyMy52aXNpb19zY2hlbWEudjEuc2VydmljZS5oZWFydGJlYXQuQ2FwdHVyZVN5bmNTdGF0ZWIGcHJvdG8z");
 
 /**
  * Immutable producer-clock -> receiving-reference-clock transform. The receiver
@@ -131,6 +131,26 @@ export type CameraSyncState = Message<"visio_schema.v1.service.heartbeat.CameraS
    * @generated from field: uint64 last_idr_frame = 5;
    */
   lastIdrFrame: bigint;
+
+  /**
+   * Actual producer-clock capture observations in the current generation.
+   *
+   * @generated from field: uint64 first_capture_ns = 6;
+   */
+  firstCaptureNs: bigint;
+
+  /**
+   * @generated from field: uint64 latest_capture_ns = 7;
+   */
+  latestCaptureNs: bigint;
+
+  /**
+   * First actual capture on the shared cadence; a faster local camera can
+   * produce an earlier interstitial frame, retained in first_capture_ns.
+   *
+   * @generated from field: uint64 first_shared_capture_ns = 8;
+   */
+  firstSharedCaptureNs: bigint;
 };
 
 /**
@@ -139,6 +159,201 @@ export type CameraSyncState = Message<"visio_schema.v1.service.heartbeat.CameraS
  */
 export const CameraSyncStateSchema: GenMessage<CameraSyncState> = /*@__PURE__*/
   messageDesc(file_visio_schema_v1_service_heartbeat_heartbeat, 1);
+
+/**
+ * Hop-local capture coordination, owned by SyncService. Clock traffic remains
+ * live in every phase. Generation and authority fence delayed launch replies.
+ *
+ * @generated from message visio_schema.v1.service.heartbeat.CaptureSyncState
+ */
+export type CaptureSyncState = Message<"visio_schema.v1.service.heartbeat.CaptureSyncState"> & {
+  /**
+   * @generated from field: fixed64 authority_epoch = 1;
+   */
+  authorityEpoch: bigint;
+
+  /**
+   * @generated from field: uint64 generation = 2;
+   */
+  generation: bigint;
+
+  /**
+   * @generated from field: uint64 roster_generation = 3;
+   */
+  rosterGeneration: bigint;
+
+  /**
+   * @generated from field: visio_schema.v1.service.heartbeat.CaptureSyncState.Phase phase = 4;
+   */
+  phase: CaptureSyncState_Phase;
+
+  /**
+   * @generated from field: bool demand = 5;
+   */
+  demand: boolean;
+
+  /**
+   * @generated from field: bool standby_supported = 6;
+   */
+  standbySupported: boolean;
+
+  /**
+   * @generated from field: bool scheduled_launch_supported = 7;
+   */
+  scheduledLaunchSupported: boolean;
+
+  /**
+   * @generated from field: int64 launch_reference_ns = 8;
+   */
+  launchReferenceNs: bigint;
+
+  /**
+   * @generated from field: fixed64 acknowledged_authority_epoch = 9;
+   */
+  acknowledgedAuthorityEpoch: bigint;
+
+  /**
+   * @generated from field: uint64 acknowledged_generation = 10;
+   */
+  acknowledgedGeneration: bigint;
+
+  /**
+   * @generated from field: uint64 local_period_ns = 11;
+   */
+  localPeriodNs: bigint;
+
+  /**
+   * @generated from field: bool launch_verified = 12;
+   */
+  launchVerified: boolean;
+
+  /**
+   * @generated from field: string error = 13;
+   */
+  error: string;
+
+  /**
+   * Observed head grid for this launch, independent of clock-model activation.
+   * These are sensor capture stamps, never requested trigger timestamps.
+   *
+   * @generated from field: uint64 grid_phase_ns = 14;
+   */
+  gridPhaseNs: bigint;
+
+  /**
+   * @generated from field: uint64 grid_period_ns = 15;
+   */
+  gridPeriodNs: bigint;
+
+  /**
+   * @generated from field: uint64 grid_generation = 16;
+   */
+  gridGeneration: bigint;
+
+  /**
+   * @generated from field: uint32 idr_period_frames = 17;
+   */
+  idrPeriodFrames: number;
+
+  /**
+   * @generated from field: uint64 grid_frame_index = 18;
+   */
+  gridFrameIndex: bigint;
+
+  /**
+   * Explicit wake requests remain distinguishable while demand stays asserted.
+   *
+   * @generated from field: uint64 demand_revision = 19;
+   */
+  demandRevision: bigint;
+
+  /**
+   * @generated from field: visio_schema.v1.service.heartbeat.CaptureSyncState.LaunchMode launch_mode = 20;
+   */
+  launchMode: CaptureSyncState_LaunchMode;
+
+  /**
+   * Derived from the slowest local camera, independent of PWM's fastest rate.
+   * Used to align a member's first capture with the head's first shared slot.
+   *
+   * @generated from field: uint64 first_frame_delay_ns = 21;
+   */
+  firstFrameDelayNs: bigint;
+};
+
+/**
+ * Describes the message visio_schema.v1.service.heartbeat.CaptureSyncState.
+ * Use `create(CaptureSyncStateSchema)` to create a new message.
+ */
+export const CaptureSyncStateSchema: GenMessage<CaptureSyncState> = /*@__PURE__*/
+  messageDesc(file_visio_schema_v1_service_heartbeat_heartbeat, 2);
+
+/**
+ * @generated from enum visio_schema.v1.service.heartbeat.CaptureSyncState.LaunchMode
+ */
+export enum CaptureSyncState_LaunchMode {
+  /**
+   * @generated from enum value: SCHEDULED = 0;
+   */
+  SCHEDULED = 0,
+
+  /**
+   * @generated from enum value: RESET_ACQUIRE = 1;
+   */
+  RESET_ACQUIRE = 1,
+
+  /**
+   * @generated from enum value: RETAIN_PHASE = 2;
+   */
+  RETAIN_PHASE = 2,
+}
+
+/**
+ * Describes the enum visio_schema.v1.service.heartbeat.CaptureSyncState.LaunchMode.
+ */
+export const CaptureSyncState_LaunchModeSchema: GenEnum<CaptureSyncState_LaunchMode> = /*@__PURE__*/
+  enumDesc(file_visio_schema_v1_service_heartbeat_heartbeat, 2, 0);
+
+/**
+ * @generated from enum visio_schema.v1.service.heartbeat.CaptureSyncState.Phase
+ */
+export enum CaptureSyncState_Phase {
+  /**
+   * @generated from enum value: AWAKE = 0;
+   */
+  AWAKE = 0,
+
+  /**
+   * @generated from enum value: PREPARING = 1;
+   */
+  PREPARING = 1,
+
+  /**
+   * @generated from enum value: ARMED = 2;
+   */
+  ARMED = 2,
+
+  /**
+   * @generated from enum value: ASLEEP = 3;
+   */
+  ASLEEP = 3,
+
+  /**
+   * @generated from enum value: FAILED = 4;
+   */
+  FAILED = 4,
+
+  /**
+   * @generated from enum value: DRAINING = 5;
+   */
+  DRAINING = 5,
+}
+
+/**
+ * Describes the enum visio_schema.v1.service.heartbeat.CaptureSyncState.Phase.
+ */
+export const CaptureSyncState_PhaseSchema: GenEnum<CaptureSyncState_Phase> = /*@__PURE__*/
+  enumDesc(file_visio_schema_v1_service_heartbeat_heartbeat, 2, 1);
 
 /**
  * @generated from message visio_schema.v1.service.heartbeat.Heartbeat
@@ -235,6 +450,11 @@ export type Heartbeat = Message<"visio_schema.v1.service.heartbeat.Heartbeat"> &
    * @generated from field: repeated visio_schema.v1.service.heartbeat.CameraSyncState camera_sync = 11;
    */
   cameraSync: CameraSyncState[];
+
+  /**
+   * @generated from field: visio_schema.v1.service.heartbeat.CaptureSyncState capture_sync = 12;
+   */
+  captureSync?: CaptureSyncState | undefined;
 };
 
 /**
@@ -242,5 +462,5 @@ export type Heartbeat = Message<"visio_schema.v1.service.heartbeat.Heartbeat"> &
  * Use `create(HeartbeatSchema)` to create a new message.
  */
 export const HeartbeatSchema: GenMessage<Heartbeat> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_service_heartbeat_heartbeat, 2);
+  messageDesc(file_visio_schema_v1_service_heartbeat_heartbeat, 3);
 
