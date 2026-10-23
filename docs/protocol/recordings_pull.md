@@ -39,8 +39,9 @@ Listing is allowed on every link and while recording.
 Managed storage also returns `catalogue_generation` and `RecordingsList.catalogue_complete`.
 A nonzero generation identifies this firmware/mount epoch. A device indexes its storage after it
 starts or a card is inserted; while it does, a listing is still answered: it names every session,
-some with their size, duration and labels still to come, and `catalogue_complete` is false until
-the index is done. One session's files are answered in full at any time. Older firmware returns
+with its size, file count, duration and `damaged` as the device reads them from the card, and
+`catalogue_complete` is false until the index is done. One session's files are answered in full at
+any time. Older firmware returns
 zero for both, so clients must treat these fields as unavailable there. Each file exposes
 `object_version` (0 for a file of a session the device has not indexed yet), lifecycle
 (`writing`, `finalizing`, `saved`, `failed`, `legacy`), independent integrity
