@@ -1,7 +1,7 @@
 """Reference rig client for the Ingest API: what the firmware does, in Python.
 
-For server integration tests and staging (``docs/ingest-api-implementation-plan.md``
-Phase 5), and as a readable statement of the rig's side of the protocol
+For server integration tests and staging, and as a readable statement of the
+rig's side of the protocol
 (``docs/protocol/ingest-api.md``): sign every call, correct the clock from ``Date``
 on ``clock_skew``, verify the ``initiate`` signature before using the folder,
 open the sealed credentials, PUT each file once while hashing it, then commit and

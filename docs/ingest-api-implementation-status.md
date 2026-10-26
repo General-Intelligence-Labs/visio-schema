@@ -1,6 +1,6 @@
 # Rig Ingest API: implementation status (overnight build, 2026-10-22)
 
-Everything in the plan ([`ingest-api-implementation-plan.md`](ingest-api-implementation-plan.md))
+Everything in GILabs' implementation plan for the rig Ingest API
 that can be built and tested without production access is built, and open as
 draft PRs. **Nothing is merged, deployed or applied anywhere.** Both feature flags
 default off.
@@ -12,7 +12,7 @@ one is listed in §3 so you can overturn it. The questions that are yours are in
 
 | Repo | Branch | Worktree | Commits |
 |---|---|---|---|
-| visio-schema | `feat/ingest-reference-client` (from `origin/dev` `0302d4d`) | `episode-outcomes-visio-schema/.claude/worktrees/rig-ingest-api-spec` | the reference rig client, the plan and this report (see §1.1) |
+| visio-schema | `feat/ingest-reference-client` (from `origin/dev` `0302d4d`) | `episode-outcomes-visio-schema/.claude/worktrees/rig-ingest-api-spec` | the reference rig client and this report (see §1.1) |
 | data-platform | `feat/rig-device-upload` (from `origin/main` `6f9b6c9a`) | `data-platform/.claude/worktrees/rig-device-upload` | `01a88af8` schema · `c31e3a66` API and registry · `3cca0940` OpenAPI · `6e96f74c` CLI isolation, portal grouping · `9089cd7c` S3 endpoint fix · `39263c04` test scoping · `e01916fc` `b981c05f` `0db636ea` portal UI · `44b35c0a` retired-rig fix · `32c312dd` held to `dev`'s vectors too · draft PR gilabs-data-center#788 |
 | DPS | `feat/device-upload-session-batches` (from `origin/main` `fa097c8`) | `data-processing-services/.claude/worktrees/device-upload-session-batches` | `5e39e8e` model mirror · `8bf1cd2` SHA-256 pre-pass · `f1e83cb` scoped purge · `f0d49c4` reconciler re-drive · `a1a7493` sweeper guard · draft PR data-processing-services#417 |
 
@@ -152,7 +152,7 @@ I deliberately did not use `supabase start`. It reuses the main checkout's `proj
    - The migration must apply **before** the DPS deploy: DPS's model now maps the three new columns, and every batch load (CLI batches included) breaks on a database without them.
    - The backend can ship with the flag off at any point after the migration.
    - Should I write this into each branch's description?
-2. **The migration was written ahead of your DDL sign-off**, because you asked me not to block. Please review `20261022090000_add_vendor_devices_and_device_uploads.sql` against §6 of the plan, and choice #12 above.
+2. **The migration was written ahead of your DDL sign-off**, because you asked me not to block. Please review `20261022090000_add_vendor_devices_and_device_uploads.sql` and choice #12 above.
 3. **Phase 0 still needs real buckets.** R2 single-PUT ETag = MD5, the ingest bucket not on SSE-KMS (#14), LIST latency, mint rate limits. Run them yourself, or should I write the commands?
 4. **Factory-clock dating (#7).** Is "date by commit time, mark `date_basis`" right? A CLI delivery of the same dead-clock session would get the operator's date instead, so the two would not dedup.
 5. **Bytes left behind.** When an expired upload's prefix is retained because sessions were unfinished, nothing purges it later. Purge is off by default today. Do we want a follow-up sweep?
@@ -163,5 +163,5 @@ I deliberately did not use `supabase start`. It reuses the main checkout's `proj
 10. **Status filter.** On the default list, filtering by "rejected" can't find a rig's failed *session*, only upload batches; those sessions show when the rig is expanded. Should the filter also search sessions?
 11. **Next steps outside this build:**
    - the companion app must accept the `visio+https` row;
-   - the firmware items in the plan's §8;
+   - the firmware items: MD5 while streaming (CPU cost still to be measured), the random `session_key`, hold mode while recording, and `403 unauthorized` handling;
    - marking the draft PRs ready, in order (#788 first, then #417).
