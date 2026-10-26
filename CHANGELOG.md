@@ -6,6 +6,16 @@ bump the MINOR version.
 
 ## Unreleased
 
+### `visio_schema.ingest.client` — a reference rig client for the Ingest API
+
+What a rig does, in Python and stdlib only, on top of `visio_schema.ingest`:
+- sign every call, correcting the clock from the reply's `Date` on `clock_skew`;
+- verify the `initiate` signature before using the folder, then open the sealed credentials;
+- PUT each file once with its MD5 (SigV4 for S3-compatible stores, with the session token, or the Azure SAS);
+- commit, and treat a session as done only on a receipt that verifies.
+
+For server integration tests and staging, not a production uploader. Its SigV4 is checked against botocore's where botocore is installed. An internal submodule; nothing on the wire changes.
+
 ### Coordinated rig control alongside ingest and recording limits
 
 The combined contract preserves the published ingest and duration assignments.
