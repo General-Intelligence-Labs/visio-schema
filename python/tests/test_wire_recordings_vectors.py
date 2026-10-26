@@ -4,7 +4,6 @@ A REGENERATION check: it fails when the builders or the schema change without
 the corpus being regenerated, which is exactly when C++ and TypeScript would
 silently diverge from it.
 """
-import importlib.util
 import sys
 from pathlib import Path
 
@@ -13,10 +12,7 @@ import _golden
 
 V = _golden.load("recordings_wire_vectors.txt")
 
-_gen_path = Path(__file__).resolve().parents[2] / "scripts" / "gen_recordings_wire_vectors.py"
-_spec = importlib.util.spec_from_file_location("gen_recordings_wire_vectors", _gen_path)
-gen = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(gen)
+gen = _golden.load_generator("gen_recordings_wire_vectors")
 
 
 def test_the_corpus_and_the_generator_agree_on_the_case_set():

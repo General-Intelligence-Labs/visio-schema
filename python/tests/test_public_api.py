@@ -66,6 +66,11 @@ REQUIRED_COMMAND_BODIES = frozenset(
         "set_gps_tagging",
         "set_ble",
         "set_anti_flicker",
+        "capture_snapshot",
+        "ingest_sign",
+        "ingest_open_credentials",
+        "ingest_check_receipt",
+        "set_max_recording_duration",
     }
 )
 
@@ -74,6 +79,35 @@ def test_facade_all_is_frozen():
     """``visio_schema.__all__`` is exactly the curated set — additions and removals both fail."""
     assert frozenset(visio_schema.__all__) == FACADE_API
     assert len(visio_schema.__all__) == len(set(visio_schema.__all__)), "duplicate in __all__"
+
+
+def test_camera_and_ingest_wire_numbers_coexist():
+    from visio_schema.v1.control import command_pb2, command_result_pb2
+
+    expected = {
+        command_pb2.Command: {
+            "set_anti_flicker": 47, "capture_snapshot": 48,
+            "ingest_sign": 49, "ingest_open_credentials": 50,
+            "ingest_check_receipt": 51,
+            "set_max_recording_duration": 52, "apply_calibration_group": 53,
+            "calibration_step": 54, "set_capture_preset": 55,
+        },
+        command_result_pb2.CommandResult: {
+            "snapshot": 14, "ingest_signature": 15, "ingest_credentials": 16,
+        },
+        command_result_pb2.DeviceState: {
+            "anti_flicker": 42, "anti_flicker_pending": 43,
+            "snapshot_supported": 44, "storage_destination_hint": 45,
+            "ingest_api_supported": 46,
+            "max_recording_duration_s": 47, "last_recording_stop": 48,
+            "calibration_transaction_state": 49, "capture_settings": 50,
+            "supported_video_modes": 51, "capture_state": 52,
+            "calibration_geometry_hash": 53, "calibration_transaction_id": 54,
+        },
+    }
+    for message, fields in expected.items():
+        for name, number in fields.items():
+            assert message.DESCRIPTOR.fields_by_name[name].number == number
 
 
 def test_facade_names_resolve():
@@ -270,6 +304,24 @@ def test_proto_command_schema_present():
     # muted instead of unsupported; pin it where the contract lives.
     nv = state.DESCRIPTOR.fields_by_name["notice_volume"]
     assert nv.has_presence and nv.number == 34
+
+    # ── max recording time ──
+    # Presence on the limit for notice_volume's reason: absent hides the app
+    # control, 0 is "no limit". Devices write the stop reasons by value and
+    # apps map them, so renumbering one changes what a stop means.
+    body = command_pb2.Command.DESCRIPTOR.fields_by_name["set_max_recording_duration"]
+    assert body.number == 52
+    limit = command_pb2.SetMaxRecordingDuration.DESCRIPTOR.fields_by_name
+    assert limit["max_duration_s"].number == 1
+    mrd = state.DESCRIPTOR.fields_by_name["max_recording_duration_s"]
+    assert mrd.has_presence and mrd.number == 47
+    last = state.DESCRIPTOR.fields_by_name["last_recording_stop"]
+    assert last.number == 48 and last.message_type.name == "RecordingStop"
+    stop = command_result_pb2.RecordingStop
+    assert stop.REASON_UNSPECIFIED == 0
+    assert stop.REASON_REQUESTED == 1
+    assert stop.REASON_MAX_DURATION == 2
+    assert stop.REASON_DEVICE == 3
 
     # ── sealed provisioning (0.8.0) ──
     # Both consumers hardcode these numbers: visio-embedded through the nanopb

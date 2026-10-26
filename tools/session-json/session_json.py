@@ -26,6 +26,7 @@ import argparse
 import json
 import math
 import os
+import re
 import struct
 import sys
 import time
@@ -183,6 +184,14 @@ def _integer(meta: dict[str, str], key: str) -> str:
     return str(int(meta[key])) if key in meta else "0"
 
 
+def _session_key(meta: dict[str, str]) -> str:
+    """The stored key only if it is exactly 32 lowercase hex: it names an
+    upload folder, so a torn or hand-edited value is dropped, as the
+    firmware's reader does."""
+    key = meta.get("session_key", "")
+    return key if re.fullmatch(r"[0-9a-f]{32}", key) else ""
+
+
 def session_json_text(meta: dict[str, str]) -> str:
     """Render the sidecar for one session's capture metadata.
 
@@ -207,6 +216,7 @@ def session_json_text(meta: dict[str, str]) -> str:
             but malformed is a damaged record, not a blank field, and rendering it as
             ``0.000000`` would launder corruption into a plausible timestamp.
     """
+    meta = {**meta, "session_key": _session_key(meta)}
     fields = (
         ("session_name", _quote(meta.get("session_name", ""))),
         ("device_id", _quote(meta.get("serial", ""))),
@@ -237,6 +247,15 @@ def session_json_text(meta: dict[str, str]) -> str:
         # the firmware's explicit "not available" values.
         ("stop_cause", _quote(meta.get("stop_cause", ""))),
         ("duration_s", _integer(meta, "duration_s")),
+        # The session's stable id, minted at open and carried in the opening
+        # MCAP record too, so a rebuild recovers it. Empty on a session
+        # recorded before it existed.
+        ("session_key", _quote(meta.get("session_key", ""))),
+        # When the calibration the session was shot under was last updated,
+        # in UTC Unix microseconds. The record omits it when unknown, so it
+        # renders as the firmware's zero.
+        ("calibration_updated_at_us",
+         _integer(meta, "calibration_updated_at_us")),
     )
     return "{" + ",".join(f"{_quote(k)}:{v}" for k, v in fields) + "}\n"
 

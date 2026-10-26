@@ -85,7 +85,7 @@ export type Header = Message<"visio_schema.v1.wire.Header"> & {
    * Additive and safe across versions: a producer that does not set it reads as
    * false, which is exactly the old behaviour. A rig whose leaves predate this
    * field still loses their video — see the pre-keyframe warning in
-   * mcap/writer.cc, which makes that visible instead of silent.
+   * mcap/writer/record.cc, which makes that visible instead of silent.
    *
    * @generated from field: bool keyframe = 4;
    */

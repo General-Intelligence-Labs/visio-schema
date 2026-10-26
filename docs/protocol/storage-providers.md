@@ -134,6 +134,29 @@ A **CNAME custom domain does not match** and falls through to `AwsS3`, which
 will fail against OSS/COS. Provision the provider's own endpoint and the bare
 region.
 
+### 2.1 An Ingest API instead of a bucket
+
+The endpoint **scheme** is checked before the host. `visio+https://host/base`
+names a customer **Ingest API** ([`ingest-api.md`](ingest-api.md)), not a
+bucket: the device asks that service where to upload and for short-lived
+credentials, and the bucket it is given is then dialled by the host rules
+above. The scheme is the selector for the same reason the host is: the URL is
+the one source of truth, so there is still no provider or mode field.
+
+In that mode the `SetStorage` / `TestStorage` fields mean:
+
+| Field | Ingest API meaning |
+|---|---|
+| `endpoint_url` | the `visio+https://` base URL (required) |
+| `access_key_id` | the device key's `key_id` (required) |
+| `secret_access_key` / sealed `sk` | the 32-byte device key, unpadded base64url (required) |
+| `destination_hint` | free text passed to the service (optional) |
+| `region`, `bucket`, `prefix`, `status_prefix` | unused; rejected when sent non-empty |
+
+`DeviceState.ingest_api_supported` is the capability probe: an app offers the
+mode only to firmware that sets it, because older firmware would read a
+`visio+https://` endpoint as an unknown S3 host.
+
 ## 3. The provider table
 
 Signature flavor and bucket addressing are **independent axes**. With only AWS

@@ -156,6 +156,24 @@ message RecordingFileOpen {
   uint64 catalogue_generation = 7;
 }
 
+// How a recording ended: the one fact a host needs to tell its user why a
+// recording it did not stop has stopped. Deliberately coarse; the device's own
+// record of each recording (its session.json) keeps the full reason.
+message RecordingStop {
+  // The recording's session name exactly as RecordingEntry.name lists it, so a
+  // host shows a notice for a given recording once.
+  string session_name = 1;
+
+  enum Reason {
+    REASON_UNSPECIFIED = 0;   // not one this host knows; treat as a plain stop
+    REASON_REQUESTED = 1;     // a host, the setup page, or the button/switch
+    REASON_MAX_DURATION = 2;  // it reached the SetMaxRecordingDuration limit
+    // The device ended it on its own: a storage, sensor or camera fault.
+    REASON_DEVICE = 3;
+  }
+  Reason reason = 2;
+}
+
 // The device's operational-state snapshot — the GET /info payload. Fields that
 // DeviceInfo (device_name/serial/firmware + channels) and SystemHealth
 // (recording, disk_free_bytes, disk_total_bytes) already report are
@@ -188,13 +206,13 @@ message CaptureSettings {
 message DeviceState {
   // Absent on firmware that does not implement board capture presets.
   CaptureSettings capture_settings = 50;
-  visio_schema.v1.sensor.CaptureState capture_state = 46;
-  string calibration_geometry_hash = 47;
-  string calibration_transaction_id = 48;
+  visio_schema.v1.sensor.CaptureState capture_state = 52;
+  string calibration_geometry_hash = 53;
+  string calibration_transaction_id = 54;
   string calibration_transaction_state = 49;
   // Validated against the sensors actually probed on this board. Empty means
   // this firmware cannot advertise modes; clients must not guess leaf modes.
-  repeated VideoMode supported_video_modes = 45;
+  repeated VideoMode supported_video_modes = 51;
   // A working primary-camera JPEG tap, independent of cloud status reporting
   // and hand detection. False on older firmware or camera-less devices.
   bool snapshot_supported = 44;
@@ -211,6 +229,16 @@ message DeviceState {
   string recording_meta_location = 21;
   string recording_meta_message  = 22;
   string recording_meta_capturer = 24;
+
+  // The SetMaxRecordingDuration limit in force, seconds; 0 = no limit.
+  // `optional` for notice_volume's reason: absence covers "this device does
+  // not record to a card" and "this firmware predates the setting", and lets
+  // the app HIDE the control; 0 is a legal value as well as the default.
+  optional uint32 max_recording_duration_s = 47;
+  // The most recent recording this device wrote to its card since it booted,
+  // and why it ended. Absent until one has ended, and on older firmware; not
+  // kept across a reboot.
+  RecordingStop last_recording_stop = 48;
 
   // ── disk ──
   sint32 disk_free_pct = 4;   // 0..100, or -1 = unknown
@@ -264,6 +292,13 @@ message DeviceState {
   // The status-report key prefix (see SetStorage.status_prefix). Echoed so the
   // app can show where health reports land; empty means the device default.
   string storage_status_prefix = 32;
+  // Ingest API mode only: the stored SetStorage.destination_hint.
+  string storage_destination_hint = 45;
+  // True when this firmware can upload through an Ingest API (a
+  // `visio+https://` SetStorage endpoint). The capability probe: false or
+  // absent means older firmware, which would misread such an endpoint as an
+  // S3 host, so an app must not offer the mode to it.
+  bool ingest_api_supported = 46;
 
   // ── upload queue ──
   uint32 upload_pending             = 14;
@@ -481,6 +516,8 @@ message CommandResult {
     RecordingsList    recordings = 12;
     RecordingFileOpen file_open  = 13;
     Snapshot          snapshot   = 14;
+    IngestSignature   ingest_signature   = 15;
+    IngestCredentials ingest_credentials = 16;
   }
 }
 
@@ -497,4 +534,18 @@ message Snapshot {
   // clock. This is not UTC and is not shifted by hop-level header timesync.
   uint64 capture_pts_us = 5;
   uint32 total_bytes = 6; // 1..131072; fixed bound on the full JPEG
+}
+
+// IngestSign's answer: the request's Authorization header value,
+// "VISIO-HMAC-SHA256 Credential=<key_id>, Signature=<hex>".
+message IngestSignature {
+  string authorization = 1;
+}
+
+// IngestOpenCredentials' answer: the secret half of the storage credentials,
+// for the app's uploads under that upload only. Short-lived; the app keeps it
+// in memory and never stores it.
+message IngestCredentials {
+  string secret_access_key = 1;
+  string session_token     = 2;  // empty for `static` credentials
 }

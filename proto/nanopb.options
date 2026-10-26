@@ -51,10 +51,11 @@ visio_schema.v1.control.ForgetWifi.ssid               max_size:33
 # Recording pull: session and file names are device-generated
 # ("session_00042-1789017895", "ego_0003.mcap"); the cursor is the device's own
 # opaque token passed back verbatim. 64 (63 + NUL) holds all three with room,
-# and must stay equal across the four so a name the listing can report is one
-# every command can accept.
+# and must stay equal across these so a name the listing can report is one
+# every command can accept and DeviceState.last_recording_stop can echo.
 visio_schema.v1.control.ListRecordings.cursor         max_size:64
 visio_schema.v1.control.ListRecordings.session_name   max_size:64
+visio_schema.v1.control.RecordingStop.session_name    max_size:64
 visio_schema.v1.control.OpenRecordingFile.session_name max_size:64
 visio_schema.v1.control.OpenRecordingFile.file_name   max_size:64
 visio_schema.v1.control.DeleteRecording.session_name  max_size:64
@@ -72,6 +73,7 @@ visio_schema.v1.control.SetStorage.access_key_id      max_size:64
 visio_schema.v1.control.SetStorage.secret_access_key  max_size:64
 visio_schema.v1.control.SetStorage.prefix             max_size:128
 visio_schema.v1.control.SetStorage.status_prefix      max_size:128
+visio_schema.v1.control.SetStorage.destination_hint   max_size:64
 visio_schema.v1.control.TestStorage.endpoint_url      max_size:128
 visio_schema.v1.control.TestStorage.region            max_size:32
 visio_schema.v1.control.TestStorage.bucket            max_size:64
@@ -79,6 +81,7 @@ visio_schema.v1.control.TestStorage.access_key_id     max_size:64
 visio_schema.v1.control.TestStorage.secret_access_key max_size:64
 visio_schema.v1.control.TestStorage.prefix            max_size:128
 visio_schema.v1.control.TestStorage.status_prefix     max_size:128
+visio_schema.v1.control.TestStorage.destination_hint  max_size:64
 
 # ---- Control: sealed provisioning envelopes ------------------------------
 # A `visio-seal-v1` blob: 56 B of framing (magic + kid + ephemeral pubkey +
@@ -160,6 +163,7 @@ visio_schema.v1.control.DeviceState.storage_endpoint           max_size:128
 visio_schema.v1.control.DeviceState.storage_bucket             max_size:64
 visio_schema.v1.control.DeviceState.storage_prefix             max_size:128
 visio_schema.v1.control.DeviceState.storage_status_prefix      max_size:128
+visio_schema.v1.control.DeviceState.storage_destination_hint   max_size:64
 # Matches the SetStorage/TestStorage cap above — this is the SAME key echoed
 # back, so a smaller cap here would make the device unable to report a key it
 # had just accepted.
@@ -393,3 +397,26 @@ visio_schema.v1.control.CalibrationStep.transaction_id max_size:65
 visio_schema.v1.control.DeviceState.calibration_geometry_hash max_size:65
 visio_schema.v1.control.DeviceState.calibration_transaction_id max_size:65
 visio_schema.v1.control.DeviceState.calibration_transaction_state max_size:24
+
+# ---- Control: Ingest API uploads carried by the companion app ------------
+# Short-lived STS session tokens run to ~2 KB (AWS with a session policy), and
+# the sealed blob carries one plus the secret, base64url-expanded. These are
+# the only large fields; each sits in one oneof arm, so the Command union pays
+# the largest once.
+visio_schema.v1.control.IngestSign.date                      max_size:24
+visio_schema.v1.control.IngestSign.method                    max_size:8
+visio_schema.v1.control.IngestSign.path                      max_size:256
+visio_schema.v1.control.IngestSign.query                     max_size:256
+visio_schema.v1.control.IngestSign.body_sha256               max_size:65
+visio_schema.v1.control.IngestOpenCredentials.request_date      max_size:24
+visio_schema.v1.control.IngestOpenCredentials.reply_body_sha256 max_size:65
+visio_schema.v1.control.IngestOpenCredentials.reply_signature   max_size:65
+visio_schema.v1.control.IngestOpenCredentials.upload_id         max_size:65
+visio_schema.v1.control.IngestOpenCredentials.sealed_credentials max_size:3456
+visio_schema.v1.control.IngestCheckReceipt.upload_id      max_size:65
+visio_schema.v1.control.IngestCheckReceipt.session_key    max_size:33
+visio_schema.v1.control.IngestCheckReceipt.content_digest max_size:65
+visio_schema.v1.control.IngestCheckReceipt.receipt        max_size:65
+visio_schema.v1.control.IngestSignature.authorization     max_size:192
+visio_schema.v1.control.IngestCredentials.secret_access_key max_size:128
+visio_schema.v1.control.IngestCredentials.session_token     max_size:2304

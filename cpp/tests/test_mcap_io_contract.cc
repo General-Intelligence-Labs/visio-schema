@@ -48,15 +48,29 @@ class McapIoContract : public ::testing::TestWithParam<bool> {
     }
     ep.Stop();
   }
+  // The shim fails a short write with ENOSPC (a full volume: the recording
+  // ends) and everything else with EIO (the part is kept unconfirmed; the
+  // recording goes on). Either way the error reaches the save outcome.
   void expect_failure(Fault kind) {
     auto ep = endpoint();
     FaultScope fault(root_, kind);  // inject after the checked VREC header open
     ASSERT_NO_THROW(record(*ep));
     ASSERT_GT(fault.hits(), 0u) << "positive control: fault never reached a recording fd";
-    EXPECT_TRUE(ep->write_failed() || ep->storage_fault())
+    EXPECT_TRUE(ep->storage_fault())
         << "recording error must reach the health/save outcome";
+    EXPECT_EQ(ep->stats().unconfirmed_parts, 1u);
+    EXPECT_EQ(ep->write_failed(), kind == Fault::ShortWrite)
+        << "only a full volume ends the recording";
     EXPECT_EQ(ep->pending_frames(), 0u);
     EXPECT_EQ(ep->pending_bytes(), 0u);
+  }
+  // The parts a rotated recording left, each checked to read whole.
+  int whole_parts() const {
+    for (int part = 0;; ++part) {
+      const std::string path = mcap_test::PartPath(root_, "part", part);
+      if (!std::filesystem::exists(path)) return part;
+      EXPECT_TRUE(mcap_test::PartIsWhole(path, key())) << path;
+    }
   }
   unsigned held_recording_fds() const {
     unsigned count = 0;
@@ -100,6 +114,27 @@ TEST_P(McapIoContract, CloseMeasurementErrorIsReported) { expect_failure(Fault::
 TEST_P(McapIoContract, FileDurabilityErrorIsReported) { expect_failure(Fault::FileSync); }
 TEST_P(McapIoContract, DirectoryDurabilityErrorIsReported) { expect_failure(Fault::DirSync); }
 
+// A card whose fsyncs fail leaves every part unconfirmed, and nothing else:
+// the take rotates through all its parts, each kept and written whole.
+TEST_P(McapIoContract, FailedDurabilityCostsEachPartAndTheRecordingGoesOn) {
+  for (const Fault kind : {Fault::FileSync, Fault::DirSync}) {
+    std::filesystem::remove_all(root_);
+    std::filesystem::create_directories(root_);
+    auto ep = endpoint(65536);
+    {
+      FaultScope fault(root_, kind);
+      record(*ep);
+      ASSERT_GT(fault.hits(), 0u);
+    }
+    EXPECT_FALSE(ep->write_failed());
+    const int parts = whole_parts();
+    EXPECT_GE(parts, 8) << "the recording stopped rotating";
+    EXPECT_EQ(ep->stats().unconfirmed_parts,
+              static_cast<std::uint64_t>(parts));
+    EXPECT_EQ(held_recording_fds(), 0u);
+  }
+}
+
 TEST_P(McapIoContract, ShortWritesNeverInflateProgressPastActualFileBytes) {
   auto ep = endpoint();
   FaultScope fault(root_, Fault::ShortWrite);
@@ -132,7 +167,8 @@ TEST_P(McapIoContract, FailedCloseMeasurementStillConsumesTheDescriptor) {
   FaultScope fault(root_, Fault::CloseMeasure);
   record(*ep);
   ASSERT_GT(fault.hits(), 0u);
-  EXPECT_TRUE(ep->write_failed());
+  EXPECT_TRUE(ep->storage_fault());
+  EXPECT_FALSE(ep->write_failed()) << "an unmeasured close costs the part";
   EXPECT_EQ(held_recording_fds(), 0u);
 }
 

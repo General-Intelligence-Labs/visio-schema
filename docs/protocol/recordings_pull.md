@@ -27,18 +27,23 @@ TCP supplies order, delivery and flow control, so the socket carries nothing but
   the files that make a complete copy of the session. Upload tombstones, temporary and repair files
   are not listed. `file_count` is always set.
 - **`writing`.** A file the device has open for write is listed with `writing=true` and is not
-  pullable: the part currently being recorded, and the active session's `session.json` (rewritten
-  when the recording stops). Every other file of an active session is a finished file.
+  pullable: the part currently being recorded (and a just-rotated one whose end has not landed
+  yet), and the active session's `session.json` (rewritten when the recording stops). Every other
+  file of an active session is a finished file.
 - **`complete`** is true for an MCAP part carrying its end magic and for `session.json`;
   **`encrypted`** is true for a `VREC` part. An encrypted part is pulled as ciphertext.
 - **`read_while_recording`** reports the device's policy (section 6).
 
 Listing is allowed on every link and while recording.
 
-Managed storage also returns `catalogue_generation` and `RecordingsList.complete`.
-A nonzero generation identifies this firmware/mount epoch; an incomplete census
-answers `storage_indexing`. Older firmware returns zero, so clients must treat
-these fields as unavailable there. Each file exposes `object_version`, lifecycle
+Managed storage also returns `catalogue_generation` and `RecordingsList.catalogue_complete`.
+A nonzero generation identifies this firmware/mount epoch. A device indexes its storage after it
+starts or a card is inserted; while it does, a listing is still answered: it names every session,
+with its size, file count, duration and `damaged` as the device reads them from the card, and
+`catalogue_complete` is false until the index is done. One session's files are answered in full at
+any time. Older firmware returns
+zero for both, so clients must treat these fields as unavailable there. Each file exposes
+`object_version` (0 for a file of a session the device has not indexed yet), lifecycle
 (`writing`, `finalizing`, `saved`, `failed`, `legacy`), independent integrity
 (`unchecked`, `verified`, `damaged`, `unverifiable`), `checkpointed_bytes` and
 `recovered`. A successful Stop detaches capture; checked finalization continues
@@ -51,7 +56,7 @@ before `saved` is published. `saved` does not mean payload integrity was verifie
 The device checks, and refuses with the first failing code:
 
 1. the link: any direct IP link — USB-NCM, the device's setup hotspot, or the Wi-Fi network it
-   joined. `no_data_link` on a link with no IP path for the data socket (USB serial);
+   joined. `no_data_link` on a link with no IP path for the data socket (USB serial, BLE);
    `forbidden_link` on a link that is not the requesting host's own — a hub's leaf link, an
    unknown endpoint. A hub relays a command to its leaves over its own direct link, so a leaf
    would grant the file to the HUB's address: pull a leaf's recordings by connecting to the leaf;
@@ -72,10 +77,13 @@ offset`, possibly 0), `file_size` and `mtime_ns`.
 
 Managed opens also return `object_version` and `catalogue_generation`. Nonzero
 `expect_object_version` and `expect_catalogue_generation` must match, or the device
-answers `changed`, even when size and FAT mtime match. A required container repair
-answers `recovery_pending` and queues idle work; opening does not perform repair.
-Original encrypted bytes remain exportable without a decryption key. Capture,
-format and mount invalidation fence existing reader leases.
+answers `changed`, even when size and FAT mtime match. Every file is served as stored, a
+part missing its end magic (cut short by a power loss) included; opening never repairs. A
+format or a card change ends a transfer; a recording ends one only where section 6 says so.
+
+`storage_indexing` and `recovery_pending` are no longer answered by any path: an earlier
+development revision used them for an index in progress and a part awaiting repair. A
+client that meets one should treat it as `busy`.
 
 An accepted open is a **lease**: it belongs to the requesting host's network address, is consumed
 by that host's next connection to `port`, and lapses unused after 10 seconds. A new open from the
@@ -124,7 +132,7 @@ away bytes still in flight.
 
 `DeleteRecording` (Command body 44) deletes one whole session. `Command.target_device` MUST name
 the unit; a broadcast delete answers `invalid_request`. A delete needs no data socket, so it is
-allowed on every direct link, USB serial included. Refusals: `forbidden_link` (a hub's leaf link or an
+allowed on every direct link, USB serial and BLE included. Refusals: `forbidden_link` (a hub's leaf link or an
 unknown endpoint), `no_sdcard`, `no_such_session`, `busy_recording`, `active_session`, `busy`, `protected`
 (encrypted parts, diagnostic files, or an upload of the session in progress), `delete_failed`. A
 session is deleted whole or not at all as far as any listing can see.
@@ -177,7 +185,7 @@ audio_ego_v3 (RTL8821CS Wi-Fi):
 | `active_session` | Delete of the session being recorded |
 | `busy` | Another host is pulling, OTA / format / storage recovery is running, or the file socket could not be opened |
 | `forbidden_link` | The link is not the host's own: a hub's leaf link, an unknown endpoint |
-| `no_data_link` | Open over a link with no IP path for the data socket (USB serial) |
+| `no_data_link` | Open over a link with no IP path for the data socket (USB serial, BLE) |
 | `no_sdcard` | No usable storage |
 | `no_such_session`, `no_such_file` | Not there (deleted, uploaded and removed, or a stale listing) |
 | `changed` | The file differs from `expect_size`/`expect_mtime_ns`, or is being repaired |

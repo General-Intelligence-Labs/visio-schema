@@ -6,6 +6,15 @@ bump the MINOR version.
 
 ## Unreleased
 
+### Coordinated rig control alongside ingest and recording limits
+
+The combined contract preserves the published ingest and duration assignments.
+Rig commands use tags 53 (ApplyCalibrationGroup), 54 (CalibrationStep) and
+55 (SetCapturePreset). DeviceState uses 51 (supported video modes), 52 (capture
+state), 53 (calibration geometry hash) and 54 (transaction ID); transaction state
+and capture settings retain 49 and 50. Unpublished local builds using the earlier
+colliding tags require a matched firmware and client rebuild.
+
 ### Compressed firmware image envelopes
 
 Added VENC format 3 (gzip then AES-256-CTR) with expanded RKFW length and
@@ -25,6 +34,49 @@ offset. The Python reader expands bundles into `Orientation` elements on the
 received header clock, including samples crossing recording-part windows.
 Individual Quaternion output remains the default. This additive schema belongs
 in the next minor release; native Quaternion viewers need a bundle adapter.
+
+### A limit on how long a recording may run
+
+`Command.set_max_recording_duration = 52` (`SetMaxRecordingDuration
+{ max_duration_s }`) sets the longest a recording written to the device's card
+may run: 0 (the default) is no limit, otherwise 10-86400 s; anything else is
+refused `out_of_range`, and a device that does not record to a card answers
+`unsupported`. It is
+persisted and applied live, and every card recording is held to it however it
+was started; a phone-destination recording is not. A recording that reaches it
+stops cleanly, and a device with a speaker says why.
+
+`DeviceState.max_recording_duration_s = 47` (`optional`; absent hides the
+control) reports the limit in force. `DeviceState.last_recording_stop = 48`, a
+new `RecordingStop { session_name, reason }`, says how the last card recording
+since boot ended: `REASON_REQUESTED`, `REASON_MAX_DURATION` or `REASON_DEVICE`.
+Additive (MINOR).
+
+### Calibration date in every recording
+
+A recording's capture metadata (the `visio.capture` MCAP record and
+`session.json`) carries `calibration_updated_at_us`: when the unit's
+calibration was last updated, UTC Unix microseconds. The record omits it when
+unknown; `session.json` appends it after `session_key`, `0` when unknown. The
+`tools/session-json` rebuild renders it. No proto change.
+
+### A part's own storage error keeps the part and the recording
+
+The C++ writer no longer ends a recording on a part's own I/O failure. A
+failed checkpoint, fsync, writeback, write, close, directory sync or
+completion keeps the part (nothing handed to storage is discarded) with its
+durability unconfirmed: storage completion is told so, the failure is logged
+once and counted in the new `McapWriterStats::unconfirmed_parts`, and the
+recording goes on into the next part. A failure that may have lost bytes
+(`LosesBytes`: a write, flush, close, checkpoint or writeback) also cuts the
+part at its next record, since its offsets no longer match its file. A part
+that will not open (its file, or an encrypted part's header) is tried again
+a few times on a short doubling wait, its failed file removed (it holds no
+recorded data) and its number kept so part numbers stay contiguous, counted
+in `McapWriterStats::part_open_retries`. Only `EROFS`, `ENOSPC`, `ENODEV`,
+or every attempt at a part failing ends it: `write_failed()` and the new
+`storage_refused()` report exactly that, and the part open at that moment is
+kept too. No proto change.
 
 ### Loss-preserving MCAP continuation parts
 
@@ -64,6 +116,34 @@ the setting" and "firmware predating the command", so a host hides the control.
 `DeviceState.anti_flicker_pending` (field 43) distinguishes an accepted request
 from a completed camera apply. UNKNOWN means both apply and rollback failed;
 hosts leave the control available for an explicit retry.
+
+### A destination can be a customer's own Ingest API
+
+`SetStorage` / `TestStorage` accept an endpoint of the form
+`visio+https://host/base`, which names a customer **Ingest API**
+([`docs/protocol/ingest-api.md`](docs/protocol/ingest-api.md)) instead of a
+bucket. The scheme selects the mode, so there is still no provider field. New,
+all optional (PATCH):
+
+- `SetStorage.destination_hint` / `TestStorage.destination_hint` (9): free
+  text passed to the service; cap 64.
+- `DeviceState.storage_destination_hint` (45): its echo.
+- `DeviceState.ingest_api_supported` (46): the capability probe. Offer the
+  mode only to a device that sets it.
+
+When recordings reach the companion app first, the app uploads them on the
+device's behalf and holds no key: three new commands ask the connected device
+to sign a request (`IngestSign` 49 → `CommandResult.ingest_signature` 15),
+check an initiate reply and open its sealed credentials
+(`IngestOpenCredentials` 50 → `ingest_credentials` 16), and check a session
+receipt (`IngestCheckReceipt` 51). The device refuses them while recording.
+
+`visio_schema.ingest` is the reference implementation of the protocol's
+request signing, signed receipts and sealed credentials, pinned by
+`tests/golden/ingest_vectors.txt`. The settings QR gains an ingest `storage`
+section (`endpoint_url`, `access_key_id`, `destination_hint`); the device key
+is sealed as `sk` exactly like a bucket secret, so a v2 code still carries no
+readable secret. Bucket-mode codes are byte-identical to before.
 
 ### The recorder counts the video frames its keyframe gate drops
 

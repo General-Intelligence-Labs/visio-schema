@@ -64,7 +64,9 @@ add_library(visio_schema STATIC
   # + the sink's write-time read-back (verify the media against RAM)
   src/routing/registry.cc
   src/mcap/storage.cc
-  src/mcap/writer.cc
+  src/mcap/writer/parts.cc
+  src/mcap/writer/record.cc
+  src/mcap/writer/continuation.cc
   src/mcap/writer_endpoint.cc
   src/mcap/payload_arena.cc
   src/mcap/span_readback.cc
@@ -99,6 +101,10 @@ target_include_directories(visio_schema PUBLIC
 )
 # mcap is an implementation detail of mcap_writer.cc (the header hides it).
 target_include_directories(visio_schema PRIVATE "${MCAP_INCLUDE_DIR}")
+# src/mcap/writer's pieces reach the mcap module's private headers by path
+# from src ("mcap/file_sync.hpp"), never by a relative one.
+target_include_directories(visio_schema PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/src")
 # DeviceInfo (its repeated Channel list + each Channel's strings/bytes) uses
 # nanopb FT_POINTER fields, which require malloc support to encode/decode.
 # PUBLIC so pb_decode.c, the generated *.pb.c, and every consumer (the
@@ -128,6 +134,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT CMAKE_CROSSCOMPILI
     tests/test_channel_registry.cc
     tests/test_mcap_writer.cc
     tests/test_mcap_writer_storage.cc
+    tests/test_part_outcome.cc
     tests/test_mcap_writer_endpoint.cc
     tests/test_mcap_writer_endpoint_arena.cc
     tests/test_payload_arena.cc
@@ -157,7 +164,9 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT CMAKE_CROSSCOMPILI
     tests/test_endpoint_reconnect.cc
   )
   target_sources(visio_schema_tests PRIVATE tests/test_recording_crypto.cc)
-  target_include_directories(visio_schema_tests PRIVATE "${MCAP_INCLUDE_DIR}")
+  # The private part-outcome header is unit-tested on its own.
+  target_include_directories(visio_schema_tests PRIVATE "${MCAP_INCLUDE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/mcap")
   target_link_libraries(visio_schema_tests
     PRIVATE visio_schema GTest::gtest GTest::gtest_main)
   # Path to the committed cross-language byte fixtures (shared with the Python

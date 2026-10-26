@@ -71,9 +71,14 @@ message Command {
     JoinSavedWifi join_saved_wifi = 46;
     SetAntiFlicker set_anti_flicker = 47;
     CaptureSnapshot capture_snapshot = 48;
-    ApplyCalibrationGroup apply_calibration_group = 49;
-    CalibrationStep calibration_step = 50;
-    SetCapturePreset set_capture_preset = 51;
+    ApplyCalibrationGroup apply_calibration_group = 53;
+    CalibrationStep calibration_step = 54;
+    SetCapturePreset set_capture_preset = 55;
+
+    IngestSign ingest_sign = 49;
+    IngestOpenCredentials ingest_open_credentials = 50;
+    IngestCheckReceipt ingest_check_receipt = 51;
+    SetMaxRecordingDuration set_max_recording_duration = 52;
   }
 }
 
@@ -144,6 +149,38 @@ message SetAntiFlicker {
 // re-upgraded.
 message SetRecordingHeartbeat {
   bool enabled = 1;
+}
+
+// The longest a recording this device writes to its card may run. A recording
+// that reaches it stops on its own, closed exactly as StopRecording closes one,
+// and a device with a speaker says why ("maximum recording time reached,
+// recording stopped") in place of its usual stop notice.
+// DeviceState.last_recording_stop then reports REASON_MAX_DURATION for it.
+//
+// Every recording the card takes is held to it, whatever started it: a host,
+// the device's button or switch, or its setup page. A phone-destination
+// recording (SetRecordingDestination PHONE) is not written to the card and is
+// not limited.
+//
+// Persisted to a device-side sidecar and applied LIVE: a change made during a
+// recording governs that recording, and a limit below the time it has already
+// run stops it within a fraction of a second, with the same notice. 0, the
+// default, means no limit.
+//
+// Only a device that records to a card accepts this; every other device
+// rejects it ("unsupported"), which is EXPECTED. A non-zero value outside
+// 10-86400 is rejected ("out_of_range"). The value in force is reported in
+// DeviceState.max_recording_duration_s, whose presence also tells the app
+// whether to offer the control at all.
+//
+// Address it to one device: an empty Command.target_device is a broadcast,
+// which behind a hub sets every recording board at once.
+//
+// Note on downgrade: the sidecar survives a rollback to firmware that predates
+// this command, and such firmware ignores it, so a limited device records
+// without a limit until re-upgraded.
+message SetMaxRecordingDuration {
+  uint32 max_duration_s = 1;  // seconds; 0 = no limit, else 10-86400 (24 h)
 }
 
 // Select where recording controls write. PHONE is deliberately a short lease:
@@ -583,6 +620,19 @@ message ResetToAp {
 // the bucket root and `status_prefix` clears to the default ("status/").
 // One guard on top: a secret is never carried onto ANOTHER account — when
 // endpoint_url or access_key_id changes, a secret must come with it.
+//
+// INGEST API MODE. An endpoint_url of the form `visio+https://host/base` names
+// a customer Ingest API (docs/protocol/ingest-api.md) instead of a bucket: the
+// device asks that service where to upload and for short-lived credentials.
+// There is still no provider field — the scheme selects the mode, as the host
+// selects the cloud. In that mode the fields mean:
+//   endpoint_url       the `visio+https://` base URL (required)
+//   access_key_id      the device key's key_id (required)
+//   secret_access_key  the 32-byte device key, base64url (43 chars), or `sk`
+//                      inside `sealed` (required, same secret rules)
+//   destination_hint   free text passed to the service (optional)
+// region, bucket, prefix and status_prefix belong to bucket mode: sent
+// non-empty with an ingest endpoint they are rejected (invalid_config).
 message SetStorage {
   optional string endpoint_url      = 1;
   optional string region            = 2;
@@ -608,11 +658,17 @@ message SetStorage {
   // `secret_access_key` does — so a "just repoint my bucket" QR needs no
   // credential at all.
   bytes sealed = 8;
+
+  // Ingest API mode only (see above): free text the operator gives the
+  // service as a routing hint, e.g. a project name. Empty clears it.
+  optional string destination_hint = 9;
 }
 
 // Validate S3 credentials WITHOUT persisting (a max-keys=1 list under the
 // recordings prefix, so the key needs only put + list — no bucket-info
 // grant). Replaces POST /storage/test. Same fields as SetStorage.
+// For an Ingest API endpoint the probe is an `initiate` with `test: true`
+// instead, which checks the endpoint, key, clock and routing.
 // Tests the destination SetStorage WOULD store if sent the same fields: the
 // device folds them onto the stored destination by the same settings rule
 // (absent keeps) and probes the result, so "test before save" signs with the
@@ -631,6 +687,55 @@ message TestStorage {
   // breaks for exactly the sealed flow that needs it most.
   // tests/test_nanopb_options.py pins the two caps equal.
   bytes sealed = 8;
+
+  optional string destination_hint = 9;  // see SetStorage.destination_hint
+}
+
+// ── Ingest API uploads carried by the companion app ──
+// A client holding recordings the device made can upload them to the
+// device's Ingest API (docs/protocol/ingest-api.md) on the device's behalf.
+// The client holds no device key: it performs the HTTP exchange and asks the
+// connected device to sign each request, check each reply and open the sealed
+// credentials. Each is a local computation; the device makes no network
+// request for them.
+//
+// Error codes (visio_schema.ingest.errors): `recording_in_progress` while the
+// device records (a client may retry after), `not_ingest_mode` when its
+// stored destination is not an Ingest API.
+
+// Sign one request the app is about to send. Answered by a CommandResult
+// carrying `ingest_signature`: the device signs
+// "VISIO-HMAC-SHA256\n" + date + "\n" + key_id + "\n" + method + "\n" +
+// path + "\n" + query + "\n" + body_sha256 with its device key.
+message IngestSign {
+  optional string date        = 1;  // the X-Visio-Date the app will send
+  optional string method      = 2;  // e.g. "POST"
+  optional string path        = 3;  // as sent, including the base path
+  optional string query       = 4;  // canonical query; empty if none
+  optional string body_sha256 = 5;  // hex SHA-256 of the exact body
+}
+
+// Check an initiate reply and open its sealed storage credentials. The device
+// verifies `reply_signature` (the reply's X-Visio-Signature) against the
+// request date and the hash of the reply body, and only then opens
+// `sealed_credentials`.
+// Answered by a CommandResult carrying `ingest_credentials`; a bad signature
+// or a seal that will not open is refused with `bad_reply`.
+message IngestOpenCredentials {
+  optional string request_date      = 1;  // the request's X-Visio-Date
+  optional string reply_body_sha256 = 2;  // hex SHA-256 of the reply body
+  optional string reply_signature   = 3;  // the reply's X-Visio-Signature
+  optional string upload_id         = 4;  // the reply's upload_id
+  optional string sealed_credentials = 5;  // the reply's storage.sealed
+}
+
+// Check one session receipt from a commit reply. ok = the receipt is genuine
+// and the app may delete its copy; refused with `bad_receipt` otherwise.
+message IngestCheckReceipt {
+  optional string upload_id      = 1;  // the upload the commit was made under
+  optional string session_key    = 2;  // 32 hex
+  optional string content_digest = 3;  // the reply entry's content_digest
+  optional string receipt        = 4;  // the reply entry's receipt (hex)
 }
 
 // List recorded sessions + their upload state; the CommandResult carries
@@ -683,7 +788,7 @@ message OpenRecordingFile {
 
 // Delete one whole recorded session from local storage. Command.target_device
 // MUST name this unit (a broadcast delete answers "invalid_request"). Allowed
-// on every direct link, USB serial included.
+// on every direct link, USB serial and the BLE control link included.
 //
 // Refusals: "busy_recording", "active_session", "protected" (encrypted parts,
 // diagnostic files, or an upload of the session in flight), "busy",
