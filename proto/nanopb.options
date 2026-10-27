@@ -311,9 +311,18 @@ foxglove.ImageAnnotations.points              max_count:8
 foxglove.ImageAnnotations.circles             type:FT_IGNORE
 foxglove.ImageAnnotations.texts               type:FT_IGNORE
 foxglove.ImageAnnotations.metadata            type:FT_IGNORE
-foxglove.PointsAnnotation.points              max_count:4
+foxglove.PointsAnnotation.points              max_count:40
 foxglove.PointsAnnotation.outline_colors      type:FT_IGNORE
 foxglove.PointsAnnotation.metadata            type:FT_IGNORE
+
+# r60: two hands, 21 joints and 16 row-major MANO rotations per hand.
+# Forty annotation points hold the 20 independent skeleton segments.
+visio_schema.v1.sensor.HandPoseFrame.frame_id max_size:48
+visio_schema.v1.sensor.HandPoseFrame.model max_size:64
+visio_schema.v1.sensor.HandPoseFrame.hands max_count:2
+visio_schema.v1.sensor.HandPose.joints max_count:21
+visio_schema.v1.sensor.HandPose.mano_rotations max_count:144
+visio_schema.v1.sensor.HandPose.betas max_count:10
 
 # "left" or "right" — the device rejects anything else.
 visio_schema.v1.control.SetCalibration.unit_side   max_size:8

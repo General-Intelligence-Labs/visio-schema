@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package visio_schema.v1.sensor;
+
+import "google/protobuf/timestamp.proto";
+
+// One model joint, in MediaPipe order (wrist, thumb, index, middle, ring, little).
+message HandKeypoint {
+  // Raw published-image pixels, before any viewer rotation or rectification.
+  float u = 1;
+  float v = 2;
+  // Wrist-relative camera coordinates, with wrist-to-middle-MCP length = 1.
+  // These have no absolute depth or metric scale.
+  float x = 3;
+  float y = 4;
+  float z = 5;
+  // Heatmap peak concentration: uniform = 1, larger means more concentrated.
+  float confidence = 6;
+}
+
+// One first-person hand reconstructed by the r60 student.
+message HandPose {
+  // Detector class: 0 = operator's left, 1 = operator's right.
+  uint32 class_id = 1;
+  float detector_score = 2;
+  // Exactly 21 joints, in the order documented by HandKeypoint.
+  repeated HandKeypoint joints = 3;
+  // 16 row-major 3x3 MANO rotations (144 values). Root is in camera axes;
+  // other rotations are local. MANO values retain the right-hand-space
+  // convention, including for a left hand inferred from a mirrored crop.
+  repeated float mano_rotations = 4;
+  // Exactly 10 MANO shape coefficients.
+  repeated float betas = 5;
+  float inference_ms = 6;
+}
+
+// /<root>/camera/<index>/hand_pose. Empty hands clears the previous result.
+message HandPoseFrame {
+  // Same capture timestamp as the associated video and detector annotations.
+  google.protobuf.Timestamp timestamp = 1;
+  string frame_id = 2;
+  repeated HandPose hands = 3;
+  // Producer model identity; this stream is an estimate, not ground truth.
+  string model = 4;
+}
