@@ -89,8 +89,7 @@ def test_camera_and_ingest_wire_numbers_coexist():
             "set_anti_flicker": 47, "capture_snapshot": 48,
             "ingest_sign": 49, "ingest_open_credentials": 50,
             "ingest_check_receipt": 51,
-            "set_max_recording_duration": 52, "apply_calibration_group": 53,
-            "calibration_step": 54, "set_capture_preset": 55,
+            "set_max_recording_duration": 52, "set_capture_preset": 55,
         },
         command_result_pb2.CommandResult: {
             "snapshot": 14, "ingest_signature": 15, "ingest_credentials": 16,
@@ -100,9 +99,8 @@ def test_camera_and_ingest_wire_numbers_coexist():
             "snapshot_supported": 44, "storage_destination_hint": 45,
             "ingest_api_supported": 46,
             "max_recording_duration_s": 47, "last_recording_stop": 48,
-            "calibration_transaction_state": 49, "capture_settings": 50,
+            "capture_settings": 50,
             "supported_video_modes": 51, "capture_state": 52,
-            "calibration_geometry_hash": 53, "calibration_transaction_id": 54,
         },
     }
     for message, fields in expected.items():
@@ -362,3 +360,31 @@ def test_proto_wire_and_device_info_present():
 
     assert hasattr(header_pb2, "Header") and hasattr(header_pb2, "ControlStream")
     assert hasattr(device_info_pb2, "DeviceInfo") and hasattr(device_info_pb2, "Channel")
+
+
+def test_retired_calibration_commands_are_reserved_and_generic_calibration_remains():
+    from google.protobuf import descriptor_pb2
+
+    from visio_schema.v1.control import command_pb2, command_result_pb2
+
+    for module, message, numbers, names in [
+        (command_pb2, "Command", {53, 54}, {"apply_calibration_group", "calibration_step"}),
+        (command_result_pb2, "DeviceState", {49, 53, 54, 55},
+         {"calibration_geometry_hash", "calibration_transaction_id",
+          "calibration_transaction_state", "target_extrinsics_supported"}),
+    ]:
+        file = descriptor_pb2.FileDescriptorProto.FromString(module.DESCRIPTOR.serialized_pb)
+        shape = next(m for m in file.message_type if m.name == message)
+        reserved = {n for span in shape.reserved_range for n in range(span.start, span.end)}
+        assert numbers <= reserved
+        assert names <= set(shape.reserved_name)
+        assert not names.intersection(f.name for f in shape.field)
+    assert command_pb2.Command.DESCRIPTOR.fields_by_name["set_calibration"].number == 20
+    fields = command_pb2.SetCalibration.DESCRIPTOR.fields_by_name
+    assert fields["extrinsics"].number == 12
+    assert "assembly" not in fields
+    calibration = descriptor_pb2.FileDescriptorProto.FromString(
+        command_pb2.DESCRIPTOR.serialized_pb
+    )
+    reserved = next(m for m in calibration.message_type if m.name == "SetCalibration")
+    assert any(r.start <= 19 < r.end for r in reserved.reserved_range)

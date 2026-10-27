@@ -207,11 +207,10 @@ message DeviceState {
   // Absent on firmware that does not implement board capture presets.
   CaptureSettings capture_settings = 50;
   visio_schema.v1.sensor.CaptureState capture_state = 52;
-  string calibration_geometry_hash = 53;
-  string calibration_transaction_id = 54;
-  string calibration_transaction_state = 49;
-  // False/absent on firmware that only accepts fixed-center scene corrections.
-  bool target_extrinsics_supported = 55;
+  // Retired experimental calibration transaction/capability metadata.
+  reserved 49, 53, 54, 55;
+  reserved "calibration_geometry_hash", "calibration_transaction_id",
+      "calibration_transaction_state", "target_extrinsics_supported";
   // Validated against the sensors actually probed on this board. Empty means
   // this firmware cannot advertise modes; clients must not guess leaf modes.
   repeated VideoMode supported_video_modes = 51;

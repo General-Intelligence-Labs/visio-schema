@@ -215,8 +215,8 @@ foxglove.CameraCalibration.D                   max_count:8
 foxglove.CameraCalibration.K                   max_count:9
 foxglove.CameraCalibration.R                   max_count:9
 foxglove.CameraCalibration.P                   max_count:12
-foxglove.FrameTransform.parent_frame_id       max_size:16
-foxglove.FrameTransform.child_frame_id        max_size:16
+foxglove.FrameTransform.parent_frame_id       max_size:128
+foxglove.FrameTransform.child_frame_id        max_size:128
 visio_schema.v1.calibration.FiducialCalibration.fiducials max_count:32
 visio_schema.v1.calibration.Fiducial.dictionary max_size:64
 # TactileLayout (glove taxel->hand map): bound the repeated + label fields so the
@@ -317,9 +317,6 @@ foxglove.PointsAnnotation.metadata            type:FT_IGNORE
 
 # "left" or "right" — the device rejects anything else.
 visio_schema.v1.control.SetCalibration.unit_side   max_size:8
-visio_schema.v1.calibration.AssemblyCalibration.result_id max_size:65
-visio_schema.v1.calibration.AssemblyCalibration.head_uid max_size:65
-visio_schema.v1.calibration.AssemblyCalibration.addon_uid max_size:65
 
 # ── Diagnostic-log service (service/diag/diag.proto) ─────────────────────────
 # DiagRequest is DECODED by the device, so every string on it must be sized or
@@ -386,20 +383,6 @@ visio_schema.v1.control.CaptureSettings.active_camera_rates max_count:8
 visio_schema.v1.control.CaptureSettings.apply_error max_size:129
 visio_schema.v1.service.heartbeat.CaptureSyncState.error max_size:129
 
-visio_schema.v1.control.CameraRotation.rotation type:FT_STATIC
-visio_schema.v1.control.CalibrationMemberUpdate.device_name max_size:128
-visio_schema.v1.control.CalibrationMemberUpdate.uid max_size:65
-visio_schema.v1.control.CalibrationMemberUpdate.expected_geometry_hash max_size:65
-visio_schema.v1.control.CalibrationMemberUpdate.rotations max_count:5
-visio_schema.v1.control.TargetExtrinsicsCorrection.cameras max_count:5
-visio_schema.v1.control.TargetExtrinsicsCorrection.target_profile max_size:65
-visio_schema.v1.control.TargetExtrinsicsCorrection.result_id max_size:65
-visio_schema.v1.control.ApplyCalibrationGroup.transaction_id max_size:65
-visio_schema.v1.control.ApplyCalibrationGroup.members max_count:2
-visio_schema.v1.control.CalibrationStep.transaction_id max_size:65
-visio_schema.v1.control.DeviceState.calibration_geometry_hash max_size:65
-visio_schema.v1.control.DeviceState.calibration_transaction_id max_size:65
-visio_schema.v1.control.DeviceState.calibration_transaction_state max_size:24
 
 # ---- Control: Ingest API uploads carried by the companion app ------------
 # Short-lived STS session tokens run to ~2 KB (AWS with a session policy), and

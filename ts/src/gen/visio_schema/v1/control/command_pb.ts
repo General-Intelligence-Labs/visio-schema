@@ -17,10 +17,6 @@ import type { CameraCalibration } from "../../../foxglove/CameraCalibration_pb.j
 import { file_foxglove_CameraCalibration } from "../../../foxglove/CameraCalibration_pb.js";
 import type { FrameTransform } from "../../../foxglove/FrameTransform_pb.js";
 import { file_foxglove_FrameTransform } from "../../../foxglove/FrameTransform_pb.js";
-import type { Quaternion } from "../../../foxglove/Quaternion_pb.js";
-import { file_foxglove_Quaternion } from "../../../foxglove/Quaternion_pb.js";
-import type { Vector3 } from "../../../foxglove/Vector3_pb.js";
-import { file_foxglove_Vector3 } from "../../../foxglove/Vector3_pb.js";
 import type { ImuCalibration } from "../calibration/imu_pb.js";
 import { file_visio_schema_v1_calibration_imu } from "../calibration/imu_pb.js";
 import type { EncoderCalibration } from "../calibration/encoder_pb.js";
@@ -29,15 +25,13 @@ import type { CameraTuning } from "../calibration/camera_tuning_pb.js";
 import { file_visio_schema_v1_calibration_camera_tuning } from "../calibration/camera_tuning_pb.js";
 import type { FiducialCalibration } from "../calibration/fiducial_pb.js";
 import { file_visio_schema_v1_calibration_fiducial } from "../calibration/fiducial_pb.js";
-import type { AssemblyCalibration } from "../calibration/assembly_pb.js";
-import { file_visio_schema_v1_calibration_assembly } from "../calibration/assembly_pb.js";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file visio_schema/v1/control/command.proto.
  */
 export const file_visio_schema_v1_control_command: GenFile = /*@__PURE__*/
-  fileDesc("CiV2aXNpb19zY2hlbWEvdjEvY29udHJvbC9jb21tYW5kLnByb3RvEhd2aXNpb19zY2hlbWEudjEuY29udHJvbCKZGQoHQ29tbWFuZBIVCg10YXJnZXRfZGV2aWNlGAEgASgJEhIKCmNvbW1hbmRfaWQYAiABKAQSQgoPc3RhcnRfcmVjb3JkaW5nGAogASgLMicudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU3RhcnRSZWNvcmRpbmdIABJACg5zdG9wX3JlY29yZGluZxgLIAEoCzImLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlN0b3BSZWNvcmRpbmdIABI1CghpZGVudGlmeRgMIAEoCzIhLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLklkZW50aWZ5SAASPwoOc2V0X2F1dG9fc3RhcnQYDSABKAsyJS52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRBdXRvU3RhcnRIABI8Cgxjb25uZWN0X3dpZmkYDiABKAsyJC52aXNpb19zY2hlbWEudjEuY29udHJvbC5Db25uZWN0V2lmaUgAEjYKCXNjYW5fd2lmaRgPIAEoCzIhLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNjYW5XaWZpSAASOgoLc2V0X3N0b3JhZ2UYECABKAsyIy52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRTdG9yYWdlSAASPAoMdGVzdF9zdG9yYWdlGBEgASgLMiQudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuVGVzdFN0b3JhZ2VIABJCCg9saXN0X3JlY29yZGluZ3MYEiABKAsyJy52aXNpb19zY2hlbWEudjEuY29udHJvbC5MaXN0UmVjb3JkaW5nc0gAEjYKCWdldF9zdGF0ZRgTIAEoCzIhLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLkdldFN0YXRlSAASQgoPc2V0X2NhbGlicmF0aW9uGBQgASgLMicudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0Q2FsaWJyYXRpb25IABI0CghzZXRfdGltZRgVIAEoCzIgLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFRpbWVIABJHChJzZXRfcmVjb3JkaW5nX21ldGEYFiABKAsyKS52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRSZWNvcmRpbmdNZXRhSAASTQoTc2V0X3ZpZGVvX3N0cmVhbWluZxgXIAEoCzIqLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFZpZGVvU3RyZWFtaW5nQgIYAUgAEjoKC3NldF9iaXRyYXRlGBggASgLMiMudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0Qml0cmF0ZUgAEkAKDmZvcm1hdF9zdG9yYWdlGBkgASgLMiYudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuRm9ybWF0U3RvcmFnZUgAEkEKD3NldF9hdXRvX3VwbG9hZBgaIAEoCzImLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldEF1dG9VcGxvYWRIABJBCg9zZXRfbm90aWNlX2xhbmcYGyABKAsyJi52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXROb3RpY2VMYW5nSAASQAoOc2V0X3Jlc29sdXRpb24YHCABKAsyJi52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRSZXNvbHV0aW9uSAASOQoLcmVzZXRfdG9fYXAYHSABKAsyIi52aXNpb19zY2hlbWEudjEuY29udHJvbC5SZXNldFRvQXBIABJJChNzZXRfYXVkaW9fcmVjb3JkaW5nGB4gASgLMioudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0QXVkaW9SZWNvcmRpbmdIABJIChFzZXRfaW11X2xpdmVfcmF0ZRgfIAEoCzInLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldEltdUxpdmVSYXRlQgIYAUgAEkUKEXNldF9zdHJlYW1fcG9saWN5GCAgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0U3RyZWFtUG9saWN5SAASOgoLZm9yZ2V0X3dpZmkYISABKAsyIy52aXNpb19zY2hlbWEudjEuY29udHJvbC5Gb3JnZXRXaWZpSAASRQoRc2V0X3N0YXR1c19yZXBvcnQYIiABKAsyKC52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRTdGF0dXNSZXBvcnRIABJJChNjbGVhcl9jYW1lcmFfdHVuaW5nGCMgASgLMioudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuQ2xlYXJDYW1lcmFUdW5pbmdIABJVChlzZXRfcmVjb3JkaW5nX2Rlc3RpbmF0aW9uGCQgASgLMjAudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0UmVjb3JkaW5nRGVzdGluYXRpb25IABJRChdzZXRfcmVjb3JkaW5nX2hlYXJ0YmVhdBglIAEoCzIuLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFJlY29yZGluZ0hlYXJ0YmVhdEgAEkUKEXNldF9ub3RpY2Vfdm9sdW1lGCYgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0Tm90aWNlVm9sdW1lSAASRQoRc2V0X3JlY29yZGluZ19rZXkYJyABKAsyKC52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRSZWNvcmRpbmdLZXlIABJHChJzZXRfaGFuZF9kZXRlY3Rpb24YKCABKAsyKS52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRIYW5kRGV0ZWN0aW9uSAASQQoPc2V0X2dwc190YWdnaW5nGCkgASgLMiYudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0R3BzVGFnZ2luZ0gAEkcKEnNldF9kaWFnX3ZlcmJvc2l0eRgqIAEoCzIpLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldERpYWdWZXJib3NpdHlIABJJChNvcGVuX3JlY29yZGluZ19maWxlGCsgASgLMioudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuT3BlblJlY29yZGluZ0ZpbGVIABJEChBkZWxldGVfcmVjb3JkaW5nGCwgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuRGVsZXRlUmVjb3JkaW5nSAASMgoHc2V0X2JsZRgtIAEoCzIfLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldEJsZUgAEkEKD2pvaW5fc2F2ZWRfd2lmaRguIAEoCzImLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLkpvaW5TYXZlZFdpZmlIABJDChBzZXRfYW50aV9mbGlja2VyGC8gASgLMicudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0QW50aUZsaWNrZXJIABJEChBjYXB0dXJlX3NuYXBzaG90GDAgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuQ2FwdHVyZVNuYXBzaG90SAASUQoXYXBwbHlfY2FsaWJyYXRpb25fZ3JvdXAYNSABKAsyLi52aXNpb19zY2hlbWEudjEuY29udHJvbC5BcHBseUNhbGlicmF0aW9uR3JvdXBIABJEChBjYWxpYnJhdGlvbl9zdGVwGDYgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuQ2FsaWJyYXRpb25TdGVwSAASRwoSc2V0X2NhcHR1cmVfcHJlc2V0GDcgASgLMikudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0Q2FwdHVyZVByZXNldEgAEjoKC2luZ2VzdF9zaWduGDEgASgLMiMudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuSW5nZXN0U2lnbkgAElEKF2luZ2VzdF9vcGVuX2NyZWRlbnRpYWxzGDIgASgLMi4udmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuSW5nZXN0T3BlbkNyZWRlbnRpYWxzSAASSwoUaW5nZXN0X2NoZWNrX3JlY2VpcHQYMyABKAsyKy52aXNpb19zY2hlbWEudjEuY29udHJvbC5Jbmdlc3RDaGVja1JlY2VpcHRIABJWChpzZXRfbWF4X3JlY29yZGluZ19kdXJhdGlvbhg0IAEoCzIwLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldE1heFJlY29yZGluZ0R1cmF0aW9uSABCBgoEYm9keSIlChBTZXRDYXB0dXJlUHJlc2V0EhEKCXByZXNldF9pZBgBIAEoCSIRCg9DYXB0dXJlU25hcHNob3QihgEKDlNldEFudGlGbGlja2VyEjwKBW1haW5zGAEgASgOMi0udmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0QW50aUZsaWNrZXIuTWFpbnMiNgoFTWFpbnMSDQoJTUFJTlNfT0ZGEAASDgoKTUFJTlNfNTBIWhABEg4KCk1BSU5TXzYwSFoQAiIoChVTZXRSZWNvcmRpbmdIZWFydGJlYXQSDwoHZW5hYmxlZBgBIAEoCCIxChdTZXRNYXhSZWNvcmRpbmdEdXJhdGlvbhIWCg5tYXhfZHVyYXRpb25fcxgBIAEoDSK8AQoXU2V0UmVjb3JkaW5nRGVzdGluYXRpb24SUQoLZGVzdGluYXRpb24YASABKA4yPC52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRSZWNvcmRpbmdEZXN0aW5hdGlvbi5EZXN0aW5hdGlvbhIQCghsZWFzZV9tcxgCIAEoDSI8CgtEZXN0aW5hdGlvbhIWChJERVNUSU5BVElPTl9ERVZJQ0UQABIVChFERVNUSU5BVElPTl9QSE9ORRABItMBCg5TdGFydFJlY29yZGluZxIiChpleHBlY3RlZF9yb3N0ZXJfZ2VuZXJhdGlvbhgJIAEoBBIUCgxzZXNzaW9uX25hbWUYASABKAkSDAoEdGFzaxgCIAEoCRIQCghsb2NhdGlvbhgDIAEoCRIQCghsYXRpdHVkZRgEIAEoARIRCglsb25naXR1ZGUYBSABKAESFgoOY2xpZW50X3VuaXhfdXMYBiABKAMSHQoVY2xpZW50X3V0Y19vZmZzZXRfbWluGAcgASgREgsKA2ZwcxgIIAEoDSIPCg1TdG9wUmVjb3JkaW5nIgoKCElkZW50aWZ5IokBCg9TZXRTdHJlYW1Qb2xpY3kSPAoFcnVsZXMYASADKAsyLS52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRTdHJlYW1Qb2xpY3kuUnVsZRo4CgRSdWxlEg0KBXRvcGljGAEgASgJEgwKBGRyb3AYAiABKAgSEwoLbWF4X3JhdGVfaHoYAyABKA0iKAoRU2V0VmlkZW9TdHJlYW1pbmcSDwoHZW5hYmxlZBgBIAEoCDoCGAEiJQoOU2V0SW11TGl2ZVJhdGUSDwoHcmF0ZV9oehgBIAEoDToCGAEiIgoMU2V0QXV0b1N0YXJ0EhIKCmF1dG9fc3RhcnQYASABKAgiIgoPU2V0U3RhdHVzUmVwb3J0Eg8KB2VuYWJsZWQYASABKAgiIAoNU2V0QXV0b1VwbG9hZBIPCgdlbmFibGVkGAEgASgIIiQKEVNldEF1ZGlvUmVjb3JkaW5nEg8KB2VuYWJsZWQYASABKAgiIwoQU2V0SGFuZERldGVjdGlvbhIPCgdlbmFibGVkGAEgASgIIhkKBlNldEJsZRIPCgdlbmFibGVkGAEgASgIIiAKDVNldEdwc1RhZ2dpbmcSDwoHZW5hYmxlZBgBIAEoCCIhChBTZXREaWFnVmVyYm9zaXR5Eg0KBWxldmVsGAEgASgNIiIKClNldEJpdHJhdGUSFAoMYml0cmF0ZV9rYnBzGAEgASgNIi4KDVNldFJlc29sdXRpb24SDQoFd2lkdGgYASABKA0SDgoGaGVpZ2h0GAIgASgNIqoDChBTZXRSZWNvcmRpbmdNZXRhEhEKBHRhc2sYASABKAlIAIgBARIVCghsb2NhdGlvbhgCIAEoCUgBiAEBEhQKB21lc3NhZ2UYAyABKAlIAogBARIVCghjYXB0dXJlchgIIAEoCUgDiAEBEhUKCGxhdGl0dWRlGAQgASgBSASIAQESFgoJbG9uZ2l0dWRlGAUgASgBSAWIAQESGwoOY2xpZW50X3VuaXhfdXMYBiABKANIBogBARIiChVjbGllbnRfdXRjX29mZnNldF9taW4YByABKBFIB4gBARIYCgtvcGVyYXRvcl9pZBgJIAEoCUgIiAEBEhsKDmVudmlyb25tZW50X2lkGAogASgJSAmIAQFCBwoFX3Rhc2tCCwoJX2xvY2F0aW9uQgoKCF9tZXNzYWdlQgsKCV9jYXB0dXJlckILCglfbGF0aXR1ZGVCDAoKX2xvbmdpdHVkZUIRCg9fY2xpZW50X3VuaXhfdXNCGAoWX2NsaWVudF91dGNfb2Zmc2V0X21pbkIOCgxfb3BlcmF0b3JfaWRCEQoPX2Vudmlyb25tZW50X2lkInwKB1NldFRpbWUSDwoHdW5peF91cxgBIAEoAxIWCg51dGNfb2Zmc2V0X21pbhgCIAEoERIVCghsYXRpdHVkZRgDIAEoAUgAiAEBEhYKCWxvbmdpdHVkZRgEIAEoAUgBiAEBQgsKCV9sYXRpdHVkZUIMCgpfbG9uZ2l0dWRlIi8KC0Nvbm5lY3RXaWZpEgwKBHNzaWQYASABKAkSEgoKcGFzc3BocmFzZRgCIAEoCSIdCg1Kb2luU2F2ZWRXaWZpEgwKBHNzaWQYASABKAkiCgoIU2NhbldpZmkiGgoKRm9yZ2V0V2lmaRIMCgRzc2lkGAEgASgJIgsKCVJlc2V0VG9BcCLuAgoKU2V0U3RvcmFnZRIZCgxlbmRwb2ludF91cmwYASABKAlIAIgBARITCgZyZWdpb24YAiABKAlIAYgBARITCgZidWNrZXQYAyABKAlIAogBARIaCg1hY2Nlc3Nfa2V5X2lkGAQgASgJSAOIAQESHgoRc2VjcmV0X2FjY2Vzc19rZXkYBSABKAlIBIgBARITCgZwcmVmaXgYBiABKAlIBYgBARIaCg1zdGF0dXNfcHJlZml4GAcgASgJSAaIAQESDgoGc2VhbGVkGAggASgMEh0KEGRlc3RpbmF0aW9uX2hpbnQYCSABKAlIB4gBAUIPCg1fZW5kcG9pbnRfdXJsQgkKB19yZWdpb25CCQoHX2J1Y2tldEIQCg5fYWNjZXNzX2tleV9pZEIUChJfc2VjcmV0X2FjY2Vzc19rZXlCCQoHX3ByZWZpeEIQCg5fc3RhdHVzX3ByZWZpeEITChFfZGVzdGluYXRpb25faGludCLvAgoLVGVzdFN0b3JhZ2USGQoMZW5kcG9pbnRfdXJsGAEgASgJSACIAQESEwoGcmVnaW9uGAIgASgJSAGIAQESEwoGYnVja2V0GAMgASgJSAKIAQESGgoNYWNjZXNzX2tleV9pZBgEIAEoCUgDiAEBEh4KEXNlY3JldF9hY2Nlc3Nfa2V5GAUgASgJSASIAQESEwoGcHJlZml4GAYgASgJSAWIAQESGgoNc3RhdHVzX3ByZWZpeBgHIAEoCUgGiAEBEg4KBnNlYWxlZBgIIAEoDBIdChBkZXN0aW5hdGlvbl9oaW50GAkgASgJSAeIAQFCDwoNX2VuZHBvaW50X3VybEIJCgdfcmVnaW9uQgkKB19idWNrZXRCEAoOX2FjY2Vzc19rZXlfaWRCFAoSX3NlY3JldF9hY2Nlc3Nfa2V5QgkKB19wcmVmaXhCEAoOX3N0YXR1c19wcmVmaXhCEwoRX2Rlc3RpbmF0aW9uX2hpbnQirAEKCkluZ2VzdFNpZ24SEQoEZGF0ZRgBIAEoCUgAiAEBEhMKBm1ldGhvZBgCIAEoCUgBiAEBEhEKBHBhdGgYAyABKAlIAogBARISCgVxdWVyeRgEIAEoCUgDiAEBEhgKC2JvZHlfc2hhMjU2GAUgASgJSASIAQFCBwoFX2RhdGVCCQoHX21ldGhvZEIHCgVfcGF0aEIICgZfcXVlcnlCDgoMX2JvZHlfc2hhMjU2IokCChVJbmdlc3RPcGVuQ3JlZGVudGlhbHMSGQoMcmVxdWVzdF9kYXRlGAEgASgJSACIAQESHgoRcmVwbHlfYm9keV9zaGEyNTYYAiABKAlIAYgBARIcCg9yZXBseV9zaWduYXR1cmUYAyABKAlIAogBARIWCgl1cGxvYWRfaWQYBCABKAlIA4gBARIfChJzZWFsZWRfY3JlZGVudGlhbHMYBSABKAlIBIgBAUIPCg1fcmVxdWVzdF9kYXRlQhQKEl9yZXBseV9ib2R5X3NoYTI1NkISChBfcmVwbHlfc2lnbmF0dXJlQgwKCl91cGxvYWRfaWRCFQoTX3NlYWxlZF9jcmVkZW50aWFscyK2AQoSSW5nZXN0Q2hlY2tSZWNlaXB0EhYKCXVwbG9hZF9pZBgBIAEoCUgAiAEBEhgKC3Nlc3Npb25fa2V5GAIgASgJSAGIAQESGwoOY29udGVudF9kaWdlc3QYAyABKAlIAogBARIUCgdyZWNlaXB0GAQgASgJSAOIAQFCDAoKX3VwbG9hZF9pZEIOCgxfc2Vzc2lvbl9rZXlCEQoPX2NvbnRlbnRfZGlnZXN0QgoKCF9yZWNlaXB0IkUKDkxpc3RSZWNvcmRpbmdzEg0KBWxpbWl0GAEgASgNEg4KBmN1cnNvchgCIAEoCRIUCgxzZXNzaW9uX25hbWUYAyABKAkivgEKEU9wZW5SZWNvcmRpbmdGaWxlEhQKDHNlc3Npb25fbmFtZRgBIAEoCRIRCglmaWxlX25hbWUYAiABKAkSDgoGb2Zmc2V0GAMgASgEEhMKC2V4cGVjdF9zaXplGAQgASgEEhcKD2V4cGVjdF9tdGltZV9ucxgFIAEoBBIdChVleHBlY3Rfb2JqZWN0X3ZlcnNpb24YBiABKAQSIwobZXhwZWN0X2NhdGFsb2d1ZV9nZW5lcmF0aW9uGAcgASgEIicKD0RlbGV0ZVJlY29yZGluZxIUCgxzZXNzaW9uX25hbWUYASABKAkiCgoIR2V0U3RhdGUiIAoNRm9ybWF0U3RvcmFnZRIPCgdmc190eXBlGAEgASgJIh0KDVNldE5vdGljZUxhbmcSDAoEbGFuZxgBIAEoCSIhCg9TZXROb3RpY2VWb2x1bWUSDgoGdm9sdW1lGAEgASgNItkFCg5TZXRDYWxpYnJhdGlvbhJHCgtzZW5zb3Jfa2luZBgBIAEoDjIyLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldENhbGlicmF0aW9uLlNlbnNvcktpbmQSFAoMc2Vuc29yX2luZGV4GAIgASgNEjEKCmludHJpbnNpY3MYCyABKAsyGy5mb3hnbG92ZS5DYW1lcmFDYWxpYnJhdGlvbkgAEi4KCmV4dHJpbnNpY3MYDCABKAsyGC5mb3hnbG92ZS5GcmFtZVRyYW5zZm9ybUgAEj8KCGltdV9pbmZvGA0gASgLMisudmlzaW9fc2NoZW1hLnYxLmNhbGlicmF0aW9uLkltdUNhbGlicmF0aW9uSAASRwoMZW5jb2Rlcl9pbmZvGA4gASgLMi8udmlzaW9fc2NoZW1hLnYxLmNhbGlicmF0aW9uLkVuY29kZXJDYWxpYnJhdGlvbkgAEkIKDWNhbWVyYV90dW5pbmcYDyABKAsyKS52aXNpb19zY2hlbWEudjEuY2FsaWJyYXRpb24uQ2FtZXJhVHVuaW5nSAASEwoJdW5pdF9zaWRlGBAgASgJSAASMgoOdGNwX2V4dHJpbnNpY3MYESABKAsyGC5mb3hnbG92ZS5GcmFtZVRyYW5zZm9ybUgAEkUKCWZpZHVjaWFscxgSIAEoCzIwLnZpc2lvX3NjaGVtYS52MS5jYWxpYnJhdGlvbi5GaWR1Y2lhbENhbGlicmF0aW9uSAASRAoIYXNzZW1ibHkYEyABKAsyMC52aXNpb19zY2hlbWEudjEuY2FsaWJyYXRpb24uQXNzZW1ibHlDYWxpYnJhdGlvbkgAIlUKClNlbnNvcktpbmQSGwoXU0VOU09SX0tJTkRfVU5TUEVDSUZJRUQQABIKCgZDQU1FUkEQARIHCgNJTVUQAhILCgdFTkNPREVSEAMSCAoEVU5JVBAEQgoKCGFydGlmYWN0IhMKEUNsZWFyQ2FtZXJhVHVuaW5nIiEKD1NldFJlY29yZGluZ0tleRIOCgZzZWFsZWQYASABKAwicwoOQ2FtZXJhUm90YXRpb24SFAoMY2FtZXJhX2luZGV4GAEgASgNEiYKCHJvdGF0aW9uGAIgASgLMhQuZm94Z2xvdmUuUXVhdGVybmlvbhIjCghwb3NpdGlvbhgDIAEoCzIRLmZveGdsb3ZlLlZlY3RvcjMi6AEKGlRhcmdldEV4dHJpbnNpY3NDb3JyZWN0aW9uEjgKB2NhbWVyYXMYASADKAsyJy52aXNpb19zY2hlbWEudjEuY29udHJvbC5DYW1lcmFSb3RhdGlvbhIWCg50YXJnZXRfcHJvZmlsZRgCIAEoCRIdChVwcmludF9zY2FsZV9jb25maXJtZWQYAyABKAgSJwoadmVyaWZpY2F0aW9uX3dvcnN0X21lYW5fcHgYBCABKAFIAIgBARIRCglyZXN1bHRfaWQYBSABKAlCHQobX3ZlcmlmaWNhdGlvbl93b3JzdF9tZWFuX3B4IqsCChdDYWxpYnJhdGlvbk1lbWJlclVwZGF0ZRITCgtkZXZpY2VfbmFtZRgBIAEoCRILCgN1aWQYAiABKAkSHgoWZXhwZWN0ZWRfZ2VvbWV0cnlfaGFzaBgDIAEoCRI6Cglyb3RhdGlvbnMYBCADKAsyJy52aXNpb19zY2hlbWEudjEuY29udHJvbC5DYW1lcmFSb3RhdGlvbhJCCghhc3NlbWJseRgFIAEoCzIwLnZpc2lvX3NjaGVtYS52MS5jYWxpYnJhdGlvbi5Bc3NlbWJseUNhbGlicmF0aW9uEk4KEXRhcmdldF9leHRyaW5zaWNzGAYgASgLMjMudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuVGFyZ2V0RXh0cmluc2ljc0NvcnJlY3Rpb24ilgEKFUFwcGx5Q2FsaWJyYXRpb25Hcm91cBIWCg50cmFuc2FjdGlvbl9pZBgBIAEoCRJBCgdtZW1iZXJzGAIgAygLMjAudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuQ2FsaWJyYXRpb25NZW1iZXJVcGRhdGUSIgoaZXhwZWN0ZWRfcm9zdGVyX2dlbmVyYXRpb24YAyABKAQigAIKD0NhbGlicmF0aW9uU3RlcBIWCg50cmFuc2FjdGlvbl9pZBgBIAEoCRJACgZtZW1iZXIYAiABKAsyMC52aXNpb19zY2hlbWEudjEuY29udHJvbC5DYWxpYnJhdGlvbk1lbWJlclVwZGF0ZRI9CgVwaGFzZRgDIAEoDjIuLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLkNhbGlicmF0aW9uU3RlcC5QaGFzZSJUCgVQaGFzZRILCgdQUkVQQVJFEAASCQoFQVBQTFkQARIKCgZWRVJJRlkQAhIMCghBU1NFTUJMWRADEgwKCFJPTExCQUNLEAQSCwoHUkVMRUFTRRAFYgZwcm90bzM", [file_foxglove_CameraCalibration, file_foxglove_FrameTransform, file_foxglove_Quaternion, file_foxglove_Vector3, file_visio_schema_v1_calibration_imu, file_visio_schema_v1_calibration_encoder, file_visio_schema_v1_calibration_camera_tuning, file_visio_schema_v1_calibration_fiducial, file_visio_schema_v1_calibration_assembly]);
+  fileDesc("CiV2aXNpb19zY2hlbWEvdjEvY29udHJvbC9jb21tYW5kLnByb3RvEhd2aXNpb19zY2hlbWEudjEuY29udHJvbCK3GAoHQ29tbWFuZBIVCg10YXJnZXRfZGV2aWNlGAEgASgJEhIKCmNvbW1hbmRfaWQYAiABKAQSQgoPc3RhcnRfcmVjb3JkaW5nGAogASgLMicudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU3RhcnRSZWNvcmRpbmdIABJACg5zdG9wX3JlY29yZGluZxgLIAEoCzImLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlN0b3BSZWNvcmRpbmdIABI1CghpZGVudGlmeRgMIAEoCzIhLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLklkZW50aWZ5SAASPwoOc2V0X2F1dG9fc3RhcnQYDSABKAsyJS52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRBdXRvU3RhcnRIABI8Cgxjb25uZWN0X3dpZmkYDiABKAsyJC52aXNpb19zY2hlbWEudjEuY29udHJvbC5Db25uZWN0V2lmaUgAEjYKCXNjYW5fd2lmaRgPIAEoCzIhLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNjYW5XaWZpSAASOgoLc2V0X3N0b3JhZ2UYECABKAsyIy52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRTdG9yYWdlSAASPAoMdGVzdF9zdG9yYWdlGBEgASgLMiQudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuVGVzdFN0b3JhZ2VIABJCCg9saXN0X3JlY29yZGluZ3MYEiABKAsyJy52aXNpb19zY2hlbWEudjEuY29udHJvbC5MaXN0UmVjb3JkaW5nc0gAEjYKCWdldF9zdGF0ZRgTIAEoCzIhLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLkdldFN0YXRlSAASQgoPc2V0X2NhbGlicmF0aW9uGBQgASgLMicudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0Q2FsaWJyYXRpb25IABI0CghzZXRfdGltZRgVIAEoCzIgLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFRpbWVIABJHChJzZXRfcmVjb3JkaW5nX21ldGEYFiABKAsyKS52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRSZWNvcmRpbmdNZXRhSAASTQoTc2V0X3ZpZGVvX3N0cmVhbWluZxgXIAEoCzIqLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFZpZGVvU3RyZWFtaW5nQgIYAUgAEjoKC3NldF9iaXRyYXRlGBggASgLMiMudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0Qml0cmF0ZUgAEkAKDmZvcm1hdF9zdG9yYWdlGBkgASgLMiYudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuRm9ybWF0U3RvcmFnZUgAEkEKD3NldF9hdXRvX3VwbG9hZBgaIAEoCzImLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldEF1dG9VcGxvYWRIABJBCg9zZXRfbm90aWNlX2xhbmcYGyABKAsyJi52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXROb3RpY2VMYW5nSAASQAoOc2V0X3Jlc29sdXRpb24YHCABKAsyJi52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRSZXNvbHV0aW9uSAASOQoLcmVzZXRfdG9fYXAYHSABKAsyIi52aXNpb19zY2hlbWEudjEuY29udHJvbC5SZXNldFRvQXBIABJJChNzZXRfYXVkaW9fcmVjb3JkaW5nGB4gASgLMioudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0QXVkaW9SZWNvcmRpbmdIABJIChFzZXRfaW11X2xpdmVfcmF0ZRgfIAEoCzInLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldEltdUxpdmVSYXRlQgIYAUgAEkUKEXNldF9zdHJlYW1fcG9saWN5GCAgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0U3RyZWFtUG9saWN5SAASOgoLZm9yZ2V0X3dpZmkYISABKAsyIy52aXNpb19zY2hlbWEudjEuY29udHJvbC5Gb3JnZXRXaWZpSAASRQoRc2V0X3N0YXR1c19yZXBvcnQYIiABKAsyKC52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRTdGF0dXNSZXBvcnRIABJJChNjbGVhcl9jYW1lcmFfdHVuaW5nGCMgASgLMioudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuQ2xlYXJDYW1lcmFUdW5pbmdIABJVChlzZXRfcmVjb3JkaW5nX2Rlc3RpbmF0aW9uGCQgASgLMjAudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0UmVjb3JkaW5nRGVzdGluYXRpb25IABJRChdzZXRfcmVjb3JkaW5nX2hlYXJ0YmVhdBglIAEoCzIuLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldFJlY29yZGluZ0hlYXJ0YmVhdEgAEkUKEXNldF9ub3RpY2Vfdm9sdW1lGCYgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0Tm90aWNlVm9sdW1lSAASRQoRc2V0X3JlY29yZGluZ19rZXkYJyABKAsyKC52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRSZWNvcmRpbmdLZXlIABJHChJzZXRfaGFuZF9kZXRlY3Rpb24YKCABKAsyKS52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRIYW5kRGV0ZWN0aW9uSAASQQoPc2V0X2dwc190YWdnaW5nGCkgASgLMiYudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0R3BzVGFnZ2luZ0gAEkcKEnNldF9kaWFnX3ZlcmJvc2l0eRgqIAEoCzIpLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldERpYWdWZXJib3NpdHlIABJJChNvcGVuX3JlY29yZGluZ19maWxlGCsgASgLMioudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuT3BlblJlY29yZGluZ0ZpbGVIABJEChBkZWxldGVfcmVjb3JkaW5nGCwgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuRGVsZXRlUmVjb3JkaW5nSAASMgoHc2V0X2JsZRgtIAEoCzIfLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldEJsZUgAEkEKD2pvaW5fc2F2ZWRfd2lmaRguIAEoCzImLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLkpvaW5TYXZlZFdpZmlIABJDChBzZXRfYW50aV9mbGlja2VyGC8gASgLMicudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0QW50aUZsaWNrZXJIABJEChBjYXB0dXJlX3NuYXBzaG90GDAgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuQ2FwdHVyZVNuYXBzaG90SAASRwoSc2V0X2NhcHR1cmVfcHJlc2V0GDcgASgLMikudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0Q2FwdHVyZVByZXNldEgAEjoKC2luZ2VzdF9zaWduGDEgASgLMiMudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuSW5nZXN0U2lnbkgAElEKF2luZ2VzdF9vcGVuX2NyZWRlbnRpYWxzGDIgASgLMi4udmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuSW5nZXN0T3BlbkNyZWRlbnRpYWxzSAASSwoUaW5nZXN0X2NoZWNrX3JlY2VpcHQYMyABKAsyKy52aXNpb19zY2hlbWEudjEuY29udHJvbC5Jbmdlc3RDaGVja1JlY2VpcHRIABJWChpzZXRfbWF4X3JlY29yZGluZ19kdXJhdGlvbhg0IAEoCzIwLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldE1heFJlY29yZGluZ0R1cmF0aW9uSABCBgoEYm9keUoECDUQNkoECDYQN1IXYXBwbHlfY2FsaWJyYXRpb25fZ3JvdXBSEGNhbGlicmF0aW9uX3N0ZXAiJQoQU2V0Q2FwdHVyZVByZXNldBIRCglwcmVzZXRfaWQYASABKAkiEQoPQ2FwdHVyZVNuYXBzaG90IoYBCg5TZXRBbnRpRmxpY2tlchI8CgVtYWlucxgBIAEoDjItLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNldEFudGlGbGlja2VyLk1haW5zIjYKBU1haW5zEg0KCU1BSU5TX09GRhAAEg4KCk1BSU5TXzUwSFoQARIOCgpNQUlOU182MEhaEAIiKAoVU2V0UmVjb3JkaW5nSGVhcnRiZWF0Eg8KB2VuYWJsZWQYASABKAgiMQoXU2V0TWF4UmVjb3JkaW5nRHVyYXRpb24SFgoObWF4X2R1cmF0aW9uX3MYASABKA0ivAEKF1NldFJlY29yZGluZ0Rlc3RpbmF0aW9uElEKC2Rlc3RpbmF0aW9uGAEgASgOMjwudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0UmVjb3JkaW5nRGVzdGluYXRpb24uRGVzdGluYXRpb24SEAoIbGVhc2VfbXMYAiABKA0iPAoLRGVzdGluYXRpb24SFgoSREVTVElOQVRJT05fREVWSUNFEAASFQoRREVTVElOQVRJT05fUEhPTkUQASLTAQoOU3RhcnRSZWNvcmRpbmcSIgoaZXhwZWN0ZWRfcm9zdGVyX2dlbmVyYXRpb24YCSABKAQSFAoMc2Vzc2lvbl9uYW1lGAEgASgJEgwKBHRhc2sYAiABKAkSEAoIbG9jYXRpb24YAyABKAkSEAoIbGF0aXR1ZGUYBCABKAESEQoJbG9uZ2l0dWRlGAUgASgBEhYKDmNsaWVudF91bml4X3VzGAYgASgDEh0KFWNsaWVudF91dGNfb2Zmc2V0X21pbhgHIAEoERILCgNmcHMYCCABKA0iDwoNU3RvcFJlY29yZGluZyIKCghJZGVudGlmeSKJAQoPU2V0U3RyZWFtUG9saWN5EjwKBXJ1bGVzGAEgAygLMi0udmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU2V0U3RyZWFtUG9saWN5LlJ1bGUaOAoEUnVsZRINCgV0b3BpYxgBIAEoCRIMCgRkcm9wGAIgASgIEhMKC21heF9yYXRlX2h6GAMgASgNIigKEVNldFZpZGVvU3RyZWFtaW5nEg8KB2VuYWJsZWQYASABKAg6AhgBIiUKDlNldEltdUxpdmVSYXRlEg8KB3JhdGVfaHoYASABKA06AhgBIiIKDFNldEF1dG9TdGFydBISCgphdXRvX3N0YXJ0GAEgASgIIiIKD1NldFN0YXR1c1JlcG9ydBIPCgdlbmFibGVkGAEgASgIIiAKDVNldEF1dG9VcGxvYWQSDwoHZW5hYmxlZBgBIAEoCCIkChFTZXRBdWRpb1JlY29yZGluZxIPCgdlbmFibGVkGAEgASgIIiMKEFNldEhhbmREZXRlY3Rpb24SDwoHZW5hYmxlZBgBIAEoCCIZCgZTZXRCbGUSDwoHZW5hYmxlZBgBIAEoCCIgCg1TZXRHcHNUYWdnaW5nEg8KB2VuYWJsZWQYASABKAgiIQoQU2V0RGlhZ1ZlcmJvc2l0eRINCgVsZXZlbBgBIAEoDSIiCgpTZXRCaXRyYXRlEhQKDGJpdHJhdGVfa2JwcxgBIAEoDSIuCg1TZXRSZXNvbHV0aW9uEg0KBXdpZHRoGAEgASgNEg4KBmhlaWdodBgCIAEoDSKqAwoQU2V0UmVjb3JkaW5nTWV0YRIRCgR0YXNrGAEgASgJSACIAQESFQoIbG9jYXRpb24YAiABKAlIAYgBARIUCgdtZXNzYWdlGAMgASgJSAKIAQESFQoIY2FwdHVyZXIYCCABKAlIA4gBARIVCghsYXRpdHVkZRgEIAEoAUgEiAEBEhYKCWxvbmdpdHVkZRgFIAEoAUgFiAEBEhsKDmNsaWVudF91bml4X3VzGAYgASgDSAaIAQESIgoVY2xpZW50X3V0Y19vZmZzZXRfbWluGAcgASgRSAeIAQESGAoLb3BlcmF0b3JfaWQYCSABKAlICIgBARIbCg5lbnZpcm9ubWVudF9pZBgKIAEoCUgJiAEBQgcKBV90YXNrQgsKCV9sb2NhdGlvbkIKCghfbWVzc2FnZUILCglfY2FwdHVyZXJCCwoJX2xhdGl0dWRlQgwKCl9sb25naXR1ZGVCEQoPX2NsaWVudF91bml4X3VzQhgKFl9jbGllbnRfdXRjX29mZnNldF9taW5CDgoMX29wZXJhdG9yX2lkQhEKD19lbnZpcm9ubWVudF9pZCJ8CgdTZXRUaW1lEg8KB3VuaXhfdXMYASABKAMSFgoOdXRjX29mZnNldF9taW4YAiABKBESFQoIbGF0aXR1ZGUYAyABKAFIAIgBARIWCglsb25naXR1ZGUYBCABKAFIAYgBAUILCglfbGF0aXR1ZGVCDAoKX2xvbmdpdHVkZSIvCgtDb25uZWN0V2lmaRIMCgRzc2lkGAEgASgJEhIKCnBhc3NwaHJhc2UYAiABKAkiHQoNSm9pblNhdmVkV2lmaRIMCgRzc2lkGAEgASgJIgoKCFNjYW5XaWZpIhoKCkZvcmdldFdpZmkSDAoEc3NpZBgBIAEoCSILCglSZXNldFRvQXAi7gIKClNldFN0b3JhZ2USGQoMZW5kcG9pbnRfdXJsGAEgASgJSACIAQESEwoGcmVnaW9uGAIgASgJSAGIAQESEwoGYnVja2V0GAMgASgJSAKIAQESGgoNYWNjZXNzX2tleV9pZBgEIAEoCUgDiAEBEh4KEXNlY3JldF9hY2Nlc3Nfa2V5GAUgASgJSASIAQESEwoGcHJlZml4GAYgASgJSAWIAQESGgoNc3RhdHVzX3ByZWZpeBgHIAEoCUgGiAEBEg4KBnNlYWxlZBgIIAEoDBIdChBkZXN0aW5hdGlvbl9oaW50GAkgASgJSAeIAQFCDwoNX2VuZHBvaW50X3VybEIJCgdfcmVnaW9uQgkKB19idWNrZXRCEAoOX2FjY2Vzc19rZXlfaWRCFAoSX3NlY3JldF9hY2Nlc3Nfa2V5QgkKB19wcmVmaXhCEAoOX3N0YXR1c19wcmVmaXhCEwoRX2Rlc3RpbmF0aW9uX2hpbnQi7wIKC1Rlc3RTdG9yYWdlEhkKDGVuZHBvaW50X3VybBgBIAEoCUgAiAEBEhMKBnJlZ2lvbhgCIAEoCUgBiAEBEhMKBmJ1Y2tldBgDIAEoCUgCiAEBEhoKDWFjY2Vzc19rZXlfaWQYBCABKAlIA4gBARIeChFzZWNyZXRfYWNjZXNzX2tleRgFIAEoCUgEiAEBEhMKBnByZWZpeBgGIAEoCUgFiAEBEhoKDXN0YXR1c19wcmVmaXgYByABKAlIBogBARIOCgZzZWFsZWQYCCABKAwSHQoQZGVzdGluYXRpb25faGludBgJIAEoCUgHiAEBQg8KDV9lbmRwb2ludF91cmxCCQoHX3JlZ2lvbkIJCgdfYnVja2V0QhAKDl9hY2Nlc3Nfa2V5X2lkQhQKEl9zZWNyZXRfYWNjZXNzX2tleUIJCgdfcHJlZml4QhAKDl9zdGF0dXNfcHJlZml4QhMKEV9kZXN0aW5hdGlvbl9oaW50IqwBCgpJbmdlc3RTaWduEhEKBGRhdGUYASABKAlIAIgBARITCgZtZXRob2QYAiABKAlIAYgBARIRCgRwYXRoGAMgASgJSAKIAQESEgoFcXVlcnkYBCABKAlIA4gBARIYCgtib2R5X3NoYTI1NhgFIAEoCUgEiAEBQgcKBV9kYXRlQgkKB19tZXRob2RCBwoFX3BhdGhCCAoGX3F1ZXJ5Qg4KDF9ib2R5X3NoYTI1NiKJAgoVSW5nZXN0T3BlbkNyZWRlbnRpYWxzEhkKDHJlcXVlc3RfZGF0ZRgBIAEoCUgAiAEBEh4KEXJlcGx5X2JvZHlfc2hhMjU2GAIgASgJSAGIAQESHAoPcmVwbHlfc2lnbmF0dXJlGAMgASgJSAKIAQESFgoJdXBsb2FkX2lkGAQgASgJSAOIAQESHwoSc2VhbGVkX2NyZWRlbnRpYWxzGAUgASgJSASIAQFCDwoNX3JlcXVlc3RfZGF0ZUIUChJfcmVwbHlfYm9keV9zaGEyNTZCEgoQX3JlcGx5X3NpZ25hdHVyZUIMCgpfdXBsb2FkX2lkQhUKE19zZWFsZWRfY3JlZGVudGlhbHMitgEKEkluZ2VzdENoZWNrUmVjZWlwdBIWCgl1cGxvYWRfaWQYASABKAlIAIgBARIYCgtzZXNzaW9uX2tleRgCIAEoCUgBiAEBEhsKDmNvbnRlbnRfZGlnZXN0GAMgASgJSAKIAQESFAoHcmVjZWlwdBgEIAEoCUgDiAEBQgwKCl91cGxvYWRfaWRCDgoMX3Nlc3Npb25fa2V5QhEKD19jb250ZW50X2RpZ2VzdEIKCghfcmVjZWlwdCJFCg5MaXN0UmVjb3JkaW5ncxINCgVsaW1pdBgBIAEoDRIOCgZjdXJzb3IYAiABKAkSFAoMc2Vzc2lvbl9uYW1lGAMgASgJIr4BChFPcGVuUmVjb3JkaW5nRmlsZRIUCgxzZXNzaW9uX25hbWUYASABKAkSEQoJZmlsZV9uYW1lGAIgASgJEg4KBm9mZnNldBgDIAEoBBITCgtleHBlY3Rfc2l6ZRgEIAEoBBIXCg9leHBlY3RfbXRpbWVfbnMYBSABKAQSHQoVZXhwZWN0X29iamVjdF92ZXJzaW9uGAYgASgEEiMKG2V4cGVjdF9jYXRhbG9ndWVfZ2VuZXJhdGlvbhgHIAEoBCInCg9EZWxldGVSZWNvcmRpbmcSFAoMc2Vzc2lvbl9uYW1lGAEgASgJIgoKCEdldFN0YXRlIiAKDUZvcm1hdFN0b3JhZ2USDwoHZnNfdHlwZRgBIAEoCSIdCg1TZXROb3RpY2VMYW5nEgwKBGxhbmcYASABKAkiIQoPU2V0Tm90aWNlVm9sdW1lEg4KBnZvbHVtZRgBIAEoDSKjBQoOU2V0Q2FsaWJyYXRpb24SRwoLc2Vuc29yX2tpbmQYASABKA4yMi52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZXRDYWxpYnJhdGlvbi5TZW5zb3JLaW5kEhQKDHNlbnNvcl9pbmRleBgCIAEoDRIxCgppbnRyaW5zaWNzGAsgASgLMhsuZm94Z2xvdmUuQ2FtZXJhQ2FsaWJyYXRpb25IABIuCgpleHRyaW5zaWNzGAwgASgLMhguZm94Z2xvdmUuRnJhbWVUcmFuc2Zvcm1IABI/CghpbXVfaW5mbxgNIAEoCzIrLnZpc2lvX3NjaGVtYS52MS5jYWxpYnJhdGlvbi5JbXVDYWxpYnJhdGlvbkgAEkcKDGVuY29kZXJfaW5mbxgOIAEoCzIvLnZpc2lvX3NjaGVtYS52MS5jYWxpYnJhdGlvbi5FbmNvZGVyQ2FsaWJyYXRpb25IABJCCg1jYW1lcmFfdHVuaW5nGA8gASgLMikudmlzaW9fc2NoZW1hLnYxLmNhbGlicmF0aW9uLkNhbWVyYVR1bmluZ0gAEhMKCXVuaXRfc2lkZRgQIAEoCUgAEjIKDnRjcF9leHRyaW5zaWNzGBEgASgLMhguZm94Z2xvdmUuRnJhbWVUcmFuc2Zvcm1IABJFCglmaWR1Y2lhbHMYEiABKAsyMC52aXNpb19zY2hlbWEudjEuY2FsaWJyYXRpb24uRmlkdWNpYWxDYWxpYnJhdGlvbkgAIlUKClNlbnNvcktpbmQSGwoXU0VOU09SX0tJTkRfVU5TUEVDSUZJRUQQABIKCgZDQU1FUkEQARIHCgNJTVUQAhILCgdFTkNPREVSEAMSCAoEVU5JVBAEQgoKCGFydGlmYWN0SgQIExAUUghhc3NlbWJseSITChFDbGVhckNhbWVyYVR1bmluZyIhCg9TZXRSZWNvcmRpbmdLZXkSDgoGc2VhbGVkGAEgASgMYgZwcm90bzM", [file_foxglove_CameraCalibration, file_foxglove_FrameTransform, file_visio_schema_v1_calibration_imu, file_visio_schema_v1_calibration_encoder, file_visio_schema_v1_calibration_camera_tuning, file_visio_schema_v1_calibration_fiducial]);
 
 /**
  * @generated from message visio_schema.v1.control.Command
@@ -299,18 +293,6 @@ export type Command = Message<"visio_schema.v1.control.Command"> & {
      */
     value: CaptureSnapshot;
     case: "captureSnapshot";
-  } | {
-    /**
-     * @generated from field: visio_schema.v1.control.ApplyCalibrationGroup apply_calibration_group = 53;
-     */
-    value: ApplyCalibrationGroup;
-    case: "applyCalibrationGroup";
-  } | {
-    /**
-     * @generated from field: visio_schema.v1.control.CalibrationStep calibration_step = 54;
-     */
-    value: CalibrationStep;
-    case: "calibrationStep";
   } | {
     /**
      * @generated from field: visio_schema.v1.control.SetCapturePreset set_capture_preset = 55;
@@ -2062,13 +2044,14 @@ export const SetNoticeVolumeSchema: GenMessage<SetNoticeVolume> = /*@__PURE__*/
   messageDesc(file_visio_schema_v1_control_command, 41);
 
 /**
- * Persist one piece of sensor calibration (effective on next boot). The target
+ * Persist one piece of sensor calibration while idle. Geometry reports update
+ * live; tuning and side changes restart the device. The target
  * device is the enclosing Command.target_device (end-to-end, hub-forwarded), so
  * a host can address a specific relayed leaf by name. The artifact is routed by
  * (sensor_kind, sensor_index, which_artifact) to the matching topic + store:
  *   intrinsics  -> /<dev>/camera/<i>/intrinsics  (foxglove.CameraCalibration)
  *   extrinsics  -> /<dev>/camera/<i>/extrinsics or /<dev>/imu/<i>/extrinsics
- *                  (foxglove.FrameTransform, child posed in the cam0 frame)
+ *                  (foxglove.FrameTransform; cam0 may have a named external parent)
  *   tcp_extrinsics -> /<dev>/camera/<i>/tcp_extrinsics
  *                  (foxglove.FrameTransform, index 0 only)
  *   imu_info    -> /<dev>/imu/<i>/info           (ImuCalibration)
@@ -2120,7 +2103,7 @@ export type SetCalibration = Message<"visio_schema.v1.control.SetCalibration"> &
     case: "intrinsics";
   } | {
     /**
-     * CAMERA (i>0) or IMU, rel. cam0
+     * CAMERA or IMU; cam0 requires distinct named external frames
      *
      * @generated from field: foxglove.FrameTransform extrinsics = 12;
      */
@@ -2160,10 +2143,8 @@ export type SetCalibration = Message<"visio_schema.v1.control.SetCalibration"> &
     case: "unitSide";
   } | {
     /**
-     * CAMERA, and `sensor_index` MUST be 0 — the anchor. That is the inverse
-     * of the `extrinsics` rule, which forbids index 0 (cam0 is the frame the
-     * others are posed in, so it has no extrinsic of its own). The pose of the
-     * gripper's tool-centre-point frame expressed in cam0
+     * CAMERA, and `sensor_index` MUST be 0 — the local anchor. The pose of
+     * the gripper's tool-centre-point frame expressed in cam0
      * (`parent_frame_id="cam0"`, `child_frame_id="tcp"`,
      * `p_cam0 = R * p_tcp + t`): the same direction as `camera/<i>/extrinsics`.
      * Its own artifact rather than an `extrinsics` on a spare index because it
@@ -2183,16 +2164,6 @@ export type SetCalibration = Message<"visio_schema.v1.control.SetCalibration"> &
      */
     value: FiducialCalibration;
     case: "fiducials";
-  } | {
-    /**
-     * UNIT, index 0. Published as /<dev>/assembly on both assembly members.
-     *
-     * 10 reserved for a deferred magnetometer artifact.
-     *
-     * @generated from field: visio_schema.v1.calibration.AssemblyCalibration assembly = 19;
-     */
-    value: AssemblyCalibration;
-    case: "assembly";
   } | { case: undefined; value?: undefined };
 };
 
@@ -2230,7 +2201,7 @@ export enum SetCalibration_SensorKind {
   /**
    * The BOARD itself, not a sensor on it: `sensor_index` is unused. Carries
    * artifacts that describe the unit rather than one of its instruments —
-   * today just `unit_side`. Additive: firmware that predates this kind falls
+   * `unit_side` and fiducials. Additive: firmware that predates this kind falls
    * through its sensor_kind switch and REFUSES the command, which is the
    * right answer, rather than silently applying it to a sensor.
    *
@@ -2314,222 +2285,4 @@ export type SetRecordingKey = Message<"visio_schema.v1.control.SetRecordingKey">
  */
 export const SetRecordingKeySchema: GenMessage<SetRecordingKey> = /*@__PURE__*/
   messageDesc(file_visio_schema_v1_control_command, 44);
-
-/**
- * Rotation correction only. Each board freezes its reference calibration before
- * any member changes. The head journals the group before PREPARE and recovers
- * unfinished work after reboot. UIDs and reference hashes are mandatory fences.
- *
- * @generated from message visio_schema.v1.control.CameraRotation
- */
-export type CameraRotation = Message<"visio_schema.v1.control.CameraRotation"> & {
-  /**
-   * @generated from field: uint32 camera_index = 1;
-   */
-  cameraIndex: number;
-
-  /**
-   * @generated from field: foxglove.Quaternion rotation = 2;
-   */
-  rotation?: Quaternion | undefined;
-
-  /**
-   * board-local coordinates of the fixed physical center
-   *
-   * @generated from field: foxglove.Vector3 position = 3;
-   */
-  position?: Vector3 | undefined;
-};
-
-/**
- * Describes the message visio_schema.v1.control.CameraRotation.
- * Use `create(CameraRotationSchema)` to create a new message.
- */
-export const CameraRotationSchema: GenMessage<CameraRotation> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 45);
-
-/**
- * Explicit opt-in to metric camera pose recovery from the bundled field target.
- * This payload must not be combined with the legacy fixed-center rotations.
- *
- * @generated from message visio_schema.v1.control.TargetExtrinsicsCorrection
- */
-export type TargetExtrinsicsCorrection = Message<"visio_schema.v1.control.TargetExtrinsicsCorrection"> & {
-  /**
-   * @generated from field: repeated visio_schema.v1.control.CameraRotation cameras = 1;
-   */
-  cameras: CameraRotation[];
-
-  /**
-   * @generated from field: string target_profile = 2;
-   */
-  targetProfile: string;
-
-  /**
-   * user checked the printed 10 cm scale
-   *
-   * @generated from field: bool print_scale_confirmed = 3;
-   */
-  printScaleConfirmed: boolean;
-
-  /**
-   * independent 1920x1080 Sampson mean
-   *
-   * @generated from field: optional double verification_worst_mean_px = 4;
-   */
-  verificationWorstMeanPx?: number | undefined;
-
-  /**
-   * @generated from field: string result_id = 5;
-   */
-  resultId: string;
-};
-
-/**
- * Describes the message visio_schema.v1.control.TargetExtrinsicsCorrection.
- * Use `create(TargetExtrinsicsCorrectionSchema)` to create a new message.
- */
-export const TargetExtrinsicsCorrectionSchema: GenMessage<TargetExtrinsicsCorrection> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 46);
-
-/**
- * @generated from message visio_schema.v1.control.CalibrationMemberUpdate
- */
-export type CalibrationMemberUpdate = Message<"visio_schema.v1.control.CalibrationMemberUpdate"> & {
-  /**
-   * @generated from field: string device_name = 1;
-   */
-  deviceName: string;
-
-  /**
-   * @generated from field: string uid = 2;
-   */
-  uid: string;
-
-  /**
-   * @generated from field: string expected_geometry_hash = 3;
-   */
-  expectedGeometryHash: string;
-
-  /**
-   * @generated from field: repeated visio_schema.v1.control.CameraRotation rotations = 4;
-   */
-  rotations: CameraRotation[];
-
-  /**
-   * Reissued on BOTH boards only after every local rotation is verified.
-   *
-   * @generated from field: visio_schema.v1.calibration.AssemblyCalibration assembly = 5;
-   */
-  assembly?: AssemblyCalibration | undefined;
-
-  /**
-   * @generated from field: visio_schema.v1.control.TargetExtrinsicsCorrection target_extrinsics = 6;
-   */
-  targetExtrinsics?: TargetExtrinsicsCorrection | undefined;
-};
-
-/**
- * Describes the message visio_schema.v1.control.CalibrationMemberUpdate.
- * Use `create(CalibrationMemberUpdateSchema)` to create a new message.
- */
-export const CalibrationMemberUpdateSchema: GenMessage<CalibrationMemberUpdate> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 47);
-
-/**
- * @generated from message visio_schema.v1.control.ApplyCalibrationGroup
- */
-export type ApplyCalibrationGroup = Message<"visio_schema.v1.control.ApplyCalibrationGroup"> & {
-  /**
-   * @generated from field: string transaction_id = 1;
-   */
-  transactionId: string;
-
-  /**
-   * one unit, or head + addon
-   *
-   * @generated from field: repeated visio_schema.v1.control.CalibrationMemberUpdate members = 2;
-   */
-  members: CalibrationMemberUpdate[];
-
-  /**
-   * @generated from field: uint64 expected_roster_generation = 3;
-   */
-  expectedRosterGeneration: bigint;
-};
-
-/**
- * Describes the message visio_schema.v1.control.ApplyCalibrationGroup.
- * Use `create(ApplyCalibrationGroupSchema)` to create a new message.
- */
-export const ApplyCalibrationGroupSchema: GenMessage<ApplyCalibrationGroup> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 48);
-
-/**
- * @generated from message visio_schema.v1.control.CalibrationStep
- */
-export type CalibrationStep = Message<"visio_schema.v1.control.CalibrationStep"> & {
-  /**
-   * @generated from field: string transaction_id = 1;
-   */
-  transactionId: string;
-
-  /**
-   * @generated from field: visio_schema.v1.control.CalibrationMemberUpdate member = 2;
-   */
-  member?: CalibrationMemberUpdate | undefined;
-
-  /**
-   * @generated from field: visio_schema.v1.control.CalibrationStep.Phase phase = 3;
-   */
-  phase: CalibrationStep_Phase;
-};
-
-/**
- * Describes the message visio_schema.v1.control.CalibrationStep.
- * Use `create(CalibrationStepSchema)` to create a new message.
- */
-export const CalibrationStepSchema: GenMessage<CalibrationStep> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command, 49);
-
-/**
- * @generated from enum visio_schema.v1.control.CalibrationStep.Phase
- */
-export enum CalibrationStep_Phase {
-  /**
-   * @generated from enum value: PREPARE = 0;
-   */
-  PREPARE = 0,
-
-  /**
-   * @generated from enum value: APPLY = 1;
-   */
-  APPLY = 1,
-
-  /**
-   * @generated from enum value: VERIFY = 2;
-   */
-  VERIFY = 2,
-
-  /**
-   * @generated from enum value: ASSEMBLY = 3;
-   */
-  ASSEMBLY = 3,
-
-  /**
-   * @generated from enum value: ROLLBACK = 4;
-   */
-  ROLLBACK = 4,
-
-  /**
-   * @generated from enum value: RELEASE = 5;
-   */
-  RELEASE = 5,
-}
-
-/**
- * Describes the enum visio_schema.v1.control.CalibrationStep.Phase.
- */
-export const CalibrationStep_PhaseSchema: GenEnum<CalibrationStep_Phase> = /*@__PURE__*/
-  enumDesc(file_visio_schema_v1_control_command, 49, 0);
 

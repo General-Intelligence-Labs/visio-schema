@@ -10,19 +10,32 @@ physical board. Each board stores geometry anchored at its own camera 0. A joint
 solve is split and rebased before it is sent; solver camera 4 is not hardware
 camera 4 on the addon.
 
-`calibration.AssemblyCalibration` carries `result_id`, `head_uid`, `addon_uid` and
-`t_head_cam0_addon_cam0` (a `foxglove.Pose`). Its transform is named
-`T_head_cam0_addon_cam0`: it maps addon-camera-0 coordinates into head-camera-0
-coordinates. Both members publish the same record on `/<root>/assembly`.
-The `SetCalibration.assembly` artifact requires `UNIT`, index 0. An empty message
-explicitly invalidates a previous assembly record.
+The addon alone stores the pose of its camera 0 in the head camera 0 frame.
+It uses the existing `SetCalibration` command, `sensor_kind=CAMERA`,
+`sensor_index=0`, `artifact.extrinsics=foxglove.FrameTransform`:
 
-The station invalidates previous membership, writes native board-local artifacts,
-and verifies values reported by both boards before committing matching assembly
-records. A sensor geometry update invalidates that board's assembly record.
-There is no cross-board atomic commit: consumers must require both matching
-records, the exact bound member UIDs, and the expected solution identifier. A
-missing or differing record is an incomplete calibration.
+- Topic: `/<addon root>/camera/0/extrinsics` (normally
+  `/stereo_addon/camera/0/extrinsics`), reported at 1 Hz.
+- `parent_frame_id`: `<head serial>/cam0`.
+- `child_frame_id`: `<addon serial>/cam0`.
+- Direction: `p_head0 = R * p_addon0 + t`; translation is in metres.
+
+Camera 0 remains the board-local anchor. Its optional external pose requires
+distinct, fully qualified cam0 frames; a camera0 self-transform is rejected.
+An empty camera0 transform explicitly clears the external pose. Camera1 and
+other local sensors retain their existing `cam0`-relative frame IDs and topics.
+Consumers compose `T_head0_addon0 * T_addon0_addon1` for addon camera1. They must
+check that the physical serials in the transform match the connected boards.
+The head stores no duplicate copy, and there is no assembly-result identifier.
+
+Clients write native camera artifacts and verify fresh values on the same
+published topics. These per-artifact writes are not atomic across boards.
+The companion retains original poses on the phone before saving, checks fresh
+geometry and identity, and restores interrupted writes before a new sweep.
+Factory tooling clears the addon anchor before a joint solve, writes and
+verifies board-local artifacts, then publishes the external anchor last.
+Target profile, print confirmation and validation evidence remain client data,
+not protocol fields.
 
 For multi-board recordings, payload timestamps remain producer-local. The native
 bus rewrites `Header.timestamp` into the receiving clock domain and MCAP stores

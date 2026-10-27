@@ -88,6 +88,12 @@ See [docs/usage.md](docs/usage.md) and [`examples/`](examples/) for full recipes
 
 ## Working in this repo
 
+`visio-schema` is an external public interface; keep it lean and evolve it
+conservatively. Reuse existing protocol messages and operations for new features.
+Add or extend a wire interface only when the existing interface cannot support
+the feature, or reuse would impose disproportionate complexity or cost; explain
+the need and preserve compatibility. Keep client workflow details in the client.
+
 - Generated bindings are **source-only at HEAD** (gitignored) and vendored at release tags. After
   changing `proto/`, run `make gen` before importing/testing.
 - Build/install: see [docs/install.md](docs/install.md). Quick: `git submodule update --init` →

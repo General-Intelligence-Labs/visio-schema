@@ -6,22 +6,27 @@ bump the MINOR version.
 
 ## Unreleased
 
-### Printed-target extrinsics correction
+### Reuse ordinary camera calibration artifacts
 
-`CalibrationMemberUpdate.target_extrinsics` carries full camera poses, target
-profile identity, print-scale confirmation and optional-present independent
-verification evidence. `DeviceState.target_extrinsics_supported` advertises
-admission support. The companion and firmware replay the same canonical
-`kalibr_aprilgrid_v1` payload from the shared golden corpus.
+Field calibration uses the existing `SetCalibration.extrinsics` artifact and
+`foxglove.FrameTransform` reports. Target detection, print confirmation,
+validation evidence and multi-camera save recovery belong to clients.
+The experimental `ApplyCalibrationGroup` / `CalibrationStep` commands,
+target-specific proof fields and mirrored `AssemblyCalibration` report are
+removed before release. Retired command, state and artifact tags/names remain
+reserved. Local builds using them require matched firmware and clients.
+
+An addon camera 0 may carry its external pose on
+`/<addon root>/camera/0/extrinsics`, with physical serials in the parent and
+child frame IDs. Other cameras stay relative to their own board's cam0.
+No new wire message or operation is introduced.
 
 ### Coordinated rig control alongside ingest and recording limits
 
 The combined contract preserves the published ingest and duration assignments.
-Rig commands use tags 53 (ApplyCalibrationGroup), 54 (CalibrationStep) and
-55 (SetCapturePreset). DeviceState uses 51 (supported video modes), 52 (capture
-state), 53 (calibration geometry hash) and 54 (transaction ID); transaction state
-and capture settings retain 49 and 50. Unpublished local builds using the earlier
-colliding tags require a matched firmware and client rebuild.
+`SetCapturePreset` retains tag 55. `DeviceState.supported_video_modes`,
+`capture_state` and `capture_settings` retain tags 51, 52 and 50.
+The retired calibration command/state slots are reserved.
 
 ### Compressed firmware image envelopes
 

@@ -179,3 +179,9 @@ They keyed off the message class rather than the topic, so neither could name a 
 camera and neither could touch the raw IMU bundles. A receiver still honours them by
 expanding them into the equivalent policy — drop every `foxglove.CompressedVideo`
 channel, cap every `Quaternion` channel — so there is one enforcement path.
+
+Camera extrinsics use `foxglove.FrameTransform` on
+`/<root>/camera/<index>/extrinsics`. Indices above zero are relative to the
+board's own `cam0`. An addon may also publish camera0's external pose on
+`/stereo_addon/camera/0/extrinsics`, with `<head serial>/cam0` as parent and
+`<addon serial>/cam0` as child. See [rig calibration](rig-calibration.md).
