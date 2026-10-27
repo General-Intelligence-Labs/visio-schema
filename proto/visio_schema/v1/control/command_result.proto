@@ -210,6 +210,8 @@ message DeviceState {
   string calibration_geometry_hash = 53;
   string calibration_transaction_id = 54;
   string calibration_transaction_state = 49;
+  // False/absent on firmware that only accepts fixed-center scene corrections.
+  bool target_extrinsics_supported = 55;
   // Validated against the sensors actually probed on this board. Empty means
   // this firmware cannot advertise modes; clients must not guess leaf modes.
   repeated VideoMode supported_video_modes = 51;

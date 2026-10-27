@@ -391,6 +391,9 @@ visio_schema.v1.control.CalibrationMemberUpdate.device_name max_size:128
 visio_schema.v1.control.CalibrationMemberUpdate.uid max_size:65
 visio_schema.v1.control.CalibrationMemberUpdate.expected_geometry_hash max_size:65
 visio_schema.v1.control.CalibrationMemberUpdate.rotations max_count:5
+visio_schema.v1.control.TargetExtrinsicsCorrection.cameras max_count:5
+visio_schema.v1.control.TargetExtrinsicsCorrection.target_profile max_size:65
+visio_schema.v1.control.TargetExtrinsicsCorrection.result_id max_size:65
 visio_schema.v1.control.ApplyCalibrationGroup.transaction_id max_size:65
 visio_schema.v1.control.ApplyCalibrationGroup.members max_count:2
 visio_schema.v1.control.CalibrationStep.transaction_id max_size:65

@@ -980,6 +980,15 @@ message CameraRotation {
   foxglove.Quaternion rotation = 2;
   foxglove.Vector3 position = 3; // board-local coordinates of the fixed physical center
 }
+// Explicit opt-in to metric camera pose recovery from the bundled field target.
+// This payload must not be combined with the legacy fixed-center rotations.
+message TargetExtrinsicsCorrection {
+  repeated CameraRotation cameras = 1;
+  string target_profile = 2;
+  bool print_scale_confirmed = 3; // user checked the printed 10 cm scale
+  optional double verification_worst_mean_px = 4; // independent 1920x1080 Sampson mean
+  string result_id = 5;
+}
 message CalibrationMemberUpdate {
   string device_name = 1;
   string uid = 2;
@@ -987,6 +996,7 @@ message CalibrationMemberUpdate {
   repeated CameraRotation rotations = 4;
   // Reissued on BOTH boards only after every local rotation is verified.
   visio_schema.v1.calibration.AssemblyCalibration assembly = 5;
+  TargetExtrinsicsCorrection target_extrinsics = 6;
 }
 message ApplyCalibrationGroup {
   string transaction_id = 1;

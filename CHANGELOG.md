@@ -6,6 +6,14 @@ bump the MINOR version.
 
 ## Unreleased
 
+### Printed-target extrinsics correction
+
+`CalibrationMemberUpdate.target_extrinsics` carries full camera poses, target
+profile identity, print-scale confirmation and optional-present independent
+verification evidence. `DeviceState.target_extrinsics_supported` advertises
+admission support. The companion and firmware replay the same canonical
+`kalibr_aprilgrid_v1` payload from the shared golden corpus.
+
 ### Coordinated rig control alongside ingest and recording limits
 
 The combined contract preserves the published ingest and duration assignments.
