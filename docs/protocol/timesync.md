@@ -5,6 +5,12 @@ sensor payload. Heartbeats and other control messages use send time. Payload
 capture times remain in the producer clock; the receiving bus translates data
 headers into its own clock. Optical exposure midpoint is outside this contract.
 
+`DeviceInfo` announcements describe registry state at receipt time. A receiving
+bus stamps their forwarded envelopes with its local monotonic clock, including
+before clock synchronization is ready. The payload's boot identity stays intact.
+This keeps announcements in the recorder's timeline without applying a sensor
+capture-time mapping to metadata.
+
 Every physical link has one clock authority: the receiving bus attaches a data
 producer as a source and estimates that producer's clock. The producer accepts
 that receiving bus as a sink and installs its authoritative mapping. A head owns
