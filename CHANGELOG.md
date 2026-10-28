@@ -21,6 +21,14 @@ An addon camera 0 may carry its external pose on
 child frame IDs. Other cameras stay relative to their own board's cam0.
 No new wire message or operation is introduced.
 
+### Optional power status
+
+`SystemHealth.power` (tag 15) reports capture power mode, external power,
+charge state, applied charger ceilings, DPM/thermal flags, raw charger faults
+and low-battery lockout/shutdown. Unknown measurements stay absent. Limits
+are settings rather than measured currents; voltage remains tag 14 and SOC
+still requires a characterized pack. Existing field assignments are unchanged.
+
 ### Coordinated rig control alongside ingest and recording limits
 
 The combined contract preserves the published ingest and duration assignments.

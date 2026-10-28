@@ -1,5 +1,6 @@
 #include "visio_schema/mcap/writer_endpoint.hpp"
 
+#include <system_error>
 #include <algorithm>
 #include <chrono>
 #include <utility>
@@ -67,35 +68,64 @@ McapWriterEndpoint::McapWriterEndpoint(std::string_view path, StreamResolver res
 McapWriterEndpoint::~McapWriterEndpoint() { Stop(); }
 
 void McapWriterEndpoint::Start(InboundFn /*on_inbound*/, ClosedFn /*on_closed*/) {
-  {
-    std::lock_guard<std::mutex> lk(mu_);
-    stop_ = false;
-  }
-  if (!thread_.joinable()) thread_ = std::thread([this] { WriterLoop(); });
+  std::lock_guard<std::mutex> serial(stop_mu_);
+  std::lock_guard<std::mutex> lk(mu_);
+  if (!stop_ && !thread_.joinable()) thread_ = std::thread([this] { WriterLoop(); });
 }
 
-void McapWriterEndpoint::Stop() {
-  {
-    std::lock_guard<std::mutex> lk(mu_);
-    if (stop_) return;
-    stop_ = true;
-    start_cv_.notify_all();
-  }
-  cv_.notify_one();
-  if (thread_.joinable()) thread_.join();  // drains the remaining queue
-  // Close() finalizes the part against the same storage that may have just
-  // died, and ~McapWriterEndpoint calls Stop() — a destructor is noexcept, so
-  // anything escaping here terminates the process during teardown. Catch(...)
-  // rather than std::exception: this is the last frame before noexcept, and
-  // NoteFailure is nothrow, so nothing can get past it. Losing the footer costs
-  // one part's index; the uploader's torn-part repair recovers it.
-  if (writer_) {
+void McapWriterEndpoint::Stop() { StopFor(std::chrono::milliseconds::max()); }
+
+bool McapWriterEndpoint::finalized() const {
+  std::lock_guard<std::mutex> lk(mu_);
+  return finalized_;
+}
+
+bool McapWriterEndpoint::StopFor(std::chrono::milliseconds timeout) {
+  std::unique_lock<std::mutex> serial(stop_mu_);
+  std::unique_lock<std::mutex> lk(mu_);
+  stop_ = true;
+  start_cv_.notify_all();
+  // A prepared writer can be abandoned before Start(). Its close still belongs
+  // to the same I/O owner and must obey the caller's completion budget.
+  if (!finalized_ && !finalizing_inline_ && !thread_.joinable()) {
     try {
-      writer_->Close();  // an unconfirmed part is said by the writer
-    } catch (...) {
-      NoteFailure("finalize failed");
+      thread_ = std::thread([this] { WriterLoop(); });
+    } catch (const std::system_error&) {
+      NoteFailure("unable to start finalization worker");
+      if (timeout != std::chrono::milliseconds::max()) return false;
+      // Destructor/indefinite stop must not create another failing thread or
+      // throw through noexcept. No I/O owner exists in this branch.
+      finalizing_inline_ = true;
+      NoteDrop(queue_.size());
+      queue_.clear(); queue_bytes_ = 0;
+      lk.unlock();
+      serial.unlock();
+      Finalize();
+      return true;
     }
   }
+  cv_.notify_one();
+  serial.unlock();
+  if (timeout == std::chrono::milliseconds::max())
+    stopped_cv_.wait(lk, [this] { return finalized_; });
+  else if (!stopped_cv_.wait_for(lk, timeout, [this] { return finalized_; })) return false;
+  lk.unlock();
+  serial.lock();
+  if (thread_.joinable()) thread_.join();
+  return true;
+}
+
+void McapWriterEndpoint::Finalize() noexcept {
+  try {
+    writer_->Close();
+  } catch (...) {
+    NoteFailure("finalize failed");
+  }
+  {
+    std::lock_guard<std::mutex> lk(mu_);
+    finalized_ = true;
+  }
+  stopped_cv_.notify_all();
 }
 
 bool McapWriterEndpoint::CrossedLogThreshold(std::uint64_t prev,
@@ -224,7 +254,7 @@ void McapWriterEndpoint::WriterLoop() {
       // pending_bytes() never pretends the endpoint got lighter at the swap.
       inflight_bytes_.store(queue_bytes_, std::memory_order_relaxed);
       queue_bytes_ = 0;
-      if (batch_.empty() && stop_) return;  // stopped + fully drained
+      if (batch_.empty() && stop_) break;  // stopped + fully drained
     }
     // This is the thread's ENTRY function: an exception leaving it calls
     // std::terminate and takes the whole process down. McapWriter throws when
@@ -257,6 +287,7 @@ void McapWriterEndpoint::WriterLoop() {
     }
     inflight_bytes_.store(0, std::memory_order_relaxed);
   }
+  Finalize();
 }
 
 std::string_view McapWriterEndpoint::PayloadOf(const Entry& e) {

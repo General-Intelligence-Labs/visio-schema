@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <numeric>
 #include <cstdlib>
@@ -70,6 +71,7 @@ class FaultStorage final : public WriterStorage {
       return inner_->Checkpoint();
     }
     IoResult Close() override {
+      owner_.CloseGate();
       auto closed = inner_->Close();  // the descriptor goes either way
       if (const int error = owner_.Injected(IoStep::close, part_))
         return {IoStep::close, error, closed.accepted, true};
@@ -135,6 +137,28 @@ class FaultStorage final : public WriterStorage {
     const auto it = parts.find(path);
     return it == parts.end() ? -1 : it->second;
   }
+  void CloseGate() {
+    std::unique_lock<std::mutex> lock(close_mu);
+    ++close_calls;
+    close_owner = std::this_thread::get_id();
+    close_entered = true;
+    close_cv.notify_all();
+    close_cv.wait(lock, [&] { return !block_close || release_close; });
+  }
+  bool WaitClose() {
+    std::unique_lock<std::mutex> lock(close_mu);
+    return close_cv.wait_for(lock, std::chrono::seconds(2), [&] { return close_entered; });
+  }
+  void ReleaseClose() {
+    std::lock_guard<std::mutex> lock(close_mu);
+    release_close = true;
+    close_cv.notify_all();
+  }
+  std::mutex close_mu;
+  std::condition_variable close_cv;
+  bool block_close = false, release_close = false, close_entered = false;
+  unsigned close_calls = 0;
+  std::thread::id close_owner;
   bool short_next = false;
   unsigned short_hits = 0;
   int writeback_error = 0;
@@ -274,6 +298,38 @@ class McapWriterStorage : public ::testing::TestWithParam<bool> {
   std::string path_;
 };
 INSTANTIATE_TEST_SUITE_P(PlainAndEncrypted, McapWriterStorage, ::testing::Bool());
+
+TEST_P(McapWriterStorage, BoundedCloseRetainsIoOwnerAndAllowsConcurrentStopBudgets) {
+  for (bool start : {false, true}) {
+    Restart();
+    auto storage = std::make_shared<FaultStorage>();
+    storage->block_close = true;
+    const auto channel = mcap_test::MakeChannel(16, "/test/imu/0/raw");
+    McapWriterEndpoint endpoint(path_, [&](std::uint32_t) { return &channel; },
+        0, 0.0, visio_schema::transport::WritePolicy::lossless(), {}, false, 0, 0, key(), {}, storage);
+    std::thread waiter;
+    struct Cleanup {
+      std::shared_ptr<FaultStorage> storage;
+      std::thread& waiter;
+      ~Cleanup() { storage->ReleaseClose(); if (waiter.joinable()) waiter.join(); }
+    } cleanup{storage, waiter};
+    if (start) endpoint.Start(nullptr, nullptr);
+    waiter = std::thread([&] { endpoint.Stop(); });
+    ASSERT_TRUE(storage->WaitClose());
+    EXPECT_FALSE(endpoint.finalized());
+    const auto before = std::chrono::steady_clock::now();
+    EXPECT_FALSE(endpoint.StopFor(std::chrono::milliseconds(2)));
+    EXPECT_LT(std::chrono::steady_clock::now() - before, std::chrono::milliseconds(500));
+    storage->ReleaseClose();
+    waiter.join();
+    EXPECT_TRUE(endpoint.StopFor(std::chrono::milliseconds(0)));
+    EXPECT_TRUE(endpoint.finalized());
+    EXPECT_FALSE(endpoint.storage_fault());
+    EXPECT_EQ(storage->close_calls, 1u);
+    EXPECT_NE(storage->close_owner, std::this_thread::get_id());
+    EXPECT_TRUE(mcap_test::PartIsWhole(path_, key()));
+  }
+}
 
 TEST_P(McapWriterStorage, SynchronizedGroupCutsLossyPartAndKeepsRecording) {
   auto storage = std::make_shared<FaultStorage>();

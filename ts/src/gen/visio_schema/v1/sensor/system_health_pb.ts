@@ -24,7 +24,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file visio_schema/v1/sensor/system_health.proto.
  */
 export const file_visio_schema_v1_sensor_system_health: GenFile = /*@__PURE__*/
-  fileDesc("Cip2aXNpb19zY2hlbWEvdjEvc2Vuc29yL3N5c3RlbV9oZWFsdGgucHJvdG8SFnZpc2lvX3NjaGVtYS52MS5zZW5zb3Ii9QkKDFN5c3RlbUhlYWx0aBItCgl0aW1lc3RhbXAYASABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhcKCmNwdV90ZW1wX2MYAiABKAJIAIgBARIaCg1jcHVfdXNhZ2VfcGN0GAMgASgCSAGIAQESGwoObWVtX2ZyZWVfYnl0ZXMYBCABKARIAogBARIYCgtiYXR0ZXJ5X3BjdBgFIAEoAkgDiAEBEh4KEWJhdHRlcnlfdm9sdGFnZV92GA4gASgCSASIAQESHAoPZGlza19mcmVlX2J5dGVzGAYgASgESAWIAQESHQoQZGlza190b3RhbF9ieXRlcxgKIAEoBEgGiAEBEhYKCXJlY29yZGluZxgHIAEoCEgHiAEBEhsKDnN0cmVhbV9jbGllbnRzGAggASgNSAiIAQESLAoIcmVhbHRpbWUYCSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEkUKDGNhbWVyYV90ZW1wcxgLIAMoCzIvLnZpc2lvX3NjaGVtYS52MS5zZW5zb3IuU3lzdGVtSGVhbHRoLkNhbWVyYVRlbXASVwoSdGhlcm1hbF9taXRpZ2F0aW9uGAwgASgOMjYudmlzaW9fc2NoZW1hLnYxLnNlbnNvci5TeXN0ZW1IZWFsdGguVGhlcm1hbE1pdGlnYXRpb25ICYgBARJgChd0aGVybWFsX3JlY29yZGluZ19ndWFyZBgNIAEoDjI6LnZpc2lvX3NjaGVtYS52MS5zZW5zb3IuU3lzdGVtSGVhbHRoLlRoZXJtYWxSZWNvcmRpbmdHdWFyZEgKiAEBGjIKCkNhbWVyYVRlbXASDQoFaW5kZXgYASABKA0SFQoNc2Vuc29yX3RlbXBfYxgCIAEoAiK+AQoRVGhlcm1hbE1pdGlnYXRpb24SIgoeVEhFUk1BTF9NSVRJR0FUSU9OX1VOU1BFQ0lGSUVEEAASGwoXVEhFUk1BTF9NSVRJR0FUSU9OX05PTkUQARIcChhUSEVSTUFMX01JVElHQVRJT05fQ0xPQ0sQAhIlCiFUSEVSTUFMX01JVElHQVRJT05fVklERU9fV0lUSEhFTEQQAxIjCh9USEVSTUFMX01JVElHQVRJT05fTElWRV9SRURVQ0VEEAQiuwEKFVRoZXJtYWxSZWNvcmRpbmdHdWFyZBInCiNUSEVSTUFMX1JFQ09SRElOR19HVUFSRF9VTlNQRUNJRklFRBAAEiAKHFRIRVJNQUxfUkVDT1JESU5HX0dVQVJEX05PTkUQARIoCiRUSEVSTUFMX1JFQ09SRElOR19HVUFSRF9TVE9QX0FEVklTRUQQAhItCilUSEVSTUFMX1JFQ09SRElOR19HVUFSRF9SRUNPUkRJTkdfQkxPQ0tFRBADQg0KC19jcHVfdGVtcF9jQhAKDl9jcHVfdXNhZ2VfcGN0QhEKD19tZW1fZnJlZV9ieXRlc0IOCgxfYmF0dGVyeV9wY3RCFAoSX2JhdHRlcnlfdm9sdGFnZV92QhIKEF9kaXNrX2ZyZWVfYnl0ZXNCEwoRX2Rpc2tfdG90YWxfYnl0ZXNCDAoKX3JlY29yZGluZ0IRCg9fc3RyZWFtX2NsaWVudHNCFQoTX3RoZXJtYWxfbWl0aWdhdGlvbkIaChhfdGhlcm1hbF9yZWNvcmRpbmdfZ3VhcmRiBnByb3RvMw", [file_google_protobuf_timestamp]);
+  fileDesc("Cip2aXNpb19zY2hlbWEvdjEvc2Vuc29yL3N5c3RlbV9oZWFsdGgucHJvdG8SFnZpc2lvX3NjaGVtYS52MS5zZW5zb3IimRIKDFN5c3RlbUhlYWx0aBItCgl0aW1lc3RhbXAYASABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhcKCmNwdV90ZW1wX2MYAiABKAJIAIgBARIaCg1jcHVfdXNhZ2VfcGN0GAMgASgCSAGIAQESGwoObWVtX2ZyZWVfYnl0ZXMYBCABKARIAogBARIYCgtiYXR0ZXJ5X3BjdBgFIAEoAkgDiAEBEh4KEWJhdHRlcnlfdm9sdGFnZV92GA4gASgCSASIAQESRAoFcG93ZXIYDyABKAsyMC52aXNpb19zY2hlbWEudjEuc2Vuc29yLlN5c3RlbUhlYWx0aC5Qb3dlclN0YXR1c0gFiAEBEhwKD2Rpc2tfZnJlZV9ieXRlcxgGIAEoBEgGiAEBEh0KEGRpc2tfdG90YWxfYnl0ZXMYCiABKARIB4gBARIWCglyZWNvcmRpbmcYByABKAhICIgBARIbCg5zdHJlYW1fY2xpZW50cxgIIAEoDUgJiAEBEiwKCHJlYWx0aW1lGAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBJFCgxjYW1lcmFfdGVtcHMYCyADKAsyLy52aXNpb19zY2hlbWEudjEuc2Vuc29yLlN5c3RlbUhlYWx0aC5DYW1lcmFUZW1wElcKEnRoZXJtYWxfbWl0aWdhdGlvbhgMIAEoDjI2LnZpc2lvX3NjaGVtYS52MS5zZW5zb3IuU3lzdGVtSGVhbHRoLlRoZXJtYWxNaXRpZ2F0aW9uSAqIAQESYAoXdGhlcm1hbF9yZWNvcmRpbmdfZ3VhcmQYDSABKA4yOi52aXNpb19zY2hlbWEudjEuc2Vuc29yLlN5c3RlbUhlYWx0aC5UaGVybWFsUmVjb3JkaW5nR3VhcmRIC4gBARrRBwoLUG93ZXJTdGF0dXMSQwoEbW9kZRgBIAEoDjI1LnZpc2lvX3NjaGVtYS52MS5zZW5zb3IuU3lzdGVtSGVhbHRoLlBvd2VyU3RhdHVzLk1vZGUSIwoWZXh0ZXJuYWxfcG93ZXJfcHJlc2VudBgCIAEoCEgAiAEBElcKDGNoYXJnZV9zdGF0ZRgDIAEoDjI8LnZpc2lvX3NjaGVtYS52MS5zZW5zb3IuU3lzdGVtSGVhbHRoLlBvd2VyU3RhdHVzLkNoYXJnZVN0YXRlSAGIAQESIwoWaW5wdXRfY3VycmVudF9saW1pdF9tYRgEIAEoDUgCiAEBEiQKF2NoYXJnZV9jdXJyZW50X2xpbWl0X21hGAUgASgNSAOIAQESJAoXY2hhcmdlX3ZvbHRhZ2VfbGltaXRfbXYYBiABKA1IBIgBARIiChVpbnB1dF92b2x0YWdlX2xpbWl0ZWQYByABKAhIBYgBARIiChVpbnB1dF9jdXJyZW50X2xpbWl0ZWQYCCABKAhIBogBARIcCg90aGVybWFsX2xpbWl0ZWQYCSABKAhIB4gBARIfChJjaGFyZ2VyX2ZhdWx0X2JpdHMYCiABKA1ICIgBARIbChNsb3dfYmF0dGVyeV9sb2Nrb3V0GAsgASgIEhwKFGxvd19iYXR0ZXJ5X3NodXRkb3duGAwgASgIInAKBE1vZGUSFAoQTU9ERV9VTlNQRUNJRklFRBAAEg8KC01PREVfQUNUSVZFEAESEgoOTU9ERV9RVUlFU0NJTkcQAhIWChJNT0RFX0NIQVJHSU5HX0lETEUQAxIVChFNT0RFX1BPV0VSSU5HX09GRhAEInwKC0NoYXJnZVN0YXRlEhwKGENIQVJHRV9TVEFURV9VTlNQRUNJRklFRBAAEh0KGUNIQVJHRV9TVEFURV9OT1RfQ0hBUkdJTkcQARIZChVDSEFSR0VfU1RBVEVfQ0hBUkdJTkcQAhIVChFDSEFSR0VfU1RBVEVfRlVMTBADQhkKF19leHRlcm5hbF9wb3dlcl9wcmVzZW50Qg8KDV9jaGFyZ2Vfc3RhdGVCGQoXX2lucHV0X2N1cnJlbnRfbGltaXRfbWFCGgoYX2NoYXJnZV9jdXJyZW50X2xpbWl0X21hQhoKGF9jaGFyZ2Vfdm9sdGFnZV9saW1pdF9tdkIYChZfaW5wdXRfdm9sdGFnZV9saW1pdGVkQhgKFl9pbnB1dF9jdXJyZW50X2xpbWl0ZWRCEgoQX3RoZXJtYWxfbGltaXRlZEIVChNfY2hhcmdlcl9mYXVsdF9iaXRzGjIKCkNhbWVyYVRlbXASDQoFaW5kZXgYASABKA0SFQoNc2Vuc29yX3RlbXBfYxgCIAEoAiK+AQoRVGhlcm1hbE1pdGlnYXRpb24SIgoeVEhFUk1BTF9NSVRJR0FUSU9OX1VOU1BFQ0lGSUVEEAASGwoXVEhFUk1BTF9NSVRJR0FUSU9OX05PTkUQARIcChhUSEVSTUFMX01JVElHQVRJT05fQ0xPQ0sQAhIlCiFUSEVSTUFMX01JVElHQVRJT05fVklERU9fV0lUSEhFTEQQAxIjCh9USEVSTUFMX01JVElHQVRJT05fTElWRV9SRURVQ0VEEAQiuwEKFVRoZXJtYWxSZWNvcmRpbmdHdWFyZBInCiNUSEVSTUFMX1JFQ09SRElOR19HVUFSRF9VTlNQRUNJRklFRBAAEiAKHFRIRVJNQUxfUkVDT1JESU5HX0dVQVJEX05PTkUQARIoCiRUSEVSTUFMX1JFQ09SRElOR19HVUFSRF9TVE9QX0FEVklTRUQQAhItCilUSEVSTUFMX1JFQ09SRElOR19HVUFSRF9SRUNPUkRJTkdfQkxPQ0tFRBADQg0KC19jcHVfdGVtcF9jQhAKDl9jcHVfdXNhZ2VfcGN0QhEKD19tZW1fZnJlZV9ieXRlc0IOCgxfYmF0dGVyeV9wY3RCFAoSX2JhdHRlcnlfdm9sdGFnZV92QggKBl9wb3dlckISChBfZGlza19mcmVlX2J5dGVzQhMKEV9kaXNrX3RvdGFsX2J5dGVzQgwKCl9yZWNvcmRpbmdCEQoPX3N0cmVhbV9jbGllbnRzQhUKE190aGVybWFsX21pdGlnYXRpb25CGgoYX3RoZXJtYWxfcmVjb3JkaW5nX2d1YXJkYgZwcm90bzM", [file_google_protobuf_timestamp]);
 
 /**
  * @generated from message visio_schema.v1.sensor.SystemHealth
@@ -72,6 +72,11 @@ export type SystemHealth = Message<"visio_schema.v1.sensor.SystemHealth"> & {
    * @generated from field: optional float battery_voltage_v = 14;
    */
   batteryVoltageV?: number | undefined;
+
+  /**
+   * @generated from field: optional visio_schema.v1.sensor.SystemHealth.PowerStatus power = 15;
+   */
+  power?: SystemHealth_PowerStatus | undefined;
 
   /**
    * Free disk space on the recording volume, in bytes.
@@ -140,6 +145,148 @@ export const SystemHealthSchema: GenMessage<SystemHealth> = /*@__PURE__*/
   messageDesc(file_visio_schema_v1_sensor_system_health, 0);
 
 /**
+ * Applied charger settings are ceilings, not measured currents. Missing
+ * properties remain absent; this message does not imply a calibrated gauge.
+ *
+ * @generated from message visio_schema.v1.sensor.SystemHealth.PowerStatus
+ */
+export type SystemHealth_PowerStatus = Message<"visio_schema.v1.sensor.SystemHealth.PowerStatus"> & {
+  /**
+   * @generated from field: visio_schema.v1.sensor.SystemHealth.PowerStatus.Mode mode = 1;
+   */
+  mode: SystemHealth_PowerStatus_Mode;
+
+  /**
+   * @generated from field: optional bool external_power_present = 2;
+   */
+  externalPowerPresent?: boolean | undefined;
+
+  /**
+   * @generated from field: optional visio_schema.v1.sensor.SystemHealth.PowerStatus.ChargeState charge_state = 3;
+   */
+  chargeState?: SystemHealth_PowerStatus_ChargeState | undefined;
+
+  /**
+   * @generated from field: optional uint32 input_current_limit_ma = 4;
+   */
+  inputCurrentLimitMa?: number | undefined;
+
+  /**
+   * @generated from field: optional uint32 charge_current_limit_ma = 5;
+   */
+  chargeCurrentLimitMa?: number | undefined;
+
+  /**
+   * @generated from field: optional uint32 charge_voltage_limit_mv = 6;
+   */
+  chargeVoltageLimitMv?: number | undefined;
+
+  /**
+   * @generated from field: optional bool input_voltage_limited = 7;
+   */
+  inputVoltageLimited?: boolean | undefined;
+
+  /**
+   * @generated from field: optional bool input_current_limited = 8;
+   */
+  inputCurrentLimited?: boolean | undefined;
+
+  /**
+   * @generated from field: optional bool thermal_limited = 9;
+   */
+  thermalLimited?: boolean | undefined;
+
+  /**
+   * @generated from field: optional uint32 charger_fault_bits = 10;
+   */
+  chargerFaultBits?: number | undefined;
+
+  /**
+   * @generated from field: bool low_battery_lockout = 11;
+   */
+  lowBatteryLockout: boolean;
+
+  /**
+   * @generated from field: bool low_battery_shutdown = 12;
+   */
+  lowBatteryShutdown: boolean;
+};
+
+/**
+ * Describes the message visio_schema.v1.sensor.SystemHealth.PowerStatus.
+ * Use `create(SystemHealth_PowerStatusSchema)` to create a new message.
+ */
+export const SystemHealth_PowerStatusSchema: GenMessage<SystemHealth_PowerStatus> = /*@__PURE__*/
+  messageDesc(file_visio_schema_v1_sensor_system_health, 0, 0);
+
+/**
+ * @generated from enum visio_schema.v1.sensor.SystemHealth.PowerStatus.Mode
+ */
+export enum SystemHealth_PowerStatus_Mode {
+  /**
+   * @generated from enum value: MODE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: MODE_ACTIVE = 1;
+   */
+  ACTIVE = 1,
+
+  /**
+   * @generated from enum value: MODE_QUIESCING = 2;
+   */
+  QUIESCING = 2,
+
+  /**
+   * @generated from enum value: MODE_CHARGING_IDLE = 3;
+   */
+  CHARGING_IDLE = 3,
+
+  /**
+   * @generated from enum value: MODE_POWERING_OFF = 4;
+   */
+  POWERING_OFF = 4,
+}
+
+/**
+ * Describes the enum visio_schema.v1.sensor.SystemHealth.PowerStatus.Mode.
+ */
+export const SystemHealth_PowerStatus_ModeSchema: GenEnum<SystemHealth_PowerStatus_Mode> = /*@__PURE__*/
+  enumDesc(file_visio_schema_v1_sensor_system_health, 0, 0, 0);
+
+/**
+ * @generated from enum visio_schema.v1.sensor.SystemHealth.PowerStatus.ChargeState
+ */
+export enum SystemHealth_PowerStatus_ChargeState {
+  /**
+   * @generated from enum value: CHARGE_STATE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: CHARGE_STATE_NOT_CHARGING = 1;
+   */
+  NOT_CHARGING = 1,
+
+  /**
+   * @generated from enum value: CHARGE_STATE_CHARGING = 2;
+   */
+  CHARGING = 2,
+
+  /**
+   * @generated from enum value: CHARGE_STATE_FULL = 3;
+   */
+  FULL = 3,
+}
+
+/**
+ * Describes the enum visio_schema.v1.sensor.SystemHealth.PowerStatus.ChargeState.
+ */
+export const SystemHealth_PowerStatus_ChargeStateSchema: GenEnum<SystemHealth_PowerStatus_ChargeState> = /*@__PURE__*/
+  enumDesc(file_visio_schema_v1_sensor_system_health, 0, 0, 1);
+
+/**
  * Per-camera image-sensor die temperature. One entry per camera that can
  * measure it; a sensor with no temperature register, or one that has not
  * answered yet, is absent rather than zero. Consumers must therefore key on
@@ -170,7 +317,7 @@ export type SystemHealth_CameraTemp = Message<"visio_schema.v1.sensor.SystemHeal
  * Use `create(SystemHealth_CameraTempSchema)` to create a new message.
  */
 export const SystemHealth_CameraTempSchema: GenMessage<SystemHealth_CameraTemp> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_sensor_system_health, 0, 0);
+  messageDesc(file_visio_schema_v1_sensor_system_health, 0, 1);
 
 /**
  * How far the device has gone to keep itself inside its thermal limits.

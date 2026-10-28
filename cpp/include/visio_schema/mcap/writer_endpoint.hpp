@@ -108,6 +108,10 @@ class McapWriterEndpoint : public transport::Endpoint {
   void Start(InboundFn on_inbound, ClosedFn on_closed) override;  // spawn writer thread
   void Send(const Message& msg) override;              // resolve + enqueue
   void Stop() override;                                // stop+join, finalize
+  // Requests drain + durable close on mcap_wr. False means still in flight;
+  // caller MUST retain this endpoint and its storage claim until completion.
+  bool StopFor(std::chrono::milliseconds timeout);
+  bool finalized() const;
 
   // Frames still QUEUED — the depth the policy's max_depth bounds. Frames the
   // writer thread has already taken are not counted here (see pending_bytes
@@ -178,6 +182,7 @@ class McapWriterEndpoint : public transport::Endpoint {
   };
   static std::string_view PayloadOf(const Entry& e);
   void WriterLoop();
+  void Finalize() noexcept;
   void DrainBatch(std::deque<Entry>& batch);  // timed writer_->Write
   void NoteDrop(std::size_t n);
   void NoteUnmapped(std::uint32_t stream_id);
@@ -201,7 +206,8 @@ class McapWriterEndpoint : public transport::Endpoint {
 
   // guards arena_, queue_, queue_bytes_, batch_ (pop/clear), stop_
   mutable std::mutex mu_;
-  transport::MonotonicConditionVariable cv_, start_cv_;
+  transport::MonotonicConditionVariable cv_, start_cv_, stopped_cv_;
+  std::mutex stop_mu_; // serializes Start/StopFor and the single join
   // Sized for a full queue plus a full batch in flight, so every backlog
   // the policy allows is held here rather than in the producers' heap.
   // Declared before the queues: their records free into it on destruction.
@@ -211,7 +217,7 @@ class McapWriterEndpoint : public transport::Endpoint {
   // The batch the writer thread swapped out and is writing. Only that thread
   // touches it; it pops and clears under mu_, because that frees arena_.
   std::deque<Entry> batch_;
-  bool stop_ = false;
+  bool stop_ = false, finalized_ = false, finalizing_inline_ = false;
   std::thread thread_;
 
   // Bytes of the swapped-out batch not yet written, i.e. taken off queue_
