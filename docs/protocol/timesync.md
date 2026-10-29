@@ -9,8 +9,9 @@ Every physical link has one clock authority: the receiving bus attaches a data
 producer as a source and estimates that producer's clock. The producer accepts
 that receiving bus as a sink and installs its authoritative mapping. A head owns
 each wrist link. A host receiving head data owns a separate head-to-host mapping.
-There is no independent reciprocal estimator on the same link, offset-only
-fallback, protocol negotiation, or legacy clock path.
+The default protocol has no independent reciprocal estimator on the same link,
+offset-only fallback, protocol negotiation, or legacy clock path. The explicit
+receiving-host compatibility exception below does not change producer rules.
 
 Heartbeats are hop-local and keyed by the bus's connection ID. Beacons default
 to 20 ms. Dense observations let a conservative rate model follow OS frequency
@@ -24,6 +25,29 @@ mapping publication still uses the regular timer. Periodic beacons
 carry a process `clock_epoch`; a changed peer epoch resets that link's estimator
 and history without reusing an authority revision. Client identity and liveness
 remain independent of clock readiness.
+
+## Explicit host compatibility for older producers
+
+An operator host may explicitly enable compatibility for older producers that
+send four-timestamp heartbeat exchanges without mapping revisions or frame
+tags. This receiver policy is disabled by default and belongs to the native
+bus. Consumers must not estimate a second clock or rewrite the same headers.
+
+Compatibility is scoped to each physical source link. The host recognizes the
+observed heartbeat fields, waits for the legacy observation window, and uses
+matched exchanges with the native clock estimator and its uncertainty gates.
+Observing modern mapping capability latches modern admission for that link.
+Disconnects, producer restarts and stale clocks invalidate readiness.
+
+For an admitted older producer, the host transforms each data header exactly
+once at its capture timestamp, before fanout or recording. Payload timestamps
+remain in the producer clock. Header readiness is distinct from acknowledged
+mapping readiness and capture-phase readiness; compatibility cannot fabricate
+mapping acknowledgments, revisions or capture synchronization. A recording
+must fail if its contributing clock becomes unusable during the episode.
+
+New producers and firmware-to-firmware links continue to use the authoritative
+mapping contract below. Compatibility does not add or change wire fields.
 
 ## Measurement
 
