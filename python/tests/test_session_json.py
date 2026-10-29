@@ -51,11 +51,12 @@ LEGACY = (
 )
 FLEET_IDS_BLANK = '"operator_id":"","environment_id":""'
 CALIBRATION_DATE_BLANK = '"calibration_updated_at_us":0'
+RECOVERY_BLANK = '"duration_source":"","video_frames":null'
 # The whole post-frozen tail, in table order. One constant so a field added at
 # the end costs one edit here rather than one per assertion.
 TAIL_BLANK = (f'{FLEET_IDS_BLANK},"recording_key_fingerprint":"",'
               '"stop_cause":"","duration_s":0,"session_key":"",'
-              f'{CALIBRATION_DATE_BLANK}')
+              f'{CALIBRATION_DATE_BLANK},{RECOVERY_BLANK}')
 GOLDEN = f"{LEGACY},{TAIL_BLANK}}}\n"
 
 # What the firmware embeds for that session: it omits the empty/zero fields, which the
@@ -195,7 +196,7 @@ def test_fleet_ids_render_after_the_frozen_layout(tmp_path):
     assert raw == LEGACY + (',"operator_id":"op-7","environment_id":"warehouse-b"'
                             ',"recording_key_fingerprint":"","stop_cause":"",'
                             '"duration_s":0,"session_key":"",'
-                            f'{CALIBRATION_DATE_BLANK}}}\n')
+                            f'{CALIBRATION_DATE_BLANK},{RECOVERY_BLANK}}}\n')
 
 
 def test_record_serial_becomes_the_sidecars_device_id():
@@ -559,7 +560,7 @@ def test_the_rebuilt_sidecar_names_the_key_that_opens_the_session():
     assert rendered.endswith(
         f'{FLEET_IDS_BLANK},"recording_key_fingerprint":"0f1e2d3c4b5a6978",'
         '"stop_cause":"","duration_s":0,"session_key":"",'
-        f'{CALIBRATION_DATE_BLANK}}}\n')
+        f'{CALIBRATION_DATE_BLANK},{RECOVERY_BLANK}}}\n')
 
 
 def test_the_session_key_is_rebuilt_from_the_mcap(tmp_path):
@@ -573,7 +574,7 @@ def test_the_session_key_is_rebuilt_from_the_mcap(tmp_path):
 
 def test_a_malformed_session_key_is_dropped():
     assert session_json_text({**GOLDEN_META, "session_key": "../x"}).endswith(
-        f',"session_key":"",{CALIBRATION_DATE_BLANK}}}\n')
+        f',"session_key":"",{CALIBRATION_DATE_BLANK},{RECOVERY_BLANK}}}\n')
 
 
 def test_the_rebuilt_sidecar_carries_the_session_key():
@@ -583,7 +584,7 @@ def test_the_rebuilt_sidecar_carries_the_session_key():
         {**GOLDEN_META, "session_key": "8f1c2a0b9d3e4f5a6b7c8d9e0f1a2b3c"})
     assert rendered.endswith(
         ',"session_key":"8f1c2a0b9d3e4f5a6b7c8d9e0f1a2b3c",'
-        f'{CALIBRATION_DATE_BLANK}}}\n')
+        f'{CALIBRATION_DATE_BLANK},{RECOVERY_BLANK}}}\n')
 
 
 def test_a_plaintext_session_renders_an_empty_fingerprint_not_a_missing_key():
@@ -592,10 +593,27 @@ def test_a_plaintext_session_renders_an_empty_fingerprint_not_a_missing_key():
     assert '"recording_key_fingerprint":""' in session_json_text(GOLDEN_META)
 
 
-def test_the_calibration_date_renders_last():
+def test_the_calibration_date_keeps_its_suffix_position():
     """Appended after session_key, so every earlier byte stays what the
     previous firmware wrote; the record omits it when unknown."""
     rendered = session_json_text(
         {**GOLDEN_META, "calibration_updated_at_us": "1784000000123456"})
     assert rendered.endswith(
-        ',"session_key":"","calibration_updated_at_us":1784000000123456}\n')
+        ',"session_key":"","calibration_updated_at_us":1784000000123456,'
+        f'{RECOVERY_BLANK}}}\n')
+
+
+@pytest.mark.parametrize("count", [None, "", "0", "713"])
+def test_duration_provenance_and_optional_video_count(count):
+    meta = {**GOLDEN_META, "duration_source": "monotonic_close"}
+    if count is not None:
+        meta["video_frames"] = count
+    rendered = json.loads(session_json_text(meta))
+    assert rendered["duration_source"] == "monotonic_close"
+    assert rendered["video_frames"] == (int(count) if count else None)
+
+
+def test_old_capture_metadata_has_unknown_count_and_duration_source():
+    rendered = json.loads(session_json_text(GOLDEN_META))
+    assert rendered["duration_source"] == ""
+    assert rendered["video_frames"] is None
