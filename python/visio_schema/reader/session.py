@@ -1226,7 +1226,7 @@ class Session:
                     members, start_read, end_read, want, raw_all, raw_set, info_start):
                 idx = self._index[i]
                 rotation = self._rotation_ids[idx.path]
-                continuing = (rotation is not None and previous is not None and
+                continuing = (rotation is not None and rotation[2] and previous is not None and
                               rotation[0] == previous[0] and rotation[1] == previous[1] + 1)
                 if not continuing:
                     if state is not None and "flush" in state:
@@ -1291,8 +1291,8 @@ class Session:
         previous = None
         for i in members:
             rotation = self._rotation_ids[self._index[i].path]
-            if (rotation is None or previous is None or rotation[0] != previous[0]
-                    or rotation[1] != previous[1] + 1):
+            if (rotation is None or not rotation[2] or previous is None
+                    or rotation[0] != previous[0] or rotation[1] != previous[1] + 1):
                 chains.append([])
             chains[-1].append(i)
             previous = rotation
@@ -1364,13 +1364,13 @@ class Session:
         try:
             part = int(row["part_index"])
             identity = row["recording_id"]
-            valid = (row["version"] == "1" and row["video_continuation"] == "true"
+            valid = (row["version"] == "1" and row["video_continuation"] in {"true", "false"}
                      and identity and part >= 0)
         except (KeyError, ValueError) as exc:
             raise ValueError(f"{idx.path}: invalid rotation metadata") from exc
         if not valid:
             raise ValueError(f"{idx.path}: invalid rotation metadata")
-        return identity, part
+        return identity, part, row["video_continuation"] == "true"
 
     def _wanted_prefixed(
         self, idx: _FileIndex, want: set[str] | None, raw_all: bool = False

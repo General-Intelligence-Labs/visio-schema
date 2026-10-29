@@ -11,7 +11,8 @@ from visio_schema import make_channel
 from visio_schema.reader import Session, sync
 
 
-def write_rows(path, rows, part, recording="test-recording", metadata=True, declared=()):
+def write_rows(path, rows, part, recording="test-recording", metadata=True, declared=(),
+               continuation="true"):
     with path.open("wb") as f:
         w = Writer(f)
         w.start()
@@ -22,7 +23,7 @@ def write_rows(path, rows, part, recording="test-recording", metadata=True, decl
                     "version": "1",
                     "recording_id": recording,
                     "part_index": str(part),
-                    "video_continuation": "true",
+                    "video_continuation": continuation,
                     "cut_reason": "initial" if part == 0 else "forced",
                 },
             )
@@ -80,6 +81,23 @@ def test_split_non_idr_continuation_matches_unsplit_decode_and_pairing(tmp_path)
         return [(g.t_ns, g.residual_ns) for g in sync(frames, keys, tol_ns=1_000_000)]
 
     assert paired(actual) == paired(expected)
+
+
+@pytest.mark.parametrize("continuation,expected", [("true", 32), ("false", 18)])
+def test_initial_aligned_and_forced_parts_obey_decoder_boundary(tmp_path, continuation, expected):
+    rows = fixture_rows(tmp_path)
+    first = write_rows(tmp_path / "first.mcap", [r for r in rows if r[4] < 5], 0,
+                       continuation="false")
+    second = write_rows(tmp_path / "second.mcap", [r for r in rows if r[4] >= 5], 1,
+                        continuation=continuation)
+    assert len(list(Session([second, first]).stream())) == expected
+
+
+def test_unknown_video_continuation_is_rejected(tmp_path):
+    path = write_rows(tmp_path / "bad.mcap", fixture_rows(tmp_path), 0,
+                      continuation="unknown")
+    with pytest.raises(ValueError, match="rotation metadata"):
+        Session([path])
 
 
 def test_missing_part_never_reuses_prior_reference_pictures(tmp_path):
@@ -143,34 +161,45 @@ def test_many_parts_reuse_only_codec_contexts(tmp_path, monkeypatch):
     assert len(made) == 2
 
 
-def test_delayed_gpu_tail_is_flushed_once_at_chain_end(tmp_path, monkeypatch):
+@pytest.mark.parametrize("continuation,expected_count,decoder_count",
+                         [("true", 32, 2), ("false", 18, 4)])
+def test_delayed_gpu_tail_is_flushed_once_at_chain_end(
+        tmp_path, monkeypatch, continuation, expected_count, decoder_count):
     from visio_schema.reader import _gpu_decode
+
+    made = []
 
     class Delayed:
         def __init__(self, fmt):
             self.pending = []
+            self.flushes = 0
+            made.append(self)
 
         def decode(self, data, t):
             self.pending.append((t, np.zeros((2, 2, 3), np.uint8), None))
             return [self.pending.pop(0)] if len(self.pending) > 2 else []
 
         def flush(self):
+            self.flushes += 1
             out, self.pending = self.pending, []
             return out
 
     monkeypatch.setattr(_gpu_decode, "NvDecoder", Delayed)
     rows = fixture_rows(tmp_path)
-    whole = write_rows(tmp_path / "whole.mcap", rows, 0)
+    continuations = ("false", continuation, "true")
     parts = [
-        write_rows(tmp_path / f"part{i}.mcap", [r for r in rows if lo <= r[4] < hi], i)
+        write_rows(tmp_path / f"part{i}.mcap", [r for r in rows if lo <= r[4] < hi], i,
+                   continuation=continuations[i])
         for i, (lo, hi) in enumerate([(0, 5), (5, 9), (9, 16)])
     ]
-    expected = list(Session([whole]).stream(gpu=True))
+    expected = list(Session(parts).stream())
     actual = list(Session(parts).stream(gpu=True))
     assert [(x.topic, x.t_ns, x.frame_id) for x in actual] == [
         (x.topic, x.t_ns, x.frame_id) for x in expected
     ]
-    assert len(actual) == 32
+    assert len(actual) == expected_count
+    assert len(made) == decoder_count
+    assert all(decoder.flushes == 1 for decoder in made)
 
 
 def test_chain_order_uses_part_identity_despite_older_remote_timestamp(tmp_path):

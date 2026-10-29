@@ -60,7 +60,8 @@ parse buffers/adapters are recreated for each file to release their parse arenas
 Unmarked legacy files keep their per-file decoder behavior. Custom video adapters
 retain their existing per-file flush contract.
 
-A missing part or changed recording identity resets the chain. A sequence gap,
+A missing part, changed recording identity, or independently decodable
+(`video_continuation=false`) part resets the decoder chain. A sequence gap,
 source frame-ID change or codec format change resets the affected camera. CPU and
 GPU decoders wait for a real bitstream IDR after reset; GPU in-flight tails flush
 before reset and at chain end. Sequence wrapping is continuous. No GOP is copied
