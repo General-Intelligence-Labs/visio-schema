@@ -96,6 +96,11 @@ def read_calibrations(rows) -> dict[str, RootCalibration]:
             if index == 0:
                 cal.T_cam0_camera[0] = np.eye(4)
         elif artifact == "extrinsics":
+            # Firmware can publish an empty placeholder for the reference
+            # camera. Its self-transform is already identity by definition;
+            # no other sensor may substitute an empty calibration for a pose.
+            if kind == "camera" and index == 0 and not msg.ListFields():
+                continue
             if any(
                 frame.startswith("/") and frame != f"{root}/{suffix}"
                 for frame, suffix in (
