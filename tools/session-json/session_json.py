@@ -256,6 +256,9 @@ def session_json_text(meta: dict[str, str]) -> str:
         # renders as the firmware's zero.
         ("calibration_updated_at_us",
          _integer(meta, "calibration_updated_at_us")),
+        ("duration_source", _quote(meta.get("duration_source", ""))),
+        ("video_frames", _integer(meta, "video_frames")
+         if meta.get("video_frames") else "null"),
     )
     return "{" + ",".join(f"{_quote(k)}:{v}" for k, v in fields) + "}\n"
 

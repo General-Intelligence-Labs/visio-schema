@@ -196,6 +196,14 @@ class McapWriter {
     return bytes_written_.load(std::memory_order_relaxed);
   }
 
+  // CompressedVideo messages accepted by the writer across all parts, after
+  // keyframe/start gates and excluding known lossy writes. One message per
+  // camera counts once; this is not a camera capture or enqueue count, nor
+  // proof of durability if storage later fails. Safe to poll; final at Close.
+  std::uint64_t video_frames_written() const {
+    return video_frames_written_.load(std::memory_order_relaxed);
+  }
+
   // Video frames the keyframe gate dropped after a part rotation, before the
   // new part saw the stream's next keyframe: a hole in the recording. The
   // frames before a stream's first keyframe of the whole recording are not
@@ -334,6 +342,7 @@ class McapWriter {
   bool part_write_failure_logged_ = false;
   // Lifetime total (never reset on rotation); see bytes_written().
   std::atomic<std::uint64_t> bytes_written_{0};
+  std::atomic<std::uint64_t> video_frames_written_{0};
   std::atomic<std::uint64_t> keyframe_gated_{0};
   std::chrono::steady_clock::time_point part_start_;
 

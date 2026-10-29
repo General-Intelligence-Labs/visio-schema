@@ -178,6 +178,10 @@ void McapWriter::WriteRecord(const Channel& channel, const RecordedMessage& msg)
   // that ends it; one storage refused for good is not counted at all.
   if (part_->refused()) return;
   part_bytes_ += msg.payload.size();
+  // The MCAP status alone cannot see a short/failed storage write. Count
+  // accepted video only while the part has no known loss of bytes.
+  if (is_video && !part_->lost_bytes())
+    video_frames_written_.fetch_add(1, std::memory_order_relaxed);
   // Track the newest video capture time WRITTEN this part — the rotate-on-keyframe
   // "starts a new pair" test compares against it (P-frames included, so the next
   // GOP's keyframe beats the last P-frame while a pair's sibling does not).
