@@ -88,6 +88,16 @@ message CaptureSyncState {
   uint64 first_frame_delay_ns = 21;
 }
 
+// Local software-clock rate relative to the sender's unsteered raw clock.
+// This is not the relative rate between devices. The receiving authority uses
+// both endpoints' measurements to account for differential OS clock steering.
+message ClockRate {
+  sint64 rate_ppb = 1;
+  uint64 sigma_ppb = 2;
+  // Sender-monotonic time of the measurement; reject stale reports.
+  uint64 measured_mono_ns = 3;
+}
+
 message Heartbeat {
   // Sender's local monotonic clock (ns) at send, stamped at the moment of
   // the first successful write, after the userspace send queue. Always set.
@@ -135,4 +145,7 @@ message Heartbeat {
   fixed64 clock_epoch = 10;
   repeated CameraSyncState camera_sync = 11;
   CaptureSyncState capture_sync = 12;
+  // Optional measured steering input. Missing reports retain network-only
+  // estimation; they must not imply that the peer's software clock is unsteered.
+  ClockRate clock_rate = 13;
 }

@@ -18,15 +18,32 @@ each wrist link. A host receiving head data owns a separate head-to-host mapping
 There is no independent reciprocal estimator on the same link, offset-only
 fallback, protocol negotiation, or legacy clock path.
 
-Heartbeats are hop-local and keyed by the bus's connection ID. Beacons default
-to 20 ms. Dense observations let a conservative rate model follow OS frequency
-steering without fitting bulk-transfer path delay as oscillator drift. The RTT,
-covariance and lease limits below stay unchanged. A bus configured with slower
-regular beacons adds 20 ms probes for recently heard sources without usable
-acknowledged mappings, or as projected phase sigma approaches 80 us, rate sigma
-approaches 8 ppm, or consecutive outliers accumulate. The default cadence does
-not duplicate those probes. Silent peers and consumers receive regular beacons;
-mapping publication still uses the regular timer. Periodic beacons
+Heartbeats are hop-local and keyed by the bus's connection ID. Regular beacons
+default to one second. The receiving clock authority initiates 20 ms probes
+while acquiring or recovering a source's mapping. The producer immediately
+echoes each request with its read and write timestamps; it keeps its own regular
+beacons at 1 Hz and does not start a reciprocal burst. Only requests are echoed,
+so responses cannot form a ping-pong loop. No extra wire fields are required.
+
+A newly attached source gets a startup burst before its first heartbeat. A
+silent source stops receiving the burst after the liveness timeout and keeps
+receiving regular beacons. Live sources return to regular beacons once their
+mapping is active and acknowledged, with rate sigma at most 10 ppm and projected
+phase sigma at most 100 us. Expired leases, exceeded uncertainty limits or
+persistent outliers can trigger a new authority-initiated recovery burst.
+Consumers do not receive these source-specific bursts. Local OS clock-rate
+sampling retains its short cadence independently of network traffic.
+
+During a burst the authority prepares mappings for the probed link immediately
+before transmission, so acquisition need not wait for the next regular timer.
+It does not prepare unsent mappings for other links whose next beacon is later.
+When a producer's mapping becomes active, it promptly advertises the applied
+revision, including while cameras are asleep. This acknowledgement replaces
+the next regular beacon rather than adding a second periodic stream. Other
+event-triggered beacons likewise replace a regular beacon that is not yet due.
+This keeps renewal acknowledgements inside the existing three-second leases
+without retaining the startup burst during normal operation.
+The RTT, covariance and lease limits below stay unchanged. Periodic beacons
 carry a process `clock_epoch`; a changed peer epoch resets that link's estimator
 and history without reusing an authority revision. Client identity and liveness
 remain independent of clock readiness.
@@ -52,7 +69,11 @@ COBS frame is completed unchanged before another lane writes. Encoding and
 kernel queues remain between these software timestamps and physical USB edges.
 
 A two-state Kalman filter estimates phase and rate with large initial rate
-covariance. It rejects negative/over-100-ms RTT, old observations, and clock discontinuities beyond five sigma. Network-plausible innovations
+covariance. Initial phase sigma is at least half the first RTT (with a 50 us
+floor), so a delayed first response cannot become a falsely precise phase
+anchor. Subsequent low-delay observations can then correct that anchor without
+inventing a large frequency error.
+It rejects negative/over-100-ms RTT, old observations, and clock discontinuities beyond five sigma. Network-plausible innovations
 inflate observation noise using the round-trip delay bound. High-RTT samples
 are downweighted by their excess delay instead of resetting a learned clock
 when the network delay baseline changes. Four persistent
@@ -60,12 +81,20 @@ clock discontinuities reacquire. A three-second gap enters holdover; recovery
 retains frequency and propagates covariance. A gap beyond 30 seconds reseeds.
 The rate process model permits ppm-scale software-clock steering, including
 NTP frequency corrections to a continuous monotonic clock.
-On Linux, paired monotonic/raw clock reads also measure local OS frequency
-steering independently of the network observations. A short, bounded sample
-window supplies that measured rate change as an external filter input, retaining
-the phase anchor. Each sample uses the narrowest of sixteen bounded read pairs
-so cold or preempted ARM reads do not dominate it. Its measurement uncertainty contributes to the rate and
-projected phase uncertainty gates. Preempted, sparse or implausible paired
+On Linux, paired monotonic/raw clock reads measure OS frequency steering on
+each endpoint independently of the network observations. The optional
+`Heartbeat.clock_rate` carries that rate, its uncertainty and sender-monotonic
+measurement time. Reports older than 250 ms at send, outside the rate range,
+or above 5 ppm measurement sigma are refused. The authority uses the ratio
+`(1 + local_rate) / (1 + peer_rate)` as its differential steering input and
+propagates uncertainty from both measurements. Missing peer reports retain
+network-only estimation; the peer's clock is never assumed to be unsteered.
+
+A short, bounded sample window supplies the measured rate changes while
+retaining the phase anchor. Each sample uses the narrowest of sixteen bounded
+read pairs so cold or preempted ARM reads do not dominate it. Combined
+measurement uncertainty contributes to the rate and projected phase uncertainty
+gates. Preempted, sparse or implausible paired
 measurements are refused; they do not relax the heartbeat outlier gates or turn
 a genuine phase step into a valid rate input. Measurements resuming after a
 250 ms gap establish a new input baseline without adding steering that the
@@ -74,6 +103,11 @@ and published mappings remain in their declared monotonic clock domains.
 Acquisition requires eight accepted observations, two seconds of span,
 phase sigma at most 100 us and rate sigma at most 10 ppm. Covariance describes
 statistical uncertainty, not fixed path asymmetry or absolute accuracy.
+These are model-confidence admission thresholds, not measured bounds on the
+true inter-device clock error. The recorded heartbeat regressions test recovery
+under load; they do not calibrate covariance coverage against an independent
+timing reference. Constant directional delay can bias an accepted mapping even
+when its reported covariance is small.
 
 `[CLOCK]` and `[CLOCK_MAP]` diagnostics distinguish observation rejection,
 publication refusal, installation failure and capture-time admission failure.
@@ -82,13 +116,34 @@ revision, remaining lease and rejection counts. Prolonged initial acquisition
 and failures after acquisition are warnings. Reports are bounded per stage;
 alternating valid/invalid packets cannot generate one log per sensor frame.
 `[CLOCK_HB]` and `[CLOCK_TIMER]` expose delayed writes and timer gaps. On Linux,
-`[CLOCK_REFERENCE]` reports the paired-clock measurement, its uncertainty,
-whether it was applied, its age and reasons for unavailable measurements.
+`[CLOCK_REFERENCE]` reports the local paired-clock measurement, its uncertainty,
+availability, age and reasons for unavailable measurements. A development run
+with `VISIO_CLOCK_TRACE=1` also records `[CLOCK_OBS]` with all four timestamps
+and the prediction made before accepting each observation. This opt-in trace
+uses the sampled log path so application sinks retain each requested exchange
+without applying a second per-site throttle.
+Normal runs leave
+this trace disabled; model calibration must compare held-out exchanges and
+account for directional delay rather than treating a fitted midpoint as truth.
+
+For Linux NCM leaf links, discovery disables the host driver's TX aggregation
+timer when writable. The hub sends small control packets and receives the video;
+delaying those control packets creates avoidable latency and directional bias.
+Unsupported drivers and unprivileged hosts retain their existing setting.
+Even with aggregation disabled, the minimum measured RTT supplies a path-delay
+bound, not an independent absolute-offset measurement. Statistical covariance
+alone cannot certify an absolute 100 us clock error.
+
+When a regular publication fails its uncertainty gate, the authority retries
+before the current mapping has less than one second of continuous coverage.
+Coverage includes an already published successor only when it overlaps the
+acknowledged mapping. This preserves the 500 ms activation lead without
+waiting until expiry, and avoids a continuous burst during ordinary renewals.
 
 ## Immutable mapping revisions
 
-The authority publishes one affine `ClockMapping` per link on its regular beacon
-timer, independently of whether the latest response happened just before or
+The authority publishes one affine `ClockMapping` per link before its regular
+beacon or acquisition probe, independently of whether the latest response happened just before or
 after the previous publication:
 
 ```
