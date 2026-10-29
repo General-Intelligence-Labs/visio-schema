@@ -389,6 +389,7 @@ McapWriterStats McapWriterEndpoint::stats() const {
   McapWriterStats s;
   s.rotation = writer_->rotation_stats();
   s.writes = stat_writes_.load(std::memory_order_relaxed);
+  s.video_frames = writer_->video_frames_written();
   s.blocked_ns = stat_blocked_ns_.load(std::memory_order_relaxed);
   s.max_block_ns = stat_max_block_ns_.load(std::memory_order_relaxed);
   s.slow_writes = stat_slow_writes_.load(std::memory_order_relaxed);

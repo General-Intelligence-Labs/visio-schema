@@ -44,6 +44,9 @@ using StreamResolver = std::function<const Channel*(std::uint32_t)>;
 // The writer thread's view of the storage device — its write-stall pattern.
 struct McapWriterStats {
   std::uint64_t writes = 0;
+  // Accepted CompressedVideo messages; see McapWriter::video_frames_written.
+  // Final only after StopFor succeeds, including queue and staging drain.
+  std::uint64_t video_frames = 0;
   std::uint64_t blocked_ns = 0;
   std::uint64_t max_block_ns = 0;
   std::uint64_t slow_writes = 0;
