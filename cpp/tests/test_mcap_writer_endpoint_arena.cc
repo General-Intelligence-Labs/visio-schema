@@ -7,15 +7,18 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <unordered_map>
 #include <vector>
 
 #include "mcap_writer_test_util.hpp"
+#include "visio_schema/mcap/storage.hpp"
 #include "visio_schema/routing/channel.hpp"
 #include "visio_schema/wire/control.hpp"
 #include "visio_schema/wire/time.hpp"
@@ -289,3 +292,252 @@ TEST_F(EndpointArena, DeferredRotationOwnsPayloadsAfterTheirArenaChunkIsReused) 
     RemoveParts(stem);
   }
 }
+
+namespace {
+using namespace std::chrono_literals;
+using namespace visio_schema;
+using namespace visio_schema::mcap;
+
+class EndpointStopStorage final : public WriterStorage {
+public:
+  class File final : public OutputFile {
+  public:
+    explicit File(EndpointStopStorage &owner) : owner_(owner) {}
+    IoResult Append(const void *, std::size_t size) override {
+      std::unique_lock<std::mutex> lock(owner_.mu_);
+      if (owner_.append_blocked_) {
+        owner_.in_append_ = true;
+        owner_.cv_.notify_all();
+        owner_.cv_.wait(lock, [&] { return !owner_.append_blocked_; });
+      }
+      return {IoStep::append, 0, size, false};
+    }
+    IoResult Flush() override { return {}; }
+    IoResult Checkpoint() override { return {}; }
+    IoResult Close() override {
+      std::unique_lock<std::mutex> lock(owner_.mu_);
+      owner_.in_close_ = true;
+      owner_.cv_.notify_all();
+      owner_.cv_.wait(lock, [&] { return !owner_.blocked_; });
+      return {};
+    }
+    int Writeback(std::uint64_t, std::uint64_t, bool) override { return 0; }
+
+  private:
+    EndpointStopStorage &owner_;
+  };
+  std::unique_ptr<OutputFile> Create(const std::string &,
+                                     IoResult &result) override {
+    result = {};
+    return std::make_unique<File>(*this);
+  }
+  IoResult SyncParent(const std::string &) override { return {}; }
+  IoResult Remove(const std::string &) override { return {}; }
+  void block_close() {
+    std::lock_guard<std::mutex> lock(mu_);
+    blocked_ = true;
+  }
+  void block_append() {
+    std::lock_guard<std::mutex> lock(mu_);
+    append_blocked_ = true;
+  }
+  bool wait_for_append() {
+    std::unique_lock<std::mutex> lock(mu_);
+    return cv_.wait_for(lock, 2s, [&] { return in_append_; });
+  }
+  void release() {
+    std::lock_guard<std::mutex> lock(mu_);
+    blocked_ = append_blocked_ = false;
+    cv_.notify_all();
+  }
+  bool wait_for_close() {
+    std::unique_lock<std::mutex> lock(mu_);
+    return cv_.wait_for(lock, 2s, [&] { return in_close_; });
+  }
+
+private:
+  std::mutex mu_;
+  std::condition_variable cv_;
+  bool blocked_ = false, in_close_ = false;
+  bool append_blocked_ = false, in_append_ = false;
+};
+
+struct ReleaseOnExit {
+  std::shared_ptr<EndpointStopStorage> storage;
+  ~ReleaseOnExit() { storage->release(); }
+};
+
+class EndpointStopLifetime : public testing::Test {
+protected:
+  Channel channel_ = [] {
+    Channel c;
+    c.id = kFirstDynamic;
+    c.topic = "/test/imu/0/raw";
+    c.schema_name = "visio_schema.v1.sensor.ImuRaw";
+    c.schema = std::string(8, '\1');
+    return c;
+  }();
+  std::shared_ptr<EndpointStopStorage> storage_ =
+      std::make_shared<EndpointStopStorage>();
+  StreamResolver resolver_ = [this](std::uint32_t id) -> const Channel * {
+    return id == channel_.id ? &channel_ : nullptr;
+  };
+  std::vector<std::weak_ptr<const std::string>>
+  late_frames(McapWriterEndpoint &ep, unsigned count, std::size_t size) {
+    std::vector<std::weak_ptr<const std::string>> weak;
+    for (unsigned i = 0; i < count; ++i) {
+      auto bytes = std::make_shared<const std::string>(size, char('a' + i));
+      weak.emplace_back(bytes);
+      wire::Message msg;
+      msg.stream_id = channel_.id;
+      msg.payload = wire::Payload(std::move(bytes));
+      ep.Send(msg);
+    }
+    return weak;
+  }
+  std::unique_ptr<McapWriterEndpoint> endpoint() {
+    return std::make_unique<McapWriterEndpoint>(
+        "memory-probe.mcap", resolver_, 0, 0,
+        WritePolicy::stale_eviction(16u << 20, 0ms),
+        std::map<std::string, std::string>{}, false, 0, 0,
+        std::optional<RecordingKey>{}, McapReadbackOptions{}, storage_);
+  }
+};
+
+TEST_F(EndpointStopLifetime, FinalizedEndpointDoesNotAcceptArenaPayloads) {
+  auto ep = endpoint();
+  ASSERT_TRUE(ep->StopFor(2s));
+  ASSERT_TRUE(ep->finalized());
+  const auto weak = late_frames(*ep, 32, 128u << 10);
+  EXPECT_EQ(ep->pending_frames(), 0u);
+  EXPECT_EQ(ep->pending_bytes(), 0u);
+  ASSERT_TRUE(ep->StopFor(0ms));
+  EXPECT_EQ(ep->pending_bytes(), 0u);
+  for (const auto &frame : weak)
+    EXPECT_TRUE(frame.expired());
+}
+
+TEST_F(EndpointStopLifetime, FinalizedEndpointReleasesOversizeProducerBuffers) {
+  auto ep = endpoint();
+  ASSERT_TRUE(ep->StopFor(2s));
+  const auto weak = late_frames(*ep, 8, 512u << 10);
+  EXPECT_EQ(ep->pending_frames(), 0u);
+  EXPECT_EQ(ep->pending_bytes(), 0u);
+  std::size_t retained = 0;
+  for (const auto &frame : weak)
+    if (const auto owner = frame.lock())
+      retained += owner->size();
+  EXPECT_EQ(retained, 0u) << "late producer bytes owned after finalization";
+  ep.reset();
+  for (const auto &frame : weak)
+    EXPECT_TRUE(frame.expired());
+}
+
+TEST_F(EndpointStopLifetime, TimedCloseDoesNotAccumulateUndrainableLateFrames) {
+  storage_->block_close();
+  auto ep = endpoint();
+  ReleaseOnExit cleanup{storage_};
+  ASSERT_FALSE(ep->StopFor(0ms));
+  ASSERT_TRUE(storage_->wait_for_close());
+  ASSERT_FALSE(ep->finalized());
+  const auto weak = late_frames(*ep, 8, 512u << 10);
+  EXPECT_EQ(ep->pending_bytes(), 0u);
+  storage_->release();
+  ASSERT_TRUE(ep->StopFor(2s));
+  EXPECT_EQ(ep->pending_bytes(), 0u);
+  for (const auto &frame : weak)
+    EXPECT_TRUE(frame.expired());
+}
+
+TEST_F(EndpointStopLifetime, APreexistingSendCannotEnqueueAfterConcurrentStop) {
+  std::mutex mutex;
+  std::condition_variable cv;
+  bool entered = false, released = false;
+  StreamResolver resolve = [&](std::uint32_t) -> const Channel * {
+    std::unique_lock<std::mutex> lock(mutex);
+    entered = true;
+    cv.notify_all();
+    cv.wait(lock, [&] { return released; });
+    return &channel_;
+  };
+  McapWriterEndpoint ep("memory-probe-race.mcap", resolve, 0, 0,
+                        WritePolicy::stale_eviction(16u << 20, 0ms), {}, false,
+                        0, 0, {}, {}, storage_);
+  auto producer = std::make_shared<const std::string>(512u << 10, 'v');
+  std::weak_ptr<const std::string> weak = producer;
+  std::thread sender([&] {
+    wire::Message msg;
+    msg.stream_id = channel_.id;
+    msg.payload = wire::Payload(std::move(producer));
+    ep.Send(msg);
+  });
+  struct JoinOnExit {
+    std::mutex &mutex;
+    std::condition_variable &cv;
+    bool &released;
+    std::thread &sender;
+    ~JoinOnExit() {
+      {
+        std::lock_guard<std::mutex> lock(mutex);
+        released = true;
+        cv.notify_all();
+      }
+      if (sender.joinable())
+        sender.join();
+    }
+  } cleanup{mutex, cv, released, sender};
+  {
+    std::unique_lock<std::mutex> lock(mutex);
+    ASSERT_TRUE(cv.wait_for(lock, 2s, [&] { return entered; }));
+  }
+  const bool stopped = ep.StopFor(2s);
+  EXPECT_TRUE(stopped);
+  {
+    std::lock_guard<std::mutex> lock(mutex);
+    released = true;
+    cv.notify_all();
+  }
+  sender.join();
+  EXPECT_EQ(ep.pending_bytes(), 0u);
+  EXPECT_EQ(ep.pending_frames(), 0u);
+  EXPECT_TRUE(weak.expired());
+}
+
+TEST_F(EndpointStopLifetime, BeforeStartPayloadsStillDrainNormally) {
+  auto ep = endpoint();
+  const auto weak = late_frames(*ep, 1, 512u << 10);
+  ASSERT_EQ(ep->pending_bytes(), 512u << 10);
+  ASSERT_FALSE(weak.front().expired());
+  ASSERT_TRUE(ep->StopFor(2s));
+  EXPECT_EQ(ep->pending_bytes(), 0u);
+  EXPECT_TRUE(weak.front().expired());
+  EXPECT_EQ(ep->stats().writes, 1u);
+  EXPECT_EQ(ep->stats().arena_fallbacks, 1u);
+}
+TEST_F(EndpointStopLifetime, LateSendCannotEvictPrecutoffAcceptedPayloads) {
+  auto ep = endpoint();
+  storage_->block_append();
+  ReleaseOnExit cleanup{storage_};
+  ep->Start(nullptr, nullptr);
+  const auto first = late_frames(*ep, 1, 1u << 20);
+  ASSERT_TRUE(storage_->wait_for_append());
+  const auto accepted = late_frames(*ep, 32, 512u << 10);
+  ASSERT_EQ(ep->pending_frames(), 32u);
+  ASSERT_EQ(ep->dropped_frames(), 0u);
+  ASSERT_FALSE(ep->StopFor(0ms));
+  const auto late = late_frames(*ep, 1, 1u << 20);
+  EXPECT_EQ(ep->pending_frames(), 32u);
+  EXPECT_EQ(ep->dropped_frames(), 0u);
+  EXPECT_TRUE(late.front().expired());
+  for (const auto &frame : accepted)
+    EXPECT_FALSE(frame.expired());
+  storage_->release();
+  ASSERT_TRUE(ep->StopFor(2s));
+  EXPECT_EQ(ep->stats().writes, 33u);
+  EXPECT_EQ(ep->pending_bytes(), 0u);
+  EXPECT_TRUE(first.front().expired());
+  for (const auto &frame : accepted)
+    EXPECT_TRUE(frame.expired());
+}
+
+} // namespace

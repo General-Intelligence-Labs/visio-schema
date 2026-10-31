@@ -199,6 +199,7 @@ void McapWriterEndpoint::Send(const Message& msg) {
   bool was_empty = false;
   {
     std::lock_guard<std::mutex> lk(mu_);
+    if (stop_) return;
     const std::size_t before = queue_.size();
     if (!transport::ApplyDropBound(policy_, queue_, queue_bytes_, len,
                                    [](const Entry& e) { return e.size; })) {
