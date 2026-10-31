@@ -6,6 +6,13 @@ bump the MINOR version.
 
 ## Unreleased
 
+### Image-based hand estimates
+
+Add `HandPoseFrame` on `/camera/<index>/hand_pose` for bounded left/right image
+keypoints, normalized 3D joints and MANO parameters. Existing ImageAnnotations
+carry combined boxes and bones; both retain the source image capture timestamp.
+CameraFrameInfo remains the exposure-time source. No new command is added.
+
 ### Reuse ordinary camera calibration artifacts
 
 Field calibration uses the existing `SetCalibration.extrinsics` artifact and

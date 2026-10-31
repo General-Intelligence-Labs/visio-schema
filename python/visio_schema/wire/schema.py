@@ -37,6 +37,7 @@ _PAYLOAD_MODULES = (
     "visio_schema.v1.sensor.audio_compressed_pb2",
     "visio_schema.v1.sensor.button_pb2",
     "visio_schema.v1.sensor.camera_frame_info_pb2",
+    "visio_schema.v1.sensor.hand_pose_pb2",
     "visio_schema.v1.sensor.tactile_raw_pb2",
     "visio_schema.v1.sensor.diag_log_pb2",
     "visio_schema.v1.sensor.vive_pb2",

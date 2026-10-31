@@ -307,7 +307,7 @@ visio_schema.v1.service.device_info.Channel.schema                 type:FT_POINT
 #      corner Point2s. ImageAnnotations.timestamp is set once at the top level
 #      ("When set, individual annotation timestamps will be ignored" per the
 #      upstream .proto), so the per-annotation timestamps stay unset.
-foxglove.ImageAnnotations.points              max_count:8
+foxglove.ImageAnnotations.points              max_count:48
 foxglove.ImageAnnotations.circles             type:FT_IGNORE
 foxglove.ImageAnnotations.texts               type:FT_IGNORE
 foxglove.ImageAnnotations.metadata            type:FT_IGNORE
@@ -406,3 +406,11 @@ visio_schema.v1.control.IngestCheckReceipt.receipt        max_size:65
 visio_schema.v1.control.IngestSignature.authorization     max_size:192
 visio_schema.v1.control.IngestCredentials.secret_access_key max_size:128
 visio_schema.v1.control.IngestCredentials.session_token     max_size:2304
+
+# Hand pose: bounded to the strongest left and right hands.
+visio_schema.v1.sensor.HandPoseFrame.frame_id max_size:48
+visio_schema.v1.sensor.HandPoseFrame.model max_size:64
+visio_schema.v1.sensor.HandPoseFrame.hands max_count:2
+visio_schema.v1.sensor.HandPose.joints max_count:21
+visio_schema.v1.sensor.HandPose.mano_rotations max_count:144
+visio_schema.v1.sensor.HandPose.betas max_count:10
