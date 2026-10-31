@@ -292,10 +292,10 @@ visio_schema.v1.service.device_info.Channel.schema                 type:FT_POINT
 
 # ---- ImageAnnotations: 2D detection overlays (palm boxes) -------------------
 #      Same treatment, and same justification, as CameraCalibration above: bound
-#      the repeated fields so the whole message is FT_STATIC — no malloc, no
-#      hand-written encode callbacks on the device publish path. Unlike the
-#      video/audio `data` blobs this is tiny and fixed-shape (a handful of boxes
-#      at 10 Hz), so a fixed array costs ~1.3 KB of struct and buys simplicity.
+#      the repeated fields so the whole message is FT_STATIC — no malloc or
+#      hand-written encode callbacks on the device publish path. The inline
+#      arrays reserve their full capacity, including unused annotation slots;
+#      encoded payloads contain only the populated entries.
 #
 #      FT_IGNORE (first use in this file) drops the fields we never populate
 #      from the C struct entirely. It affects nanopb codegen ONLY — the Python
@@ -303,15 +303,14 @@ visio_schema.v1.service.device_info.Channel.schema                 type:FT_POINT
 #      full message, so a consumer sees a complete schema. Revert an entry to a
 #      max_count if we later want circles (keypoints) or texts (score labels).
 #
-#      Geometry: one box = one PointsAnnotation with type=LINE_LOOP and 4
-#      corner Point2s. ImageAnnotations.timestamp is set once at the top level
-#      ("When set, individual annotation timestamps will be ignored" per the
-#      upstream .proto), so the per-annotation timestamps stay unset.
+#      Geometry: one box is a LINE_LOOP with 4 corner Point2s. One hand is
+#      a LINE_LIST with up to 40 endpoints for its 20 bones. Annotations share
+#      the source frame's capture timestamp at the message level.
 foxglove.ImageAnnotations.points              max_count:48
 foxglove.ImageAnnotations.circles             type:FT_IGNORE
 foxglove.ImageAnnotations.texts               type:FT_IGNORE
 foxglove.ImageAnnotations.metadata            type:FT_IGNORE
-foxglove.PointsAnnotation.points              max_count:4
+foxglove.PointsAnnotation.points              max_count:40
 foxglove.PointsAnnotation.outline_colors      type:FT_IGNORE
 foxglove.PointsAnnotation.metadata            type:FT_IGNORE
 
