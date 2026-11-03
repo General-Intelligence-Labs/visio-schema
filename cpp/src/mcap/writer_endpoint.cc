@@ -37,17 +37,15 @@ std::uint64_t SteadyNs() {
 }
 }  // namespace
 
-McapWriterEndpoint::McapWriterEndpoint(std::string_view path, StreamResolver resolve,
-                                       std::uint64_t max_bytes, double max_duration_s,
-                                       transport::WritePolicy policy,
-                                       std::map<std::string, std::string> metadata,
-                                       bool rotate_on_keyframe, std::int64_t pair_guard_ns,
-                                       std::uint64_t sync_span_bytes,
-                                       std::optional<RecordingKey> recording_key,
-                                       McapReadbackOptions readback,
-                                       std::shared_ptr<WriterStorage> storage,
-                                       std::chrono::milliseconds checkpoint_interval,
-                                       std::optional<McapRotationPolicy> rotation_policy)
+McapWriterEndpoint::McapWriterEndpoint(
+    std::string_view path, StreamResolver resolve, std::uint64_t max_bytes,
+    double max_duration_s, transport::WritePolicy policy,
+    std::map<std::string, std::string> metadata, bool rotate_on_keyframe,
+    std::int64_t pair_guard_ns, std::uint64_t sync_span_bytes,
+    std::optional<RecordingKey> recording_key, McapReadbackOptions readback,
+    std::shared_ptr<WriterStorage> storage,
+    std::chrono::milliseconds checkpoint_interval,
+    std::optional<McapRotationPolicy> rotation_policy)
     : resolve_(std::move(resolve)),
       writer_(std::make_unique<visio_schema::mcap::McapWriter>(
           path, max_bytes, max_duration_s, rotate_on_keyframe, pair_guard_ns,
@@ -62,15 +60,18 @@ McapWriterEndpoint::McapWriterEndpoint(std::string_view path, StreamResolver res
   }
   // Written on this (constructing) thread, before Start() spawns the writer
   // thread — so it lands in the file ahead of any message, no locking needed.
-  if (!metadata.empty()) writer_->SetMetadata("visio.capture", std::move(metadata));
+  if (!metadata.empty())
+    writer_->SetMetadata("visio.capture", std::move(metadata));
 }
 
 McapWriterEndpoint::~McapWriterEndpoint() { Stop(); }
 
-void McapWriterEndpoint::Start(InboundFn /*on_inbound*/, ClosedFn /*on_closed*/) {
+void McapWriterEndpoint::Start(InboundFn /*on_inbound*/,
+                               ClosedFn /*on_closed*/) {
   std::lock_guard<std::mutex> serial(stop_mu_);
   std::lock_guard<std::mutex> lk(mu_);
-  if (!stop_ && !thread_.joinable()) thread_ = std::thread([this] { WriterLoop(); });
+  if (!stop_ && !thread_.joinable())
+    thread_ = std::thread([this] { WriterLoop(); });
 }
 
 void McapWriterEndpoint::Stop() { StopFor(std::chrono::milliseconds::max()); }
@@ -85,6 +86,7 @@ bool McapWriterEndpoint::StopFor(std::chrono::milliseconds timeout) {
   std::unique_lock<std::mutex> lk(mu_);
   stop_ = true;
   start_cv_.notify_all();
+  cv_.notify_all();
   // A prepared writer can be abandoned before Start(). Its close still belongs
   // to the same I/O owner and must obey the caller's completion budget.
   if (!finalized_ && !finalizing_inline_ && !thread_.joinable()) {
@@ -97,18 +99,22 @@ bool McapWriterEndpoint::StopFor(std::chrono::milliseconds timeout) {
       // throw through noexcept. No I/O owner exists in this branch.
       finalizing_inline_ = true;
       NoteDrop(queue_.size());
-      queue_.clear(); queue_bytes_ = 0;
-      lk.unlock();
       serial.unlock();
+      while (!queue_.empty()) {
+        const auto bytes = queue_.front().size;
+        ReleaseFront(queue_, lk);
+        queue_bytes_ -= bytes;
+      }
+      lk.unlock();
       Finalize();
       return true;
     }
   }
-  cv_.notify_one();
   serial.unlock();
   if (timeout == std::chrono::milliseconds::max())
     stopped_cv_.wait(lk, [this] { return finalized_; });
-  else if (!stopped_cv_.wait_for(lk, timeout, [this] { return finalized_; })) return false;
+  else if (!stopped_cv_.wait_for(lk, timeout, [this] { return finalized_; }))
+    return false;
   lk.unlock();
   serial.lock();
   if (thread_.joinable()) thread_.join();
@@ -144,12 +150,12 @@ void McapWriterEndpoint::NoteDrop(std::size_t n) {
   }
 }
 
-// Counted and reported, because the failure it hides is total: an id that never
-// maps loses its ENTIRE topic for the whole recording, and unlike a queue drop
-// no amount of faster storage helps. Deliberately NOT folded into `dropped` —
-// that one means storage is too slow, this one means a topic is missing.
-// Only data ids reach here; Send() keeps the control plane out, as it has no
-// topic to lose.
+// Counted and reported, because the failure it hides is total: an id that
+// never maps loses its ENTIRE topic for the whole recording, and unlike a
+// queue drop no amount of faster storage helps. Deliberately NOT folded into
+// `dropped` — that one means storage is too slow, this one means a topic is
+// missing. Only data ids reach here; Send() keeps the control plane out, as it
+// has no topic to lose.
 //
 // The id is not named: this counter is global to the endpoint, so with two
 // unmapped ids interleaving the message would name whichever arrived first and
@@ -166,10 +172,11 @@ void McapWriterEndpoint::NoteUnmapped(std::uint32_t) {
 }
 
 void McapWriterEndpoint::Send(const Message& msg) {
-  // Resolve on the caller (bus dispatch) thread; snapshot the Channel once per id
-  // so the writer thread is independent of the live registry.
+  // Resolve on the caller (bus dispatch) thread; snapshot the Channel once per
+  // id so the writer thread is independent of the live registry.
   std::shared_ptr<const Channel> ch;
-  if (auto it = channel_cache_.find(msg.stream_id); it != channel_cache_.end()) {
+  if (auto it = channel_cache_.find(msg.stream_id);
+      it != channel_cache_.end()) {
     ch = it->second;
   } else {
     const Channel* resolved = resolve_ ? resolve_(msg.stream_id) : nullptr;
@@ -193,12 +200,18 @@ void McapWriterEndpoint::Send(const Message& msg) {
 
   if (freeze_video_membership_ &&
       ch->schema_name == visio_schema::kCompressedVideoSchema &&
-      !selected_video_ids_.count(ch->id)) return;
+      !selected_video_ids_.count(ch->id))
+    return;
 
   const std::size_t len = msg.payload.size();
   bool was_empty = false;
   {
-    std::lock_guard<std::mutex> lk(mu_);
+    std::unique_lock<std::mutex> lk(mu_);
+    if (reclaim_in_flight_ && len > 0 && len <= kArenaChunkBytes) {
+      cv_.wait(lk, [this, len] {
+        return stop_ || !reclaim_in_flight_ || arena_.CanPut(len);
+      });
+    }
     if (stop_) return;
     const std::size_t before = queue_.size();
     if (!transport::ApplyDropBound(policy_, queue_, queue_bytes_, len,
@@ -206,9 +219,13 @@ void McapWriterEndpoint::Send(const Message& msg) {
       NoteDrop(1);
       return;
     }
-    if (const std::size_t evicted = before - queue_.size()) NoteDrop(evicted);
-    Entry e{std::move(ch), msg.timestamp, msg.seq, msg.keyframe, msg.sync_point, len,
-            msg.payload};
+    const auto evicted = before - queue_.size();
+    // Notify before allocation can throw. A bypassing oversized Send may
+    // have freed a chunk for a capacity waiter while the writer is in Run.
+    if (reclaim_in_flight_ && evicted) cv_.notify_all();
+    if (evicted) NoteDrop(evicted);
+    Entry e{std::move(ch),  msg.timestamp, msg.seq,    msg.keyframe,
+            msg.sync_point, len,           msg.payload};
     if (auto record = arena_.Put(msg.payload.str())) {
       e.payload = std::move(*record);
     } else if (len > 0 && arena_.capacity() > 0) {
@@ -219,9 +236,9 @@ void McapWriterEndpoint::Send(const Message& msg) {
     // The QUEUE's high-water mark, deliberately not queue+in-flight: this stat
     // is the queue's relationship to the policy bound (the firmware prints it
     // beside the drop count), and folding in a batch the writer thread happens
-    // to be holding would make it depend on writer timing — it would read up to
-    // 2x the bound on a healthy board. Peak RESIDENCY is a different question
-    // and pending_bytes() is where it is answered honestly.
+    // to be holding would make it depend on writer timing — it would read up
+    // to 2x the bound on a healthy board. Peak RESIDENCY is a different
+    // question and pending_bytes() is where it is answered honestly.
     if (queue_bytes_ > stat_max_pending_bytes_.load(std::memory_order_relaxed))
       stat_max_pending_bytes_.store(queue_bytes_, std::memory_order_relaxed);
     was_empty = before == 0;
@@ -255,7 +272,7 @@ void McapWriterEndpoint::WriterLoop() {
       // pending_bytes() never pretends the endpoint got lighter at the swap.
       inflight_bytes_.store(queue_bytes_, std::memory_order_relaxed);
       queue_bytes_ = 0;
-      if (batch_.empty() && stop_) break;  // stopped + fully drained
+      if (batch_.empty() && stop_) break;
     }
     // This is the thread's ENTRY function: an exception leaving it calls
     // std::terminate and takes the whole process down. McapWriter throws when
@@ -273,17 +290,22 @@ void McapWriterEndpoint::WriterLoop() {
       } catch (const std::exception& e) {
         NoteFailure(e.what());
         NoteDrop(batch_.size());  // the frame it threw on, and the rest
-      } catch (...) {   // nothing may escape this frame; see above
+      } catch (...) {             // nothing may escape this frame; see above
         NoteFailure("unknown exception");
         NoteDrop(batch_.size());
       }
     }
     // One release point for every path out of the batch (drained, shed by the
     // latch, or abandoned mid-write): free whatever it still holds FIRST, then
-    // zero the accounting, so the gauge never reads lighter than the process is.
+    // zero the accounting, so the gauge never reads lighter than the process
+    // is.
     {
-      std::lock_guard<std::mutex> lk(mu_);
-      batch_.clear();
+      std::unique_lock<std::mutex> lk(mu_);
+      while (!batch_.empty()) {
+        const auto bytes = batch_.front().size;
+        ReleaseFront(batch_, lk);
+        inflight_bytes_.fetch_sub(bytes, std::memory_order_relaxed);
+      }
       start_cv_.notify_all();
     }
     inflight_bytes_.store(0, std::memory_order_relaxed);
@@ -329,7 +351,8 @@ void McapWriterEndpoint::DrainBatch(std::deque<Entry>& batch) {
     const Entry& e = batch.front();
     const std::size_t bytes = e.size;
     if (e.channel) {
-      const RecordedMessage m{e.timestamp, e.seq, e.keyframe, PayloadOf(e),e.sync_point};
+      const RecordedMessage m{e.timestamp, e.seq, e.keyframe, PayloadOf(e),
+                              e.sync_point};
       const std::uint64_t t0 = SteadyNs();
       writer_->Write(*e.channel, m);
       const std::uint64_t dt = SteadyNs() - t0;
@@ -339,14 +362,30 @@ void McapWriterEndpoint::DrainBatch(std::deque<Entry>& batch) {
       while (dt > cur && !stat_max_block_ns_.compare_exchange_weak(
                              cur, dt, std::memory_order_relaxed)) {
       }
-      if (dt > kSlowWriteNs) stat_slow_writes_.fetch_add(1, std::memory_order_relaxed);
+      if (dt > kSlowWriteNs)
+        stat_slow_writes_.fetch_add(1, std::memory_order_relaxed);
     }
     {
-      std::lock_guard<std::mutex> lk(mu_);  // an arena record frees under it
-      batch.pop_front();  // frees this payload HERE, not at the end of the batch
+      std::unique_lock<std::mutex> lk(mu_);
+      ReleaseFront(batch, lk);
     }
     inflight_bytes_.fetch_sub(bytes, std::memory_order_relaxed);
   }
+}
+
+void McapWriterEndpoint::ReleaseFront(std::deque<Entry>& entries,
+                                      std::unique_lock<std::mutex>& lock) {
+  auto* record = std::get_if<PayloadArena::Record>(&entries.front().payload);
+  auto reclaim = record ? record->Release() : std::nullopt;
+  entries.pop_front();
+  if (!reclaim) return;
+  reclaim_in_flight_ = true;
+  lock.unlock();
+  const int error = reclaim->Run();
+  lock.lock();
+  arena_.CompleteReclaim(std::move(*reclaim), error);
+  reclaim_in_flight_ = false;
+  cv_.notify_all();
 }
 
 std::size_t McapWriterEndpoint::pending_frames() const {
@@ -358,7 +397,8 @@ std::size_t McapWriterEndpoint::pending_bytes() const {
   std::lock_guard<std::mutex> lk(mu_);
   return queue_bytes_ +
          static_cast<std::size_t>(
-             inflight_bytes_.load(std::memory_order_relaxed)) + writer_->rotation_pending_bytes();
+             inflight_bytes_.load(std::memory_order_relaxed)) +
+         writer_->rotation_pending_bytes();
 }
 
 std::uint64_t McapWriterEndpoint::bytes_written() const {
@@ -396,7 +436,8 @@ McapWriterStats McapWriterEndpoint::stats() const {
   s.slow_writes = stat_slow_writes_.load(std::memory_order_relaxed);
   s.dropped = dropped_.load(std::memory_order_relaxed);
   s.unmapped = unmapped_.load(std::memory_order_relaxed);
-  s.max_pending_bytes = stat_max_pending_bytes_.load(std::memory_order_relaxed);
+  s.max_pending_bytes =
+      stat_max_pending_bytes_.load(std::memory_order_relaxed);
   s.arena_fallbacks = stat_arena_fallbacks_.load(std::memory_order_relaxed);
   s.arena_capacity_bytes = arena_.capacity();
   s.keyframe_gated = writer_ ? writer_->keyframe_gated() : 0;
@@ -410,9 +451,11 @@ McapWriterStats McapWriterEndpoint::stats() const {
 namespace visio_schema::mcap {
 bool McapWriterEndpoint::WaitForStart(std::chrono::milliseconds timeout) {
   std::unique_lock<std::mutex> lock(mu_);
-  start_cv_.wait_for(lock,timeout,[this] {
-    return stop_ || write_failed() || writer_->start_status() != McapWriter::StartStatus::Waiting;
+  start_cv_.wait_for(lock, timeout, [this] {
+    return stop_ || write_failed() ||
+           writer_->start_status() != McapWriter::StartStatus::Waiting;
   });
-  return !stop_ && !write_failed() && writer_->start_status() == McapWriter::StartStatus::Ready;
+  return !stop_ && !write_failed() &&
+         writer_->start_status() == McapWriter::StartStatus::Ready;
 }
-}
+}  // namespace visio_schema::mcap
