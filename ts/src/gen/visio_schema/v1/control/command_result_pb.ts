@@ -25,7 +25,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file visio_schema/v1/control/command_result.proto.
  */
 export const file_visio_schema_v1_control_command_result: GenFile = /*@__PURE__*/
-  fileDesc("Cix2aXNpb19zY2hlbWEvdjEvY29udHJvbC9jb21tYW5kX3Jlc3VsdC5wcm90bxIXdmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wiPgoOV2lmaVNjYW5SZXN1bHQSDAoEc3NpZBgBIAEoCRIMCgRyc3NpGAIgASgREhAKCHNlY3VyaXR5GAMgASgJIksKD1dpZmlTY2FuUmVzdWx0cxI4CgdyZXN1bHRzGAEgAygLMicudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuV2lmaVNjYW5SZXN1bHQiGwoLV2lmaU5ldHdvcmsSDAoEc3NpZBgBIAEoCSLhBAoOUmVjb3JkaW5nRW50cnkSDAoEbmFtZRgBIAEoCRISCgpzaXplX2J5dGVzGAIgASgEEhUKDXN0YXJ0ZWRfYXRfdXMYAyABKAQSEgoKZHVyYXRpb25fcxgEIAEoARJJCgx1cGxvYWRfc3RhdGUYBSABKA4yMy52aXNpb19zY2hlbWEudjEuY29udHJvbC5SZWNvcmRpbmdFbnRyeS5VcGxvYWRTdGF0ZRIQCghhdHRlbXB0cxgGIAEoDRIWCg5ieXRlc191cGxvYWRlZBgHIAEoBBITCgtieXRlc190b3RhbBgIIAEoBBISCgpsYXN0X2Vycm9yGAkgASgJEgwKBHRhc2sYCiABKAkSEAoIbG9jYXRpb24YCyABKAkSDwoHbWVzc2FnZRgMIAEoCRIQCghsYXRpdHVkZRgNIAEoARIRCglsb25naXR1ZGUYDiABKAESEAoIY2FwdHVyZXIYDyABKAkSDwoHZGFtYWdlZBgQIAEoCBIOCgZhY3RpdmUYESABKAgSEgoKZmlsZV9jb3VudBgSIAEoDRI1CgVmaWxlcxgTIAMoCzImLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlJlY29yZGluZ0ZpbGUijwEKC1VwbG9hZFN0YXRlEhUKEVVQTE9BRF9TVEFURV9OT05FEAASGAoUVVBMT0FEX1NUQVRFX1BFTkRJTkcQARIaChZVUExPQURfU1RBVEVfSU5fRkxJR0hUEAISGgoWVVBMT0FEX1NUQVRFX0NPTVBMRVRFRBADEhcKE1VQTE9BRF9TVEFURV9GQUlMRUQQBCKIBAoNUmVjb3JkaW5nRmlsZRIMCgRuYW1lGAEgASgJEgwKBHNpemUYAiABKAQSEAoIbXRpbWVfbnMYAyABKAQSDwoHd3JpdGluZxgEIAEoCBIQCghjb21wbGV0ZRgFIAEoCBIRCgllbmNyeXB0ZWQYBiABKAgSFgoOb2JqZWN0X3ZlcnNpb24YByABKAQSQwoJbGlmZWN5Y2xlGAggASgOMjAudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuUmVjb3JkaW5nRmlsZS5MaWZlY3ljbGUSQwoJaW50ZWdyaXR5GAkgASgOMjAudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuUmVjb3JkaW5nRmlsZS5JbnRlZ3JpdHkSGgoSY2hlY2twb2ludGVkX2J5dGVzGAogASgEEhEKCXJlY292ZXJlZBgLIAEoCCJiCglMaWZlY3ljbGUSFQoRTElGRUNZQ0xFX1VOS05PV04QABILCgdXUklUSU5HEAESDgoKRklOQUxJWklORxACEgkKBVNBVkVEEAMSCgoGRkFJTEVEEAQSCgoGTEVHQUNZEAUiXgoJSW50ZWdyaXR5EhUKEUlOVEVHUklUWV9VTktOT1dOEAASDQoJVU5DSEVDS0VEEAESDAoIVkVSSUZJRUQQAhILCgdEQU1BR0VEEAMSEAoMVU5WRVJJRklBQkxFEAQiugEKDlJlY29yZGluZ3NMaXN0EjsKCnJlY29yZGluZ3MYASADKAsyJy52aXNpb19zY2hlbWEudjEuY29udHJvbC5SZWNvcmRpbmdFbnRyeRITCgtuZXh0X2N1cnNvchgCIAEoCRIcChRyZWFkX3doaWxlX3JlY29yZGluZxgDIAEoCBIcChRjYXRhbG9ndWVfZ2VuZXJhdGlvbhgEIAEoBBIaChJjYXRhbG9ndWVfY29tcGxldGUYBSABKAginAEKEVJlY29yZGluZ0ZpbGVPcGVuEgwKBHBvcnQYASABKA0SDgoGb2Zmc2V0GAIgASgEEg4KBmxlbmd0aBgDIAEoBBIRCglmaWxlX3NpemUYBCABKAQSEAoIbXRpbWVfbnMYBSABKAQSFgoOb2JqZWN0X3ZlcnNpb24YBiABKAQSHAoUY2F0YWxvZ3VlX2dlbmVyYXRpb24YByABKAQiyAEKDVJlY29yZGluZ1N0b3ASFAoMc2Vzc2lvbl9uYW1lGAEgASgJEj0KBnJlYXNvbhgCIAEoDjItLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlJlY29yZGluZ1N0b3AuUmVhc29uImIKBlJlYXNvbhIWChJSRUFTT05fVU5TUEVDSUZJRUQQABIUChBSRUFTT05fUkVRVUVTVEVEEAESFwoTUkVBU09OX01BWF9EVVJBVElPThACEhEKDVJFQVNPTl9ERVZJQ0UQAyIqCglWaWRlb01vZGUSDQoFd2lkdGgYASABKA0SDgoGaGVpZ2h0GAIgASgNIjQKD0NhbWVyYUZyYW1lUmF0ZRIUCgxjYW1lcmFfaW5kZXgYASABKA0SCwoDZnBzGAIgASgNIlYKDUNhcHR1cmVQcmVzZXQSCgoCaWQYASABKAkSOQoHY2FtZXJhcxgCIAMoCzIoLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLkNhbWVyYUZyYW1lUmF0ZSLgAQoPQ2FwdHVyZVNldHRpbmdzEkEKEXN1cHBvcnRlZF9wcmVzZXRzGAEgAygLMiYudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuQ2FwdHVyZVByZXNldBIXCg9zZWxlY3RlZF9wcmVzZXQYAiABKAkSFQoNYWN0aXZlX3ByZXNldBgDIAEoCRJFChNhY3RpdmVfY2FtZXJhX3JhdGVzGAQgAygLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuQ2FtZXJhRnJhbWVSYXRlEhMKC2FwcGx5X2Vycm9yGAUgASgJIuAXCgtEZXZpY2VTdGF0ZRJCChBjYXB0dXJlX3NldHRpbmdzGDIgASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuQ2FwdHVyZVNldHRpbmdzEjsKDWNhcHR1cmVfc3RhdGUYNCABKAsyJC52aXNpb19zY2hlbWEudjEuc2Vuc29yLkNhcHR1cmVTdGF0ZRJBChVzdXBwb3J0ZWRfdmlkZW9fbW9kZXMYMyADKAsyIi52aXNpb19zY2hlbWEudjEuY29udHJvbC5WaWRlb01vZGUSGgoSc25hcHNob3Rfc3VwcG9ydGVkGCwgASgIEhwKFHJlY29yZGluZ19hdXRvX3N0YXJ0GAEgASgIEh4KFnJlY29yZGluZ19zZXNzaW9uX25hbWUYAiABKAkSHwoXcmVjb3JkaW5nX3N0YXJ0ZWRfYXRfdXMYAyABKAQSFgoOcmVjb3JkaW5nX3Rhc2sYEyABKAkSGwoTcmVjb3JkaW5nX21ldGFfdGFzaxgUIAEoCRIfChdyZWNvcmRpbmdfbWV0YV9sb2NhdGlvbhgVIAEoCRIeChZyZWNvcmRpbmdfbWV0YV9tZXNzYWdlGBYgASgJEh8KF3JlY29yZGluZ19tZXRhX2NhcHR1cmVyGBggASgJEiUKGG1heF9yZWNvcmRpbmdfZHVyYXRpb25fcxgvIAEoDUgAiAEBEkMKE2xhc3RfcmVjb3JkaW5nX3N0b3AYMCABKAsyJi52aXNpb19zY2hlbWEudjEuY29udHJvbC5SZWNvcmRpbmdTdG9wEhUKDWRpc2tfZnJlZV9wY3QYBCABKBESFgoOZGlza19ub19zZGNhcmQYBSABKAgSQgoKd2lmaV9zdGF0ZRgGIAEoDjIuLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLkRldmljZVN0YXRlLldpZmlTdGF0ZRIRCgl3aWZpX3NzaWQYByABKAkSDwoHd2lmaV9pcBgIIAEoCRIXCg93aWZpX2xhc3RfZXJyb3IYCSABKAkSOwoNd2lmaV9uZXR3b3JrcxgeIAMoCzIkLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLldpZmlOZXR3b3JrEhoKEnN0b3JhZ2VfY29uZmlndXJlZBgKIAEoCBIYChBzdG9yYWdlX2VuZHBvaW50GAsgASgJEhYKDnN0b3JhZ2VfYnVja2V0GAwgASgJEhYKDnN0b3JhZ2VfcHJlZml4GA0gASgJEh0KFXN0b3JhZ2VfYWNjZXNzX2tleV9pZBgaIAEoCRIdChVzdG9yYWdlX3N0YXR1c19wcmVmaXgYICABKAkSIAoYc3RvcmFnZV9kZXN0aW5hdGlvbl9oaW50GC0gASgJEhwKFGluZ2VzdF9hcGlfc3VwcG9ydGVkGC4gASgIEhYKDnVwbG9hZF9wZW5kaW5nGA4gASgNEhgKEHVwbG9hZF9pbl9mbGlnaHQYDyABKA0SFQoNdXBsb2FkX2ZhaWxlZBgQIAEoDRIZChF1cGxvYWRfbGFzdF9lcnJvchgRIAEoCRIjCht1cGxvYWRfbGFzdF9jb21wbGV0ZWRfYXRfdXMYEiABKAQSGwoTYXV0b191cGxvYWRfZW5hYmxlZBgZIAEoCBIaChJ2aWRlb19iaXRyYXRlX2ticHMYFyABKA0SEwoLdmlkZW9fd2lkdGgYGyABKA0SFAoMdmlkZW9faGVpZ2h0GBwgASgNEkwKD2F1ZGlvX3JlY29yZGluZxgdIAEoDjIzLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLkRldmljZVN0YXRlLkF1ZGlvUmVjb3JkaW5nEkgKDXN0YXR1c19yZXBvcnQYHyABKA4yMS52aXNpb19zY2hlbWEudjEuY29udHJvbC5EZXZpY2VTdGF0ZS5TdGF0dXNSZXBvcnQSVAoTcmVjb3JkaW5nX2hlYXJ0YmVhdBghIAEoDjI3LnZpc2lvX3NjaGVtYS52MS5jb250cm9sLkRldmljZVN0YXRlLlJlY29yZGluZ0hlYXJ0YmVhdBJKCg5oYW5kX2RldGVjdGlvbhgmIAEoDjIyLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLkRldmljZVN0YXRlLkhhbmREZXRlY3Rpb24SRAoLZ3BzX3RhZ2dpbmcYJyABKA4yLy52aXNpb19zY2hlbWEudjEuY29udHJvbC5EZXZpY2VTdGF0ZS5HcHNUYWdnaW5nEjUKA2JsZRgoIAEoDjIoLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLkRldmljZVN0YXRlLkJsZRImChljYWxpYnJhdGlvbl91cGRhdGVkX2F0X3VzGCkgASgESAGIAQESRgoMYW50aV9mbGlja2VyGCogASgOMjAudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuRGV2aWNlU3RhdGUuQW50aUZsaWNrZXISHAoUYW50aV9mbGlja2VyX3BlbmRpbmcYKyABKAgSGgoNbm90aWNlX3ZvbHVtZRgiIAEoDUgCiAEBEiEKGXJlY29yZGluZ19rZXlfZmluZ2VycHJpbnQYIyABKAkSJQodcmVjb3JkaW5nX2VuY3J5cHRpb25fcmVxdWlyZWQYJCABKAgSEwoLc2VhbF9rZXlfaWQYJSABKAkiVAoJV2lmaVN0YXRlEhcKE1dJRklfU1RBVEVfRElTQUJMRUQQABISCg5XSUZJX1NUQVRFX1NUQRABEhoKFldJRklfU1RBVEVfQVBfRkFMTEJBQ0sQAiJsCg5BdWRpb1JlY29yZGluZxIfChtBVURJT19SRUNPUkRJTkdfVU5TVVBQT1JURUQQABIbChdBVURJT19SRUNPUkRJTkdfRU5BQkxFRBABEhwKGEFVRElPX1JFQ09SRElOR19ESVNBQkxFRBACImQKDFN0YXR1c1JlcG9ydBIdChlTVEFUVVNfUkVQT1JUX1VOU1VQUE9SVEVEEAASGQoVU1RBVFVTX1JFUE9SVF9FTkFCTEVEEAESGgoWU1RBVFVTX1JFUE9SVF9ESVNBQkxFRBACInwKElJlY29yZGluZ0hlYXJ0YmVhdBIjCh9SRUNPUkRJTkdfSEVBUlRCRUFUX1VOU1VQUE9SVEVEEAASHwobUkVDT1JESU5HX0hFQVJUQkVBVF9FTkFCTEVEEAESIAocUkVDT1JESU5HX0hFQVJUQkVBVF9ESVNBQkxFRBACImgKDUhhbmREZXRlY3Rpb24SHgoaSEFORF9ERVRFQ1RJT05fVU5TVVBQT1JURUQQABIaChZIQU5EX0RFVEVDVElPTl9FTkFCTEVEEAESGwoXSEFORF9ERVRFQ1RJT05fRElTQUJMRUQQAiJcCgpHcHNUYWdnaW5nEhsKF0dQU19UQUdHSU5HX1VOU1VQUE9SVEVEEAASFwoTR1BTX1RBR0dJTkdfRU5BQkxFRBABEhgKFEdQU19UQUdHSU5HX0RJU0FCTEVEEAIiPQoDQmxlEhMKD0JMRV9VTlNVUFBPUlRFRBAAEg8KC0JMRV9FTkFCTEVEEAESEAoMQkxFX0RJU0FCTEVEEAIiiQEKC0FudGlGbGlja2VyEhwKGEFOVElfRkxJQ0tFUl9VTlNVUFBPUlRFRBAAEhQKEEFOVElfRkxJQ0tFUl9PRkYQARIVChFBTlRJX0ZMSUNLRVJfNTBIWhACEhUKEUFOVElfRkxJQ0tFUl82MEhaEAMSGAoUQU5USV9GTElDS0VSX1VOS05PV04QBEIbChlfbWF4X3JlY29yZGluZ19kdXJhdGlvbl9zQhwKGl9jYWxpYnJhdGlvbl91cGRhdGVkX2F0X3VzQhAKDl9ub3RpY2Vfdm9sdW1lSgQIMRAySgQINRA2SgQINhA3SgQINxA4UhljYWxpYnJhdGlvbl9nZW9tZXRyeV9oYXNoUhpjYWxpYnJhdGlvbl90cmFuc2FjdGlvbl9pZFIdY2FsaWJyYXRpb25fdHJhbnNhY3Rpb25fc3RhdGVSG3RhcmdldF9leHRyaW5zaWNzX3N1cHBvcnRlZCKdBAoNQ29tbWFuZFJlc3VsdBISCgpjb21tYW5kX2lkGAEgASgEEgoKAm9rGAIgASgIEhIKCmVycm9yX2NvZGUYAyABKAkSFQoNZXJyb3JfbWVzc2FnZRgEIAEoCRI1CgVzdGF0ZRgKIAEoCzIkLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLkRldmljZVN0YXRlSAASOAoEc2NhbhgLIAEoCzIoLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLldpZmlTY2FuUmVzdWx0c0gAEj0KCnJlY29yZGluZ3MYDCABKAsyJy52aXNpb19zY2hlbWEudjEuY29udHJvbC5SZWNvcmRpbmdzTGlzdEgAEj8KCWZpbGVfb3BlbhgNIAEoCzIqLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlJlY29yZGluZ0ZpbGVPcGVuSAASNQoIc25hcHNob3QYDiABKAsyIS52aXNpb19zY2hlbWEudjEuY29udHJvbC5TbmFwc2hvdEgAEkQKEGluZ2VzdF9zaWduYXR1cmUYDyABKAsyKC52aXNpb19zY2hlbWEudjEuY29udHJvbC5Jbmdlc3RTaWduYXR1cmVIABJIChJpbmdlc3RfY3JlZGVudGlhbHMYECABKAsyKi52aXNpb19zY2hlbWEudjEuY29udHJvbC5Jbmdlc3RDcmVkZW50aWFsc0gAQgkKB3BheWxvYWQigQEKCFNuYXBzaG90EhMKC3NuYXBzaG90X2lkGAEgASgEEhQKDGNhbWVyYV9pbmRleBgCIAEoDRINCgV3aWR0aBgDIAEoDRIOCgZoZWlnaHQYBCABKA0SFgoOY2FwdHVyZV9wdHNfdXMYBSABKAQSEwoLdG90YWxfYnl0ZXMYBiABKA0iKAoPSW5nZXN0U2lnbmF0dXJlEhUKDWF1dGhvcml6YXRpb24YASABKAkiRQoRSW5nZXN0Q3JlZGVudGlhbHMSGQoRc2VjcmV0X2FjY2Vzc19rZXkYASABKAkSFQoNc2Vzc2lvbl90b2tlbhgCIAEoCWIGcHJvdG8z", [file_visio_schema_v1_sensor_capture_state]);
+  fileDesc("Cix2aXNpb19zY2hlbWEvdjEvY29udHJvbC9jb21tYW5kX3Jlc3VsdC5wcm90bxIXdmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wiPgoOV2lmaVNjYW5SZXN1bHQSDAoEc3NpZBgBIAEoCRIMCgRyc3NpGAIgASgREhAKCHNlY3VyaXR5GAMgASgJIksKD1dpZmlTY2FuUmVzdWx0cxI4CgdyZXN1bHRzGAEgAygLMicudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuV2lmaVNjYW5SZXN1bHQiGwoLV2lmaU5ldHdvcmsSDAoEc3NpZBgBIAEoCSLhBAoOUmVjb3JkaW5nRW50cnkSDAoEbmFtZRgBIAEoCRISCgpzaXplX2J5dGVzGAIgASgEEhUKDXN0YXJ0ZWRfYXRfdXMYAyABKAQSEgoKZHVyYXRpb25fcxgEIAEoARJJCgx1cGxvYWRfc3RhdGUYBSABKA4yMy52aXNpb19zY2hlbWEudjEuY29udHJvbC5SZWNvcmRpbmdFbnRyeS5VcGxvYWRTdGF0ZRIQCghhdHRlbXB0cxgGIAEoDRIWCg5ieXRlc191cGxvYWRlZBgHIAEoBBITCgtieXRlc190b3RhbBgIIAEoBBISCgpsYXN0X2Vycm9yGAkgASgJEgwKBHRhc2sYCiABKAkSEAoIbG9jYXRpb24YCyABKAkSDwoHbWVzc2FnZRgMIAEoCRIQCghsYXRpdHVkZRgNIAEoARIRCglsb25naXR1ZGUYDiABKAESEAoIY2FwdHVyZXIYDyABKAkSDwoHZGFtYWdlZBgQIAEoCBIOCgZhY3RpdmUYESABKAgSEgoKZmlsZV9jb3VudBgSIAEoDRI1CgVmaWxlcxgTIAMoCzImLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlJlY29yZGluZ0ZpbGUijwEKC1VwbG9hZFN0YXRlEhUKEVVQTE9BRF9TVEFURV9OT05FEAASGAoUVVBMT0FEX1NUQVRFX1BFTkRJTkcQARIaChZVUExPQURfU1RBVEVfSU5fRkxJR0hUEAISGgoWVVBMT0FEX1NUQVRFX0NPTVBMRVRFRBADEhcKE1VQTE9BRF9TVEFURV9GQUlMRUQQBCKIBAoNUmVjb3JkaW5nRmlsZRIMCgRuYW1lGAEgASgJEgwKBHNpemUYAiABKAQSEAoIbXRpbWVfbnMYAyABKAQSDwoHd3JpdGluZxgEIAEoCBIQCghjb21wbGV0ZRgFIAEoCBIRCgllbmNyeXB0ZWQYBiABKAgSFgoOb2JqZWN0X3ZlcnNpb24YByABKAQSQwoJbGlmZWN5Y2xlGAggASgOMjAudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuUmVjb3JkaW5nRmlsZS5MaWZlY3ljbGUSQwoJaW50ZWdyaXR5GAkgASgOMjAudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuUmVjb3JkaW5nRmlsZS5JbnRlZ3JpdHkSGgoSY2hlY2twb2ludGVkX2J5dGVzGAogASgEEhEKCXJlY292ZXJlZBgLIAEoCCJiCglMaWZlY3ljbGUSFQoRTElGRUNZQ0xFX1VOS05PV04QABILCgdXUklUSU5HEAESDgoKRklOQUxJWklORxACEgkKBVNBVkVEEAMSCgoGRkFJTEVEEAQSCgoGTEVHQUNZEAUiXgoJSW50ZWdyaXR5EhUKEUlOVEVHUklUWV9VTktOT1dOEAASDQoJVU5DSEVDS0VEEAESDAoIVkVSSUZJRUQQAhILCgdEQU1BR0VEEAMSEAoMVU5WRVJJRklBQkxFEAQiugEKDlJlY29yZGluZ3NMaXN0EjsKCnJlY29yZGluZ3MYASADKAsyJy52aXNpb19zY2hlbWEudjEuY29udHJvbC5SZWNvcmRpbmdFbnRyeRITCgtuZXh0X2N1cnNvchgCIAEoCRIcChRyZWFkX3doaWxlX3JlY29yZGluZxgDIAEoCBIcChRjYXRhbG9ndWVfZ2VuZXJhdGlvbhgEIAEoBBIaChJjYXRhbG9ndWVfY29tcGxldGUYBSABKAginAEKEVJlY29yZGluZ0ZpbGVPcGVuEgwKBHBvcnQYASABKA0SDgoGb2Zmc2V0GAIgASgEEg4KBmxlbmd0aBgDIAEoBBIRCglmaWxlX3NpemUYBCABKAQSEAoIbXRpbWVfbnMYBSABKAQSFgoOb2JqZWN0X3ZlcnNpb24YBiABKAQSHAoUY2F0YWxvZ3VlX2dlbmVyYXRpb24YByABKAQiyAEKDVJlY29yZGluZ1N0b3ASFAoMc2Vzc2lvbl9uYW1lGAEgASgJEj0KBnJlYXNvbhgCIAEoDjItLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlJlY29yZGluZ1N0b3AuUmVhc29uImIKBlJlYXNvbhIWChJSRUFTT05fVU5TUEVDSUZJRUQQABIUChBSRUFTT05fUkVRVUVTVEVEEAESFwoTUkVBU09OX01BWF9EVVJBVElPThACEhEKDVJFQVNPTl9ERVZJQ0UQAyIqCglWaWRlb01vZGUSDQoFd2lkdGgYASABKA0SDgoGaGVpZ2h0GAIgASgNIjQKD0NhbWVyYUZyYW1lUmF0ZRIUCgxjYW1lcmFfaW5kZXgYASABKA0SCwoDZnBzGAIgASgNIlYKDUNhcHR1cmVQcmVzZXQSCgoCaWQYASABKAkSOQoHY2FtZXJhcxgCIAMoCzIoLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLkNhbWVyYUZyYW1lUmF0ZSLgAQoPQ2FwdHVyZVNldHRpbmdzEkEKEXN1cHBvcnRlZF9wcmVzZXRzGAEgAygLMiYudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuQ2FwdHVyZVByZXNldBIXCg9zZWxlY3RlZF9wcmVzZXQYAiABKAkSFQoNYWN0aXZlX3ByZXNldBgDIAEoCRJFChNhY3RpdmVfY2FtZXJhX3JhdGVzGAQgAygLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuQ2FtZXJhRnJhbWVSYXRlEhMKC2FwcGx5X2Vycm9yGAUgASgJIusECgxTZENhcmRTdGF0dXMSOgoFcGhhc2UYASABKA4yKy52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZENhcmRTdGF0dXMuUGhhc2USSQoNY2hlY2tfb3V0Y29tZRgCIAEoDjIyLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLlNkQ2FyZFN0YXR1cy5DaGVja091dGNvbWUSEwoLcmVhc29uX2NvZGUYAyABKAkSFwoPcGhhc2VfZWxhcHNlZF9zGAQgASgNIuoBCgVQaGFzZRIVChFQSEFTRV9VTlNQRUNJRklFRBAAEhAKDFBIQVNFX0FCU0VOVBABEhEKDVBIQVNFX1BST0JJTkcQAhISCg5QSEFTRV9DSEVDS0lORxADEhMKD1BIQVNFX1JFUEFJUklORxAEEhMKD1BIQVNFX1ZFUklGWUlORxAFEhIKDlBIQVNFX01PVU5USU5HEAYSEQoNUEhBU0VfTU9VTlRFRBAHEhMKD1BIQVNFX1JFQURfT05MWRAIEhUKEVBIQVNFX1VOQVZBSUxBQkxFEAkSFAoQUEhBU0VfRk9STUFUVElORxAKIrgBCgxDaGVja091dGNvbWUSHQoZQ0hFQ0tfT1VUQ09NRV9VTlNQRUNJRklFRBAAEh0KGUNIRUNLX09VVENPTUVfTk9UX0NIRUNLRUQQARIXChNDSEVDS19PVVRDT01FX0NMRUFOEAISGgoWQ0hFQ0tfT1VUQ09NRV9SRVBBSVJFRBADEhsKF0NIRUNLX09VVENPTUVfVU5DSEVDS0VEEAQSGAoUQ0hFQ0tfT1VUQ09NRV9GQUlMRUQQBSKfGAoLRGV2aWNlU3RhdGUSPQoOc2RfY2FyZF9zdGF0dXMYOCABKAsyJS52aXNpb19zY2hlbWEudjEuY29udHJvbC5TZENhcmRTdGF0dXMSQgoQY2FwdHVyZV9zZXR0aW5ncxgyIAEoCzIoLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLkNhcHR1cmVTZXR0aW5ncxI7Cg1jYXB0dXJlX3N0YXRlGDQgASgLMiQudmlzaW9fc2NoZW1hLnYxLnNlbnNvci5DYXB0dXJlU3RhdGUSQQoVc3VwcG9ydGVkX3ZpZGVvX21vZGVzGDMgAygLMiIudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuVmlkZW9Nb2RlEhoKEnNuYXBzaG90X3N1cHBvcnRlZBgsIAEoCBIcChRyZWNvcmRpbmdfYXV0b19zdGFydBgBIAEoCBIeChZyZWNvcmRpbmdfc2Vzc2lvbl9uYW1lGAIgASgJEh8KF3JlY29yZGluZ19zdGFydGVkX2F0X3VzGAMgASgEEhYKDnJlY29yZGluZ190YXNrGBMgASgJEhsKE3JlY29yZGluZ19tZXRhX3Rhc2sYFCABKAkSHwoXcmVjb3JkaW5nX21ldGFfbG9jYXRpb24YFSABKAkSHgoWcmVjb3JkaW5nX21ldGFfbWVzc2FnZRgWIAEoCRIfChdyZWNvcmRpbmdfbWV0YV9jYXB0dXJlchgYIAEoCRIlChhtYXhfcmVjb3JkaW5nX2R1cmF0aW9uX3MYLyABKA1IAIgBARJDChNsYXN0X3JlY29yZGluZ19zdG9wGDAgASgLMiYudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuUmVjb3JkaW5nU3RvcBIVCg1kaXNrX2ZyZWVfcGN0GAQgASgREhYKDmRpc2tfbm9fc2RjYXJkGAUgASgIEkIKCndpZmlfc3RhdGUYBiABKA4yLi52aXNpb19zY2hlbWEudjEuY29udHJvbC5EZXZpY2VTdGF0ZS5XaWZpU3RhdGUSEQoJd2lmaV9zc2lkGAcgASgJEg8KB3dpZmlfaXAYCCABKAkSFwoPd2lmaV9sYXN0X2Vycm9yGAkgASgJEjsKDXdpZmlfbmV0d29ya3MYHiADKAsyJC52aXNpb19zY2hlbWEudjEuY29udHJvbC5XaWZpTmV0d29yaxIaChJzdG9yYWdlX2NvbmZpZ3VyZWQYCiABKAgSGAoQc3RvcmFnZV9lbmRwb2ludBgLIAEoCRIWCg5zdG9yYWdlX2J1Y2tldBgMIAEoCRIWCg5zdG9yYWdlX3ByZWZpeBgNIAEoCRIdChVzdG9yYWdlX2FjY2Vzc19rZXlfaWQYGiABKAkSHQoVc3RvcmFnZV9zdGF0dXNfcHJlZml4GCAgASgJEiAKGHN0b3JhZ2VfZGVzdGluYXRpb25faGludBgtIAEoCRIcChRpbmdlc3RfYXBpX3N1cHBvcnRlZBguIAEoCBIWCg51cGxvYWRfcGVuZGluZxgOIAEoDRIYChB1cGxvYWRfaW5fZmxpZ2h0GA8gASgNEhUKDXVwbG9hZF9mYWlsZWQYECABKA0SGQoRdXBsb2FkX2xhc3RfZXJyb3IYESABKAkSIwobdXBsb2FkX2xhc3RfY29tcGxldGVkX2F0X3VzGBIgASgEEhsKE2F1dG9fdXBsb2FkX2VuYWJsZWQYGSABKAgSGgoSdmlkZW9fYml0cmF0ZV9rYnBzGBcgASgNEhMKC3ZpZGVvX3dpZHRoGBsgASgNEhQKDHZpZGVvX2hlaWdodBgcIAEoDRJMCg9hdWRpb19yZWNvcmRpbmcYHSABKA4yMy52aXNpb19zY2hlbWEudjEuY29udHJvbC5EZXZpY2VTdGF0ZS5BdWRpb1JlY29yZGluZxJICg1zdGF0dXNfcmVwb3J0GB8gASgOMjEudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuRGV2aWNlU3RhdGUuU3RhdHVzUmVwb3J0ElQKE3JlY29yZGluZ19oZWFydGJlYXQYISABKA4yNy52aXNpb19zY2hlbWEudjEuY29udHJvbC5EZXZpY2VTdGF0ZS5SZWNvcmRpbmdIZWFydGJlYXQSSgoOaGFuZF9kZXRlY3Rpb24YJiABKA4yMi52aXNpb19zY2hlbWEudjEuY29udHJvbC5EZXZpY2VTdGF0ZS5IYW5kRGV0ZWN0aW9uEkQKC2dwc190YWdnaW5nGCcgASgOMi8udmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuRGV2aWNlU3RhdGUuR3BzVGFnZ2luZxI1CgNibGUYKCABKA4yKC52aXNpb19zY2hlbWEudjEuY29udHJvbC5EZXZpY2VTdGF0ZS5CbGUSJgoZY2FsaWJyYXRpb25fdXBkYXRlZF9hdF91cxgpIAEoBEgBiAEBEkYKDGFudGlfZmxpY2tlchgqIAEoDjIwLnZpc2lvX3NjaGVtYS52MS5jb250cm9sLkRldmljZVN0YXRlLkFudGlGbGlja2VyEhwKFGFudGlfZmxpY2tlcl9wZW5kaW5nGCsgASgIEhoKDW5vdGljZV92b2x1bWUYIiABKA1IAogBARIhChlyZWNvcmRpbmdfa2V5X2ZpbmdlcnByaW50GCMgASgJEiUKHXJlY29yZGluZ19lbmNyeXB0aW9uX3JlcXVpcmVkGCQgASgIEhMKC3NlYWxfa2V5X2lkGCUgASgJIlQKCVdpZmlTdGF0ZRIXChNXSUZJX1NUQVRFX0RJU0FCTEVEEAASEgoOV0lGSV9TVEFURV9TVEEQARIaChZXSUZJX1NUQVRFX0FQX0ZBTExCQUNLEAIibAoOQXVkaW9SZWNvcmRpbmcSHwobQVVESU9fUkVDT1JESU5HX1VOU1VQUE9SVEVEEAASGwoXQVVESU9fUkVDT1JESU5HX0VOQUJMRUQQARIcChhBVURJT19SRUNPUkRJTkdfRElTQUJMRUQQAiJkCgxTdGF0dXNSZXBvcnQSHQoZU1RBVFVTX1JFUE9SVF9VTlNVUFBPUlRFRBAAEhkKFVNUQVRVU19SRVBPUlRfRU5BQkxFRBABEhoKFlNUQVRVU19SRVBPUlRfRElTQUJMRUQQAiJ8ChJSZWNvcmRpbmdIZWFydGJlYXQSIwofUkVDT1JESU5HX0hFQVJUQkVBVF9VTlNVUFBPUlRFRBAAEh8KG1JFQ09SRElOR19IRUFSVEJFQVRfRU5BQkxFRBABEiAKHFJFQ09SRElOR19IRUFSVEJFQVRfRElTQUJMRUQQAiJoCg1IYW5kRGV0ZWN0aW9uEh4KGkhBTkRfREVURUNUSU9OX1VOU1VQUE9SVEVEEAASGgoWSEFORF9ERVRFQ1RJT05fRU5BQkxFRBABEhsKF0hBTkRfREVURUNUSU9OX0RJU0FCTEVEEAIiXAoKR3BzVGFnZ2luZxIbChdHUFNfVEFHR0lOR19VTlNVUFBPUlRFRBAAEhcKE0dQU19UQUdHSU5HX0VOQUJMRUQQARIYChRHUFNfVEFHR0lOR19ESVNBQkxFRBACIj0KA0JsZRITCg9CTEVfVU5TVVBQT1JURUQQABIPCgtCTEVfRU5BQkxFRBABEhAKDEJMRV9ESVNBQkxFRBACIokBCgtBbnRpRmxpY2tlchIcChhBTlRJX0ZMSUNLRVJfVU5TVVBQT1JURUQQABIUChBBTlRJX0ZMSUNLRVJfT0ZGEAESFQoRQU5USV9GTElDS0VSXzUwSFoQAhIVChFBTlRJX0ZMSUNLRVJfNjBIWhADEhgKFEFOVElfRkxJQ0tFUl9VTktOT1dOEARCGwoZX21heF9yZWNvcmRpbmdfZHVyYXRpb25fc0IcChpfY2FsaWJyYXRpb25fdXBkYXRlZF9hdF91c0IQCg5fbm90aWNlX3ZvbHVtZUoECDEQMkoECDUQNkoECDYQN0oECDcQOFIZY2FsaWJyYXRpb25fZ2VvbWV0cnlfaGFzaFIaY2FsaWJyYXRpb25fdHJhbnNhY3Rpb25faWRSHWNhbGlicmF0aW9uX3RyYW5zYWN0aW9uX3N0YXRlUht0YXJnZXRfZXh0cmluc2ljc19zdXBwb3J0ZWQinQQKDUNvbW1hbmRSZXN1bHQSEgoKY29tbWFuZF9pZBgBIAEoBBIKCgJvaxgCIAEoCBISCgplcnJvcl9jb2RlGAMgASgJEhUKDWVycm9yX21lc3NhZ2UYBCABKAkSNQoFc3RhdGUYCiABKAsyJC52aXNpb19zY2hlbWEudjEuY29udHJvbC5EZXZpY2VTdGF0ZUgAEjgKBHNjYW4YCyABKAsyKC52aXNpb19zY2hlbWEudjEuY29udHJvbC5XaWZpU2NhblJlc3VsdHNIABI9CgpyZWNvcmRpbmdzGAwgASgLMicudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuUmVjb3JkaW5nc0xpc3RIABI/CglmaWxlX29wZW4YDSABKAsyKi52aXNpb19zY2hlbWEudjEuY29udHJvbC5SZWNvcmRpbmdGaWxlT3BlbkgAEjUKCHNuYXBzaG90GA4gASgLMiEudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuU25hcHNob3RIABJEChBpbmdlc3Rfc2lnbmF0dXJlGA8gASgLMigudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuSW5nZXN0U2lnbmF0dXJlSAASSAoSaW5nZXN0X2NyZWRlbnRpYWxzGBAgASgLMioudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuSW5nZXN0Q3JlZGVudGlhbHNIAEIJCgdwYXlsb2FkIoEBCghTbmFwc2hvdBITCgtzbmFwc2hvdF9pZBgBIAEoBBIUCgxjYW1lcmFfaW5kZXgYAiABKA0SDQoFd2lkdGgYAyABKA0SDgoGaGVpZ2h0GAQgASgNEhYKDmNhcHR1cmVfcHRzX3VzGAUgASgEEhMKC3RvdGFsX2J5dGVzGAYgASgNIigKD0luZ2VzdFNpZ25hdHVyZRIVCg1hdXRob3JpemF0aW9uGAEgASgJIkUKEUluZ2VzdENyZWRlbnRpYWxzEhkKEXNlY3JldF9hY2Nlc3Nfa2V5GAEgASgJEhUKDXNlc3Npb25fdG9rZW4YAiABKAliBnByb3RvMw", [file_visio_schema_v1_sensor_capture_state]);
 
 /**
  * One Wi-Fi access point seen in a scan.
@@ -720,9 +720,168 @@ export const CaptureSettingsSchema: GenMessage<CaptureSettings> = /*@__PURE__*/
   messageDesc(file_visio_schema_v1_control_command_result, 11);
 
 /**
+ * Recording storage availability and its last startup/insert check are
+ * independent: a best-effort writable mount may have an incomplete check.
+ * This is observation only; it does not introduce a recording admission gate.
+ *
+ * @generated from message visio_schema.v1.control.SdCardStatus
+ */
+export type SdCardStatus = Message<"visio_schema.v1.control.SdCardStatus"> & {
+  /**
+   * @generated from field: visio_schema.v1.control.SdCardStatus.Phase phase = 1;
+   */
+  phase: SdCardStatus_Phase;
+
+  /**
+   * @generated from field: visio_schema.v1.control.SdCardStatus.CheckOutcome check_outcome = 2;
+   */
+  checkOutcome: SdCardStatus_CheckOutcome;
+
+  /**
+   * Stable diagnostic identifier, e.g. check_timeout, io_error,
+   * repair_unverified, checker_unavailable or mount_failed. Empty when none.
+   * Unknown codes should be displayed as a generic storage warning.
+   *
+   * @generated from field: string reason_code = 3;
+   */
+  reasonCode: string;
+
+  /**
+   * Monotonic elapsed time in the current active phase; no progress percentage.
+   * A slow phase may still be blocked in kernel I/O after its deadline.
+   *
+   * @generated from field: uint32 phase_elapsed_s = 4;
+   */
+  phaseElapsedS: number;
+};
+
+/**
+ * Describes the message visio_schema.v1.control.SdCardStatus.
+ * Use `create(SdCardStatusSchema)` to create a new message.
+ */
+export const SdCardStatusSchema: GenMessage<SdCardStatus> = /*@__PURE__*/
+  messageDesc(file_visio_schema_v1_control_command_result, 12);
+
+/**
+ * @generated from enum visio_schema.v1.control.SdCardStatus.Phase
+ */
+export enum SdCardStatus_Phase {
+  /**
+   * @generated from enum value: PHASE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: PHASE_ABSENT = 1;
+   */
+  ABSENT = 1,
+
+  /**
+   * @generated from enum value: PHASE_PROBING = 2;
+   */
+  PROBING = 2,
+
+  /**
+   * @generated from enum value: PHASE_CHECKING = 3;
+   */
+  CHECKING = 3,
+
+  /**
+   * @generated from enum value: PHASE_REPAIRING = 4;
+   */
+  REPAIRING = 4,
+
+  /**
+   * @generated from enum value: PHASE_VERIFYING = 5;
+   */
+  VERIFYING = 5,
+
+  /**
+   * @generated from enum value: PHASE_MOUNTING = 6;
+   */
+  MOUNTING = 6,
+
+  /**
+   * @generated from enum value: PHASE_MOUNTED = 7;
+   */
+  MOUNTED = 7,
+
+  /**
+   * @generated from enum value: PHASE_READ_ONLY = 8;
+   */
+  READ_ONLY = 8,
+
+  /**
+   * @generated from enum value: PHASE_UNAVAILABLE = 9;
+   */
+  UNAVAILABLE = 9,
+
+  /**
+   * @generated from enum value: PHASE_FORMATTING = 10;
+   */
+  FORMATTING = 10,
+}
+
+/**
+ * Describes the enum visio_schema.v1.control.SdCardStatus.Phase.
+ */
+export const SdCardStatus_PhaseSchema: GenEnum<SdCardStatus_Phase> = /*@__PURE__*/
+  enumDesc(file_visio_schema_v1_control_command_result, 12, 0);
+
+/**
+ * @generated from enum visio_schema.v1.control.SdCardStatus.CheckOutcome
+ */
+export enum SdCardStatus_CheckOutcome {
+  /**
+   * @generated from enum value: CHECK_OUTCOME_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * No checker is run for this filesystem (including existing ext4).
+   *
+   * @generated from enum value: CHECK_OUTCOME_NOT_CHECKED = 1;
+   */
+  NOT_CHECKED = 1,
+
+  /**
+   * @generated from enum value: CHECK_OUTCOME_CLEAN = 2;
+   */
+  CLEAN = 2,
+
+  /**
+   * @generated from enum value: CHECK_OUTCOME_REPAIRED = 3;
+   */
+  REPAIRED = 3,
+
+  /**
+   * @generated from enum value: CHECK_OUTCOME_UNCHECKED = 4;
+   */
+  UNCHECKED = 4,
+
+  /**
+   * @generated from enum value: CHECK_OUTCOME_FAILED = 5;
+   */
+  FAILED = 5,
+}
+
+/**
+ * Describes the enum visio_schema.v1.control.SdCardStatus.CheckOutcome.
+ */
+export const SdCardStatus_CheckOutcomeSchema: GenEnum<SdCardStatus_CheckOutcome> = /*@__PURE__*/
+  enumDesc(file_visio_schema_v1_control_command_result, 12, 1);
+
+/**
  * @generated from message visio_schema.v1.control.DeviceState
  */
 export type DeviceState = Message<"visio_schema.v1.control.DeviceState"> & {
+  /**
+   * Absent on older firmware and devices without local recording storage.
+   *
+   * @generated from field: visio_schema.v1.control.SdCardStatus sd_card_status = 56;
+   */
+  sdCardStatus?: SdCardStatus | undefined;
+
   /**
    * Absent on firmware that does not implement board capture presets.
    *
@@ -1119,7 +1278,7 @@ export type DeviceState = Message<"visio_schema.v1.control.DeviceState"> & {
  * Use `create(DeviceStateSchema)` to create a new message.
  */
 export const DeviceStateSchema: GenMessage<DeviceState> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command_result, 12);
+  messageDesc(file_visio_schema_v1_control_command_result, 13);
 
 /**
  * ── wifi ──
@@ -1147,7 +1306,7 @@ export enum DeviceState_WifiState {
  * Describes the enum visio_schema.v1.control.DeviceState.WifiState.
  */
 export const DeviceState_WifiStateSchema: GenEnum<DeviceState_WifiState> = /*@__PURE__*/
-  enumDesc(file_visio_schema_v1_control_command_result, 12, 0);
+  enumDesc(file_visio_schema_v1_control_command_result, 13, 0);
 
 /**
  * ── audio ──
@@ -1183,7 +1342,7 @@ export enum DeviceState_AudioRecording {
  * Describes the enum visio_schema.v1.control.DeviceState.AudioRecording.
  */
 export const DeviceState_AudioRecordingSchema: GenEnum<DeviceState_AudioRecording> = /*@__PURE__*/
-  enumDesc(file_visio_schema_v1_control_command_result, 12, 1);
+  enumDesc(file_visio_schema_v1_control_command_result, 13, 1);
 
 /**
  * ── status reports ──
@@ -1219,7 +1378,7 @@ export enum DeviceState_StatusReport {
  * Describes the enum visio_schema.v1.control.DeviceState.StatusReport.
  */
 export const DeviceState_StatusReportSchema: GenEnum<DeviceState_StatusReport> = /*@__PURE__*/
-  enumDesc(file_visio_schema_v1_control_command_result, 12, 2);
+  enumDesc(file_visio_schema_v1_control_command_result, 13, 2);
 
 /**
  * ── recording heartbeat ──
@@ -1254,7 +1413,7 @@ export enum DeviceState_RecordingHeartbeat {
  * Describes the enum visio_schema.v1.control.DeviceState.RecordingHeartbeat.
  */
 export const DeviceState_RecordingHeartbeatSchema: GenEnum<DeviceState_RecordingHeartbeat> = /*@__PURE__*/
-  enumDesc(file_visio_schema_v1_control_command_result, 12, 3);
+  enumDesc(file_visio_schema_v1_control_command_result, 13, 3);
 
 /**
  * ── hand detection ──
@@ -1291,7 +1450,7 @@ export enum DeviceState_HandDetection {
  * Describes the enum visio_schema.v1.control.DeviceState.HandDetection.
  */
 export const DeviceState_HandDetectionSchema: GenEnum<DeviceState_HandDetection> = /*@__PURE__*/
-  enumDesc(file_visio_schema_v1_control_command_result, 12, 4);
+  enumDesc(file_visio_schema_v1_control_command_result, 13, 4);
 
 /**
  * ── GPS tagging ──
@@ -1326,7 +1485,7 @@ export enum DeviceState_GpsTagging {
  * Describes the enum visio_schema.v1.control.DeviceState.GpsTagging.
  */
 export const DeviceState_GpsTaggingSchema: GenEnum<DeviceState_GpsTagging> = /*@__PURE__*/
-  enumDesc(file_visio_schema_v1_control_command_result, 12, 5);
+  enumDesc(file_visio_schema_v1_control_command_result, 13, 5);
 
 /**
  * ── BLE ──
@@ -1360,7 +1519,7 @@ export enum DeviceState_Ble {
  * Describes the enum visio_schema.v1.control.DeviceState.Ble.
  */
 export const DeviceState_BleSchema: GenEnum<DeviceState_Ble> = /*@__PURE__*/
-  enumDesc(file_visio_schema_v1_control_command_result, 12, 6);
+  enumDesc(file_visio_schema_v1_control_command_result, 13, 6);
 
 /**
  * ── anti-flicker ──
@@ -1409,7 +1568,7 @@ export enum DeviceState_AntiFlicker {
  * Describes the enum visio_schema.v1.control.DeviceState.AntiFlicker.
  */
 export const DeviceState_AntiFlickerSchema: GenEnum<DeviceState_AntiFlicker> = /*@__PURE__*/
-  enumDesc(file_visio_schema_v1_control_command_result, 12, 7);
+  enumDesc(file_visio_schema_v1_control_command_result, 13, 7);
 
 /**
  * The single ack a device emits per Command on /<device>/command_result.
@@ -1512,7 +1671,7 @@ export type CommandResult = Message<"visio_schema.v1.control.CommandResult"> & {
  * Use `create(CommandResultSchema)` to create a new message.
  */
 export const CommandResultSchema: GenMessage<CommandResult> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command_result, 13);
+  messageDesc(file_visio_schema_v1_control_command_result, 14);
 
 /**
  * The image described by CaptureSnapshot's single command acknowledgment.
@@ -1564,7 +1723,7 @@ export type Snapshot = Message<"visio_schema.v1.control.Snapshot"> & {
  * Use `create(SnapshotSchema)` to create a new message.
  */
 export const SnapshotSchema: GenMessage<Snapshot> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command_result, 14);
+  messageDesc(file_visio_schema_v1_control_command_result, 15);
 
 /**
  * IngestSign's answer: the request's Authorization header value,
@@ -1584,7 +1743,7 @@ export type IngestSignature = Message<"visio_schema.v1.control.IngestSignature">
  * Use `create(IngestSignatureSchema)` to create a new message.
  */
 export const IngestSignatureSchema: GenMessage<IngestSignature> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command_result, 15);
+  messageDesc(file_visio_schema_v1_control_command_result, 16);
 
 /**
  * IngestOpenCredentials' answer: the secret half of the storage credentials,
@@ -1612,5 +1771,5 @@ export type IngestCredentials = Message<"visio_schema.v1.control.IngestCredentia
  * Use `create(IngestCredentialsSchema)` to create a new message.
  */
 export const IngestCredentialsSchema: GenMessage<IngestCredentials> = /*@__PURE__*/
-  messageDesc(file_visio_schema_v1_control_command_result, 16);
+  messageDesc(file_visio_schema_v1_control_command_result, 17);
 

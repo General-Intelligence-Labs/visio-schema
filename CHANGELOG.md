@@ -6,6 +6,13 @@ bump the MINOR version.
 
 ## Unreleased
 
+### SD startup and insertion status
+
+Add optional `DeviceState.sd_card_status` (tag 56), reporting storage phase,
+check outcome, diagnostic reason and elapsed phase time. A mounted card may
+retain a failed or incomplete check warning: existing best-effort recording
+policy is unchanged. Older firmware omits the message; older clients ignore it.
+
 ### Image-based hand estimates
 
 Add `HandPoseFrame` on `/camera/<index>/hand_pose` for bounded left/right image

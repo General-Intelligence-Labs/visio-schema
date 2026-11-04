@@ -203,7 +203,46 @@ message CaptureSettings {
   string apply_error = 5;
 }
 
+// Recording storage availability and its last startup/insert check are
+// independent: a best-effort writable mount may have an incomplete check.
+// This is observation only; it does not introduce a recording admission gate.
+message SdCardStatus {
+  enum Phase {
+    PHASE_UNSPECIFIED = 0;
+    PHASE_ABSENT = 1;
+    PHASE_PROBING = 2;
+    PHASE_CHECKING = 3;
+    PHASE_REPAIRING = 4;
+    PHASE_VERIFYING = 5;
+    PHASE_MOUNTING = 6;
+    PHASE_MOUNTED = 7;
+    PHASE_READ_ONLY = 8;
+    PHASE_UNAVAILABLE = 9;
+    PHASE_FORMATTING = 10;
+  }
+  enum CheckOutcome {
+    CHECK_OUTCOME_UNSPECIFIED = 0;
+    // No checker is run for this filesystem (including existing ext4).
+    CHECK_OUTCOME_NOT_CHECKED = 1;
+    CHECK_OUTCOME_CLEAN = 2;
+    CHECK_OUTCOME_REPAIRED = 3;
+    CHECK_OUTCOME_UNCHECKED = 4;
+    CHECK_OUTCOME_FAILED = 5;
+  }
+  Phase phase = 1;
+  CheckOutcome check_outcome = 2;
+  // Stable diagnostic identifier, e.g. check_timeout, io_error,
+  // repair_unverified, checker_unavailable or mount_failed. Empty when none.
+  // Unknown codes should be displayed as a generic storage warning.
+  string reason_code = 3;
+  // Monotonic elapsed time in the current active phase; no progress percentage.
+  // A slow phase may still be blocked in kernel I/O after its deadline.
+  uint32 phase_elapsed_s = 4;
+}
+
 message DeviceState {
+  // Absent on older firmware and devices without local recording storage.
+  SdCardStatus sd_card_status = 56;
   // Absent on firmware that does not implement board capture presets.
   CaptureSettings capture_settings = 50;
   visio_schema.v1.sensor.CaptureState capture_state = 52;
