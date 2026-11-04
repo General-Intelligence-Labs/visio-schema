@@ -36,6 +36,7 @@ import numpy as np
 
 from .domain import (
     IMAGE_SCHEMA,
+    IMU_QUAT_SCHEMA,
     IMU_RAW_SCHEMA,
     JOINT_STATES_SCHEMA,
     POSE_SCHEMA,
@@ -273,6 +274,25 @@ class _JointStateAdapter:
         return iter(())
 
 
+class _OrientationBundleAdapter:
+    """One ImuQuat -> N Orientations on the aligned header clock."""
+
+    def __init__(self, schema_name: str, ctx: AdapterContext) -> None:
+        self._proto = ctx.message_class_for(schema_name)()
+
+    def emit(self, data: bytes, topic: str, t_ns: Ns) -> Iterator[Triple]:
+        self._proto.ParseFromString(data)
+        for sample in self._proto.samples:
+            q = sample.orientation
+            sample_ns = t_ns + int(sample.t_offset_ns)
+            yield sample_ns, t_ns, Orientation(
+                topic=topic, t_ns=sample_ns,
+                q=np.array([q.x, q.y, q.z, q.w], float))
+
+    def flush(self) -> Iterator[Triple]:
+        return iter(())
+
+
 class _OrientationAdapter:
     """`visio_schema.v1.ros.geometry_msgs.Quaternion` -> `Orientation`.
 
@@ -327,6 +347,7 @@ class _RecordAdapter:
 element_adapter(VIDEO_SCHEMA)(_DecodedAdapter)
 element_adapter(IMAGE_SCHEMA)(_DecodedAdapter)
 element_adapter(IMU_RAW_SCHEMA)(_ImuAdapter)
+element_adapter(IMU_QUAT_SCHEMA)(_OrientationBundleAdapter)
 element_adapter(POSE_SCHEMA)(_PoseAdapter)
 element_adapter(QUATERNION_SCHEMA)(_OrientationAdapter)
 element_adapter(JOINT_STATES_SCHEMA)(_JointStateAdapter)

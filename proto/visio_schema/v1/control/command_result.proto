@@ -15,6 +15,8 @@ syntax = "proto3";
 
 package visio_schema.v1.control;
 
+import "visio_schema/v1/sensor/capture_state.proto";
+
 // One Wi-Fi access point seen in a scan.
 message WifiScanResult {
   string ssid     = 1;
@@ -107,6 +109,26 @@ message RecordingFile {
 
   // An .mcap part is VREC ciphertext; a pull carries it unchanged.
   bool encrypted = 6;
+  uint64 object_version = 7; // scoped to catalogue_generation
+  enum Lifecycle {
+    LIFECYCLE_UNKNOWN = 0;
+    WRITING = 1;
+    FINALIZING = 2;
+    SAVED = 3;
+    FAILED = 4;
+    LEGACY = 5;
+  }
+  Lifecycle lifecycle = 8;
+  enum Integrity {
+    INTEGRITY_UNKNOWN = 0;
+    UNCHECKED = 1;
+    VERIFIED = 2;
+    DAMAGED = 3;
+    UNVERIFIABLE = 4;
+  }
+  Integrity integrity = 9; // independent of save or transfer completion
+  uint64 checkpointed_bytes = 10;
+  bool recovered = 11; // recovered data may still be damaged
 }
 
 message RecordingsList {
@@ -119,6 +141,8 @@ message RecordingsList {
   // false, OpenRecordingFile answers "busy_recording" during a recording and a
   // recording that starts mid-pull closes the transfer.
   bool read_while_recording = 3;
+  uint64 catalogue_generation = 4;
+  bool catalogue_complete = 5;
 }
 
 // Answer to OpenRecordingFile: where and how much to read.
@@ -128,6 +152,26 @@ message RecordingFileOpen {
   uint64 length    = 3;  // exact byte count the socket carries: file_size - offset
   uint64 file_size = 4;
   uint64 mtime_ns  = 5;  // keep beside a partial download for a later resume
+  uint64 object_version = 6;
+  uint64 catalogue_generation = 7;
+}
+
+// How a recording ended: the one fact a host needs to tell its user why a
+// recording it did not stop has stopped. Deliberately coarse; the device's own
+// record of each recording (its session.json) keeps the full reason.
+message RecordingStop {
+  // The recording's session name exactly as RecordingEntry.name lists it, so a
+  // host shows a notice for a given recording once.
+  string session_name = 1;
+
+  enum Reason {
+    REASON_UNSPECIFIED = 0;   // not one this host knows; treat as a plain stop
+    REASON_REQUESTED = 1;     // a host, the setup page, or the button/switch
+    REASON_MAX_DURATION = 2;  // it reached the SetMaxRecordingDuration limit
+    // The device ended it on its own: a storage, sensor or camera fault.
+    REASON_DEVICE = 3;
+  }
+  Reason reason = 2;
 }
 
 // The device's operational-state snapshot — the GET /info payload. Fields that
@@ -135,7 +179,44 @@ message RecordingFileOpen {
 // (recording, disk_free_bytes, disk_total_bytes) already report are
 // intentionally NOT duplicated
 // here. Carried only inside CommandResult; it has no own stream.
+message VideoMode {
+  uint32 width = 1;
+  uint32 height = 2;
+}
+
+message CameraFrameRate {
+  uint32 camera_index = 1;
+  uint32 fps = 2;
+}
+
+message CapturePreset {
+  string id = 1;
+  repeated CameraFrameRate cameras = 2;
+}
+
+message CaptureSettings {
+  repeated CapturePreset supported_presets = 1;
+  string selected_preset = 2;
+  string active_preset = 3;
+  repeated CameraFrameRate active_camera_rates = 4;
+  // Empty after a successful apply; otherwise a machine-readable failure code.
+  string apply_error = 5;
+}
+
 message DeviceState {
+  // Absent on firmware that does not implement board capture presets.
+  CaptureSettings capture_settings = 50;
+  visio_schema.v1.sensor.CaptureState capture_state = 52;
+  // Retired experimental calibration transaction/capability metadata.
+  reserved 49, 53, 54, 55;
+  reserved "calibration_geometry_hash", "calibration_transaction_id",
+      "calibration_transaction_state", "target_extrinsics_supported";
+  // Validated against the sensors actually probed on this board. Empty means
+  // this firmware cannot advertise modes; clients must not guess leaf modes.
+  repeated VideoMode supported_video_modes = 51;
+  // A working primary-camera JPEG tap, independent of cloud status reporting
+  // and hand detection. False on older firmware or camera-less devices.
+  bool snapshot_supported = 44;
   // ── recording ──
   bool   recording_auto_start    = 1;
   string recording_session_name  = 2;  // empty when not recording
@@ -149,6 +230,16 @@ message DeviceState {
   string recording_meta_location = 21;
   string recording_meta_message  = 22;
   string recording_meta_capturer = 24;
+
+  // The SetMaxRecordingDuration limit in force, seconds; 0 = no limit.
+  // `optional` for notice_volume's reason: absence covers "this device does
+  // not record to a card" and "this firmware predates the setting", and lets
+  // the app HIDE the control; 0 is a legal value as well as the default.
+  optional uint32 max_recording_duration_s = 47;
+  // The most recent recording this device wrote to its card since it booted,
+  // and why it ended. Absent until one has ended, and on older firmware; not
+  // kept across a reboot.
+  RecordingStop last_recording_stop = 48;
 
   // ── disk ──
   sint32 disk_free_pct = 4;   // 0..100, or -1 = unknown
@@ -202,6 +293,13 @@ message DeviceState {
   // The status-report key prefix (see SetStorage.status_prefix). Echoed so the
   // app can show where health reports land; empty means the device default.
   string storage_status_prefix = 32;
+  // Ingest API mode only: the stored SetStorage.destination_hint.
+  string storage_destination_hint = 45;
+  // True when this firmware can upload through an Ingest API (a
+  // `visio+https://` SetStorage endpoint). The capability probe: false or
+  // absent means older firmware, which would misread such an endpoint as an
+  // S3 host, so an app must not offer the mode to it.
+  bool ingest_api_supported = 46;
 
   // ── upload queue ──
   uint32 upload_pending             = 14;
@@ -323,6 +421,27 @@ message DeviceState {
   // calibration or an unsynchronized clock). Report publication timestamps
   // are independent of this persisted value.
   optional uint64 calibration_updated_at_us = 41;
+  // ── anti-flicker ──
+  // The mains anti-flicker setting (SetAntiFlicker) as the cameras run it. A
+  // command's echo reports the last completed apply; anti_flicker_pending
+  // stays true until the camera thread finishes the request. A failed switch
+  // that restores the IQ exposure reports OFF; a failed restore is unknown
+  // and reports UNKNOWN until a subsequent apply succeeds.
+  //
+  // UNSUPPORTED covers both "this device cannot run the setting" and "this
+  // firmware predates it", and lets the app HIDE the control. OFF is the
+  // camera's tuned default, not "no anti-flicker at all".
+  enum AntiFlicker {
+    ANTI_FLICKER_UNSUPPORTED = 0;
+    ANTI_FLICKER_OFF         = 1;
+    ANTI_FLICKER_50HZ        = 2;
+    ANTI_FLICKER_60HZ        = 3;
+    ANTI_FLICKER_UNKNOWN     = 4; // failed apply and restore; retry is available
+  }
+  AntiFlicker anti_flicker = 42;
+  // A persisted SetAntiFlicker request is waiting for the camera thread.
+  // anti_flicker reports the last completed apply, including a failed restore.
+  bool anti_flicker_pending = 43;
 
   // ── notice volume ──
   // Voice-notice loudness, 0-100 (SetNoticeVolume; 0 = muted).
@@ -397,5 +516,37 @@ message CommandResult {
     WifiScanResults   scan       = 11;
     RecordingsList    recordings = 12;
     RecordingFileOpen file_open  = 13;
+    Snapshot          snapshot   = 14;
+    IngestSignature   ingest_signature   = 15;
+    IngestCredentials ingest_credentials = 16;
   }
+}
+
+// The image described by CaptureSnapshot's single command acknowledgment.
+// JPEG bytes arrive separately on the caller-only /<device>/snapshot channel
+// as visio_schema.v1.service.snapshot.SnapshotChunk messages. Chunks may arrive
+// before this acknowledgment; correlate by snapshot_id == command_id.
+message Snapshot {
+  uint64 snapshot_id = 1;
+  uint32 camera_index = 2;
+  uint32 width = 3;
+  uint32 height = 4;
+  // Original VI capture PTS, CLOCK_BOOTTIME microseconds, in the camera's own
+  // clock. This is not UTC and is not shifted by hop-level header timesync.
+  uint64 capture_pts_us = 5;
+  uint32 total_bytes = 6; // 1..131072; fixed bound on the full JPEG
+}
+
+// IngestSign's answer: the request's Authorization header value,
+// "VISIO-HMAC-SHA256 Credential=<key_id>, Signature=<hex>".
+message IngestSignature {
+  string authorization = 1;
+}
+
+// IngestOpenCredentials' answer: the secret half of the storage credentials,
+// for the app's uploads under that upload only. Short-lived; the app keeps it
+// in memory and never stores it.
+message IngestCredentials {
+  string secret_access_key = 1;
+  string session_token     = 2;  // empty for `static` credentials
 }

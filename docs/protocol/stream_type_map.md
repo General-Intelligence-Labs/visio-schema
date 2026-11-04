@@ -29,6 +29,31 @@ fleet reflash to add a stream.
 `/<root>/<sensor-group>/<index>/<sub-field>` — e.g. `/glove_left/imu/3/raw`,
 `/glove_left/imu/3/quat`, `/gripper_left/camera/0`, `/ego/camera/0`.
 
+The fused IMU `/<root>/imu/<index>/quat` topic has two producer-selected
+formats. Its announced `Channel.schema_name` identifies the format:
+
+| Schema | Samples per message |
+|---|---|
+| `visio_schema.v1.ros.geometry_msgs.Quaternion` | One fused orientation |
+| `visio_schema.v1.sensor.ImuQuat` | A bundle of fused orientations |
+
+Firmware opts into the bundle with `[imu] quat_bundled=1` (default off).
+It follows `raw_bundle_ms` and the raw stream's sample windows; production ego
+configs currently use 33 ms, nominally about 30 bundles/s. Every fused sample
+is retained. The bundle's `first_sample_time` and outgoing header timestamp
+anchor the first sample; each `samples[].t_offset_ns` preserves acquisition
+time. Reconstruct aligned times from the received header (MCAP `log_time`)
+plus the offset, because the payload's first-sample timestamp stays in the
+producer clock. The shared Python reader expands either format into
+`Orientation` elements when the topic is selected. Consumers must inspect the
+schema instead of assuming every `/quat` message is one sample.
+
+The existing `quat_bundle_ms` option only groups individual Quaternion messages
+for transport. It applies when `quat_bundled=0`; with bundles enabled,
+`raw_bundle_ms` controls both outputs. Topic policies still match `/quat`;
+preview rate caps apply to whole bundle messages, while recordings retain all
+samples. Changing format requires restarting the producer.
+
 VIVE uses three fixed topics regardless of tracker count:
 `/<root>/vive/poses` (`VivePoseBatch`), `/<root>/vive/status` (`ViveStatus`),
 and `/<root>/vive/stations` (`foxglove.FrameTransforms`). Poses are bundled
@@ -44,13 +69,20 @@ libsurvive's subsequent refinements.
 
 The root is **always exactly one path segment** — it never contains a `/`. It is
 *derived from*, but not identical to, the device's `equipment_type` (its logical
-role: `gripper`, `glove`, `ego`, `suit`):
+role: `gripper`, `glove`, `wrist`, `ego`, `suit`, `stereo_addon`):
 
 | device | root | example |
 |---|---|---|
 | unhanded | `equipment_type` | `/ego/`, `/suit/` |
-| handed, assigned | `equipment_type` + `_` + side | `/gripper_left/`, `/glove_right/` |
-| handed, unassigned | `equipment_type` + `_` + `code8` | `/gripper_aB3xY9pQ/` |
+| handed, assigned | `equipment_type` + `_` + side | `/gripper_left/`, `/glove_right/`, `/wrist_left/` |
+| handed, unassigned | `equipment_type` + `_` + `code8` | `/gripper_aB3xY9pQ/`, `/wrist_aB3xY9pQ/` |
+
+The single-camera wrist unit announces `equipment_type="wrist"` with the
+canonical hardware/image revision `compact_wrist`. Earlier firmware used
+`compact_wristcam` for this same hardware and announced the role `gripper`.
+Consumers accept the old revision only as a compatibility alias; new configs,
+presets and support classifications use `wrist`. Keep actual announced hardware
+revisions and the topics stored in old recordings as provenance.
 
 Role and root answer different questions, which is why they are not one string.
 The **role** says what a board *is*: it is what a hub roster (`[hub] expect=`)
@@ -147,3 +179,9 @@ They keyed off the message class rather than the topic, so neither could name a 
 camera and neither could touch the raw IMU bundles. A receiver still honours them by
 expanding them into the equivalent policy — drop every `foxglove.CompressedVideo`
 channel, cap every `Quaternion` channel — so there is one enforcement path.
+
+Camera extrinsics use `foxglove.FrameTransform` on
+`/<root>/camera/<index>/extrinsics`. Indices above zero are relative to the
+board's own `cam0`. An addon may also publish camera0's external pose on
+`/stereo_addon/camera/0/extrinsics`, with `<head serial>/cam0` as parent and
+`<addon serial>/cam0` as child. See [rig calibration](rig-calibration.md).

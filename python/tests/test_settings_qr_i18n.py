@@ -10,6 +10,7 @@ from __future__ import annotations
 import builtins
 
 import pytest
+from _settings_qr_support import pin_english
 
 from visio_schema.settings_qr import i18n
 from visio_schema.settings_qr.i18n import LANGUAGES, detect_language, set_language, tr
@@ -17,11 +18,7 @@ from visio_schema.settings_qr.i18n import LANGUAGES, detect_language, set_langua
 
 @pytest.fixture(autouse=True)
 def _english_by_default(monkeypatch):
-    for var in ("VISIO_LANG", "LC_ALL", "LC_MESSAGES", "LANG"):
-        monkeypatch.delenv(var, raising=False)
-    set_language("en")
-    yield
-    set_language("en")
+    yield from pin_english(monkeypatch)
 
 
 # -- the table ----------------------------------------------------------- #

@@ -27,6 +27,7 @@
 
 #include "visio_schema/transport/stream_policy.hpp"
 #include "visio_schema/wire/message.hpp"
+#include "visio_schema/wire/time.hpp"
 
 namespace visio_schema::transport {
 
@@ -42,6 +43,8 @@ class EndpointClosed : public std::runtime_error {
 
 class Endpoint {
  public:
+  enum class SendResult { Accepted, Backpressure, Closed, Unsupported };
+  static constexpr std::size_t kReliableQueueBytes = 8 * 1024;
   // Invoked from the endpoint's OWN thread for each decoded inbound message.
   using InboundFn = std::function<void(Message, Endpoint*)>;
   // Invoked from the endpoint's OWN thread once a fixed link hits EOF.
@@ -54,6 +57,26 @@ class Endpoint {
 
   // Thread-safe, non-blocking enqueue for sending (drains on the endpoint's thread).
   virtual void Send(const Message& msg) = 0;
+
+  using TimedFinalize = std::function<void(Message&, std::int64_t)>;
+  using TimedSent = std::function<void(std::int64_t)>;
+  // Framed transports defer finalization to the first successful write. An
+  // in-process endpoint's delivery edge is Send itself. Callbacks must not
+  // acquire the bus dispatch lock; a real transport invokes them on its I/O
+  // thread, including after the caller has returned.
+  virtual void SendTimed(Message msg, TimedFinalize finalize, TimedSent sent) {
+    const auto now = visio_schema::MonotonicNs();
+    finalize(msg, now);
+    if (sent) sent(now);
+    Send(msg);
+  }
+
+  // Solicited finite responses bypass preview shedding. A full lane refuses
+  // the new frame without discarding earlier data; the producer retries later.
+  virtual bool SupportsReliable() const { return false; }
+  virtual SendResult TrySendReliable(const Message&) { return SendResult::Unsupported; }
+  // Preserve any partially transmitted COBS frame; discard only queued work.
+  virtual void DiscardReliable() {}
 
   // Enqueue N messages as ONE unit of work, for a producer that already knows it
   // has a group (one collector drain, one bundle period). The default is the

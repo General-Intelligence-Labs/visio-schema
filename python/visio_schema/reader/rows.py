@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING
 
 from visio_schema import message_class
 
-from ._decode import HevcDecoder
+from ._decode import KEYFRAME_FORMATS, HevcDecoder, is_keyframe
 from .adapters import AdapterContext, AdapterFactory, ElementAdapter, build_adapter
 from .domain import Element, Frame, FrameExposure, Ns
 
@@ -149,6 +149,7 @@ def cpu_video_decoders(
     video,
     pixel_format: str = "rgb24",
     exposure_at: Callable[[str, Ns], FrameExposure | None] | None = None,
+    *, state: dict | None = None,
 ) -> tuple[Callable, Callable]:
     """Per-camera PyAV decoders: 1-in-1-out, stamped with the current AU's ``t``.
 
@@ -160,13 +161,24 @@ def cpu_video_decoders(
     has no such side channel and leaves it None, which is the same answer a
     recording without the (opt-in, off by default) stream gives.
     """
-    decoders: dict[str, HevcDecoder] = {}
+    continuation = state is not None
+    state = {} if state is None else state
+    decoders = state.setdefault("decoders", {})
+    formats = state.setdefault("formats", {})
     # Resolved once, not per frame: it is fixed when the binder is built.
     at = exposure_at or (lambda _topic, _t: None)
 
     def emit(topic: str, t: Ns) -> Iterator[tuple[Ns, Ns, Element]]:
         dec = decoders.get(topic)
+        if formats.get(topic) != (video.format, video.frame_id):
+            dec = None
         if dec is None:
+            decoders.pop(topic, None)
+            formats.pop(topic, None)
+            if (continuation and video.format.lower() in KEYFRAME_FORMATS and
+                    not is_keyframe(video.format, video.data)):
+                return
+            formats[topic] = (video.format, video.frame_id)
             dec = decoders[topic] = HevcDecoder(video.format, pixel_format)
         img = dec.decode(video.data)
         if img is not None:

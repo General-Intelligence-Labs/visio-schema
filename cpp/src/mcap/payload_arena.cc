@@ -2,6 +2,7 @@
 
 #include <sys/mman.h>
 
+#include <cassert>
 #include <cerrno>
 #include <cstring>
 
@@ -11,7 +12,7 @@ namespace visio_schema::mcap {
 
 PayloadArena::Record& PayloadArena::Record::operator=(Record&& o) noexcept {
   if (this != &o) {
-    if (arena_) arena_->Free(offset_);
+    Reset();
     arena_ = o.arena_;
     offset_ = o.offset_;
     size_ = o.size_;
@@ -20,8 +21,19 @@ PayloadArena::Record& PayloadArena::Record::operator=(Record&& o) noexcept {
   return *this;
 }
 
-PayloadArena::Record::~Record() {
-  if (arena_) arena_->Free(offset_);
+PayloadArena::Record::~Record() { Reset(); }
+
+void PayloadArena::Record::Reset() noexcept {
+  auto* arena = arena_;
+  if (auto reclaim = Release()) {
+    const int error = reclaim->Run();
+    arena->CompleteReclaim(std::move(*reclaim), error);
+  }
+}
+
+std::optional<PayloadArena::Reclaim> PayloadArena::Record::Release() noexcept {
+  auto* arena = std::exchange(arena_, nullptr);
+  return arena ? arena->Free(offset_) : std::nullopt;
 }
 
 std::string_view PayloadArena::Record::bytes() const {
@@ -46,7 +58,7 @@ PayloadArena::PayloadArena(std::size_t capacity, std::size_t chunk_bytes,
   }
   base_ = static_cast<char*>(p);
   live_.assign(chunks, 0);
-  touched_.assign(chunks, false);
+  residency_.assign(chunks, Residency::Untouched);
 }
 
 PayloadArena::~PayloadArena() {
@@ -55,12 +67,9 @@ PayloadArena::~PayloadArena() {
 
 std::optional<PayloadArena::Record> PayloadArena::Put(std::string_view bytes) {
   const std::size_t len = bytes.size();
-  if (len == 0 || len > chunk_bytes_ || !base_) return std::nullopt;
-  if (current_ == kNoChunk || fill_ + len > chunk_bytes_) {
-    // An emptied current chunk restarts at 0, so a chunk left here still
-    // holds a record, and its last Free() hands it back.
-    const std::size_t next = LowestFreeChunk();
-    if (next == kNoChunk) return std::nullopt;
+  const auto next = ChooseChunk(len);
+  if (next == kNoChunk) return std::nullopt;
+  if (next != current_) {
     current_ = next;
     fill_ = 0;
   }
@@ -68,50 +77,69 @@ std::optional<PayloadArena::Record> PayloadArena::Put(std::string_view bytes) {
   std::memcpy(base_ + offset, bytes.data(), len);
   fill_ += len;
   ++live_[current_];
-  touched_[current_] = true;
+  residency_[current_] = Residency::Touched;
   return Record(this, offset, len);
 }
 
-void PayloadArena::Free(std::size_t offset) {
+bool PayloadArena::CanPut(std::size_t size) const {
+  return ChooseChunk(size) != kNoChunk;
+}
+
+std::size_t PayloadArena::ChooseChunk(std::size_t size) const {
+  if (!base_ || size == 0 || size > chunk_bytes_) return kNoChunk;
+  if (current_ != kNoChunk && size <= chunk_bytes_ - fill_) return current_;
+  return LowestFreeChunk();
+}
+
+std::optional<PayloadArena::Reclaim> PayloadArena::Free(std::size_t offset) {
   const std::size_t chunk = offset / chunk_bytes_;
-  if (--live_[chunk] != 0) return;
+  if (--live_[chunk] != 0) return std::nullopt;
   // Emptied, the current chunk fills again from its start, unless it lies
   // above the resident set: then it is given up, so a backlog that drains
   // with nothing arriving does not keep its last chunk.
   if (chunk == current_) {
     fill_ = 0;
-    if (chunk < resident_chunks_) return;
+    if (chunk < resident_chunks_) return std::nullopt;
     current_ = kNoChunk;
   }
-  HandBack(chunk);
+  if (chunk < resident_chunks_) return std::nullopt;
+  residency_[chunk] = Residency::Reclaiming;
+  return Reclaim(this, chunk);
 }
 
 std::size_t PayloadArena::LowestFreeChunk() const {
   for (std::size_t c = 0; c < live_.size(); ++c)
-    if (c != current_ && live_[c] == 0) return c;
+    if (c != current_ && live_[c] == 0 &&
+        residency_[c] != Residency::Reclaiming)
+      return c;
   return kNoChunk;
 }
 
-// An emptied chunk outside the resident set goes back to the kernel now:
-// anonymous private pages read as zero if written again.
-void PayloadArena::HandBack(std::size_t chunk) {
-  if (chunk < resident_chunks_ || !touched_[chunk]) return;
-  if (::madvise(base_ + chunk * chunk_bytes_, chunk_bytes_, MADV_DONTNEED) != 0) {
-    if (!hand_back_failed_logged_) {
-      hand_back_failed_logged_ = true;
-      log::Write(log::Severity::kWarning,
-                 "PayloadArena: madvise(DONTNEED) failed: %s — emptied chunks "
-                 "stay with the process",
-                 std::strerror(errno));
-    }
-    return;
-  }
-  touched_[chunk] = false;
+int PayloadArena::Reclaim::Run() const noexcept {
+  assert(arena_);
+  if (::madvise(arena_->base_ + chunk_ * arena_->chunk_bytes_,
+                arena_->chunk_bytes_, MADV_DONTNEED) == 0)
+    return 0;
+  const int error = errno;
+  if (!arena_->hand_back_failed_logged_.exchange(true))
+    log::Write(log::Severity::kWarning,
+               "PayloadArena: madvise(DONTNEED) failed: %s — emptied chunks "
+               "stay with the process",
+               std::strerror(error));
+  return error;
+}
+
+void PayloadArena::CompleteReclaim(Reclaim&& reclaim, int error) {
+  assert(reclaim.arena_ == this);
+  assert(residency_[reclaim.chunk_] == Residency::Reclaiming);
+  residency_[reclaim.chunk_] =
+      error ? Residency::Touched : Residency::Untouched;
+  reclaim.arena_ = nullptr;
 }
 
 std::size_t PayloadArena::resident_bytes() const {
   std::size_t n = 0;
-  for (bool t : touched_) n += t;
+  for (auto state : residency_) n += state != Residency::Untouched;
   return n * chunk_bytes_;
 }
 

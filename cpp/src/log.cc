@@ -28,16 +28,9 @@ void WriteToStderr(char* line, std::size_t len) {
   }
 }
 
-}  // namespace
-
-void SetSink(Sink sink) { g_sink.store(sink, std::memory_order_release); }
-
-void Write(Severity severity, const char* format, ...) {
+void WriteFormatted(Severity severity, bool sampled, const char* format, va_list ap) {
   char line[kMaxLineBytes + 1];
-  va_list ap;
-  va_start(ap, format);
   const int n = std::vsnprintf(line, sizeof(line), format, ap);
-  va_end(ap);
   if (n < 0) return;
   std::size_t len = static_cast<std::size_t>(n);
   if (len > kMaxLineBytes) {
@@ -48,10 +41,28 @@ void Write(Severity severity, const char* format, ...) {
   while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) --len;
   if (const Sink sink = g_sink.load(std::memory_order_acquire)) {
     line[len] = '\0';
-    sink(Record{severity, format, std::string_view(line, len)});
+    sink(Record{severity, format, std::string_view(line, len), sampled});
     return;
   }
   WriteToStderr(line, len);
+}
+
+}  // namespace
+
+void SetSink(Sink sink) { g_sink.store(sink, std::memory_order_release); }
+
+void Write(Severity severity, const char* format, ...) {
+  va_list ap;
+  va_start(ap, format);
+  WriteFormatted(severity, false, format, ap);
+  va_end(ap);
+}
+
+void WriteSampled(Severity severity, const char* format, ...) {
+  va_list ap;
+  va_start(ap, format);
+  WriteFormatted(severity, true, format, ap);
+  va_end(ap);
 }
 
 }  // namespace visio_schema::log

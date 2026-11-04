@@ -66,3 +66,22 @@ def test_bad_fiducial_and_transform_are_rejected():
     ft.rotation.w = 1.
     with pytest.raises(ValueError, match="expected cam0"):
         read_calibrations([(ft.DESCRIPTOR.full_name, "/ego/imu/0/extrinsics", ft)])
+
+
+def test_only_empty_reference_camera_transform_is_ignored():
+    from visio_schema.reader.calibration import read_calibrations
+
+    cam = CameraCalibration(width=64, height=48, frame_id="cam0",
+                            distortion_model="equidistant",
+                            K=[100., 0., 32., 0., 100., 24., 0., 0., 1.],
+                            D=[0., 0., 0., 0.])
+    ft = FrameTransform()
+    camera = (cam.DESCRIPTOR.full_name, "/ego/camera/0/intrinsics", cam)
+    empty = (ft.DESCRIPTOR.full_name, "/ego/camera/0/extrinsics", ft)
+    for rows in ([camera, empty], [empty, camera]):
+        cal = read_calibrations(rows)["/ego"]
+        np.testing.assert_array_equal(cal.T_cam0_camera[0], np.eye(4))
+        assert cal.camera_frames[0] == "cam0"
+    for sensor in ("camera/1", "imu/0"):
+        with pytest.raises(ValueError, match="expected cam0"):
+            read_calibrations([(ft.DESCRIPTOR.full_name, f"/ego/{sensor}/extrinsics", ft)])

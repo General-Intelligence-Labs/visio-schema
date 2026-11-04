@@ -758,6 +758,8 @@ TEST(Backpressure, PreArmedGateStillPassesKeyframesAndNoDegradeFrames) {
 class ProbeEndpoint : public FramedFdEndpoint {
  public:
   using FramedFdEndpoint::FramedFdEndpoint;
+  using FramedFdEndpoint::MarkLinkDead;
+  using FramedFdEndpoint::Reopen;
   std::uint64_t accepted() const { return accepted_total(); }
 };
 
@@ -790,4 +792,105 @@ TEST(Backpressure, AcceptedTotalCountsBytesTheFdTook) {
   stop.store(true);
   CloseFd(b);
   reader.join();
+}
+
+TEST(ReliableResponses, BackpressureAndDiscardDoNotShedOrThinResponses) {
+  using Result = visio_schema::transport::Endpoint::SendResult;
+  auto [a, b] = MakeFdPair();
+  FramedFdEndpoint tx(a);
+  ASSERT_TRUE(tx.SupportsReliable());
+  auto policy = std::make_shared<visio_schema::transport::ResolvedStreamPolicy>();
+  (*policy)[20] = {true, 1'000'000};
+  tx.SetStreamPolicy(policy);
+  Message m;
+  m.stream_id = 20;
+  m.payload = std::string(1024, 'r');
+  for (int i = 0; i < 7; ++i) EXPECT_EQ(tx.TrySendReliable(m), Result::Accepted);
+  EXPECT_EQ(tx.TrySendReliable(m), Result::Backpressure);
+  EXPECT_EQ(tx.dropped(), 0u);
+  tx.DiscardReliable();
+  EXPECT_EQ(tx.TrySendReliable(m), Result::Accepted);
+  DrainingReader reader(b);
+  tx.Start({}, {});
+  ASSERT_TRUE(WaitUntilDrained(tx));
+  tx.Stop();
+  // Drain the kernel buffer before taking the reader's final batch.
+  std::this_thread::sleep_for(20ms);
+  reader.Stop();
+  auto bytes = reader.Take();
+  const auto messages = ExtractFrames(bytes);
+  ASSERT_EQ(messages.size(), 1u);
+  EXPECT_EQ(messages[0].payload, m.payload);
+  EXPECT_EQ(tx.TrySendReliable(m), Result::Closed);
+  CloseFd(b);
+}
+
+TEST(ReliableResponses, ControlPrecedesFiniteResponsesAndResponsesPrecedeVideo) {
+  using Result = visio_schema::transport::Endpoint::SendResult;
+  auto [a, b] = MakeFdPair();
+  FramedFdEndpoint tx(a);
+  Message video = Frame(100);
+  video.stream_id = 22;
+  tx.Send(video);
+  Message response;
+  response.stream_id = 21;
+  response.payload = "snapshot-1";
+  ASSERT_EQ(tx.TrySendReliable(response), Result::Accepted);
+  Message second_response;
+  second_response.stream_id = 21;
+  second_response.payload = "snapshot-2";
+  ASSERT_EQ(tx.TrySendReliable(second_response), Result::Accepted);
+  Message control;
+  control.stream_id = 20;
+  control.payload = "ack";
+  tx.Send(control);
+  DrainingReader reader(b);
+  tx.Start({}, {});
+  ASSERT_TRUE(WaitUntilDrained(tx));
+  tx.Stop();
+  std::this_thread::sleep_for(20ms);
+  reader.Stop();
+  auto bytes = reader.Take();
+  const auto messages = ExtractFrames(bytes);
+  ASSERT_EQ(messages.size(), 4u);
+  EXPECT_EQ(messages[0].stream_id, 20u);
+  EXPECT_EQ(messages[1].payload, "snapshot-1");
+  EXPECT_EQ(messages[2].payload, "snapshot-2");
+  EXPECT_EQ(messages[3].stream_id, 22u);
+  CloseFd(b);
+}
+
+TEST(ReliableResponses, ReopenDropsThePriorPeersResponseAndReportsClosedWhileDown) {
+  using Result = visio_schema::transport::Endpoint::SendResult;
+  std::vector<int> peers;
+  auto factory = [&] {
+    auto [a, b] = MakeFdPair();
+    peers.push_back(b);
+    return a;
+  };
+  ProbeEndpoint tx(factory);
+  Message stale;
+  stale.stream_id = 21;
+  stale.payload = "prior-peer";
+  ASSERT_EQ(tx.TrySendReliable(stale), Result::Accepted);
+  // Drive the leg-only transition before starting its I/O thread.
+  tx.MarkLinkDead();
+  EXPECT_EQ(tx.TrySendReliable(stale), Result::Closed);
+  ASSERT_TRUE(tx.Reopen());
+  Message fresh;
+  fresh.stream_id = 21;
+  fresh.payload = "current-peer";
+  ASSERT_EQ(tx.TrySendReliable(fresh), Result::Accepted);
+  ASSERT_EQ(peers.size(), 2u);
+  DrainingReader reader(peers.back());
+  tx.Start({}, {});
+  ASSERT_TRUE(WaitUntilDrained(tx));
+  tx.Stop();
+  std::this_thread::sleep_for(20ms);
+  reader.Stop();
+  auto bytes = reader.Take();
+  const auto messages = ExtractFrames(bytes);
+  ASSERT_EQ(messages.size(), 1u);
+  EXPECT_EQ(messages[0].payload, fresh.payload);
+  for (int fd : peers) CloseFd(fd);
 }

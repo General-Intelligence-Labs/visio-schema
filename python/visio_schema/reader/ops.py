@@ -330,7 +330,7 @@ class _Matched:
     by_topic: dict[str, Sampled]
 
 
-class _Matcher:
+class StreamMatcher:
     """Match keys -> the instants a group forms at.
 
     Buffers ≤ ``window`` elements per key and emits a set once every key has one
@@ -349,6 +349,15 @@ class _Matcher:
         emit_partial: bool,
     ) -> None:
         self.keys = list(keys)
+        if (
+            not self.keys
+            or len(set(self.keys)) != len(self.keys)
+            or window < 1
+            or tol_ns < 0
+        ):
+            raise ValueError(
+                "matcher requires distinct keys, positive window and nonnegative tolerance"
+            )
         self._buf: dict[str, deque[Element]] = {k: deque() for k in self.keys}
         self._tol_ns = tol_ns
         self._window = window
@@ -365,6 +374,27 @@ class _Matcher:
         """
         heads = [buf[0].t_ns for buf in self._buf.values() if buf]
         return min(heads) if heads else None
+
+    def buffered_elements(self) -> Iterator[Element]:
+        """Borrow buffered elements for accounting; callers must not mutate them."""
+        for buf in self._buf.values():
+            yield from buf
+
+    def clear(self) -> int:
+        """Release unmatched elements and return their count."""
+        count = sum(map(len, self._buf.values()))
+        for buf in self._buf.values():
+            buf.clear()
+        return count
+
+    def finish(self) -> Iterator[_Matched | Element]:
+        """Drain complete groups, then release unmatched tail elements."""
+        try:
+            yield from self.flush()
+            if self._emit_partial:
+                yield from sorted(self.buffered_elements(), key=lambda e: e.t_ns)
+        finally:
+            self.clear()
 
     def push(self, el: Element) -> Iterator[_Matched | Element]:
         """Buffer one element, then form whatever that made possible."""
@@ -395,6 +425,10 @@ class _Matcher:
             yield _Matched(
                 lo, {k: Sampled(e, "matched", e.t_ns - lo) for k, e in heads.items()}
             )
+
+
+# Compatibility for internal reader consumers; there is one matching algorithm.
+_Matcher = StreamMatcher
 
 
 class _Resampler:

@@ -51,10 +51,11 @@ visio_schema.v1.control.ForgetWifi.ssid               max_size:33
 # Recording pull: session and file names are device-generated
 # ("session_00042-1789017895", "ego_0003.mcap"); the cursor is the device's own
 # opaque token passed back verbatim. 64 (63 + NUL) holds all three with room,
-# and must stay equal across the four so a name the listing can report is one
-# every command can accept.
+# and must stay equal across these so a name the listing can report is one
+# every command can accept and DeviceState.last_recording_stop can echo.
 visio_schema.v1.control.ListRecordings.cursor         max_size:64
 visio_schema.v1.control.ListRecordings.session_name   max_size:64
+visio_schema.v1.control.RecordingStop.session_name    max_size:64
 visio_schema.v1.control.OpenRecordingFile.session_name max_size:64
 visio_schema.v1.control.OpenRecordingFile.file_name   max_size:64
 visio_schema.v1.control.DeleteRecording.session_name  max_size:64
@@ -72,6 +73,7 @@ visio_schema.v1.control.SetStorage.access_key_id      max_size:64
 visio_schema.v1.control.SetStorage.secret_access_key  max_size:64
 visio_schema.v1.control.SetStorage.prefix             max_size:128
 visio_schema.v1.control.SetStorage.status_prefix      max_size:128
+visio_schema.v1.control.SetStorage.destination_hint   max_size:64
 visio_schema.v1.control.TestStorage.endpoint_url      max_size:128
 visio_schema.v1.control.TestStorage.region            max_size:32
 visio_schema.v1.control.TestStorage.bucket            max_size:64
@@ -79,6 +81,7 @@ visio_schema.v1.control.TestStorage.access_key_id     max_size:64
 visio_schema.v1.control.TestStorage.secret_access_key max_size:64
 visio_schema.v1.control.TestStorage.prefix            max_size:128
 visio_schema.v1.control.TestStorage.status_prefix     max_size:128
+visio_schema.v1.control.TestStorage.destination_hint  max_size:64
 
 # ---- Control: sealed provisioning envelopes ------------------------------
 # A `visio-seal-v1` blob: 56 B of framing (magic + kid + ephemeral pubkey +
@@ -143,6 +146,7 @@ visio_schema.v1.control.SetStreamPolicy.Rule.topic    max_size:64
 #      ack is a static struct; the two list payloads below are FT_POINTER) -----
 visio_schema.v1.control.CommandResult.error_code               max_size:32
 visio_schema.v1.control.CommandResult.error_message            max_size:128
+visio_schema.v1.service.snapshot.SnapshotChunk.jpeg           max_size:1024
 visio_schema.v1.control.DeviceState.recording_session_name     max_size:64
 # recording_* / recording_meta_* mirror StartRecording + SetRecordingMeta above
 # (the board echoes what it accepted); keep the sizes equal or the echo would
@@ -159,6 +163,7 @@ visio_schema.v1.control.DeviceState.storage_endpoint           max_size:128
 visio_schema.v1.control.DeviceState.storage_bucket             max_size:64
 visio_schema.v1.control.DeviceState.storage_prefix             max_size:128
 visio_schema.v1.control.DeviceState.storage_status_prefix      max_size:128
+visio_schema.v1.control.DeviceState.storage_destination_hint   max_size:64
 # Matches the SetStorage/TestStorage cap above — this is the SAME key echoed
 # back, so a smaller cap here would make the device unable to report a key it
 # had just accepted.
@@ -210,8 +215,8 @@ foxglove.CameraCalibration.D                   max_count:8
 foxglove.CameraCalibration.K                   max_count:9
 foxglove.CameraCalibration.R                   max_count:9
 foxglove.CameraCalibration.P                   max_count:12
-foxglove.FrameTransform.parent_frame_id       max_size:16
-foxglove.FrameTransform.child_frame_id        max_size:16
+foxglove.FrameTransform.parent_frame_id       max_size:128
+foxglove.FrameTransform.child_frame_id        max_size:128
 visio_schema.v1.calibration.FiducialCalibration.fiducials max_count:32
 visio_schema.v1.calibration.Fiducial.dictionary max_size:64
 # TactileLayout (glove taxel->hand map): bound the repeated + label fields so the
@@ -287,10 +292,10 @@ visio_schema.v1.service.device_info.Channel.schema                 type:FT_POINT
 
 # ---- ImageAnnotations: 2D detection overlays (palm boxes) -------------------
 #      Same treatment, and same justification, as CameraCalibration above: bound
-#      the repeated fields so the whole message is FT_STATIC — no malloc, no
-#      hand-written encode callbacks on the device publish path. Unlike the
-#      video/audio `data` blobs this is tiny and fixed-shape (a handful of boxes
-#      at 10 Hz), so a fixed array costs ~1.3 KB of struct and buys simplicity.
+#      the repeated fields so the whole message is FT_STATIC — no malloc or
+#      hand-written encode callbacks on the device publish path. The inline
+#      arrays reserve their full capacity, including unused annotation slots;
+#      encoded payloads contain only the populated entries.
 #
 #      FT_IGNORE (first use in this file) drops the fields we never populate
 #      from the C struct entirely. It affects nanopb codegen ONLY — the Python
@@ -298,15 +303,14 @@ visio_schema.v1.service.device_info.Channel.schema                 type:FT_POINT
 #      full message, so a consumer sees a complete schema. Revert an entry to a
 #      max_count if we later want circles (keypoints) or texts (score labels).
 #
-#      Geometry: one box = one PointsAnnotation with type=LINE_LOOP and 4
-#      corner Point2s. ImageAnnotations.timestamp is set once at the top level
-#      ("When set, individual annotation timestamps will be ignored" per the
-#      upstream .proto), so the per-annotation timestamps stay unset.
-foxglove.ImageAnnotations.points              max_count:8
+#      Geometry: one box is a LINE_LOOP with 4 corner Point2s. One hand is
+#      a LINE_LIST with up to 40 endpoints for its 20 bones. Annotations share
+#      the source frame's capture timestamp at the message level.
+foxglove.ImageAnnotations.points              max_count:48
 foxglove.ImageAnnotations.circles             type:FT_IGNORE
 foxglove.ImageAnnotations.texts               type:FT_IGNORE
 foxglove.ImageAnnotations.metadata            type:FT_IGNORE
-foxglove.PointsAnnotation.points              max_count:4
+foxglove.PointsAnnotation.points              max_count:40
 foxglove.PointsAnnotation.outline_colors      type:FT_IGNORE
 foxglove.PointsAnnotation.metadata            type:FT_IGNORE
 
@@ -354,3 +358,58 @@ visio_schema.v1.sensor.ViveStatus.station_map_id             max_size:40
 visio_schema.v1.sensor.ViveStatus.detail                     max_size:160
 visio_schema.v1.sensor.ViveStatus.Tracker.tracker_serial     max_size:24
 visio_schema.v1.sensor.ViveStatus.Tracker.detail             max_size:128
+
+visio_schema.v1.service.heartbeat.Heartbeat.camera_sync max_count:8
+
+# Per-board validated capture modes (small bounded allowlist).
+visio_schema.v1.control.DeviceState.supported_video_modes max_count:16
+
+# Authoritative capture state; rig sizes remain bounded on embedded targets.
+visio_schema.v1.sensor.CaptureState.capture_id max_size:64
+visio_schema.v1.sensor.CaptureState.stop_reason max_size:64
+visio_schema.v1.sensor.CaptureState.frozen_members max_count:16 max_size:128
+visio_schema.v1.sensor.CaptureState.changed_members max_count:16 max_size:128
+
+visio_schema.v1.sensor.CaptureState.attached_members max_count:16 max_size:128
+
+visio_schema.v1.control.SetCapturePreset.preset_id max_size:33
+visio_schema.v1.control.CapturePreset.id max_size:33
+visio_schema.v1.control.CapturePreset.cameras max_count:8
+visio_schema.v1.control.CaptureSettings.supported_presets max_count:2
+visio_schema.v1.control.CaptureSettings.selected_preset max_size:33
+visio_schema.v1.control.CaptureSettings.active_preset max_size:33
+visio_schema.v1.control.CaptureSettings.active_camera_rates max_count:8
+visio_schema.v1.control.CaptureSettings.apply_error max_size:129
+visio_schema.v1.service.heartbeat.CaptureSyncState.error max_size:129
+
+
+# ---- Control: Ingest API uploads carried by the companion app ------------
+# Short-lived STS session tokens run to ~2 KB (AWS with a session policy), and
+# the sealed blob carries one plus the secret, base64url-expanded. These are
+# the only large fields; each sits in one oneof arm, so the Command union pays
+# the largest once.
+visio_schema.v1.control.IngestSign.date                      max_size:24
+visio_schema.v1.control.IngestSign.method                    max_size:8
+visio_schema.v1.control.IngestSign.path                      max_size:256
+visio_schema.v1.control.IngestSign.query                     max_size:256
+visio_schema.v1.control.IngestSign.body_sha256               max_size:65
+visio_schema.v1.control.IngestOpenCredentials.request_date      max_size:24
+visio_schema.v1.control.IngestOpenCredentials.reply_body_sha256 max_size:65
+visio_schema.v1.control.IngestOpenCredentials.reply_signature   max_size:65
+visio_schema.v1.control.IngestOpenCredentials.upload_id         max_size:65
+visio_schema.v1.control.IngestOpenCredentials.sealed_credentials max_size:3456
+visio_schema.v1.control.IngestCheckReceipt.upload_id      max_size:65
+visio_schema.v1.control.IngestCheckReceipt.session_key    max_size:33
+visio_schema.v1.control.IngestCheckReceipt.content_digest max_size:65
+visio_schema.v1.control.IngestCheckReceipt.receipt        max_size:65
+visio_schema.v1.control.IngestSignature.authorization     max_size:192
+visio_schema.v1.control.IngestCredentials.secret_access_key max_size:128
+visio_schema.v1.control.IngestCredentials.session_token     max_size:2304
+
+# Hand pose: bounded to the strongest left and right hands.
+visio_schema.v1.sensor.HandPoseFrame.frame_id max_size:48
+visio_schema.v1.sensor.HandPoseFrame.model max_size:64
+visio_schema.v1.sensor.HandPoseFrame.hands max_count:2
+visio_schema.v1.sensor.HandPose.joints max_count:21
+visio_schema.v1.sensor.HandPose.mano_rotations max_count:144
+visio_schema.v1.sensor.HandPose.betas max_count:10

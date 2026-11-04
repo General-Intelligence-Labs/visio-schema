@@ -5,9 +5,12 @@ which is the same drift the fixtures exist to prevent, one level up.
 
 Grammar: `#` comments, blank lines, and `key=lowercase_hexbytes`.
 """
+import importlib.util
 from pathlib import Path
+from types import ModuleType
 
-GOLDEN_DIR = Path(__file__).resolve().parents[2] / "tests" / "golden"
+REPO = Path(__file__).resolve().parents[2]
+GOLDEN_DIR = REPO / "tests" / "golden"
 
 
 def load(name: str) -> dict[str, bytes]:
@@ -18,3 +21,12 @@ def load(name: str) -> dict[str, bytes]:
         key, _, hexbytes = line.partition("=")
         out[key] = bytes.fromhex(hexbytes)
     return out
+
+
+def load_generator(script: str) -> ModuleType:
+    """Import scripts/<script>.py, the generator a golden file comes from."""
+    spec = importlib.util.spec_from_file_location(
+        script, REPO / "scripts" / f"{script}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module

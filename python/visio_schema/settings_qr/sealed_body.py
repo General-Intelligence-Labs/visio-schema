@@ -39,7 +39,7 @@ import binascii
 import json
 from dataclasses import dataclass, field
 
-from ..crypto import seal, unseal
+from ..crypto import b64url, seal, unseal
 from ..crypto.envelope import blob_key_id
 from .payload import (
     PAYLOAD_TYPE,
@@ -79,13 +79,13 @@ class EnvelopeTooLarge(ValueError):
 
 def _b64(raw: bytes) -> str:
     """base64url, no padding — the QR pays for every character."""
-    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+    return b64url.encode(raw)
 
 
 def _unb64(text: str, where: str) -> bytes:
-    """Strict base64url. `validate=False` (the default) DISCARDS characters
-    outside the alphabet instead of raising, which would turn a corrupted
-    field into silently different bytes rather than an error."""
+    """Lenient on purpose: sealed codes already in the field were produced by
+    encoders that pad, and every one of them must keep opening. Canonical form
+    is enforced where it decides a key (`_checked_b64_key`), not here."""
     try:
         return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
     except (binascii.Error, ValueError) as exc:
@@ -96,8 +96,7 @@ def _checked_b64_key(value: object, where: str) -> bytes:
     if not isinstance(value, str):
         raise ValueError(f"{where}: must be a base64 string, got "
                          f"{type(value).__name__}")
-    if not base64.urlsafe_b64encode(
-            _unb64(value, where)).decode().rstrip("=") == value:
+    if _b64(_unb64(value, where)) != value:
         raise ValueError(f"{where}: not canonical base64url")
     return _unb64(value, where)
 

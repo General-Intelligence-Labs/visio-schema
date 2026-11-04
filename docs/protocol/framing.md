@@ -43,7 +43,10 @@ message Header {
   uint32                    stream_id = 1;  // per-link stream label
   uint32                    seq       = 2;  // per-stream_id sequence
   google.protobuf.Timestamp timestamp = 3;  // see timesync.md
-  bool                      keyframe  = 4;  // H.265 sync point (VPS/SPS/PPS)
+  bool                      keyframe  = 4;  // verified IDR with VPS/SPS/PPS
+  fixed64                   clock_epoch = 5;
+  uint32                    clock_revision = 6;
+  SyncPoint                 sync_point = 7; // confirmed periodic capture slot
 }
 ```
 
@@ -56,7 +59,7 @@ binding is learned at runtime from the periodic `DeviceInfo` announce — each
 announced `Channel` carries its `schema_name` (protobuf full name) and `schema`
 (serialized `FileDescriptorSet`) inline (see
 [`stream_type_map.md`](stream_type_map.md)). `seq` is producer-owned, per
-`stream_id`, and `timestamp` is rewritten on receive by the timesync offset (see
+`stream_id`, and `timestamp` is rewritten on receive by the affine clock mapping (see
 [`timesync.md`](timesync.md)).
 
 Typical serialized Header size: **~10-16 bytes** (one 1-byte stream_id varint,
@@ -68,9 +71,13 @@ frame is not always its producer: a hub relays its leaves' video, and a recorder
 opens a video channel only on a decodable IDR. See the field's own comment in
 `wire/header.proto`.
 
-`HEADER_LEN` is a single byte: the ~23-27 byte Header never approaches
-255 bytes, and it grows *compatibly* via optional protobuf fields, so a
-wider length field buys nothing. There is also **no separate header
+Clock epoch/revision tags identify the exact capture-time mapping and are consumed
+on each physical hop. `sync_point` is a nested message with fixed64
+`authority_epoch` and uint64 `grid_generation` and `frame_index`; it survives relay.
+It is present only for a confirmed shared periodic IDR.
+
+`HEADER_LEN` is a single byte: the maximum current Header is 86 bytes, including
+clock tags and the nested sync point, within the 255-byte limit. There is also **no separate header
 version byte** — structural breaks are handled by the proto package
 version (`visio_schema.v1.wire` → `v2`). (This field was `u16` in an earlier
 draft; the narrowing is a deliberate pre-1.0 wire change.)

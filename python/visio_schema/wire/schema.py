@@ -30,11 +30,14 @@ __all__ = ["file_descriptor_set", "message_class"]
 # entry here and nothing else.
 _PAYLOAD_MODULES = (
     "visio_schema.v1.sensor.imu_raw_pb2",
+    "visio_schema.v1.sensor.imu_quat_pb2",
     "visio_schema.v1.sensor.encoder_raw_pb2",
     "visio_schema.v1.sensor.system_health_pb2",
+    "visio_schema.v1.sensor.capture_state_pb2",
     "visio_schema.v1.sensor.audio_compressed_pb2",
     "visio_schema.v1.sensor.button_pb2",
     "visio_schema.v1.sensor.camera_frame_info_pb2",
+    "visio_schema.v1.sensor.hand_pose_pb2",
     "visio_schema.v1.sensor.tactile_raw_pb2",
     "visio_schema.v1.sensor.diag_log_pb2",
     "visio_schema.v1.sensor.vive_pb2",
@@ -51,6 +54,7 @@ _PAYLOAD_MODULES = (
     "visio_schema.v1.service.heartbeat.heartbeat_pb2",
     "visio_schema.v1.service.ota.ota_pb2",
     "visio_schema.v1.service.diag.diag_pb2",
+    "visio_schema.v1.service.snapshot.snapshot_pb2",
     "visio_schema.foxglove.CompressedVideo_pb2",
     "visio_schema.foxglove.CompressedImage_pb2",
     "visio_schema.foxglove.RawImage_pb2",

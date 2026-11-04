@@ -6,6 +6,173 @@ bump the MINOR version.
 
 ## Unreleased
 
+### Image-based hand estimates
+
+Add `HandPoseFrame` on `/camera/<index>/hand_pose` for bounded left/right image
+keypoints, normalized 3D joints and MANO parameters. Existing ImageAnnotations
+carry combined boxes and bones; both retain the source image capture timestamp.
+CameraFrameInfo remains the exposure-time source. No new command is added.
+
+### Reuse ordinary camera calibration artifacts
+
+Field calibration uses the existing `SetCalibration.extrinsics` artifact and
+`foxglove.FrameTransform` reports. Target detection, print confirmation,
+validation evidence and multi-camera save recovery belong to clients.
+The experimental `ApplyCalibrationGroup` / `CalibrationStep` commands,
+target-specific proof fields and mirrored `AssemblyCalibration` report are
+removed before release. Retired command, state and artifact tags/names remain
+reserved. Local builds using them require matched firmware and clients.
+
+An addon camera 0 may carry its external pose on
+`/<addon root>/camera/0/extrinsics`, with physical serials in the parent and
+child frame IDs. Other cameras stay relative to their own board's cam0.
+No new wire message or operation is introduced.
+
+### Optional power status
+
+`SystemHealth.power` (tag 15) reports capture power mode, external power,
+charge state, applied charger ceilings, DPM/thermal flags, raw charger faults
+and low-battery lockout/shutdown. Unknown measurements stay absent. Limits
+are settings rather than measured currents; voltage remains tag 14 and SOC
+still requires a characterized pack. Existing field assignments are unchanged.
+
+### Coordinated rig control alongside ingest and recording limits
+
+The combined contract preserves the published ingest and duration assignments.
+`SetCapturePreset` retains tag 55. `DeviceState.supported_video_modes`,
+`capture_state` and `capture_settings` retain tags 51, 52 and 50.
+The retired calibration command/state slots are reserved.
+
+### Compressed firmware image envelopes
+
+Added VENC format 3 (gzip then AES-256-CTR) with expanded RKFW length and
+SHA-256, a bounded Python decoder and the shared C++ header contract. Format 1
+is unchanged; format 2 remains reserved. Only RV1126B firmware enables format 3.
+The existing OTA messages carry both formats unchanged. Heads embed raw leaf
+images in OEM and reconcile leaves after reboot; the universal tar package and
+its codecs are retired. Legacy wire values remain reserved.
+See [the image contract](docs/protocol/ota-image.md).
+
+### Optional fused IMU orientation bundles
+
+Added `sensor.ImuQuat` and `ImuQuatSample`. Firmware may opt into one quaternion
+bundle per raw IMU flush on its existing `/imu/<index>/quat` topic, announcing
+the selected schema. Each sample retains its orientation and acquisition-time
+offset. The Python reader expands bundles into `Orientation` elements on the
+received header clock, including samples crossing recording-part windows.
+Individual Quaternion output remains the default. This additive schema belongs
+in the next minor release; native Quaternion viewers need a bundle adapter.
+
+### A limit on how long a recording may run
+
+`Command.set_max_recording_duration = 52` (`SetMaxRecordingDuration
+{ max_duration_s }`) sets the longest a recording written to the device's card
+may run: 0 (the default) is no limit, otherwise 10-86400 s; anything else is
+refused `out_of_range`, and a device that does not record to a card answers
+`unsupported`. It is
+persisted and applied live, and every card recording is held to it however it
+was started; a phone-destination recording is not. A recording that reaches it
+stops cleanly, and a device with a speaker says why.
+
+`DeviceState.max_recording_duration_s = 47` (`optional`; absent hides the
+control) reports the limit in force. `DeviceState.last_recording_stop = 48`, a
+new `RecordingStop { session_name, reason }`, says how the last card recording
+since boot ended: `REASON_REQUESTED`, `REASON_MAX_DURATION` or `REASON_DEVICE`.
+Additive (MINOR).
+
+### Calibration date in every recording
+
+A recording's capture metadata (the `visio.capture` MCAP record and
+`session.json`) carries `calibration_updated_at_us`: when the unit's
+calibration was last updated, UTC Unix microseconds. The record omits it when
+unknown; `session.json` appends it after `session_key`, `0` when unknown. The
+`tools/session-json` rebuild renders it. No proto change.
+
+### A part's own storage error keeps the part and the recording
+
+The C++ writer no longer ends a recording on a part's own I/O failure. A
+failed checkpoint, fsync, writeback, write, close, directory sync or
+completion keeps the part (nothing handed to storage is discarded) with its
+durability unconfirmed: storage completion is told so, the failure is logged
+once and counted in the new `McapWriterStats::unconfirmed_parts`, and the
+recording goes on into the next part. A failure that may have lost bytes
+(`LosesBytes`: a write, flush, close, checkpoint or writeback) also cuts the
+part at its next record, since its offsets no longer match its file. A part
+that will not open (its file, or an encrypted part's header) is tried again
+a few times on a short doubling wait, its failed file removed (it holds no
+recorded data) and its number kept so part numbers stay contiguous, counted
+in `McapWriterStats::part_open_retries`. Only `EROFS`, `ENOSPC`, `ENODEV`,
+or every attempt at a part failing ends it: `write_failed()` and the new
+`storage_refused()` report exactly that, and the part open at that moment is
+kept too. No proto change.
+
+### Loss-preserving MCAP continuation parts
+
+The C++ writer can opt into bounded local-camera IDR alignment while retaining
+all accepted records at forced cuts, including attached-camera P-frames. New
+`visio.rotation` metadata identifies the part chain. `Session.stream` retains
+per-camera CPU/GPU codec state across these marked parts and resets it on a
+missing part or source discontinuity. Deploy the updated reader with firmware
+that enables this policy; isolated forced parts may require the next IDR.
+See [the continuation contract](docs/protocol/mcap_rotation.md).
+
+### Manual camera snapshots
+
+Added the `CaptureSnapshot` command (tag 48), the bounded
+`CommandResult.snapshot` payload (tag 14), and `DeviceState.snapshot_supported`
+(field 44). A directly connected host can retrieve a fresh primary-camera
+640×360 q60 JPEG in 1024-byte chunks on any command transport, including BLE.
+One capture solicits a caller-only finite `SnapshotChunk` response stream;
+its single command acknowledgment describes the image. No per-chunk commands
+or post-capture cache are required.
+See [the snapshot contract](docs/protocol/snapshots.md). This addition introduces
+new message types and belongs in the next minor schema release.
+
+### SetAntiFlicker — a per-unit switch for lamps that flicker on AC mains
+
+`Command.set_anti_flicker` (tag 47) and `DeviceState.anti_flicker` (field 42:
+UNSUPPORTED / OFF / 50HZ / 60HZ / UNKNOWN) let a host hold every camera's exposure to
+whole mains flicker periods — 1/100 s at 50 Hz, 1/120 s at 60 Hz — so indoor
+LED and fluorescent lamps stop beating through the video. The host supplies the
+mains frequency (`SetAntiFlicker.Mains`); a device cannot know its country.
+Persisted device-side and applied live. It is OFF unless asked for: the
+exposure can no longer fall below one period, so motion blurs more and a bright
+scene clips. OFF restores the camera's tuned behaviour rather than disabling
+anti-flicker outright; it is also what a device reports when its cameras
+refused the value asked for. UNSUPPORTED covers both "this device cannot run
+the setting" and "firmware predating the command", so a host hides the control.
+`DeviceState.anti_flicker_pending` (field 43) distinguishes an accepted request
+from a completed camera apply. UNKNOWN means both apply and rollback failed;
+hosts leave the control available for an explicit retry.
+
+### A destination can be a customer's own Ingest API
+
+`SetStorage` / `TestStorage` accept an endpoint of the form
+`visio+https://host/base`, which names a customer **Ingest API**
+([`docs/protocol/ingest-api.md`](docs/protocol/ingest-api.md)) instead of a
+bucket. The scheme selects the mode, so there is still no provider field. New,
+all optional (PATCH):
+
+- `SetStorage.destination_hint` / `TestStorage.destination_hint` (9): free
+  text passed to the service; cap 64.
+- `DeviceState.storage_destination_hint` (45): its echo.
+- `DeviceState.ingest_api_supported` (46): the capability probe. Offer the
+  mode only to a device that sets it.
+
+When recordings reach the companion app first, the app uploads them on the
+device's behalf and holds no key: three new commands ask the connected device
+to sign a request (`IngestSign` 49 → `CommandResult.ingest_signature` 15),
+check an initiate reply and open its sealed credentials
+(`IngestOpenCredentials` 50 → `ingest_credentials` 16), and check a session
+receipt (`IngestCheckReceipt` 51). The device refuses them while recording.
+
+`visio_schema.ingest` is the reference implementation of the protocol's
+request signing, signed receipts and sealed credentials, pinned by
+`tests/golden/ingest_vectors.txt`. The settings QR gains an ingest `storage`
+section (`endpoint_url`, `access_key_id`, `destination_hint`); the device key
+is sealed as `sk` exactly like a bucket secret, so a v2 code still carries no
+readable secret. Bucket-mode codes are byte-identical to before.
+
 ### The recorder counts the video frames its keyframe gate drops
 
 A part opens each video stream on a keyframe, so after a part rotation the
@@ -96,7 +263,6 @@ The C++ twin is the header-only, bus-free `visio_schema/reader/time_history.hpp`
 
 Both kernels are pinned to `tests/golden/slerp_vectors.txt`, generated by
 `scripts/gen_slerp_vectors.py`.
-
 ### Batched VIVE tracking
 
 Adds `visio_schema.v1.sensor.VivePoseBatch` and `ViveStatus`, replacing the

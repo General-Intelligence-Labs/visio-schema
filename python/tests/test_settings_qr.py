@@ -14,6 +14,12 @@ import time
 from pathlib import Path
 
 import pytest
+from _settings_qr_support import (
+    TEST_PRIVATE,
+    TEST_PUBLIC,
+    pin_english,
+    write_test_pubkey_pem,
+)
 
 from visio_schema.settings_qr import (
     PLAINTEXT_VERSION,
@@ -40,11 +46,6 @@ from visio_schema.settings_qr.payload import (
     region_must_be_typed,
 )
 
-# The test fleet keypair from test_seal.py — never the shipped one.
-TEST_PRIVATE = bytes(range(32))
-TEST_PUBLIC = bytes.fromhex(
-    "8f40c5adb68f25624ae5b214ea767a6ec94d829d3d7b5e1ad1ba6f3e2138285f"
-)
 SECRET = "s3cr3t-do-not-print"
 RECORDING_KEY = bytes(range(100, 132))
 
@@ -66,15 +67,7 @@ BASE_CONFIG = {
 
 @pytest.fixture(autouse=True)
 def _english_notices(monkeypatch) -> None:
-    """validate() and the CLI translate their notices now, and this box may be
-    a zh locale. Pin English so the substring assertions below read the text
-    they expect regardless of $LANG (and of any CLI run that re-detects it)."""
-    from visio_schema.settings_qr.i18n import set_language
-    for var in ("VISIO_LANG", "LC_ALL", "LC_MESSAGES", "LANG"):
-        monkeypatch.delenv(var, raising=False)
-    set_language("en")
-    yield
-    set_language("en")
+    yield from pin_english(monkeypatch)
 
 
 @pytest.fixture
@@ -84,13 +77,7 @@ def config() -> dict:
 
 @pytest.fixture
 def test_pubkey_pem(tmp_path: Path) -> str:
-    """The TEST fleet public key as a file, so a CLI run's output can be
-    opened with TEST_PRIVATE instead of the shipped key."""
-    from visio_schema.crypto.envelope import public_key_pem
-
-    p = tmp_path / "fleet.pem"
-    p.write_bytes(public_key_pem(TEST_PUBLIC))
-    return str(p)
+    return write_test_pubkey_pem(tmp_path)
 
 
 class TestSealing:

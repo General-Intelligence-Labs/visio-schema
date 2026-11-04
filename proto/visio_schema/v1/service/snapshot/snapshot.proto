@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package visio_schema.v1.service.snapshot;
+
+// A finite response to one CaptureSnapshot command, on /<device>/snapshot.
+// Only its requesting connection receives these messages. The ordered JPEG
+// chunks start at offset zero; complete when offset+size equals the metadata's
+// total_bytes. There are no per-chunk requests or acknowledgments. A missing
+// chunk, disconnect or deadline fails the capture; request a new image.
+message SnapshotChunk {
+  // The nonzero CaptureSnapshot.command_id on this connection.
+  uint64 snapshot_id = 1;
+  uint32 offset = 2;
+  // 1..1024 JPEG bytes. This wire bound permits control messages to interleave
+  // at complete frame boundaries; ATT fragmentation remains a transport concern.
+  bytes jpeg = 3;
+}

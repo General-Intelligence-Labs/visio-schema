@@ -836,7 +836,8 @@ def test_scan_linux_parses_nmcli(monkeypatch) -> None:
     )
     monkeypatch.setattr(s.subprocess, "run",
                         lambda *a, **k: types.SimpleNamespace(stdout=sample, returncode=0))
-    nets = s._scan_linux()
+    from visio_schema.host_wifi import _scan_linux
+    nets = _scan_linux()
     assert [n["ssid"] for n in nets] == ["GILABS-x", "TP:LINK", "Home"]   # deduped, strongest-first
     assert nets[0] == {"ssid": "GILABS-x", "signal": 100, "security": "OPEN"}
     assert nets[1] == {"ssid": "TP:LINK", "signal": 80, "security": "WPA2"}

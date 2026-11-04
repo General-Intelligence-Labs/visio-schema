@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <string>
 
 #include "visio_schema/mcap/recording_crypto.hpp"
@@ -46,6 +47,14 @@ inline std::string PartPath(const std::string& stem_no_ext, int part) {
   char buf[16];
   std::snprintf(buf, sizeof(buf), "_%04d", part);
   return TempPath(stem_no_ext + buf + ".mcap");
+}
+
+// Part `part` of a rotated recording written as <dir>/<stem>.mcap.
+inline std::string PartPath(const std::string& dir, const std::string& stem,
+                            int part) {
+  char tag[16];
+  std::snprintf(tag, sizeof(tag), "_%04d", part);
+  return dir + "/" + stem + tag + ".mcap";
 }
 
 inline std::string SlurpFile(const std::string& path) {
@@ -103,6 +112,16 @@ inline std::string DecryptPart(const std::string& raw,
                       body.size(),
                       reinterpret_cast<std::uint8_t*>(body.data())));
   return body;
+}
+
+// A part that reads whole: its plaintext (decrypted with `key` when the
+// recording has one) ends with the MCAP end magic.
+inline bool PartIsWhole(
+    const std::string& path,
+    const std::optional<visio_schema::mcap::RecordingKey>& key) {
+  auto bytes = SlurpFile(path);
+  if (key) bytes = DecryptPart(bytes, *key);
+  return EndsWithMcapMagic(bytes);
 }
 
 }  // namespace mcap_test

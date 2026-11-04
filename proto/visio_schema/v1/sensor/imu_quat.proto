@@ -1,0 +1,31 @@
+// Fused orientations from one IMU, bundled at the raw IMU publication cadence.
+// The topic remains /<device>/imu/<index>/quat; Channel.schema_name identifies
+// whether it carries this bundle or individual geometry_msgs Quaternions.
+syntax = "proto3";
+
+package visio_schema.v1.sensor;
+
+import "foxglove/Quaternion.proto";
+import "google/protobuf/timestamp.proto";
+
+// One fused sample, without resampling or changing the fusion's orientation.
+message ImuQuatSample {
+  // Acquisition-time offset from ImuQuat.first_sample_time, in nanoseconds.
+  uint64 t_offset_ns = 1;
+
+  // Orientation in the same gravity-aligned world frame as the individual
+  // Quaternion output. Components retain their original x/y/z/w values.
+  foxglove.Quaternion orientation = 2;
+}
+
+// Consecutive fused samples from one IMU, in acquisition order. Empty bundles
+// MUST NOT be emitted. Bundling changes message frequency, not sample frequency.
+message ImuQuat {
+  // First sample's acquisition time on the producer clock. At send time the
+  // wire Header has the same timestamp. After receive-side timesync rewriting,
+  // reconstruct aligned sample times as Header.timestamp + t_offset_ns.
+  google.protobuf.Timestamp first_sample_time = 1;
+
+  // First offset is zero; subsequent offsets preserve acquisition order.
+  repeated ImuQuatSample samples = 2;
+}

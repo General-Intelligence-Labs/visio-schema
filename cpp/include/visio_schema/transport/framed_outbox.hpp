@@ -49,15 +49,22 @@ class FramedOutbox {
   bool Enqueue(const std::uint8_t* frame, std::size_t len,
                bool keyframe = false);
 
+  // A bounded, non-shedding enqueue. The limit counts queued bytes; the single
+  // in-flight frame is owned by the drainer and is never read by the producer.
+  bool TryEnqueue(SharedFrame frame, std::size_t queued_byte_limit);
+  void DiscardQueued();  // thread-safe; leaves committed bytes intact
+
   // True iff a frame is committed to the wire but not yet fully written (a
   // partial in_flight_). The owning endpoint uses this to multiplex two outboxes
   // (control + bulk) over one fd WITHOUT interleaving half-frames: it only
   // switches queues when neither has bytes mid-flight. Leg-thread-local read.
   bool InFlightActive() const { return in_flight_off_ < in_flight_size(); }
 
-  // Drain as much as the link will accept right now, non-blocking. Returns false
+  // Drain as much as the link will accept right now, non-blocking. one_frame
+  // yields at the next frame boundary so the endpoint can re-check priority.
+  // Returns false
   // if `wr` reported the link dead (<0). Call ONLY from the single leg I/O thread.
-  bool Drain(const WriteFn& wr);
+  bool Drain(const WriteFn& wr, bool one_frame = false);
 
   // True while there are committed-but-unwritten bytes or queued frames — i.e.
   // the sink wants POLLOUT. (in_flight_ read is leg-thread-local.)

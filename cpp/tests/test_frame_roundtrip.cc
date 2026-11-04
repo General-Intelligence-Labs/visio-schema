@@ -157,3 +157,25 @@ TEST(PayloadTest, StringViewConstructionCopiesOutOfTheTransientWindow) {
   EXPECT_EQ(visio_schema::wire::Payload(),
             visio_schema::wire::Payload(std::string()));
 }
+
+TEST(FrameTest, CaptureClockRevisionSurvivesTheWire) {
+  Message m=MakeMsg();m.clock_authority_epoch=0xabc00123456789ULL;m.clock_revision=1234;
+  m.receive_mono_ns=98765;
+  Message decoded;ASSERT_EQ(DecodeFrame(EncodeFrame(m),&decoded),FrameStatus::kOk);
+  EXPECT_EQ(decoded.clock_authority_epoch,m.clock_authority_epoch);
+  EXPECT_EQ(decoded.clock_revision,m.clock_revision);
+  EXPECT_EQ(decoded.receive_mono_ns,0); // receive stamp is hop-local memory only
+}
+
+TEST(FrameTest, ConfirmedIdrIdentitySurvivesRelayHeaderEncoding) {
+  auto message=MakeMsg();message.keyframe=true;
+  message.sync_point={0xfedcba9876543210ULL,1234,0};
+  message.clock_authority_epoch=42;message.clock_revision=7;
+  Message decoded;
+  ASSERT_EQ(DecodeFrame(EncodeFrame(message),&decoded),FrameStatus::kOk);
+  EXPECT_EQ(decoded.sync_point,message.sync_point);
+  decoded.clock_authority_epoch=0;decoded.clock_revision=0;
+  Message relayed;
+  ASSERT_EQ(DecodeFrame(EncodeFrame(decoded),&relayed),FrameStatus::kOk);
+  EXPECT_EQ(relayed.sync_point,message.sync_point);
+}

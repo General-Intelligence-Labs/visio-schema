@@ -186,17 +186,12 @@ class Outcome:
 def bundle_error(raw: bytes) -> str | None:
     """Why ``raw`` is not an OTA bundle, or None if it is one.
 
-    Two shapes are bundles: a bare VENC envelope (one board -- what every
-    fielded ego has always been sent) and a multi-board PACKAGE (see
-    `visio_schema.wire.package`). The device dispatches on the same distinction,
-    so a pusher must not be stricter than the device it is pushing to.
+    Every device receives one VENC envelope. A head carries its leaf images
+    inside its ordinary OEM filesystem and updates leaves after reboot.
 
     Returns a string rather than raising: the caller owns the remedy, which
     differs by context (a GUI logs it, a CLI prints the wrap command).
     """
-    from visio_schema.wire import package  # local: package imports nothing heavy
-    if package.is_package(raw):
-        return None
     if raw[:4] == VENC_MAGIC:
         return None
     if raw[:4] == RKFW_MAGIC:

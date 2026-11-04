@@ -11,6 +11,7 @@ import getpass
 import sys
 from pathlib import Path
 
+from .fields import over_byte_limit
 from .i18n import LANGUAGES, detect_language, set_language, tr
 from .payload import (
     BITRATE_KBPS,
@@ -25,7 +26,6 @@ from .payload import (
     STORAGE_MAX_BYTES,
     WIFI_MAX_BYTES,
     Provider,
-    over_byte_limit,
     provider_from_endpoint,
     region_from_endpoint,
     region_must_be_typed,

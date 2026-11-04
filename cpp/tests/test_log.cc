@@ -27,6 +27,7 @@ struct Delivered {
   const char* format;
   std::string text;
   bool nul_terminated;
+  bool sampled;
 };
 
 std::vector<Delivered>& Captured() {
@@ -37,7 +38,7 @@ std::vector<Delivered>& Captured() {
 void CapturingSink(const Record& record) {
   Captured().push_back({record.severity, record.format,
                         std::string(record.text),
-                        record.text.data()[record.text.size()] == '\0'});
+                        record.text.data()[record.text.size()] == '\0',record.sampled});
 }
 
 class LogTest : public ::testing::Test {
@@ -87,6 +88,17 @@ TEST_F(LogTest, ClearingTheSinkRestoresStderr) {
   Write(Severity::kWarning, "back on stderr");
   EXPECT_EQ(testing::internal::GetCapturedStderr(), "back on stderr\n");
   EXPECT_TRUE(Captured().empty());
+}
+
+TEST_F(LogTest, CallerSampledDiagnosticsPreserveTheirSamplingMetadata) {
+  SetSink(&CapturingSink);
+  Write(Severity::kWarning,"ordinary fault %u",1u);
+  visio_schema::log::WriteSampled(Severity::kInfo,"clock sample %u",2u);
+  ASSERT_EQ(Captured().size(),2u);
+  EXPECT_FALSE(Captured()[0].sampled);
+  EXPECT_TRUE(Captured()[1].sampled);
+  EXPECT_EQ(Captured()[1].text,"clock sample 2");
+  EXPECT_TRUE(Captured()[1].nul_terminated);
 }
 
 // A sink appends its own line ending; one in the text would print a blank line

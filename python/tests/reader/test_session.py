@@ -483,7 +483,7 @@ def test_gpu_stream_stays_monotonic_when_nvdec_hands_frames_back_late(
         return emit, flush
 
     monkeypatch.setattr(Session, "_gpu_video_decoders",
-                        lambda self, video: late_decoders(video))
+                        lambda self, video, **_kwargs: late_decoders(video))
 
     ts = [e.t_ns for e in sess.stream(gpu=True)]
     assert ts == sorted(ts), "the widened gpu window did not absorb the NVDEC lag"

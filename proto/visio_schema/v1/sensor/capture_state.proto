@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package visio_schema.v1.sensor;
+
+// Head-authoritative capture lifecycle for both SD and phone destinations.
+// Generation changes on every attached source addition/removal, including a
+// reconnect of the same physical unit. A stopped capture never auto-resumes.
+message CaptureState {
+  enum State {
+    STATE_IDLE = 0;
+    STATE_RECORDING = 1;
+    STATE_STOPPED = 2;
+    STATE_PREPARING = 3;
+  }
+  enum Destination {
+    DESTINATION_DEVICE = 0;
+    DESTINATION_PHONE = 1;
+  }
+  repeated string attached_members = 8;
+  bool roster_ready = 9; // every current source has announced its identity
+  uint64 frozen_roster_generation = 10;
+  uint64 roster_generation = 1;
+  string capture_id = 2;
+  Destination destination = 3;
+  State state = 4;
+  string stop_reason = 5;
+  repeated string frozen_members = 6; // unique DeviceInfo.device_name, including head
+  repeated string changed_members = 7; // source link tokens when identity is not yet known
+}

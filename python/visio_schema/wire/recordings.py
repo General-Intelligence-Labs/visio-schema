@@ -37,6 +37,7 @@ __all__ = [
     "list_recordings",
     "list_recordings_command",
     "list_session_files",
+    "list_session_files_with_generation",
     "open_recording_file",
     "open_recording_file_command",
     "pull_file",
@@ -121,8 +122,10 @@ def list_recordings_command(*, limit: int = 0, cursor: str = "", session_name: s
 
 def open_recording_file_command(session_name: str, file_name: str, *, offset: int = 0,
                                 expect_size: int = 0, expect_mtime_ns: int = 0,
+                                expect_object_version: int = 0,
+                                expect_catalogue_generation: int = 0,
                                 target_device: str = "") -> command_pb2.Command:
-    """An OpenRecordingFile. ``expect_*`` both 0 = unchecked."""
+    """An OpenRecordingFile. ``expect_*`` all 0 = unchecked."""
     _check_name("session_name", session_name)
     _check_name("file_name", file_name)
     cmd = command_pb2.Command(target_device=target_device)
@@ -132,6 +135,8 @@ def open_recording_file_command(session_name: str, file_name: str, *, offset: in
     body.offset = offset
     body.expect_size = expect_size
     body.expect_mtime_ns = expect_mtime_ns
+    body.expect_object_version = expect_object_version
+    body.expect_catalogue_generation = expect_catalogue_generation
     return cmd
 
 
@@ -190,21 +195,32 @@ def list_all_recordings(
 def list_session_files(run: Runner, session_name: str, *, target_device: str = "",
                        timeout: float = COMMAND_TIMEOUT_S) -> command_result_pb2.RecordingEntry:
     """One session with its files (``RecordingEntry.files``)."""
+    return list_session_files_with_generation(run, session_name, target_device=target_device,
+                                             timeout=timeout)[0]
+
+
+def list_session_files_with_generation(run: Runner, session_name: str, *, target_device: str = "",
+                                      timeout: float = COMMAND_TIMEOUT_S
+                                      ) -> tuple[command_result_pb2.RecordingEntry, int]:
+    """A session and its mount epoch, for replacement-safe persistent resumes."""
     result = _run(run, list_recordings_command(session_name=session_name,
                                                target_device=target_device), timeout)
     page = _payload(result, "recordings", "ListRecordings")
     if len(page.recordings) != 1 or page.recordings[0].name != session_name:
         raise RecordingsError("protocol", f"asked for {session_name!r}, got "
                               f"{[e.name for e in page.recordings]!r}")
-    return page.recordings[0]
+    return page.recordings[0], page.catalogue_generation
 
 
 def open_recording_file(run: Runner, session_name: str, file_name: str, *, offset: int = 0,
                         expect_size: int = 0, expect_mtime_ns: int = 0, target_device: str = "",
+                        expect_object_version: int = 0, expect_catalogue_generation: int = 0,
                         timeout: float = COMMAND_TIMEOUT_S) -> command_result_pb2.RecordingFileOpen:
     """Open one file for reading from ``offset``; the answer says where and how much to read."""
     cmd = open_recording_file_command(session_name, file_name, offset=offset,
                                       expect_size=expect_size, expect_mtime_ns=expect_mtime_ns,
+                                      expect_object_version=expect_object_version,
+                                      expect_catalogue_generation=expect_catalogue_generation,
                                       target_device=target_device)
     opened = _payload(_run(run, cmd, timeout), "file_open", "OpenRecordingFile")
     if opened.offset != offset or opened.offset + opened.length != opened.file_size:
@@ -252,6 +268,7 @@ def receive(address: str, opened: command_result_pb2.RecordingFileOpen, sink: Si
 
 def pull_file(run: Runner, address: str, session_name: str, file_name: str, sink: Sink, *,
               offset: int = 0, expect_size: int = 0, expect_mtime_ns: int = 0,
+              expect_object_version: int = 0, expect_catalogue_generation: int = 0,
               target_device: str = "", on_progress: Callable[[int, int], None] | None = None,
               stall_timeout: float = STALL_TIMEOUT_S, timeout: float = COMMAND_TIMEOUT_S,
               max_opens_without_progress: int = MAX_OPENS_WITHOUT_PROGRESS,
@@ -259,18 +276,22 @@ def pull_file(run: Runner, address: str, session_name: str, file_name: str, sink
     """Pull ``file_name`` from ``offset`` to its end into ``sink(offset, data)``.
 
     Opens, receives, and on a short read opens again at the bytes received,
-    pinning the file's size and mtime from the first open so a file that
+    pinning the file's size, mtime, object version and mount epoch so a file that
     changes between attempts fails with "changed" instead of being spliced.
-    Returns the last open (its ``file_size`` and ``mtime_ns`` identify the
-    file). Device refusals raise RecordingsError with the device's code.
+    Returns the last open with its identity fields. Device refusals raise
+    RecordingsError with the device's code.
     """
     idle_opens = 0
     last_error: OSError | None = None
     while True:
         opened = open_recording_file(run, session_name, file_name, offset=offset,
                                      expect_size=expect_size, expect_mtime_ns=expect_mtime_ns,
+                                     expect_object_version=expect_object_version,
+                                     expect_catalogue_generation=expect_catalogue_generation,
                                      target_device=target_device, timeout=timeout)
         expect_size, expect_mtime_ns = opened.file_size, opened.mtime_ns
+        expect_object_version = opened.object_version
+        expect_catalogue_generation = opened.catalogue_generation
         if opened.length == 0:
             return opened
         got = receive(address, opened, sink, stall_timeout=stall_timeout)

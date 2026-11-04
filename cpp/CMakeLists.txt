@@ -63,7 +63,10 @@ add_library(visio_schema STATIC
   # routing (id<->Channel table) + the MCAP container codec + its writer sink
   # + the sink's write-time read-back (verify the media against RAM)
   src/routing/registry.cc
-  src/mcap/writer.cc
+  src/mcap/storage.cc
+  src/mcap/writer/parts.cc
+  src/mcap/writer/record.cc
+  src/mcap/writer/continuation.cc
   src/mcap/writer_endpoint.cc
   src/mcap/payload_arena.cc
   src/mcap/span_readback.cc
@@ -98,6 +101,10 @@ target_include_directories(visio_schema PUBLIC
 )
 # mcap is an implementation detail of mcap_writer.cc (the header hides it).
 target_include_directories(visio_schema PRIVATE "${MCAP_INCLUDE_DIR}")
+# src/mcap/writer's pieces reach the mcap module's private headers by path
+# from src ("mcap/file_sync.hpp"), never by a relative one.
+target_include_directories(visio_schema PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/src")
 # DeviceInfo (its repeated Channel list + each Channel's strings/bytes) uses
 # nanopb FT_POINTER fields, which require malloc support to encode/decode.
 # PUBLIC so pb_decode.c, the generated *.pb.c, and every consumer (the
@@ -108,11 +115,16 @@ add_library(visio::schema ALIAS visio_schema)
 # ---- tests (top-level host builds only; skipped when cross-compiling) -------
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT CMAKE_CROSSCOMPILING)
   include(FetchContent)
+  # Older supported CMake versions preserve archive timestamps by default.
+  set(GOOGLETEST_TIMESTAMP_ARGS)
+  if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
+    set(GOOGLETEST_TIMESTAMP_ARGS DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  endif()
   FetchContent_Declare(
     googletest
     URL https://github.com/google/googletest/archive/refs/tags/v1.15.2.tar.gz
     URL_HASH SHA256=7b42b4d6ed48810c5362c265a17faebe90dc2373c885e5216439d37927f02926
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    ${GOOGLETEST_TIMESTAMP_ARGS}
   )
   set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
   FetchContent_MakeAvailable(googletest)
@@ -126,6 +138,9 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT CMAKE_CROSSCOMPILI
     tests/test_frame_roundtrip.cc
     tests/test_channel_registry.cc
     tests/test_mcap_writer.cc
+    tests/test_mcap_video_count.cc
+    tests/test_mcap_writer_storage.cc
+    tests/test_part_outcome.cc
     tests/test_mcap_writer_endpoint.cc
     tests/test_mcap_writer_endpoint_arena.cc
     tests/test_payload_arena.cc
@@ -143,7 +158,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT CMAKE_CROSSCOMPILI
     tests/test_ota_vectors.cc
     tests/test_wire_recordings.cc
     tests/test_wire_ota_quiesce.cc
-    tests/test_package.cc
+    tests/test_image.cc
     tests/test_calibration_nanopb.cc
     tests/test_control_nanopb.cc
     tests/test_sensor_nanopb.cc
@@ -155,6 +170,9 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT CMAKE_CROSSCOMPILI
     tests/test_endpoint_reconnect.cc
   )
   target_sources(visio_schema_tests PRIVATE tests/test_recording_crypto.cc)
+  # The private part-outcome header is unit-tested on its own.
+  target_include_directories(visio_schema_tests PRIVATE "${MCAP_INCLUDE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/mcap")
   target_link_libraries(visio_schema_tests
     PRIVATE visio_schema GTest::gtest GTest::gtest_main)
   # Path to the committed cross-language byte fixtures (shared with the Python
@@ -164,4 +182,27 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT CMAKE_CROSSCOMPILI
   # Bound each test so a hung endpoint/thread join fails the test instead of
   # wedging CI (these tests spawn I/O threads + ptys/sockets).
   gtest_discover_tests(visio_schema_tests PROPERTIES TIMEOUT 60)
+
+  # The firmware fault contracts use Linux /proc and libc interposition.
+  # Isolate them from the portable functional suite (also run on macOS).
+  # Strict assertions intentionally expose current recording error gaps.
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(visio_schema_mcap_io_tests
+      tests/test_mcap_io_contract.cc tests/mcap_io_fault.cc)
+    target_link_libraries(visio_schema_mcap_io_tests PRIVATE
+      visio_schema GTest::gtest_main ${CMAKE_DL_LIBS})
+    gtest_discover_tests(visio_schema_mcap_io_tests PROPERTIES TIMEOUT 30)
+
+    # Keep the actual arena syscall wrapper out of all other test targets.
+    add_executable(visio_schema_mcap_arena_boundary_tests
+      tests/test_mcap_arena_boundary.cc tests/mcap_arena_boundary.cc)
+    target_include_directories(visio_schema_mcap_arena_boundary_tests PRIVATE
+      "${MCAP_INCLUDE_DIR}")
+    target_link_libraries(visio_schema_mcap_arena_boundary_tests PRIVATE
+      visio_schema GTest::gtest_main pthread)
+    target_link_options(visio_schema_mcap_arena_boundary_tests PRIVATE
+      -Wl,--wrap=madvise -Wl,--wrap=pthread_cond_wait)
+    gtest_discover_tests(visio_schema_mcap_arena_boundary_tests
+      PROPERTIES TIMEOUT 20)
+  endif()
 endif()

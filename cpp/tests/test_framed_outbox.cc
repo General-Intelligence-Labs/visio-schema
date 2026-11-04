@@ -73,6 +73,59 @@ TEST(FramedOutbox, DropOnFailRejectsNewFrameWhenFull) {
   EXPECT_EQ(sink.received, a);  // only A survives
 }
 
+TEST(FramedOutbox, ReliableBackpressurePreservesQueuedFramesAndDropCounter) {
+  FramedOutbox ob(WritePolicy::lossless());
+  auto a = std::make_shared<const std::vector<std::uint8_t>>(Frame(0xA1, 4));
+  auto b = std::make_shared<const std::vector<std::uint8_t>>(Frame(0xB2, 4));
+  EXPECT_TRUE(ob.TryEnqueue(a, 8));
+  EXPECT_TRUE(ob.TryEnqueue(b, 8));
+  EXPECT_FALSE(ob.TryEnqueue(a, 8));
+  EXPECT_FALSE(ob.TryEnqueue(a, 3));
+  EXPECT_EQ(ob.QueuedFrames(), 2u);
+  EXPECT_EQ(ob.Dropped(), 0u);
+  FakeSink sink;
+  while (ob.HasPending()) ASSERT_TRUE(ob.Drain(sink.fn(), true));
+  EXPECT_EQ(sink.received, (std::vector<std::uint8_t>{0xA1, 0xA1, 0xA1, 0xA1,
+                                                    0xB2, 0xB2, 0xB2, 0xB2}));
+}
+
+TEST(FramedOutbox, ReliableDiscardPreservesOnlyThePartialFrame) {
+  FramedOutbox ob(WritePolicy::lossless());
+  auto a = std::make_shared<const std::vector<std::uint8_t>>(Frame(0xA1, 4));
+  auto b = std::make_shared<const std::vector<std::uint8_t>>(Frame(0xB2, 4));
+  ASSERT_TRUE(ob.TryEnqueue(a, 4));
+  FakeSink sink;
+  sink.accept_per_call = 2;
+  ASSERT_TRUE(ob.Drain(sink.fn(), true));
+  ASSERT_TRUE(ob.InFlightActive());
+  // The queue has room even while its committed frame is still mid-write.
+  ASSERT_TRUE(ob.TryEnqueue(b, 4));
+  ob.DiscardQueued();
+  EXPECT_EQ(ob.QueuedFrames(), 0u);
+  ASSERT_TRUE(ob.Drain(sink.fn(), true));
+  EXPECT_EQ(sink.received, *a);
+  EXPECT_FALSE(ob.HasPending());
+  EXPECT_EQ(ob.Dropped(), 0u);
+}
+
+TEST(FramedOutbox, FinishingAPartialFrameYieldsBeforePromotingTheNext) {
+  FramedOutbox ob(WritePolicy::lossless());
+  auto a = std::make_shared<const std::vector<std::uint8_t>>(Frame(0xA1, 4));
+  auto b = std::make_shared<const std::vector<std::uint8_t>>(Frame(0xB2, 4));
+  ASSERT_TRUE(ob.TryEnqueue(a, 8));
+  ASSERT_TRUE(ob.TryEnqueue(b, 8));
+  FakeSink sink;
+  sink.accept_per_call = 2;
+  ASSERT_TRUE(ob.Drain(sink.fn(), true));
+  sink.accept_per_call = 0;
+  ASSERT_TRUE(ob.Drain(sink.fn(), true));
+  EXPECT_EQ(sink.received, *a);
+  EXPECT_EQ(ob.QueuedFrames(), 1u);
+  EXPECT_FALSE(ob.InFlightActive());
+  ASSERT_TRUE(ob.Drain(sink.fn(), true));
+  EXPECT_EQ(sink.received.size(), 8u);
+}
+
 TEST(FramedOutbox, StaleEvictionBoundsBytes) {
   // 10-byte cap; each frame is 4 bytes -> at most 2 fit.
   FramedOutbox ob(WritePolicy::stale_eviction(/*max_bytes=*/10,

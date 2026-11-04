@@ -30,7 +30,17 @@ import json
 import re
 from typing import NamedTuple
 
-from .i18n import tr
+from .fields import (
+    _err,
+    _int_in_range,
+    _is_whole_number,
+    _string,
+)
+from .ingest import (
+    INGEST_STORAGE_FIELDS,
+    is_ingest_endpoint,
+    validate_ingest_storage,
+)
 
 __all__ = [
     "BITRATE_KBPS",
@@ -137,6 +147,7 @@ DEVICE_MAX_SIZE = {
     "SetStorage.access_key_id": 64,
     "SetStorage.secret_access_key": 64,
     "SetStorage.prefix": 128,
+    "SetStorage.destination_hint": 64,
     "ConnectWifi.ssid": 33,
     "ConnectWifi.passphrase": 64,
 }
@@ -156,7 +167,7 @@ META_MAX_BYTES = {
     f: _usable_bytes(f"SetRecordingMeta.{f}") for f in META_FIELDS}
 STORAGE_MAX_BYTES = {
     f: _usable_bytes(f"SetStorage.{f}")
-    for f in STORAGE_FIELDS[PLAINTEXT_VERSION]}
+    for f in {*STORAGE_FIELDS[PLAINTEXT_VERSION], *INGEST_STORAGE_FIELDS}}
 WIFI_MAX_BYTES = {
     "ssid": _usable_bytes("ConnectWifi.ssid"),
     "passphrase": _usable_bytes("ConnectWifi.passphrase")}
@@ -368,62 +379,6 @@ def region_must_be_typed(endpoint_url: str) -> bool:
             or provider.region_source is not RegionSource.UNUSED)
 
 
-def _err(errs: list, where: str | None, key: str, **params: object) -> None:
-    """Append one validation problem, translated to the active language.
-
-    `where` is the WIRE field path (`storage.endpoint_url`) and is never
-    translated — an operator matches it against the QR payload and the device
-    docs, so it must read identically in every locale. Only the reason is
-    prose. This is the split the app's parser draws too (settings-payload.ts).
-    """
-    reason = tr(key, **params)
-    errs.append(f"{where}: {reason}" if where else reason)
-
-
-def over_byte_limit(value: str, max_bytes: int) -> int | None:
-    """`value`'s UTF-8 byte length if it overruns the device's decode buffer,
-    else None. See DEVICE_MAX_SIZE for why an overrun is fatal, not truncating.
-    One home so the validator and the interactive prompt cannot disagree."""
-    nbytes = len(value.encode("utf-8"))
-    return nbytes if nbytes > max_bytes else None
-
-
-def _string(errs: list, where: str, v, *, required: bool = False,
-            max_bytes: int | None = None, max_chars: int | None = None) -> str:
-    # Every string field bounds a length; a call that sets neither would leave
-    # the field silently uncapped, which is the very overflow this guards.
-    assert max_bytes is not None or max_chars is not None, (
-        f"_string({where!r}) set no length cap")
-    if v is None:
-        if required:
-            _err(errs, where, "required")
-        return ""
-    if not isinstance(v, str):
-        _err(errs, where, "mustBeString")
-        return ""
-    if required and v == "":
-        _err(errs, where, "required")
-    if max_chars is not None and len(v) > max_chars:
-        _err(errs, where, "tooLongChars", max=max_chars)
-    if max_bytes is not None:
-        over = over_byte_limit(v, max_bytes)
-        if over is not None:
-            _err(errs, where, "tooLongBytes", bytes=over, max=max_bytes)
-    return v
-
-
-def _is_whole_number(v) -> bool:
-    return isinstance(v, int) and not isinstance(v, bool)  # bool is an int subclass
-
-
-def _int_in_range(errs: list, where: str, v, lo: int, hi: int) -> None:
-    if not _is_whole_number(v):
-        _err(errs, where, "mustBeInteger")
-        return
-    if not lo <= v <= hi:
-        _err(errs, where, "intRange", lo=lo, hi=hi)
-
-
 def _validate_meta(errs: list, meta) -> None:
     if not isinstance(meta, dict):
         _err(errs, "meta", "mustBeObject")
@@ -438,6 +393,11 @@ def _validate_meta(errs: list, meta) -> None:
 def _validate_storage(errs: list, storage, version: int) -> None:
     if not isinstance(storage, dict):
         _err(errs, "storage", "mustBeObject")
+        return
+    if is_ingest_endpoint(storage.get("endpoint_url")):
+        validate_ingest_storage(errs, storage, version,
+                                plaintext=version == PLAINTEXT_VERSION,
+                                max_bytes=STORAGE_MAX_BYTES)
         return
     allowed = STORAGE_FIELDS[version]
     for f in storage:
@@ -583,6 +543,8 @@ def normalize_storage_prefix(cfg: dict) -> None:
     storage = cfg.get("storage")
     if not isinstance(storage, dict):
         return
+    if is_ingest_endpoint(storage.get("endpoint_url")):
+        return  # the service chooses the folder, so there is no prefix
     prefix = storage.get("prefix")
     if prefix is None or prefix == "":
         prefix = DEFAULT_STORAGE_PREFIX

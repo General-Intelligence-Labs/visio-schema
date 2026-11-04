@@ -10,13 +10,12 @@
 //
 // THE NORMATIVE SPEC IS docs/protocol/ota.md. It states the session, what
 // bytes_received means, the chunk-size negotiation and its bounds, the board
-// mark, and the multi-board package. This file is the message shapes.
+// mark, and head-mediated leaf updates. This file is the message shapes.
 //
-// ONE PACKAGE, ONE DEVICE. A sender pushes one file to one device and is
-// agnostic to what is behind it. A device with limbs attached receives the same
-// single file a single-board device does, containing every board's image, and
-// updates its own limbs from it — see wire/package.py for that container. So
-// nothing here describes a per-board delivery: there is no longer such a thing.
+// ONE IMAGE, ONE DEVICE. A sender pushes an ordinary VENC image to one device.
+// A head image embeds raw leaf images in its OEM partition. After reboot and
+// independent slot confirmation, the head uses this same OTA protocol to update
+// each stale attached leaf. There is no host-side rig transaction or container.
 //
 // Why its own control stream rather than a Command body: a full image is
 // 30–60 MB = tens of thousands of chunks. That is too big for the single-ack
@@ -78,8 +77,8 @@ message OtaMessage {
     // DEPRECATED, with OtaBegin.hold_apply: a sender no longer defers a
     // device's apply, so nothing puts this on the wire. Kept (never removed,
     // never reused) so the field number cannot come back meaning something
-    // else. A device that DOES defer its own apply -- a head that flashes
-    // itself last -- decides that internally, from the package it received.
+    // else. Receivers apply a verified commit immediately; a head confirms its
+    // own boot independently before reconciling attached leaves.
     OtaApply  apply  = 15 [deprecated = true];
   }
 }
@@ -112,23 +111,10 @@ message OtaBegin {
   uint32 min_version = 7;  // UNUSED — no anti-rollback floor is enforced here
   repeated OtaPartition partitions = 8;  // UNUSED — the payload names its own
 
-// DEPRECATED, and no sender sets it. Two-phase staging: the device verified
-  // and staged at Commit but moved no slot, holding until an OtaApply named
-  // this version.
-  //
-  // It existed to shrink the mixed-version window when the APP pushed to each
-  // board of a rig over a phone link — minutes per limb. A hub now receives ONE
-  // package, holds every image locally, and pushes over a fast local leg, so
-  // that window is seconds. And the revert path has to be bulletproof whatever
-  // happens, so a mechanism whose only job is to keep the common failures away
-  // from it leaves the most safety-critical path exercised only in the rarest
-  // cases. A commit applies, on a limb exactly as on a single board.
-  //
-  // A hub still defers its OWN apply — head-last is structural — but that is
-  // internal and derived from the package it received, not something the wire
-  // can ask for. Kept (never removed, never reused) so a field number cannot
-  // come back meaning something else; proto3 omits it when false, so every
-  // begin on the wire is byte-identical to one sent before it existed.
+  // DEPRECATED, and no sender sets it. The earlier two-phase staging flow held
+  // a verified commit until OtaApply. Heads and leaves now apply immediately.
+  // A head boots and confirms independently before updating attached leaves.
+  // The number remains reserved; omitted false preserves ordinary wire bytes.
   bool hold_apply = 9 [deprecated = true];
 }
 
@@ -177,23 +163,9 @@ message OtaAbort {
 // (bytes_received) or learn the staging file vanished (NEEDS_RESUME).
 message OtaQuery {}
 
-// DEPRECATED. Flash a stage that OtaCommit verified but held: arm recovery and
-// reboot NOW.
-//
-// It was the second half of a rig's two-phase update, when a SENDER staged
-// every board and then applied them. A sender no longer does either: it pushes
-// one package to one device, and that device decides its own apply order from
-// what the package contains. So nothing puts this on the wire.
-//
-// The message shape survives as the head's own loopback self-apply — it holds
-// its apply because head-last is structural, and this is how it fires it — and
-// so that the field number can never come back meaning something else. Do not
-// send one; a device is free to stop answering them.
-//
-// fw_version must equal the held stage's version: an apply that races a newer
-// stage must not flash whichever happened to land. Addressed like every
-// OtaMessage (target_device); a device holding no such stage answers FAILED
-// rather than guessing.
+// DEPRECATED. Previously applied a held stage. No current sender emits it;
+// receivers reject it as unsupported. The shape and field number remain so
+// they cannot be reused with a different meaning.
 message OtaApply {
   string fw_version = 1;
 }

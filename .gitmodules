@@ -1,7 +1,7 @@
+# Fixed at sdk/v0.24.0; schema generation consumes this version's protos.
 [submodule "third_party/foxglove-sdk"]
 	path = third_party/foxglove-sdk
 	url = https://github.com/foxglove/foxglove-sdk.git
-	branch = main
 [submodule "third_party/nanopb"]
 	path = third_party/nanopb
 	url = https://github.com/nanopb/nanopb.git

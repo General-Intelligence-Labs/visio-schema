@@ -37,6 +37,37 @@ message SystemHealth {
   // Unset when the gauge is absent or its reading is unavailable.
   optional float battery_voltage_v = 14;
 
+  // Applied charger settings are ceilings, not measured currents. Missing
+  // properties remain absent; this message does not imply a calibrated gauge.
+  message PowerStatus {
+    enum Mode {
+      MODE_UNSPECIFIED = 0;
+      MODE_ACTIVE = 1;
+      MODE_QUIESCING = 2;
+      MODE_CHARGING_IDLE = 3;
+      MODE_POWERING_OFF = 4;
+    }
+    enum ChargeState {
+      CHARGE_STATE_UNSPECIFIED = 0;
+      CHARGE_STATE_NOT_CHARGING = 1;
+      CHARGE_STATE_CHARGING = 2;
+      CHARGE_STATE_FULL = 3;
+    }
+    Mode mode = 1;
+    optional bool external_power_present = 2;
+    optional ChargeState charge_state = 3;
+    optional uint32 input_current_limit_ma = 4;
+    optional uint32 charge_current_limit_ma = 5;
+    optional uint32 charge_voltage_limit_mv = 6;
+    optional bool input_voltage_limited = 7;
+    optional bool input_current_limited = 8;
+    optional bool thermal_limited = 9;
+    optional uint32 charger_fault_bits = 10;
+    bool low_battery_lockout = 11;
+    bool low_battery_shutdown = 12;
+  }
+  optional PowerStatus power = 15;
+
   // Free disk space on the recording volume, in bytes.
   optional uint64 disk_free_bytes = 6;
 

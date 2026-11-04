@@ -34,6 +34,8 @@ void FramedFdEndpoint::AdoptFd(int fd) {
     return;
   }
   fd_ = fd;
+  std::lock_guard<std::mutex> lk(reliable_send_mu_);
+  reliable_link_up_ = true;
 }
 
 // Control queue: near-lossless and bounded by frame count (control + IMU are
@@ -88,6 +90,10 @@ void FramedFdEndpoint::Start(InboundFn on_inbound, ClosedFn on_closed) {
 
 void FramedFdEndpoint::Stop() {
   stop_.store(true);
+  {
+    std::lock_guard<std::mutex> lk(reliable_send_mu_);
+    reliable_link_up_ = false;
+  }
   Wake();
   if (thread_.joinable()) thread_.join();
   if (fd_ >= 0) {
@@ -95,11 +101,75 @@ void FramedFdEndpoint::Stop() {
     fd_ = -1;
   }
   wake_.Close();
+  reliable_outbox_.Clear();
+  ClearTimed();
 }
 
 void FramedFdEndpoint::Send(const Message& msg) {
   // Qualified: an override that looped Send would otherwise recurse.
   FramedFdEndpoint::SendBatch(&msg, 1);
+}
+
+void FramedFdEndpoint::SendTimed(Message msg, TimedFinalize finalize, TimedSent sent) {
+  {
+    std::lock_guard<std::mutex> lock(timed_mu_);
+    if (timed_queue_.size() >= 16) {
+      timed_queue_.pop_front();
+      timed_pending_.fetch_sub(1, std::memory_order_relaxed);
+    }
+    timed_queue_.push_back({std::move(msg), std::move(finalize), std::move(sent), {}, 0, 0});
+    timed_pending_.fetch_add(1, std::memory_order_relaxed);
+  }
+  Wake();
+}
+
+void FramedFdEndpoint::ClearTimed() {
+  std::lock_guard<std::mutex> lock(timed_mu_);
+  timed_queue_.clear();
+  timed_active_.reset();
+  timed_pending_.store(0, std::memory_order_relaxed);
+}
+
+long FramedFdEndpoint::PumpTimed() {
+  if (!timed_active_) {
+    std::lock_guard<std::mutex> lock(timed_mu_);
+    if (timed_queue_.empty()) return 0;
+    timed_active_ = std::make_unique<TimedFrame>(std::move(timed_queue_.front()));
+    timed_queue_.pop_front();
+  }
+  auto& f = *timed_active_;
+  if (f.offset == 0) {
+    f.stamp_ns = MonotonicNs();
+    f.finalize(f.msg, f.stamp_ns);
+    f.msg.framed.reset();
+    f.bytes = EncodeFramed(f.msg);
+  }
+  const long n = WriteSome(fd_, f.bytes.data() + f.offset, f.bytes.size() - f.offset);
+  if (n <= 0) return n;  // zero-byte retry must get a fresh timestamp
+  if (f.offset == 0 && f.sent) f.sent(f.stamp_ns);
+  f.offset += static_cast<std::size_t>(n);
+  if (f.offset == f.bytes.size()) {
+    timed_active_.reset();
+    timed_pending_.fetch_sub(1, std::memory_order_relaxed);
+  }
+  return n;
+}
+
+Endpoint::SendResult FramedFdEndpoint::TrySendReliable(const Message& msg) {
+  std::lock_guard<std::mutex> lk(reliable_send_mu_);
+  if (stop_.load() || !reliable_link_up_) return SendResult::Closed;
+  if (!msg.framed) {
+    msg.framed = std::make_shared<const std::vector<std::uint8_t>>(EncodeFramed(msg));
+  }
+  if (msg.framed->size() > kReliableQueueBytes) return SendResult::Unsupported;
+  if (!reliable_outbox_.TryEnqueue(msg.framed, kReliableQueueBytes))
+    return SendResult::Backpressure;
+  Wake();
+  return SendResult::Accepted;
+}
+
+void FramedFdEndpoint::DiscardReliable() {
+  reliable_outbox_.DiscardQueued();
 }
 
 // ONE wake for the whole group, which is the only thing this adds. Waking per
@@ -340,6 +410,18 @@ void FramedFdEndpoint::Pump() {
   // starve this thread's inbound reads.
   constexpr int kMaxFramesPerPump = 64;
   for (int i = 0; i < kMaxFramesPerPump; ++i) {
+    // Once a timed frame starts, finish it before switching lanes. Otherwise
+    // enter this lane only at a boundary in every existing outbox.
+    if (timed_active_ ||
+        (timed_pending_.load(std::memory_order_relaxed) != 0 &&
+         !ctrl_outbox_.InFlightActive() && !reliable_outbox_.InFlightActive() &&
+         !outbox_.InFlightActive())) {
+      const long progress = PumpTimed();
+      if (progress < 0) { MarkLinkDead(); return; }
+      accepted += progress;
+      if (timed_active_) break;
+      continue;
+    }
     // Multiplex the two outboxes over the one fd WITHOUT splitting a frame: if
     // either has a frame mid-write (bytes already on the wire), finish exactly
     // that one — switching now would inject the other queue's bytes into a
@@ -347,18 +429,22 @@ void FramedFdEndpoint::Pump() {
     // (neither in-flight) do we choose, and then control goes first so a reply
     // never waits behind the video backlog. The video outbox is OneAtATime, so
     // "finish the in-flight frame" is bounded to a single video frame.
-    FramedOutbox* pick = outbox_.InFlightActive()         ? &outbox_
-                         : ctrl_outbox_.InFlightActive()  ? &ctrl_outbox_
-                         : ctrl_outbox_.HasPending()      ? &ctrl_outbox_
-                                                          : &outbox_;
-    if (!pick->Drain(wr)) {
+    FramedOutbox* pick = &outbox_;
+    if (ctrl_outbox_.InFlightActive()) pick = &ctrl_outbox_;
+    else if (reliable_outbox_.InFlightActive()) pick = &reliable_outbox_;
+    else if (!outbox_.InFlightActive()) {
+      if (ctrl_outbox_.HasPending()) pick = &ctrl_outbox_;
+      else if (reliable_outbox_.HasPending()) pick = &reliable_outbox_;
+    }
+    if (!pick->Drain(wr, pick == &reliable_outbox_)) {
       MarkLinkDead();
       return;
     }
     // Bytes still in flight => the write hit EAGAIN; wait for the next POLLOUT
     // rather than spinning on a socket that isn't taking data.
     if (pick->InFlightActive()) break;
-    if (!ctrl_outbox_.HasPending() && !outbox_.HasPending()) break;
+    if (!ctrl_outbox_.HasPending() && !reliable_outbox_.HasPending() &&
+        !outbox_.HasPending()) break;
   }
   UpdateStallState(accepted);
 }
@@ -387,7 +473,8 @@ void FramedFdEndpoint::UpdateStallState(long accepted) {
           "to keyframes-only");
     }
   }
-  const bool pending = ctrl_outbox_.HasPending() || outbox_.HasPending();
+  const bool pending = ctrl_outbox_.HasPending() || reliable_outbox_.HasPending() ||
+                       outbox_.HasPending() || timed_pending_.load(std::memory_order_relaxed) != 0;
   if (accepted > 0 || !pending) {
     last_progress_ns_ = now_ns;
     if (link_stalled_.load(std::memory_order_relaxed) && accepted > 0) {
@@ -423,6 +510,11 @@ void FramedFdEndpoint::ReportClosedOnce() {
 }
 
 void FramedFdEndpoint::MarkLinkDead() {
+  {
+    std::lock_guard<std::mutex> lk(reliable_send_mu_);
+    reliable_link_up_ = false;
+    reliable_outbox_.Clear();
+  }
   // A FIXED fd cannot come back: Tick() only reopens when a factory is set, so
   // for an accepted TCP client or a dialed TcpEndpoint this IS the end of the
   // link — and the owner has to hear about it, exactly as it would from a read
@@ -449,6 +541,7 @@ void FramedFdEndpoint::MarkLinkDead() {
   ctrl_outbox_.Clear();  // a fresh reader after reopen would desync on a half-frame
   outbox_.Clear();
   rx_buf_.clear();
+  ClearTimed();
   next_reopen_ns_ = 0;  // reopen ASAP on the next Tick
   // A fresh link starts unstalled and re-arms its own stall clock.
   link_stalled_.store(false, std::memory_order_relaxed);
@@ -499,7 +592,8 @@ void FramedFdEndpoint::Loop() {
     int fd_idx = -1;
     if (fd >= 0) {
       short ev = POLLIN;
-      if (ctrl_outbox_.HasPending() || outbox_.HasPending()) ev |= POLLOUT;
+      if (ctrl_outbox_.HasPending() || reliable_outbox_.HasPending() ||
+          outbox_.HasPending() || timed_pending_.load(std::memory_order_relaxed)) ev |= POLLOUT;
       fd_idx = n;
       pfds[n++] = {fd, ev, 0};
     }
@@ -521,6 +615,7 @@ void FramedFdEndpoint::Loop() {
 bool FramedFdEndpoint::ReadInbound(int fd) {
   std::uint8_t chunk[4096];
   const long r = ReadSome(fd, chunk, sizeof(chunk));
+  const auto received_ns = MonotonicNs();
   if (r == 0) return false;  // EAGAIN: nothing ready
   if (r < 0) {               // EOF / dead fd
     // One teardown for both ways a link dies (see MarkLinkDead): a fixed fd
@@ -533,6 +628,7 @@ bool FramedFdEndpoint::ReadInbound(int fd) {
   }
   rx_buf_.insert(rx_buf_.end(), chunk, chunk + r);
   for (auto& m : ExtractFrames(rx_buf_)) {
+    m.receive_mono_ns = received_ns;
     if (on_inbound_) on_inbound_(std::move(m), this);
   }
   return false;

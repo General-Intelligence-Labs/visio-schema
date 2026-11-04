@@ -147,3 +147,128 @@ TEST(PayloadArena, ABacklogThatDrainsInSilenceKeepsNoChunk) {
   EXPECT_LE(arena.resident_bytes(), 2 * kChunk);
   EXPECT_TRUE(arena.Put(Bytes(100000, 12)));  // and the arena still works
 }
+
+TEST(PayloadArena, RecordReleaseQuarantinesUntilCompletion) {
+  PayloadArena arena(3 * kChunk, kChunk, 2);
+  auto a = arena.Put(Bytes(kChunk, 1));
+  auto b = arena.Put(Bytes(kChunk, 2));
+  auto c = arena.Put(Bytes(kChunk, 3));
+  ASSERT_TRUE(a && b && c);
+  c.reset();
+  // Ordinary destruction finishes the handback immediately.
+  EXPECT_TRUE(arena.CanPut(kChunk));
+  c = arena.Put(Bytes(kChunk, 4));
+  ASSERT_TRUE(c);
+  auto reclaim = c->Release();
+  c.reset();
+  ASSERT_TRUE(reclaim);
+  EXPECT_FALSE(arena.CanPut(kChunk));
+  EXPECT_FALSE(arena.Put(Bytes(kChunk, 5)));
+  EXPECT_EQ(arena.resident_bytes(), 3 * kChunk);
+  const int error = reclaim->Run();
+  EXPECT_EQ(error, 0);
+  // Completion, not syscall entry, releases quarantine to Put.
+  EXPECT_FALSE(arena.CanPut(1));
+  EXPECT_FALSE(arena.Put(Bytes(kChunk, 6)));
+  arena.CompleteReclaim(std::move(*reclaim), error);
+  const auto expected = Bytes(kChunk, 7);
+  c = arena.Put(expected);
+  ASSERT_TRUE(c);
+  EXPECT_EQ(c->bytes(), expected);
+  EXPECT_EQ(a->bytes(), Bytes(kChunk, 1));
+  EXPECT_EQ(b->bytes(), Bytes(kChunk, 2));
+}
+
+TEST(PayloadArena, MoveReleasesExactlyItsOldChunkImmediately) {
+  PayloadArena arena(4 * kChunk, kChunk, 2);
+  std::vector<Record> records;
+  for (unsigned i = 0; i < 4; ++i) {
+    auto record = arena.Put(Bytes(kChunk, i));
+    ASSERT_TRUE(record);
+    records.push_back(std::move(*record));
+  }
+  records[2] = std::move(records[3]);
+  EXPECT_TRUE(arena.CanPut(kChunk));
+  EXPECT_EQ(records[2].bytes(), Bytes(kChunk, 3));
+  auto reclaimed = arena.Put(Bytes(kChunk, 9));
+  ASSERT_TRUE(reclaimed);
+  EXPECT_FALSE(arena.CanPut(1));
+  auto last_reclaim = records[2].Release();
+  ASSERT_TRUE(last_reclaim);
+  records.clear();
+  const int last_error = last_reclaim->Run();
+  arena.CompleteReclaim(std::move(*last_reclaim), last_error);
+  EXPECT_EQ(reclaimed->bytes(), Bytes(kChunk, 9));
+  reclaimed.reset();
+  EXPECT_LE(arena.resident_bytes(), 2 * kChunk);
+}
+
+TEST(PayloadArena, RecordDrainActuallyReturnsAllNonresidentPages) {
+  PayloadArena arena(16u << 20, kChunk, 2);
+  const auto capacity = arena.capacity();
+  std::deque<Record> records;
+  for (unsigned i = 0; i < 60; ++i) {
+    auto record = arena.Put(Bytes(100000, i));
+    ASSERT_TRUE(record);
+    records.push_back(std::move(*record));
+  }
+  const auto* base = records.front().bytes().data();
+  const auto peak = arena.resident_bytes();
+  ASSERT_GE(peak, 5u << 20);
+  ASSERT_GT(ResidentPages(base + 2 * kChunk, 4u << 20), 0u);
+  while (!records.empty()) {
+    auto reclaim = records.front().Release();
+    records.pop_front();
+    if (reclaim) {
+      const int error = reclaim->Run();
+      EXPECT_EQ(error, 0);
+      arena.CompleteReclaim(std::move(*reclaim), error);
+    }
+  }
+  EXPECT_EQ(arena.capacity(), capacity);
+  EXPECT_LE(arena.resident_bytes(), 2 * kChunk);
+  EXPECT_EQ(ResidentPages(base + 2 * kChunk, 4u << 20), 0u);
+  ::testing::Test::RecordProperty("peak_touched_bytes", std::to_string(peak));
+  ::testing::Test::RecordProperty("final_touched_bytes",
+                                  std::to_string(arena.resident_bytes()));
+  ::testing::Test::RecordProperty("arena_object_bytes",
+                                  std::to_string(sizeof(PayloadArena)));
+  ::testing::Test::RecordProperty("record_object_bytes",
+                                  std::to_string(sizeof(Record)));
+}
+
+TEST(PayloadArena, CanPutIsPureAndUsesCurrentOrLowestFreeChunk) {
+  PayloadArena arena(3 * kChunk, kChunk, 1);
+  EXPECT_FALSE(arena.CanPut(0));
+  EXPECT_FALSE(arena.CanPut(kChunk + 1));
+  EXPECT_EQ(arena.resident_bytes(), 0u);
+  for (unsigned i = 0; i < 4; ++i) EXPECT_TRUE(arena.CanPut(kChunk));
+  EXPECT_EQ(arena.resident_bytes(), 0u);
+  auto a = arena.Put(Bytes(100, 1));
+  ASSERT_TRUE(a);
+  const auto* base = a->bytes().data();
+  EXPECT_TRUE(arena.CanPut(kChunk - 100));
+  auto b = arena.Put(Bytes(kChunk - 100, 2));
+  ASSERT_TRUE(b);
+  EXPECT_EQ(b->bytes().data(), base + 100);
+  auto c = arena.Put(Bytes(kChunk, 3));
+  auto d = arena.Put(Bytes(kChunk, 4));
+  ASSERT_TRUE(c && d);
+  EXPECT_FALSE(arena.CanPut(1));
+  auto claim = c->Release();
+  ASSERT_TRUE(claim);
+  EXPECT_FALSE(arena.CanPut(1));
+  const auto error = claim->Run();
+  EXPECT_FALSE(arena.CanPut(1));
+  arena.CompleteReclaim(std::move(*claim), error);
+  EXPECT_TRUE(arena.CanPut(kChunk));
+  c = arena.Put(Bytes(kChunk, 5));
+  ASSERT_TRUE(c);
+  EXPECT_EQ(c->bytes().data(), base + kChunk);
+  EXPECT_EQ(a->bytes(), Bytes(100, 1));
+  EXPECT_EQ(b->bytes(), Bytes(kChunk - 100, 2));
+  EXPECT_EQ(d->bytes(), Bytes(kChunk, 4));
+  PayloadArena none(0, kChunk, 2);
+  EXPECT_FALSE(none.CanPut(1));
+  EXPECT_FALSE(none.Put("x"));
+}

@@ -14,7 +14,9 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <deque>
 #include <memory>
+#include <mutex>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -57,7 +59,11 @@ class FramedFdEndpoint : public Endpoint {
 
   void Start(InboundFn on_inbound, ClosedFn on_closed) override;
   void Send(const Message& msg) override;
+  void SendTimed(Message msg, TimedFinalize finalize, TimedSent sent) override;
   void SendBatch(const Message* msgs, std::size_t n) override;
+  bool SupportsReliable() const override { return true; }
+  SendResult TrySendReliable(const Message& msg) override;
+  void DiscardReliable() override;
   void Stop() override;
 
   // This client's delivery filter (endpoint.hpp). Replaced whole rather than
@@ -81,7 +87,7 @@ class FramedFdEndpoint : public Endpoint {
 
   // Diagnostics (thread-safe).
   std::size_t pending_bytes() const {
-    return ctrl_outbox_.PendingBytes() + outbox_.PendingBytes();
+    return ctrl_outbox_.PendingBytes() + reliable_outbox_.PendingBytes() + outbox_.PendingBytes();
   }
   std::uint64_t dropped() const { return ctrl_outbox_.Dropped() + outbox_.Dropped(); }
   // Frames refused at Send's stalled-gate, before any framing or enqueue.
@@ -127,7 +133,7 @@ class FramedFdEndpoint : public Endpoint {
     return accepted_total_.load(std::memory_order_relaxed);
   }
   std::size_t outbox_pending() const {
-    return ctrl_outbox_.PendingBytes() + outbox_.PendingBytes();
+    return ctrl_outbox_.PendingBytes() + reliable_outbox_.PendingBytes() + outbox_.PendingBytes();
   }
   void MarkLinkDead();   // I/O thread: close fd + clear outbox; Tick reopens
   bool Reopen();         // I/O thread: fresh fd via factory; returns link_up
@@ -136,6 +142,20 @@ class FramedFdEndpoint : public Endpoint {
  private:
   void Loop();           // the I/O thread body
   void Pump();           // drain outbox to the fd (I/O thread)
+  long PumpTimed();
+  void ClearTimed();
+  struct TimedFrame {
+    Message msg;
+    TimedFinalize finalize;
+    TimedSent sent;
+    std::vector<std::uint8_t> bytes;
+    std::size_t offset = 0;
+    std::int64_t stamp_ns = 0;
+  };
+  std::mutex timed_mu_;
+  std::deque<TimedFrame> timed_queue_;  // bounded to 16 uncommitted heartbeats
+  std::unique_ptr<TimedFrame> timed_active_;  // I/O thread only
+  std::atomic<std::size_t> timed_pending_{0};
   // Stall bookkeeping after each Pump: `accepted` is the bytes the fd took
   // this pass. With bytes pending and none accepted for stall_ns_ the link is
   // STALLED (a serial gadget nobody reads, a peer gone silent): Send then
@@ -152,12 +172,14 @@ class FramedFdEndpoint : public Endpoint {
   void AdoptFd(int fd);  // O_NONBLOCK-or-close a freshly opened fd into fd_
 
   int fd_ = -1;                    // I/O-thread-owned after Start
-  // Split outbox over the single fd: CONTROL frames (command results, DeviceInfo,
-  // OTA status, IMU) on ctrl_outbox_ are drained ahead of camera video on
-  // outbox_, so a reply never waits behind buffered H.265. Pump() switches
-  // between them only at a frame boundary (never mid-frame → no COBS desync).
+  // Control, finite responses, then video; switch only at COBS-frame boundaries.
   FramedOutbox ctrl_outbox_;       // non-bulk: control/sensor; near-lossless
+  FramedOutbox reliable_outbox_{WritePolicy::lossless()};
   FramedOutbox outbox_;            // bulk: camera video; lossy backpressure
+  // Serializes reliable admission with link death/reopen; fd_ itself stays
+  // I/O-thread-owned and is never inspected by a producer.
+  std::mutex reliable_send_mu_;
+  bool reliable_link_up_ = false;
   std::atomic<bool> bulk_flush_{false};     // shed queued video at a frame boundary
   std::atomic<bool> link_stalled_{false};   // set by I/O thread, read in Send
   std::atomic<std::uint64_t> door_dropped_{0};  // refused at the stalled gate

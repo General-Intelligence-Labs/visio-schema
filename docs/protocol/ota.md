@@ -6,12 +6,11 @@ a sender must follow. `visio_schema.wire.ota` (Python) and
 `visio_schema/wire/ota.hpp` (C++) are the reference implementations, and
 `tests/golden/ota_vectors.txt` pins them to each other.
 
-**One package, one device.** A sender pushes ONE file to ONE device and is
-agnostic to what is behind it. An Ego 1 is a single board; an Ego Pro head is a
-board with limbs attached, and it is sent exactly the same way — it unpacks
-what it received, updates its own limbs, and reports one verdict. Nothing above
-a device plans a per-board delivery, and the shape recurses: a device drives its
-children exactly as a sender drives it.
+**One image, one device.** A sender pushes one ordinary VENC file to the device
+it is connected to. A head image includes leaf firmware in its slot-bound OEM
+filesystem. The head updates itself first; after reboot and independent boot
+confirmation it reconciles connected leaves using ordinary OTA sessions. The
+sender does not plan or coordinate a multi-device transaction.
 
 > **Normative vs non-normative.** §1–§6 are the contract: implementations MUST
 > conform, and a change there is a MAJOR bump under
@@ -79,7 +78,10 @@ reads from `DeviceInfo` — never from the transfer ending well.
 **Payload opacity.** The bytes are one opaque encrypted image and the sender is
 a BLIND RELAY: it moves a file it cannot read, and only the device holds the
 key. Authenticity rests on that shared key, which is why no field here carries
-a signature.
+a signature. The [image envelope contract](ota-image.md) defines format 1
+(RKFW) and format 3 (gzip of RKFW, enabled only on RV1126B). The host relay
+does not inspect or decompress either. A head originates VENC1 sessions to its
+RV1106 leaves from its own embedded raw images.
 
 ## 3. Chunk-size negotiation
 
@@ -126,55 +128,28 @@ tautology. An empty mark is the legacy unmarked push and is byte-identical to
 the pre-mark encoding (proto3 omits an empty string), so the check simply does
 not fire — a device may be configured to require the mark instead.
 
-## 5. The package (multi-board devices)
+## 5. Heads with attached leaves
 
-A device with children is sent ONE file containing every board's image. It is an
-uncompressed (stored) **ustar** archive:
+The head receives the same ordinary VENC envelope as a standalone device. Its
+image contains one raw RKFW per supported leaf hardware revision and a versioned
+JSON catalogue under `/oem/ota_children`. OEM follows the active A/B slot, so the
+catalogue is replaced by ordinary head OTA and follows a head rollback.
 
-```
-index.txt           MUST be member 0
-<hwrev>.img         one image per board, verbatim
-...                 the RECEIVING device's own image LAST
-```
+After its own successful boot confirmation, the head uses native discovery to
+match connected units to catalogue entries. Each stale leaf is updated with the
+same begin/chunk/commit protocol. It MUST receive the format its firmware supports
+(VENC1 for RV1106). A head may construct that envelope while reading the embedded
+raw image; retransmitted offsets within a session MUST produce identical bytes.
 
-`index.txt` is `key=value` lines — not JSON, because a device has to parse it
-and a JSON parser would be the largest dependency in this library for the sake
-of ~300 bytes:
+The head's update and each leaf update have independent outcomes and A/B
+confirmation. A failed or missing leaf does not roll back the head or its siblings.
+STAGED is a transfer milestone; successful installation is proven by that unit's
+subsequent target-version announce. Manufacturing rig QC checks all required
+assembly members after the head returns.
 
-```
-v=1
-product=ego_pro
-version=1.3.0
-board=<role>:<hwrev>:<equipment>:<soc>:<file>:<bytes>:<sha256>
-hmac=<hex>
-```
-
-Four rules, each load-bearing:
-
-- **Index first.** Tar has no table of contents, so a reader discovers members
-  as it goes — and a device must validate the WHOLE roster before it erases
-  anything. A reader MUST hard-fail if member 0 is not `index.txt`.
-- **Self last.** By the time the receiving device's own image arrives, every
-  refusal the index can produce has already fired; what is left is a write
-  failure, and discovering one before the inactive slot is erased is strictly
-  better than after. This is BYTE order in the archive. It is not apply order.
-- **Children first is APPLY order**, and separate: the coordinator stays on
-  known-good firmware through the risky part.
-- **The index is authenticated** — HMAC-SHA256 over the index body under the
-  same key the images are encrypted with. Every image is independently
-  key-encrypted and self-digesting, so an attacker cannot forge one; but they
-  could RELABEL which board an image is for, and the device would then hand a
-  genuine image to the wrong board. An image for the wrong SoC is a
-  maskrom-recovery brick.
-
-A device whose attached child has no image in the package MUST refuse the whole
-package, naming that board, and MUST do so before anything is written. Half
-updating defeats the one-product-version rule the transaction exists to enforce.
-A child that is NOT attached is simply not in the roster and is not an error.
-
-A stream whose first bytes are a bare image rather than a tar is an implicit
-package of one: board from `OtaBegin.board`, destination self. That is what
-keeps a single-board device's contract unchanged.
+Legacy multi-board ustar archives and the rig transaction are retired. Reserved
+wire values for the old hold/apply procedure and terminal session MUST NOT be
+reused. Ordinary VENC1 transfers retain their previous wire behavior.
 
 ## 6. Quieting the link
 

@@ -26,6 +26,9 @@ class FakeDevice:
         self.sessions = sessions or [SESSION]
         self.page = page
         self.opens: list = []
+        self.identity_opens: list[tuple[int, int]] = []
+        self.object_versions = {name: i + 1 for i, name in enumerate(files)}
+        self.catalogue_generation = 73
         self.cuts: list[int] = []
         self.refuse_sends = False
         self.errors: dict[str, str] = {}
@@ -68,11 +71,12 @@ class FakeDevice:
         if body == "list_recordings":
             req = cmd.list_recordings
             out = result.recordings
+            out.catalogue_generation = self.catalogue_generation
             if req.session_name:
                 entry = out.recordings.add(name=req.session_name, file_count=len(self.files))
                 for name, data in self.files.items():
                     entry.files.add(name=name, size=len(data), mtime_ns=self.mtime[name],
-                                    complete=True)
+                                    complete=True, object_version=self.object_versions[name])
                 return result
             start = int(req.cursor) if req.cursor else 0
             for name in self.sessions[start:start + self.page]:
@@ -83,8 +87,16 @@ class FakeDevice:
         if body == "open_recording_file":
             req = cmd.open_recording_file
             self.opens.append((req.offset, req.expect_size, req.expect_mtime_ns))
+            self.identity_opens.append((req.expect_object_version, req.expect_catalogue_generation))
             data = self.files[req.file_name]
             mtime = self.mtime[req.file_name]
+            version = self.object_versions[req.file_name]
+            if (req.expect_object_version and req.expect_object_version != version) or \
+                    (req.expect_catalogue_generation and
+                     req.expect_catalogue_generation != self.catalogue_generation):
+                result.ok = False
+                result.error_code = "changed"
+                return result
             if (req.expect_size or req.expect_mtime_ns) and \
                     (req.expect_size, req.expect_mtime_ns) != (len(data), mtime):
                 result.ok = False
@@ -94,7 +106,8 @@ class FakeDevice:
             self._pending = (data, req.offset, length)
             result.file_open.CopyFrom(command_result_pb2.RecordingFileOpen(
                 port=self.port, offset=req.offset, length=length,
-                file_size=len(data), mtime_ns=mtime))
+                file_size=len(data), mtime_ns=mtime, object_version=version,
+                catalogue_generation=self.catalogue_generation))
             return result
         if body == "delete_recording":
             self.sessions.remove(cmd.delete_recording.session_name)
@@ -174,6 +187,12 @@ def test_list_session_files(device):
     assert [f.name for f in entry.files] == ["ego_0000.mcap", "session.json"]
 
 
+def test_session_listing_carries_file_identity_and_mount_epoch(device):
+    entry, generation = rec.list_session_files_with_generation(device.run, SESSION)
+    assert generation == device.catalogue_generation
+    assert [f.object_version for f in entry.files] == list(device.object_versions.values())
+
+
 # ---- pulling ------------------------------------------------------------------
 
 def test_pull_whole_file_in_one_open(device):
@@ -184,13 +203,50 @@ def test_pull_whole_file_in_one_open(device):
     assert len(device.opens) == 1
 
 
-def test_an_early_close_resumes_at_the_bytes_received_with_identity_pinned(device):
+@pytest.mark.parametrize("version,generation", [(1, 73), (0, 0)])
+def test_an_early_close_resumes_at_the_bytes_received_with_identity_pinned(
+        device, version, generation):
+    device.object_versions["ego_0000.mcap"] = version
+    device.catalogue_generation = generation
     device.cuts = [100_000, 300_000]
     sink = Collector()
     rec.pull_file(device.run, "127.0.0.1", SESSION, "ego_0000.mcap", sink)
     assert bytes(sink.data) == device.files["ego_0000.mcap"]
     size, mtime = len(device.files["ego_0000.mcap"]), device.mtime["ego_0000.mcap"]
     assert device.opens == [(0, 0, 0), (100_000, size, mtime), (400_000, size, mtime)]
+    assert device.identity_opens == [(0, 0), (version, generation), (version, generation)]
+
+
+@pytest.mark.parametrize("change", ["replacement", "card_generation"])
+def test_retry_rejects_identity_change_even_with_unchanged_size_and_mtime(device, change):
+    device.cuts = [20_000]
+    original = device.files["ego_0000.mcap"]
+    sink = Collector()
+
+    def run(cmd, timeout):
+        if cmd.WhichOneof("body") == "open_recording_file" and device.opens:
+            if change == "replacement":
+                device.files["ego_0000.mcap"] = b"x" * len(original)
+                device.object_versions["ego_0000.mcap"] += 1
+            else:
+                device.catalogue_generation += 1
+        return device.run(cmd, timeout)
+
+    with pytest.raises(rec.RecordingsError) as error:
+        rec.pull_file(run, "127.0.0.1", SESSION, "ego_0000.mcap", sink)
+    assert error.value.code == "changed"
+    assert bytes(sink.data) == original[:20_000]
+    assert device.opens[1][0] == 20_000
+    assert device.identity_opens == [(0, 0), (1, 73)]
+
+
+def test_pull_forwards_initial_identity_and_retains_it_for_retry(device):
+    device.cuts = [30_000]
+    sink = Collector()
+    rec.pull_file(device.run, "127.0.0.1", SESSION, "ego_0000.mcap", sink,
+                  expect_object_version=1, expect_catalogue_generation=73)
+    assert bytes(sink.data) == device.files["ego_0000.mcap"]
+    assert device.identity_opens == [(1, 73), (1, 73)]
 
 
 def test_a_file_that_changes_between_opens_fails_instead_of_splicing(device):

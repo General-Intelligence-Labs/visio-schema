@@ -6,6 +6,9 @@
 // QR would appear to apply while setting nothing. Everything asserted here is
 // what makes the cap real on the device rather than a number in a text file.
 #include <gtest/gtest.h>
+#include "golden_vectors_test_util.hpp"
+#include "visio_schema/wire/codec/frame.hpp"
+#include "visio_schema/wire/message.hpp"
 
 #include <pb_decode.h>
 #include <pb_encode.h>
@@ -17,6 +20,7 @@
 
 #include "visio_schema/v1/control/command.pb.h"
 #include "visio_schema/v1/control/command_result.pb.h"
+#include "visio_schema/v1/service/snapshot/snapshot.pb.h"
 
 namespace {
 
@@ -167,6 +171,164 @@ TEST(ControlNanopb, StorageSealedFieldsAreStaticAndAgree) {
                            blob.size()));
 }
 
+// An Ingest API destination rides the same SetStorage plus one optional
+// hint; the device echoes the hint and says it can do the mode at all.
+TEST(ControlNanopb, IngestDestinationHintRoundTrips) {
+  visio_schema_v1_control_Command cmd =
+      visio_schema_v1_control_Command_init_zero;
+  cmd.which_body = visio_schema_v1_control_Command_set_storage_tag;
+  auto& set = cmd.body.set_storage;
+  set.has_endpoint_url = true;
+  std::snprintf(set.endpoint_url, sizeof(set.endpoint_url),
+                "visio+https://ingest.example.com/visio");
+  set.has_destination_hint = true;
+  std::snprintf(set.destination_hint, sizeof(set.destination_hint), "site-b");
+
+  const std::string wire =
+      Encode(visio_schema_v1_control_Command_fields, cmd);
+  visio_schema_v1_control_Command got =
+      visio_schema_v1_control_Command_init_zero;
+  ASSERT_TRUE(Decode(visio_schema_v1_control_Command_fields, wire, &got));
+  EXPECT_TRUE(got.body.set_storage.has_destination_hint);
+  EXPECT_STREQ(got.body.set_storage.destination_hint, "site-b");
+  EXPECT_FALSE(got.body.set_storage.has_bucket);
+
+  visio_schema_v1_control_DeviceState st =
+      visio_schema_v1_control_DeviceState_init_zero;
+  EXPECT_EQ(sizeof(st.storage_destination_hint),
+            sizeof(visio_schema_v1_control_SetStorage{}.destination_hint));
+  std::snprintf(st.storage_destination_hint,
+                sizeof(st.storage_destination_hint), "site-b");
+  st.ingest_api_supported = true;
+  st.anti_flicker = visio_schema_v1_control_DeviceState_AntiFlicker_ANTI_FLICKER_50HZ;
+  st.anti_flicker_pending = true;
+  st.snapshot_supported = true;
+  const std::string state =
+      Encode(visio_schema_v1_control_DeviceState_fields, st);
+  visio_schema_v1_control_DeviceState echoed =
+      visio_schema_v1_control_DeviceState_init_zero;
+  ASSERT_TRUE(Decode(visio_schema_v1_control_DeviceState_fields, state,
+                     &echoed));
+  EXPECT_STREQ(echoed.storage_destination_hint, "site-b");
+  EXPECT_TRUE(echoed.ingest_api_supported);
+  EXPECT_EQ(echoed.anti_flicker, st.anti_flicker);
+  EXPECT_TRUE(echoed.anti_flicker_pending);
+  EXPECT_TRUE(echoed.snapshot_supported);
+}
+
+// The three Ingest commands are new arms of the Command / CommandResult
+// unions the firmware decodes into static buffers. Their caps must not make
+// either union larger than its existing largest arm.
+static_assert(sizeof(visio_schema_v1_control_IngestOpenCredentials) <=
+                  sizeof(visio_schema_v1_control_SetCalibration),
+              "IngestOpenCredentials would grow every decoded Command");
+static_assert(sizeof(visio_schema_v1_control_IngestSign) <=
+                  sizeof(visio_schema_v1_control_SetCalibration),
+              "IngestSign would grow every decoded Command");
+static_assert(sizeof(visio_schema_v1_control_IngestCredentials) <=
+                  sizeof(visio_schema_v1_control_DeviceState),
+              "IngestCredentials would grow every CommandResult");
+static_assert(std::is_array<decltype(
+                  visio_schema_v1_control_IngestOpenCredentials{}
+                      .sealed_credentials)>::value,
+              "sealed_credentials must decode statically (needs max_size)");
+
+template <std::size_t N>
+void FillTo(char (&field)[N], char c) {
+  std::memset(field, c, N - 1);
+  field[N - 1] = '\0';
+}
+
+TEST(ControlNanopb, IngestCommandsRoundTripAtTheirCaps) {
+  visio_schema_v1_control_Command sign =
+      visio_schema_v1_control_Command_init_zero;
+  sign.which_body = visio_schema_v1_control_Command_ingest_sign_tag;
+  auto& s = sign.body.ingest_sign;
+  s.has_path = s.has_query = s.has_body_sha256 = true;
+  FillTo(s.path, '/');
+  FillTo(s.query, 'q');
+  FillTo(s.body_sha256, 'f');
+  visio_schema_v1_control_Command got =
+      visio_schema_v1_control_Command_init_zero;
+  ASSERT_TRUE(Decode(visio_schema_v1_control_Command_fields,
+                     Encode(visio_schema_v1_control_Command_fields, sign),
+                     &got));
+  EXPECT_EQ(std::strlen(got.body.ingest_sign.path), sizeof(s.path) - 1);
+  EXPECT_EQ(std::strlen(got.body.ingest_sign.query), sizeof(s.query) - 1);
+
+  visio_schema_v1_control_Command open =
+      visio_schema_v1_control_Command_init_zero;
+  open.which_body = visio_schema_v1_control_Command_ingest_open_credentials_tag;
+  auto& o = open.body.ingest_open_credentials;
+  o.has_sealed_credentials = o.has_upload_id = true;
+  FillTo(o.sealed_credentials, 'A');
+  FillTo(o.upload_id, 'u');
+  visio_schema_v1_control_Command got_open =
+      visio_schema_v1_control_Command_init_zero;
+  ASSERT_TRUE(Decode(visio_schema_v1_control_Command_fields,
+                     Encode(visio_schema_v1_control_Command_fields, open),
+                     &got_open));
+  EXPECT_EQ(
+      std::strlen(got_open.body.ingest_open_credentials.sealed_credentials),
+            sizeof(o.sealed_credentials) - 1);
+
+  visio_schema_v1_control_Command check =
+      visio_schema_v1_control_Command_init_zero;
+  check.which_body = visio_schema_v1_control_Command_ingest_check_receipt_tag;
+  auto& r = check.body.ingest_check_receipt;
+  r.has_session_key = r.has_receipt = true;
+  FillTo(r.session_key, 'k');
+  FillTo(r.receipt, 'r');
+  visio_schema_v1_control_Command got_check =
+      visio_schema_v1_control_Command_init_zero;
+  ASSERT_TRUE(Decode(visio_schema_v1_control_Command_fields,
+                     Encode(visio_schema_v1_control_Command_fields, check),
+                     &got_check));
+  EXPECT_STREQ(got_check.body.ingest_check_receipt.receipt, r.receipt);
+}
+
+TEST(ControlNanopb, IngestResultsRoundTripAtTheirCaps) {
+  visio_schema_v1_control_CommandResult res =
+      visio_schema_v1_control_CommandResult_init_zero;
+  res.ok = true;
+  res.which_payload =
+      visio_schema_v1_control_CommandResult_ingest_credentials_tag;
+  FillTo(res.payload.ingest_credentials.session_token, 't');
+  FillTo(res.payload.ingest_credentials.secret_access_key, 's');
+  visio_schema_v1_control_CommandResult got =
+      visio_schema_v1_control_CommandResult_init_zero;
+  ASSERT_TRUE(Decode(visio_schema_v1_control_CommandResult_fields,
+                     Encode(visio_schema_v1_control_CommandResult_fields, res),
+                     &got));
+  EXPECT_EQ(std::strlen(got.payload.ingest_credentials.session_token),
+            sizeof(res.payload.ingest_credentials.session_token) - 1);
+
+  res.which_payload = visio_schema_v1_control_CommandResult_ingest_signature_tag;
+  FillTo(res.payload.ingest_signature.authorization, 'a');
+  visio_schema_v1_control_CommandResult got_sig =
+      visio_schema_v1_control_CommandResult_init_zero;
+  ASSERT_TRUE(Decode(visio_schema_v1_control_CommandResult_fields,
+                     Encode(visio_schema_v1_control_CommandResult_fields, res),
+                     &got_sig));
+  EXPECT_STREQ(got_sig.payload.ingest_signature.authorization,
+               res.payload.ingest_signature.authorization);
+}
+
+TEST(ControlNanopb, TestStorageCarriesTheDestinationHint) {
+  visio_schema_v1_control_Command cmd =
+      visio_schema_v1_control_Command_init_zero;
+  cmd.which_body = visio_schema_v1_control_Command_test_storage_tag;
+  cmd.body.test_storage.has_destination_hint = true;
+  FillTo(cmd.body.test_storage.destination_hint, 'h');
+  visio_schema_v1_control_Command got =
+      visio_schema_v1_control_Command_init_zero;
+  ASSERT_TRUE(Decode(visio_schema_v1_control_Command_fields,
+                     Encode(visio_schema_v1_control_Command_fields, cmd),
+                     &got));
+  EXPECT_EQ(std::strlen(got.body.test_storage.destination_hint),
+            sizeof(cmd.body.test_storage.destination_hint) - 1);
+}
+
 // DeviceState reports the key fingerprint but never the key. 17 = 16 hex
 // characters + NUL, the same 8 bytes the VREC container header carries.
 TEST(ControlNanopb, DeviceStateCarriesTheFingerprintNotTheKey) {
@@ -188,4 +350,45 @@ TEST(ControlNanopb, DeviceStateCarriesTheFingerprintNotTheKey) {
   EXPECT_STREQ(got.recording_key_fingerprint, "730311a8e481b5e6");
   EXPECT_STREQ(got.seal_key_id, "77ba509d");
   EXPECT_TRUE(got.recording_encryption_required);
+}
+
+
+TEST(ControlNanopb, SnapshotCorpusAndFiniteStream) {
+  const auto vectors = visio_golden::Load("snapshot_vectors.txt");
+  ASSERT_EQ(vectors.size(), 8u);
+  for (const auto& entry : vectors) {
+    if (entry.first.find(".cmd") != std::string::npos) {
+      visio_schema_v1_control_Command cmd = visio_schema_v1_control_Command_init_zero;
+      ASSERT_TRUE(Decode(visio_schema_v1_control_Command_fields, entry.second, &cmd));
+      EXPECT_EQ(Encode(visio_schema_v1_control_Command_fields, cmd), entry.second);
+      EXPECT_STREQ(cmd.target_device, "GILABS-TEST");
+    } else if (entry.first.find(".chunk") != std::string::npos) {
+      visio_schema_v1_service_snapshot_SnapshotChunk chunk =
+          visio_schema_v1_service_snapshot_SnapshotChunk_init_zero;
+      ASSERT_TRUE(Decode(visio_schema_v1_service_snapshot_SnapshotChunk_fields, entry.second, &chunk));
+      EXPECT_EQ(Encode(visio_schema_v1_service_snapshot_SnapshotChunk_fields, chunk), entry.second);
+      EXPECT_EQ(sizeof(chunk.jpeg.bytes), 1024u);
+      EXPECT_GT(chunk.jpeg.size, 0u);
+    } else {
+      visio_schema_v1_control_CommandResult result = visio_schema_v1_control_CommandResult_init_zero;
+      ASSERT_TRUE(Decode(visio_schema_v1_control_CommandResult_fields, entry.second, &result));
+      EXPECT_EQ(Encode(visio_schema_v1_control_CommandResult_fields, result), entry.second);
+      pb_release(visio_schema_v1_control_CommandResult_fields, &result);
+    }
+  }
+  visio_schema_v1_control_CommandResult result = visio_schema_v1_control_CommandResult_init_zero;
+  ASSERT_TRUE(Decode(visio_schema_v1_control_CommandResult_fields, vectors.at("capture.result"), &result));
+  ASSERT_EQ(result.which_payload, visio_schema_v1_control_CommandResult_snapshot_tag);
+  EXPECT_EQ(result.payload.snapshot.snapshot_id, result.command_id);
+  EXPECT_EQ(result.payload.snapshot.camera_index, 7u);
+  EXPECT_EQ(result.payload.snapshot.capture_pts_us, 12345678901234567ull);
+}
+
+TEST(ControlNanopb, SnapshotStreamRejectsOversizeBytes) {
+  visio_schema_v1_service_snapshot_SnapshotChunk chunk =
+      visio_schema_v1_service_snapshot_SnapshotChunk_init_zero;
+  chunk.jpeg.size = 1025;
+  std::uint8_t buffer[2048];
+  auto os = pb_ostream_from_buffer(buffer, sizeof(buffer));
+  EXPECT_FALSE(pb_encode(&os, visio_schema_v1_service_snapshot_SnapshotChunk_fields, &chunk));
 }
