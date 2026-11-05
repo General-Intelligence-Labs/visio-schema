@@ -164,3 +164,7 @@ reachable through the submodules (`visio_schema.transport`, `visio_schema.wire.c
 `visio_schema.routing`). They are **advanced/internal** — useful for building a bus or a custom
 transport, but not part of the [stability guarantee](../AGENTS.md). For the byte-level details, see
 the [protocol reference](protocol/).
+
+For provider-backed MCAP parts that cannot all fit on local disk, see
+[on-demand reader sessions](reader-sharding.md). This advanced reader API leaves storage and
+cache ownership with the caller and does not widen the package-root facade.
