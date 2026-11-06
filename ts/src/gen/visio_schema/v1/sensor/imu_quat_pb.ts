@@ -79,3 +79,4 @@ export type ImuQuat = Message<"visio_schema.v1.sensor.ImuQuat"> & {
  */
 export const ImuQuatSchema: GenMessage<ImuQuat> = /*@__PURE__*/
   messageDesc(file_visio_schema_v1_sensor_imu_quat, 1);
+

@@ -1,11 +1,12 @@
-// McapWriterEndpoint — a write-only sink ACTIVE OBJECT that records to MCAP. Send()
-// (called on the bus dispatch thread) resolves + snapshots the channel and
-// enqueues into a bounded queue (WritePolicy); the endpoint's OWN writer thread
-// drains it to disk, so the blocking SD write never touches the bus. Resolution
-// happens on the Send() caller (dispatch, serialized) and is snapshotted, so the
-// writer thread never touches the (non-thread-safe) ChannelRegistry. Ignores
-// on_inbound (write-only). Mirrors python/visio_schema/mcap/writer_endpoint.py,
-// except that a byte-bounded queue here keeps its payloads in a PayloadArena.
+// McapWriterEndpoint — a write-only sink ACTIVE OBJECT that records to MCAP.
+// Send() (called on the bus dispatch thread) resolves + snapshots the channel
+// and enqueues into a bounded queue (WritePolicy); the endpoint's OWN writer
+// thread drains it to disk, so the blocking SD write never touches the bus.
+// Resolution happens on the Send() caller (dispatch, serialized) and is
+// snapshotted, so the writer thread never touches the (non-thread-safe)
+// ChannelRegistry. Ignores on_inbound (write-only). Mirrors
+// python/visio_schema/mcap/writer_endpoint.py, except that a byte-bounded
+// queue here keeps its payloads in a PayloadArena.
 #pragma once
 
 #include <atomic>
@@ -28,7 +29,7 @@
 #include "visio_schema/mcap/payload_arena.hpp"
 #include "visio_schema/mcap/writer.hpp"
 #include "visio_schema/transport/monotonic_cv.hpp"
-#include "visio_schema/routing/channel.hpp"   // Channel
+#include "visio_schema/routing/channel.hpp"  // Channel
 #include "visio_schema/transport/endpoint.hpp"
 #include "visio_schema/transport/write_policy.hpp"
 #include "visio_schema/wire/message.hpp"
@@ -37,8 +38,8 @@ namespace visio_schema::mcap {
 
 using visio_schema::wire::Message;
 
-// resolve(stream_id) -> const Channel* (nullptr if unmapped). Called only on the
-// Send() caller's thread (the bus dispatch thread).
+// resolve(stream_id) -> const Channel* (nullptr if unmapped). Called only on
+// the Send() caller's thread (the bus dispatch thread).
 using StreamResolver = std::function<const Channel*(std::uint32_t)>;
 
 // The writer thread's view of the storage device — its write-stall pattern.
@@ -87,30 +88,33 @@ struct McapWriterStats {
 
 class McapWriterEndpoint : public transport::Endpoint {
  public:
-  // rotate_on_keyframe + pair_guard_ns are forwarded to the inner McapWriter; see
-  // McapWriter's ctor for their contract (opt-in keyframe-aligned rotation).
-  McapWriterEndpoint(std::string_view path, StreamResolver resolve,
-                     std::uint64_t max_bytes = 0, double max_duration_s = 0.0,
-                     transport::WritePolicy policy = transport::WritePolicy::lossless(),
-                     std::map<std::string, std::string> metadata = {},
-                     bool rotate_on_keyframe = false, std::int64_t pair_guard_ns = 0,
-                     std::uint64_t sync_span_bytes = 0,
-                     // Present -> each part is a VREC container instead of
-                     // plaintext MCAP. Passthrough; see McapWriter.
-                     std::optional<RecordingKey> recording_key = std::nullopt,
-                     // Write-time read-back. Passthrough; see McapWriter.
-                     McapReadbackOptions readback = {},
-                     std::shared_ptr<WriterStorage> storage = {},
-                     std::chrono::milliseconds checkpoint_interval = {},
-                     std::optional<McapRotationPolicy> rotation_policy = std::nullopt);
+  // rotate_on_keyframe + pair_guard_ns are forwarded to the inner McapWriter;
+  // see McapWriter's ctor for their contract (opt-in keyframe-aligned
+  // rotation).
+  McapWriterEndpoint(
+      std::string_view path, StreamResolver resolve,
+      std::uint64_t max_bytes = 0, double max_duration_s = 0.0,
+      transport::WritePolicy policy = transport::WritePolicy::lossless(),
+      std::map<std::string, std::string> metadata = {},
+      bool rotate_on_keyframe = false, std::int64_t pair_guard_ns = 0,
+      std::uint64_t sync_span_bytes = 0,
+      // Present -> each part is a VREC container instead of
+      // plaintext MCAP. Passthrough; see McapWriter.
+      std::optional<RecordingKey> recording_key = std::nullopt,
+      // Write-time read-back. Passthrough; see McapWriter.
+      McapReadbackOptions readback = {},
+      std::shared_ptr<WriterStorage> storage = {},
+      std::chrono::milliseconds checkpoint_interval = {},
+      std::optional<McapRotationPolicy> rotation_policy = std::nullopt);
   ~McapWriterEndpoint() override;
 
   McapWriterEndpoint(const McapWriterEndpoint&) = delete;
   McapWriterEndpoint& operator=(const McapWriterEndpoint&) = delete;
 
-  void Start(InboundFn on_inbound, ClosedFn on_closed) override;  // spawn writer thread
-  void Send(const Message& msg) override;              // resolve + enqueue
-  void Stop() override;                                // stop+join, finalize
+  void Start(InboundFn on_inbound,
+             ClosedFn on_closed) override;  // spawn writer thread
+  void Send(const Message& msg) override;   // resolve + enqueue
+  void Stop() override;                     // stop+join, finalize
   // Requests drain + durable close on mcap_wr. False means still in flight;
   // caller MUST retain this endpoint and its storage claim until completion.
   bool StopFor(std::chrono::milliseconds timeout);
@@ -118,20 +122,23 @@ class McapWriterEndpoint : public transport::Endpoint {
 
   // Frames still QUEUED — the depth the policy's max_depth bounds. Frames the
   // writer thread has already taken are not counted here (see pending_bytes
-  // for why the two differ: depth is a policy question, bytes are a memory one).
+  // for why the two differ: depth is a policy question, bytes are a memory
+  // one).
   std::size_t pending_frames() const;
   // Payload bytes the endpoint still HOLDS: queued, plus the batch the writer
   // thread has taken but not yet written. Counting only the queue would have
   // read 0 for the whole time a batch is being written to storage — the very
   // window in which the endpoint is at its fattest.
   std::size_t pending_bytes() const;
-  std::uint64_t dropped_frames() const { return dropped_.load(std::memory_order_relaxed); }
+  std::uint64_t dropped_frames() const {
+    return dropped_.load(std::memory_order_relaxed);
+  }
   std::uint64_t unmapped_frames() const {
     return unmapped_.load(std::memory_order_relaxed);
   }
   // Lifetime total of payload bytes written to disk (passthrough to the inner
-  // McapWriter; monotonic across part rotation). 0 until the first message drains
-  // to the writer thread.
+  // McapWriter; monotonic across part rotation). 0 until the first message
+  // drains to the writer thread.
   std::uint64_t bytes_written() const;
   McapWriterStats stats() const;
 
@@ -152,11 +159,14 @@ class McapWriterEndpoint : public transport::Endpoint {
 
   // Wait only on the command worker. SD I/O and bus dispatch never wait here.
   bool WaitForStart(std::chrono::milliseconds timeout);
-  void ArmStart(wire::SyncPoint target,
-                std::chrono::milliseconds wait = std::chrono::milliseconds::zero()) {
-    writer_->ArmStart(target,wait);
+  void ArmStart(
+      wire::SyncPoint target,
+      std::chrono::milliseconds wait = std::chrono::milliseconds::zero()) {
+    writer_->ArmStart(target, wait);
   }
-  McapWriter::StartStatus start_status() const { return writer_->start_status(); }
+  McapWriter::StartStatus start_status() const {
+    return writer_->start_status();
+  }
 
   // Write-time read-back passthrough (see McapReadbackOptions). Step from
   // any ONE thread of the caller's choosing while recording; the writer
@@ -187,6 +197,8 @@ class McapWriterEndpoint : public transport::Endpoint {
   void WriterLoop();
   void Finalize() noexcept;
   void DrainBatch(std::deque<Entry>& batch);  // timed writer_->Write
+  void ReleaseFront(std::deque<Entry>& entries,
+                    std::unique_lock<std::mutex>& lock);
   void NoteDrop(std::size_t n);
   void NoteUnmapped(std::uint32_t stream_id);
   // First occurrence, then every thousandth. Bucket-crossing rather than a
@@ -200,17 +212,19 @@ class McapWriterEndpoint : public transport::Endpoint {
   std::unique_ptr<visio_schema::mcap::McapWriter> writer_;
   transport::WritePolicy policy_;
   // Send()-caller-thread-only (the serialized bus dispatch thread); no lock.
-  std::unordered_map<std::uint32_t, std::shared_ptr<const Channel>> channel_cache_;
+  std::unordered_map<std::uint32_t, std::shared_ptr<const Channel>>
+      channel_cache_;
   // Recording membership is logical: a reconnect changes the bus link/id,
   // while the same camera topic retains its original recording channel.
   std::unordered_set<std::uint32_t> selected_video_ids_;
   bool freeze_video_membership_ = false;
-  std::unordered_map<std::string, std::shared_ptr<const Channel>> selected_video_topics_;
+  std::unordered_map<std::string, std::shared_ptr<const Channel>>
+      selected_video_topics_;
 
   // guards arena_, queue_, queue_bytes_, batch_ (pop/clear), stop_
   mutable std::mutex mu_;
   transport::MonotonicConditionVariable cv_, start_cv_, stopped_cv_;
-  std::mutex stop_mu_; // serializes Start/StopFor and the single join
+  std::mutex stop_mu_;  // serializes Start/StopFor and the single join
   // Sized for a full queue plus a full batch in flight, so every backlog
   // the policy allows is held here rather than in the producers' heap.
   // Declared before the queues: their records free into it on destruction.
@@ -221,6 +235,7 @@ class McapWriterEndpoint : public transport::Endpoint {
   // touches it; it pops and clears under mu_, because that frees arena_.
   std::deque<Entry> batch_;
   bool stop_ = false, finalized_ = false, finalizing_inline_ = false;
+  bool reclaim_in_flight_ = false;  // writer claim only; guarded by mu_
   std::thread thread_;
 
   // Bytes of the swapped-out batch not yet written, i.e. taken off queue_
@@ -236,7 +251,7 @@ class McapWriterEndpoint : public transport::Endpoint {
   // endpoint hold right now".
   std::atomic<std::uint64_t> inflight_bytes_{0};
 
-  std::atomic<bool> failed_{false};   // unrecoverable storage error, latched
+  std::atomic<bool> failed_{false};  // unrecoverable storage error, latched
   std::atomic<std::uint64_t> dropped_{0};
   std::atomic<std::uint64_t> unmapped_{0};
   // Written only under mu_ (Send), read lock-free by stats().

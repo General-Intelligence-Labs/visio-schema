@@ -115,11 +115,16 @@ add_library(visio::schema ALIAS visio_schema)
 # ---- tests (top-level host builds only; skipped when cross-compiling) -------
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT CMAKE_CROSSCOMPILING)
   include(FetchContent)
+  # Older supported CMake versions preserve archive timestamps by default.
+  set(GOOGLETEST_TIMESTAMP_ARGS)
+  if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
+    set(GOOGLETEST_TIMESTAMP_ARGS DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  endif()
   FetchContent_Declare(
     googletest
     URL https://github.com/google/googletest/archive/refs/tags/v1.15.2.tar.gz
     URL_HASH SHA256=7b42b4d6ed48810c5362c265a17faebe90dc2373c885e5216439d37927f02926
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    ${GOOGLETEST_TIMESTAMP_ARGS}
   )
   set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
   FetchContent_MakeAvailable(googletest)
@@ -187,5 +192,17 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT CMAKE_CROSSCOMPILI
     target_link_libraries(visio_schema_mcap_io_tests PRIVATE
       visio_schema GTest::gtest_main ${CMAKE_DL_LIBS})
     gtest_discover_tests(visio_schema_mcap_io_tests PROPERTIES TIMEOUT 30)
+
+    # Keep the actual arena syscall wrapper out of all other test targets.
+    add_executable(visio_schema_mcap_arena_boundary_tests
+      tests/test_mcap_arena_boundary.cc tests/mcap_arena_boundary.cc)
+    target_include_directories(visio_schema_mcap_arena_boundary_tests PRIVATE
+      "${MCAP_INCLUDE_DIR}")
+    target_link_libraries(visio_schema_mcap_arena_boundary_tests PRIVATE
+      visio_schema GTest::gtest_main pthread)
+    target_link_options(visio_schema_mcap_arena_boundary_tests PRIVATE
+      -Wl,--wrap=madvise -Wl,--wrap=pthread_cond_wait)
+    gtest_discover_tests(visio_schema_mcap_arena_boundary_tests
+      PROPERTIES TIMEOUT 20)
   endif()
 endif()
