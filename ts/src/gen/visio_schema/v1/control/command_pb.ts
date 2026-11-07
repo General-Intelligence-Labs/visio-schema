@@ -378,7 +378,7 @@ export type UploadRecording = Message<"visio_schema.v1.control.UploadRecording">
 
   /**
    * The one-file upload link (an Azure Blob SAS URL scoped to one blob,
-   * permissions at least read + create).
+   * permissions at least read + write).
    *
    * @generated from field: string url = 2;
    */

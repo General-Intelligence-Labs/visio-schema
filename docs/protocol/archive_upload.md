@@ -28,9 +28,10 @@ archive uploads.
   keeps the job, link included, on internal storage until the upload ends, so it continues across
   host disconnects, new recordings, network drops and reboots. Sending it again for the same
   session with a fresh link for the **same blob** replaces the stored link; the upload continues
-  where it stopped. The link must be `https`, name one blob (`sr=b`) and grant read and create
-  (`sp` containing `r` and `c`): read lets the device list the blocks already uploaded, so a
-  resume does not start over. Over BLE the command is accepted only inside the encrypted session.
+  where it stopped. The link must be `https`, name one blob (`sr=b`) and grant read and write
+  (`sp` containing `r` and `w`): read lets the device list the blocks already uploaded, so a
+  resume does not start over, and write is what Put Block and Put Block List need (create
+  alone permits only a single-request Put Blob). Over BLE the command is accepted only inside the encrypted session.
   Refusals: `no_such_session`, `active_session`, `invalid_request`, `insecure_link`, `no_sdcard`,
   `busy`, `unsupported`.
 - **`CancelUpload { session_key }`** stops the upload and forgets the link. Uploaded blocks stay

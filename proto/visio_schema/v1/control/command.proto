@@ -107,7 +107,7 @@ message UploadRecording {
   // The recording's id: RecordingEntry.session_key (32 lowercase hex).
   string session_key = 1;
   // The one-file upload link (an Azure Blob SAS URL scoped to one blob,
-  // permissions at least read + create).
+  // permissions at least read + write).
   string url         = 2;
 }
 
