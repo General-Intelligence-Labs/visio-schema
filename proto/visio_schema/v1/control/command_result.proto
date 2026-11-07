@@ -56,6 +56,10 @@ message RecordingEntry {
     UPLOAD_STATE_IN_FLIGHT = 2;
     UPLOAD_STATE_COMPLETED = 3;
     UPLOAD_STATE_FAILED    = 4;
+    // An archive upload (UploadRecording) whose link the storage service
+    // rejected (expired or revoked). The upload resumes when the host sends
+    // UploadRecording again with a fresh link for the same blob.
+    UPLOAD_STATE_NEEDS_LINK = 5;
   }
   UploadState upload_state   = 5;
   uint32      attempts       = 6;
@@ -90,6 +94,20 @@ message RecordingEntry {
   // The files themselves, only when ListRecordings.session_name named this
   // session; empty in a page of sessions.
   repeated RecordingFile files = 19;
+
+  // The recording's id: 128 random bits as 32 lowercase hex, minted when the
+  // recording starts and written into its session.json and MCAP metadata.
+  // Unlike `name`, unique across devices. Empty on sessions recorded by
+  // firmware that did not mint one.
+  string session_key = 20;
+
+  // Archive upload (UploadRecording) only: the blob the archive is written
+  // to, as named by the link; empty when the session has no archive upload.
+  string upload_blob = 21;
+
+  // Archive upload only: the archive's exact size in bytes (the tar holding
+  // the session's files); 0 until the device has planned the archive.
+  uint64 archive_bytes = 22;
 }
 
 // One file inside a recorded session.
@@ -129,6 +147,13 @@ message RecordingFile {
   Integrity integrity = 9; // independent of save or transfer completion
   uint64 checkpointed_bytes = 10;
   bool recovered = 11; // recovered data may still be damaged
+
+  // Archive upload only, filled once the file's bytes have been uploaded:
+  // the MD5 of the file's data as stored in the archive (32 lowercase hex),
+  // and the byte position of that data inside the archive. Empty / 0
+  // otherwise. A host forwards both to its backend to verify the archive.
+  string md5            = 12;
+  uint64 archive_offset = 13;
 }
 
 message RecordingsList {
@@ -172,6 +197,9 @@ message RecordingStop {
     REASON_DEVICE = 3;
   }
   Reason reason = 2;
+
+  // The recording's id (RecordingEntry.session_key); empty when none.
+  string session_key = 3;
 }
 
 // The device's operational-state snapshot — the GET /info payload. Fields that
@@ -525,6 +553,14 @@ message DeviceState {
   // could never open, instead of letting that surface in a factory as an
   // unexplained "bad_envelope" on a rig.
   string seal_key_id = 37;
+
+  // The id (RecordingEntry.session_key) of the recording in progress; empty
+  // when not recording.
+  string recording_session_key = 57;
+
+  // True when this firmware accepts UploadRecording (archive uploads through
+  // a one-file link). Reads false on firmware that predates it.
+  bool archive_upload_supported = 58;
 }
 
 // The single ack a device emits per Command on /<device>/command_result.

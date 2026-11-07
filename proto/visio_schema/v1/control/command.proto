@@ -78,7 +78,45 @@ message Command {
     IngestOpenCredentials ingest_open_credentials = 50;
     IngestCheckReceipt ingest_check_receipt = 51;
     SetMaxRecordingDuration set_max_recording_duration = 52;
+
+    UploadRecording upload_recording = 56;
+    CancelUpload    cancel_upload    = 57;
   }
+}
+
+// Upload one finished recording as a single archive file through a one-file
+// upload link the host obtained from its own backend. See
+// docs/protocol/archive_upload.md.
+//
+// The device queues the upload and owns it from then on: it continues across
+// host disconnects, new recordings, network drops and reboots, and reports
+// progress in RecordingEntry (upload_state, bytes_uploaded, upload_blob). The
+// link is kept on the device's internal storage until the upload ends.
+// Repeating the command for the same session_key with a fresh link for the
+// SAME blob replaces the stored link and continues where the upload stopped.
+//
+// The link is a credential: over BLE the device accepts this command only
+// inside the encrypted session. Allowed while another recording is running
+// (the upload then waits for the recording to stop).
+//
+// Refusals: "no_such_session", "active_session" (the session is still being
+// recorded), "invalid_request" (not an https Azure blob URL, or a malformed
+// session_key), "insecure_link" (a BLE link without the encrypted session),
+// "no_sdcard", "busy", "unsupported".
+message UploadRecording {
+  // The recording's id: RecordingEntry.session_key (32 lowercase hex).
+  string session_key = 1;
+  // The one-file upload link (an Azure Blob SAS URL scoped to one blob,
+  // permissions at least read + create).
+  string url         = 2;
+}
+
+// Stop a recording's archive upload and forget its link. Blocks already sent
+// stay with the storage service until it discards them. Answers ok for a
+// session with no upload. Refusals: "no_such_session", "invalid_request",
+// "unsupported".
+message CancelUpload {
+  string session_key = 1;
 }
 
 // Persist a board-advertised capture preset. Applied after restart; resolution
@@ -754,6 +792,11 @@ message ListRecordings {
   // Unset = a page of sessions without files. A session that does not exist
   // answers ok=false, error_code "no_such_session".
   string session_name = 3;
+
+  // Set = the same as session_name, naming the session by its recording id
+  // (RecordingEntry.session_key) instead. When both are set they must name
+  // the same session.
+  string session_key = 4;
 }
 
 // Open one recording file for a pull. The CommandResult carries
@@ -795,6 +838,11 @@ message OpenRecordingFile {
 // "delete_failed", "invalid_request", "unsupported".
 message DeleteRecording {
   string session_name = 1;
+  // Names the session by its recording id (RecordingEntry.session_key)
+  // instead; when both are set they must name the same session. A session
+  // whose archive upload is still in progress answers "protected"
+  // (CancelUpload it first).
+  string session_key = 2;
 }
 
 // Pull the device's operational-state snapshot; the CommandResult carries

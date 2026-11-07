@@ -6,6 +6,18 @@ bump the MINOR version.
 
 ## Unreleased
 
+### Archive upload through a one-file link
+
+Add `UploadRecording` (Command 56) and `CancelUpload` (57): a host hands a
+device one recording id and one Azure Blob SAS URL, and the device uploads the
+session as a single tar archive, resuming by block. New `UPLOAD_STATE_NEEDS_LINK`
+(5); `RecordingEntry.session_key` / `upload_blob` / `archive_bytes` (20-22);
+`RecordingFile.md5` / `archive_offset` (12-13); `RecordingStop.session_key` (3);
+`DeviceState.recording_session_key` / `archive_upload_supported` (57-58);
+`ListRecordings.session_key` (4) and `DeleteRecording.session_key` (2). All
+additive: older firmware answers the new commands `unsupported`, older hosts
+ignore the new fields. See docs/protocol/archive_upload.md.
+
 ### SD startup and insertion status
 
 Add optional `DeviceState.sd_card_status` (tag 56), reporting storage phase,

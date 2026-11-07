@@ -59,6 +59,17 @@ visio_schema.v1.control.RecordingStop.session_name    max_size:64
 visio_schema.v1.control.OpenRecordingFile.session_name max_size:64
 visio_schema.v1.control.OpenRecordingFile.file_name   max_size:64
 visio_schema.v1.control.DeleteRecording.session_name  max_size:64
+# Archive upload (UploadRecording): the recording id is 32 lowercase hex
+# (33 with NUL) wherever a command or state carries it inline.
+visio_schema.v1.control.ListRecordings.session_key    max_size:33
+visio_schema.v1.control.DeleteRecording.session_key   max_size:33
+visio_schema.v1.control.RecordingStop.session_key     max_size:33
+visio_schema.v1.control.CancelUpload.session_key      max_size:33
+visio_schema.v1.control.UploadRecording.session_key   max_size:33
+# A one-file Azure SAS URL: account host + container + blob path + SAS query
+# (a user delegation SAS adds ~250 characters of signer fields), ~600 in
+# practice. In a oneof arm, so paid once across the whole Command.
+visio_schema.v1.control.UploadRecording.url           max_size:1024
 visio_schema.v1.control.SetStorage.endpoint_url       max_size:128
 visio_schema.v1.control.SetStorage.region             max_size:32
 visio_schema.v1.control.SetStorage.bucket             max_size:64
@@ -148,6 +159,7 @@ visio_schema.v1.control.CommandResult.error_code               max_size:32
 visio_schema.v1.control.CommandResult.error_message            max_size:128
 visio_schema.v1.service.snapshot.SnapshotChunk.jpeg           max_size:1024
 visio_schema.v1.control.DeviceState.recording_session_name     max_size:64
+visio_schema.v1.control.DeviceState.recording_session_key      max_size:33
 visio_schema.v1.control.SdCardStatus.reason_code               max_size:64
 # recording_* / recording_meta_* mirror StartRecording + SetRecordingMeta above
 # (the board echoes what it accepted); keep the sizes equal or the echo would
@@ -192,6 +204,9 @@ visio_schema.v1.control.RecordingEntry.message    type:FT_POINTER
 visio_schema.v1.control.RecordingEntry.capturer   type:FT_POINTER
 visio_schema.v1.control.RecordingEntry.files      type:FT_POINTER
 visio_schema.v1.control.RecordingFile.name        type:FT_POINTER
+visio_schema.v1.control.RecordingEntry.session_key type:FT_POINTER
+visio_schema.v1.control.RecordingEntry.upload_blob type:FT_POINTER
+visio_schema.v1.control.RecordingFile.md5         type:FT_POINTER
 visio_schema.v1.control.RecordingsList.next_cursor type:FT_POINTER
 
 # DeviceState.wifi_networks: the first FT_POINTER field on DeviceState, which is
