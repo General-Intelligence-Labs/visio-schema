@@ -17,7 +17,6 @@ from test_truncated import _chop_tail, _summary_start
 
 from visio_schema import make_channel
 from visio_schema.reader import (
-    BlobReaderIO,
     IndexSource,
     OnDemandSession,
     Session,
@@ -29,28 +28,31 @@ from visio_schema.reader import (
     UnsupportedOperationError,
 )
 from visio_schema.reader.session import _FileIndex
+from visio_schema.reader.sharding import _ShardReaderIO
 
 CAM = '/ego/camera/0'
 
 
-class MemoryBlob:
-    def __init__(self, data):
-        self.data, self.calls = data, []
-
-    @property
-    def size(self):
-        return len(self.data)
-
-    def read_at(self, offset, size):
-        self.calls.append((offset, size))
-        return self.data[offset : offset + size]
-
-
 class LocalProvider:
-    def __init__(self, paths):
+    def __init__(self, paths=(), *, remote=None):
         self.paths = {p.name: p for p in paths}
-        self.pinned, self.events = set(), []
-        self.peak = 0
+        self.remote = remote or {}
+        self.pinned, self.events, self.ranges = set(), [], []
+        self.peak = self.list_calls = 0
+
+    def list_shards(self):
+        self.list_calls += 1
+        refs = {key: ShardRef(key, path.stat().st_size) for key, path in self.paths.items()}
+        refs.update({key: ShardRef(key, len(data)) for key, data in self.remote.items()})
+        return list(refs.values())
+
+    def read_at(self, shard, offset, size):
+        self.ranges.append((shard.key, offset, size))
+        if shard.key in self.remote:
+            return self.remote[shard.key][offset : offset + size]
+        with self.paths[shard.key].open('rb') as file:
+            file.seek(offset)
+            return file.read(size)
 
     @contextmanager
     def acquire(self, shard):
@@ -91,13 +93,95 @@ def shards(rec):
 def sessions(builder, shards, **kwargs):
     provider = LocalProvider(shards)
     for path in reversed(shards):
-        builder.index_remote_shard(
-            ShardRef(path.name, path.stat().st_size),
-            reader=MemoryBlob(path.read_bytes()),
-            provider=provider,
-        )
+        builder.index_remote_shard(ShardRef(path.name, path.stat().st_size), provider=provider)
     catalog = builder.build()
     return Session(shards, **kwargs), OnDemandSession(catalog, provider, **kwargs), provider
+
+
+def test_from_provider_accepts_empty_inventory():
+    provider = LocalProvider()
+    catalog = ShardCatalogBuilder.from_provider(provider)
+    assert catalog == ShardCatalog(version=1, shards=())
+    assert provider.list_calls == 1
+    assert provider.ranges == provider.events == []
+    with pytest.raises(ValueError, match='no MCAP shards'):
+        OnDemandSession(catalog, provider)
+
+
+def test_from_provider_indexes_and_orders_all_shards(builder, shards):
+    provider = LocalProvider(reversed(shards))
+    catalog = ShardCatalogBuilder.from_provider(provider)
+    for path in shards:
+        builder.index_local_shard(path.name, path)
+    assert catalog == builder.build()
+    assert [entry.key for entry in catalog.shards] == [path.name for path in shards]
+    assert {key for key, _offset, _size in provider.ranges} == {path.name for path in shards}
+    assert provider.events == []
+    session = OnDemandSession(catalog, provider)
+    assert session.topics() == Session(shards).topics()
+    assert session.metadata == Session(shards).metadata
+    assert provider.list_calls == 1
+    assert not provider.pinned
+
+
+def test_from_provider_reuses_single_shard_fallback(rec, tmp_path, monkeypatch):
+    healthy = rec('healthy.mcap').add_camera(CAM, indexed_frames(3)).write()
+    unindexed = unindexed_mcap(tmp_path / 'unindexed.mcap')
+    provider = LocalProvider([healthy, unindexed])
+    calls = []
+    index_remote_shard = ShardCatalogBuilder.index_remote_shard
+
+    def record_index(self, shard, *, provider):
+        calls.append(shard)
+        return index_remote_shard(self, shard, provider=provider)
+
+    monkeypatch.setattr(ShardCatalogBuilder, 'index_remote_shard', record_index)
+    catalog = ShardCatalogBuilder.from_provider(provider)
+    assert [ref.key for ref in calls] == [healthy.name, unindexed.name]
+    entries = {entry.key: entry for entry in catalog.shards}
+    assert entries[healthy.name].index_source == IndexSource.MCAP_SUMMARY
+    assert entries[unindexed.name].index_source == IndexSource.LINEAR_SCAN
+    assert not entries[unindexed.name].chunk_indexed
+    assert provider.list_calls == 1
+    assert provider.events == [('acquire', unindexed.name), ('release', unindexed.name)]
+    assert not provider.pinned
+
+
+def test_from_provider_propagates_listing_failure():
+    class FailingProvider(LocalProvider):
+        def list_shards(self):
+            raise OSError('listing failed')
+
+    provider = FailingProvider()
+    with pytest.raises(OSError, match='listing failed'):
+        ShardCatalogBuilder.from_provider(provider)
+    assert provider.ranges == provider.events == []
+
+
+def test_from_provider_handles_5000_shards(builder, rec):
+    path = rec().add_camera(CAM, indexed_frames(1)).write()
+    builder.index_local_shard(path.name, path)
+    (template,) = builder.build().shards
+    refs = tuple(ShardRef(f'{i:04}.mcap', template.size) for i in range(5000))
+    calls = []
+
+    class ListingProvider(LocalProvider):
+        def list_shards(self):
+            self.list_calls += 1
+            return refs
+
+    class InventoryBuilder(ShardCatalogBuilder):
+        def index_remote_shard(self, shard, *, provider):
+            calls.append(shard)
+            self._entries.append(replace(template, key=shard.key, size=shard.size))
+
+    provider = ListingProvider()
+    catalog = InventoryBuilder.from_provider(provider)
+    assert len(catalog.shards) == 5000
+    assert tuple(calls) == refs
+    assert tuple(entry.ref for entry in catalog.shards) == refs
+    assert provider.list_calls == 1
+    assert provider.ranges == provider.events == []
 
 
 def test_catalog_roundtrip_and_inventory(builder, shards, tmp_path):
@@ -152,11 +236,10 @@ def test_catalog_version_checked(builder, version):
 
 def test_builder_registers_shards_and_freezes_after_build(builder, shards):
     assert builder.index_local_shard(shards[0].name, shards[0]) is None
-    provider = LocalProvider([])
+    provider = LocalProvider([shards[1]])
     assert (
         builder.index_remote_shard(
             ShardRef(shards[1].name, shards[1].stat().st_size),
-            reader=MemoryBlob(shards[1].read_bytes()),
             provider=provider,
         )
         is None
@@ -169,20 +252,18 @@ def test_builder_registers_shards_and_freezes_after_build(builder, shards):
     with pytest.raises(ValueError, match='after build'):
         builder.index_remote_shard(
             ShardRef(shards[2].name, shards[2].stat().st_size),
-            reader=MemoryBlob(shards[2].read_bytes()),
             provider=provider,
         )
     assert builder.build() == catalog
     assert provider.events == []
 
 
-def test_remote_reader_size_mismatch_is_fatal(builder):
-    with pytest.raises(ValueError, match='remote reader size'):
-        builder.index_remote_shard(
-            ShardRef('part.mcap', 9),
-            reader=MemoryBlob(b'123'),
-            provider=LocalProvider([]),
-        )
+@pytest.mark.parametrize('size', [-1, True, 1.5])
+def test_invalid_remote_shard_size_is_fatal(builder, size):
+    provider = LocalProvider()
+    with pytest.raises(ValueError, match='ShardRef.size'):
+        builder.index_remote_shard(ShardRef('part.mcap', size), provider=provider)
+    assert provider.ranges == provider.events == []
     assert builder.build().shards == ()
 
 
@@ -190,7 +271,7 @@ def test_fallback_size_mismatch_releases_handle(builder, tmp_path):
     path = unindexed_mcap(tmp_path / 'part.mcap')
     data = path.read_bytes()
 
-    class WrongSizeProvider:
+    class WrongSizeProvider(LocalProvider):
         @contextmanager
         def acquire(self, shard):
             self.pinned = True
@@ -200,11 +281,10 @@ def test_fallback_size_mismatch_releases_handle(builder, tmp_path):
                 self.pinned = False
 
     (tmp_path / 'wrong.mcap').write_bytes(b'wrong')
-    provider = WrongSizeProvider()
+    provider = WrongSizeProvider(remote={path.name: data})
     with pytest.raises(ValueError, match='acquired file size'):
         builder.index_remote_shard(
             ShardRef(path.name, len(data)),
-            reader=MemoryBlob(data),
             provider=provider,
         )
     assert not provider.pinned
@@ -215,11 +295,10 @@ def test_fallback_parse_failure_releases_handle(builder, tmp_path):
     path = unindexed_mcap(tmp_path / 'part.mcap')
     data = path.read_bytes()
     path.write_bytes(b'x' * len(data))
-    provider = LocalProvider([path])
+    provider = LocalProvider([path], remote={path.name: data})
     with pytest.raises(InvalidMagic):
         builder.index_remote_shard(
             ShardRef(path.name, len(data)),
-            reader=MemoryBlob(data),
             provider=provider,
         )
     assert not provider.pinned
@@ -227,9 +306,10 @@ def test_fallback_parse_failure_releases_handle(builder, tmp_path):
     assert builder.build().shards == ()
 
 
-def test_blob_adapter_seek_and_close():
-    blob = MemoryBlob(b'abcdefgh')
-    with BlobReaderIO(blob) as file:
+def test_shard_adapter_seek_and_close():
+    shard = ShardRef('part.mcap', 8)
+    provider = LocalProvider(remote={shard.key: b'abcdefgh'})
+    with _ShardReaderIO(provider, shard) as file:
         assert file.read(2) == b'ab'
         assert file.seek(-1, io.SEEK_CUR) == 1
         buf = bytearray(2)
@@ -242,11 +322,41 @@ def test_blob_adapter_seek_and_close():
         file.tell()
 
 
+def test_shared_provider_keeps_shard_cursors_independent():
+    provider = LocalProvider(remote={'first': b'abcdefgh', 'second': b'12345678'})
+    first_ref, second_ref = ShardRef('first', 8), ShardRef('second', 8)
+    with (
+        _ShardReaderIO(provider, first_ref) as first,
+        _ShardReaderIO(provider, second_ref) as second,
+    ):
+        assert first.read(2) == b'ab'
+        assert second.read(3) == b'123'
+        assert first.tell() == 2 and second.tell() == 3
+        assert first.read(2) == b'cd'
+        assert second.read(2) == b'45'
+        first.seek(8)
+        calls = len(provider.ranges)
+        assert first.read(1) == b'' and len(provider.ranges) == calls
+    assert provider.ranges == [('first', 0, 2), ('second', 0, 3), ('first', 2, 2), ('second', 3, 2)]
+    assert provider.events == []
+
+
+def test_reader_adapters_are_not_public_api():
+    from visio_schema import reader
+    from visio_schema.reader import sharding
+
+    for name in ('BlobReader', 'BlobReaderIO'):
+        assert not hasattr(reader, name)
+        assert not hasattr(sharding, name)
+        assert name not in reader.__all__
+    assert '_ShardReaderIO' not in reader.__all__
+
+
 def test_range_summary_uses_bounded_reads(builder, rec):
     path = rec().add_camera(CAM, indexed_frames(20)).write(chunk_size=200)
-    blob = MemoryBlob(path.read_bytes())
-    provider = LocalProvider([])
-    builder.index_remote_shard(ShardRef('remote.mcap', blob.size), reader=blob, provider=provider)
+    data = path.read_bytes()
+    provider = LocalProvider(remote={'remote.mcap': data})
+    builder.index_remote_shard(ShardRef('remote.mcap', len(data)), provider=provider)
     (entry,) = builder.build().shards
     assert provider.events == []
     assert entry.index_source == 'range_summary'
@@ -254,9 +364,10 @@ def test_range_summary_uses_bounded_reads(builder, rec):
     assert entry.start_ns == T0 and entry.end_ns == T0 + 19 * FRAME_DT
     assert entry.topic_info[0].schema_name == 'foxglove.CompressedVideo'
     cut = _summary_start(path)
-    assert all(offset < 8 or offset >= cut for offset, _size in blob.calls)
-    assert sum(size for _offset, size in blob.calls) < len(blob.data) // 2
-    assert len(blob.calls) < 20
+    assert all(offset < 8 or offset >= cut for _key, offset, _size in provider.ranges)
+    assert sum(size for _key, _offset, size in provider.ranges) < len(data) // 2
+    assert len(provider.ranges) < 20
+    assert {key for key, _offset, _size in provider.ranges} == {'remote.mcap'}
 
 
 def test_filelike_index_does_not_close_caller_stream(builder, shards):
@@ -276,7 +387,6 @@ def test_missing_summary_acquires_local_fallback(builder, tmp_path, caplog):
     provider = LocalProvider([path])
     builder.index_remote_shard(
         ShardRef(path.name, path.stat().st_size),
-        reader=MemoryBlob(path.read_bytes()),
         provider=provider,
     )
     (entry,) = builder.build().shards
@@ -294,7 +404,6 @@ def test_unreadable_summary_and_truncated_prefix(builder, rec):
     provider = LocalProvider([path])
     builder.index_remote_shard(
         ShardRef(path.name, path.stat().st_size),
-        reader=MemoryBlob(path.read_bytes()),
         provider=provider,
     )
     catalog = builder.build()
@@ -312,27 +421,21 @@ def test_unreadable_summary_and_truncated_prefix(builder, rec):
 
 
 def test_invalid_magic_and_network_error_do_not_trigger_fallback(builder):
-    provider = LocalProvider([])
+    provider = LocalProvider(remote={'not.mcap': b'not mcap' * 10})
     with pytest.raises(InvalidMagic):
-        builder.index_remote_shard(
-            ShardRef('not.mcap', 80),
-            reader=MemoryBlob(b'not mcap' * 10),
-            provider=provider,
-        )
+        builder.index_remote_shard(ShardRef('not.mcap', 80), provider=provider)
+    assert provider.events == []
 
-    class FailingBlob(MemoryBlob):
-        def read_at(self, offset, size):
+    class FailingProvider(LocalProvider):
+        def read_at(self, shard, offset, size):
             if offset > 8:
                 raise PermissionError('denied')
-            return super().read_at(offset, size)
+            return super().read_at(shard, offset, size)
 
+    failing = FailingProvider(remote={'network.mcap': b'\x89MCAP0\r\n' + b'x' * 100})
     with pytest.raises(PermissionError, match='denied'):
-        builder.index_remote_shard(
-            ShardRef('network.mcap', 108),
-            reader=FailingBlob(b'\x89MCAP0\r\n' + b'x' * 100),
-            provider=provider,
-        )
-    assert provider.events == []
+        builder.index_remote_shard(ShardRef('network.mcap', 108), provider=failing)
+    assert failing.events == []
     assert builder.build().shards == ()
 
 
@@ -345,7 +448,6 @@ def test_corrupt_summary_acquires_local_fallback(builder, rec):
     provider = LocalProvider([path])
     builder.index_remote_shard(
         ShardRef(path.name, path.stat().st_size),
-        reader=MemoryBlob(data),
         provider=provider,
     )
     (entry,) = builder.build().shards
@@ -356,15 +458,14 @@ def test_corrupt_summary_acquires_local_fallback(builder, rec):
 
 
 def test_short_remote_read_is_an_io_error_not_summary_fallback(builder, shards):
-    class ShortBlob(MemoryBlob):
-        def read_at(self, offset, size):
-            return super().read_at(offset, size)[:-1]
+    class ShortProvider(LocalProvider):
+        def read_at(self, shard, offset, size):
+            return super().read_at(shard, offset, size)[:-1]
 
-    provider = LocalProvider([])
+    provider = ShortProvider(remote={'short.mcap': shards[0].read_bytes()})
     with pytest.raises(OSError, match='short read'):
         builder.index_remote_shard(
             ShardRef('short.mcap', shards[0].stat().st_size),
-            reader=ShortBlob(shards[0].read_bytes()),
             provider=provider,
         )
     assert provider.events == []
@@ -386,8 +487,7 @@ def test_no_chunk_index_is_not_fabricated(builder, rec):
         writer.finish()
     builder.index_remote_shard(
         ShardRef(b.path.name, b.path.stat().st_size),
-        reader=MemoryBlob(b.path.read_bytes()),
-        provider=LocalProvider([]),
+        provider=LocalProvider([b.path]),
     )
     catalog = builder.build()
     (entry,) = catalog.shards
@@ -470,19 +570,14 @@ def test_part_session_is_context_managed_on_both_sessions(builder, shards):
 def test_rotation_metadata_range_reads_are_bounded(builder, rec):
     recording = rec().add_camera(CAM, indexed_frames(20), keyint=5)
     path = write_rows(recording.path, [(*r, i) for i, r in enumerate(recording._rows)], 0)
-    blob = MemoryBlob(path.read_bytes())
-    provider = LocalProvider([])
-    builder.index_remote_shard(
-        ShardRef(path.name, blob.size),
-        reader=blob,
-        provider=provider,
-    )
+    provider = LocalProvider([path])
+    builder.index_remote_shard(ShardRef(path.name, path.stat().st_size), provider=provider)
     (entry,) = builder.build().shards
     assert entry.rotation.recording_id == 'test-recording'
     assert entry.rotation.part_index == 0
     assert provider.events == []
-    assert all(size <= io.DEFAULT_BUFFER_SIZE for _, size in blob.calls)
-    assert len(blob.calls) < 20
+    assert all(size <= io.DEFAULT_BUFFER_SIZE for _key, _offset, size in provider.ranges)
+    assert len(provider.ranges) < 20
 
 
 def test_remote_metadata_without_summary_never_scans(builder, rec, monkeypatch):
@@ -508,7 +603,6 @@ def test_remote_metadata_without_summary_never_scans(builder, rec, monkeypatch):
     monkeypatch.setattr(sharding, 'make_reader', metadata_reader)
     builder.index_remote_shard(
         ShardRef(path.name, path.stat().st_size),
-        reader=MemoryBlob(path.read_bytes()),
         provider=provider,
     )
     assert builder.build().shards[0].rotation.part_index == 0

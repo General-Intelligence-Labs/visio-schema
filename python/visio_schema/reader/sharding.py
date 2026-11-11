@@ -45,17 +45,8 @@ class UnsupportedOperationError(NotImplementedError):
     """This access path is intentionally unavailable for on-demand sessions."""
 
 
-class BlobReader(Protocol):
-    """Random-access bytes supplied by the caller, without a storage SDK."""
-
-    @property
-    def size(self) -> int: ...
-
-    def read_at(self, offset: int, size: int) -> bytes: ...
-
-
-class BlobReaderIO(io.BufferedIOBase):
-    """Adapt one blob's read_at(offset, size) to MCAP's read/seek/tell interface.
+class _ShardReaderIO(io.BufferedIOBase):
+    """Bind one provider shard to MCAP's read/seek/tell interface.
 
     This adapter owns only a byte cursor, not a download or connection. MCAP's
     parser chooses the offsets; an outer BufferedReader coalesces small reads.
@@ -63,11 +54,11 @@ class BlobReaderIO(io.BufferedIOBase):
     temporary BufferedReaders whose destruction would close the shared source.
     """
 
-    def __init__(self, reader: BlobReader):
+    def __init__(self, provider: ShardProvider, shard: ShardRef):
         super().__init__()
-        if type(reader.size) is not int or reader.size < 0:
-            raise ValueError('BlobReader.size must be a nonnegative integer')
-        self._reader = reader
+        if type(shard.size) is not int or shard.size < 0:
+            raise ValueError('ShardRef.size must be a nonnegative integer')
+        self._provider, self._shard = provider, shard
         self._position = 0
 
     def readable(self) -> bool:
@@ -85,24 +76,24 @@ class BlobReaderIO(io.BufferedIOBase):
         if whence == io.SEEK_CUR:
             offset += self._position
         elif whence == io.SEEK_END:
-            offset += self._reader.size
+            offset += self._shard.size
         elif whence != io.SEEK_SET:
             raise ValueError(f'invalid seek whence: {whence}')
         if offset < 0:
-            raise McapError('MCAP seek before the start of the blob')
+            raise McapError('MCAP seek before the start of the shard')
         self._position = offset
         return offset
 
     def read(self, size: int = -1) -> bytes:
         self._checkClosed()
-        remaining = max(0, self._reader.size - self._position)
+        remaining = max(0, self._shard.size - self._position)
         size = remaining if size is None or size < 0 else min(size, remaining)
         if not size:
             return b''
-        data = self._reader.read_at(self._position, size)
+        data = self._provider.read_at(self._shard, self._position, size)
         if len(data) != size:
             raise OSError(
-                f'BlobReader short read at {self._position}: wanted {size}, got {len(data)}'
+                f'{self._shard.key}: short read at {self._position}: wanted {size}, got {len(data)}'
             )
         self._position += size
         return data
@@ -306,7 +297,15 @@ class ShardCatalog:
 
 
 class ShardProvider(Protocol):
-    """A stage-side way to pin a local shard, implemented outside schema."""
+    """Describe input shards, read remote ranges, and pin complete local files.
+
+    read_at must return the requested bytes exactly. acquire keeps a complete,
+    seekable local file available until context exit. Both identify the same shard.
+    """
+
+    def list_shards(self) -> Sequence[ShardRef]: ...
+
+    def read_at(self, shard: ShardRef, offset: int, size: int) -> bytes: ...
 
     def acquire(self, shard: ShardRef) -> AbstractContextManager[Path]: ...
 
@@ -336,6 +335,14 @@ class ShardCatalogBuilder:
         self._entries: list[ShardEntry] = []
         self._built = False
 
+    @classmethod
+    def from_provider(cls, provider: ShardProvider) -> ShardCatalog:
+        """Build a catalog from a self-describing provider, including per-shard recovery."""
+        builder = cls()
+        for shard in provider.list_shards():
+            builder.index_remote_shard(shard, provider=provider)
+        return builder.build()
+
     def _require_open(self) -> None:
         if self._built:
             raise ValueError('ShardCatalogBuilder: cannot index shards after build()')
@@ -344,15 +351,12 @@ class ShardCatalogBuilder:
         self,
         shard: ShardRef,
         *,
-        reader: BlobReader,
         provider: ShardProvider,
     ) -> None:
-        """Index remote ranges, acquiring one local shard only if its summary is unavailable."""
+        """Index provider ranges, acquiring one local shard only if its summary is unavailable."""
         self._require_open()
-        if reader.size != shard.size:
-            raise ValueError(f'{shard.key}: remote reader size differs from shard size')
         try:
-            entry = self._entry_from_reader(shard.key, reader)
+            entry = self._entry_from_provider(shard, provider)
         except SummaryUnavailableError as exc:
             _log.warning(
                 '%s: remote summary unavailable; acquiring shard for download_scan', shard.key
@@ -371,23 +375,25 @@ class ShardCatalogBuilder:
         self._entries.append(self._entry_from_path(key, path))
 
     @staticmethod
-    def _entry_from_reader(key: str, reader: BlobReader) -> ShardEntry:
-        with io.BufferedReader(BlobReaderIO(reader)) as file:
-            idx = _FileIndex(file, label=key, require_index=True)
+    def _entry_from_provider(shard: ShardRef, provider: ShardProvider) -> ShardEntry:
+        with io.BufferedReader(_ShardReaderIO(provider, shard)) as file:
+            idx = _FileIndex(file, label=shard.key, require_index=True)
             rows = []
             if ROTATION_METADATA in (idx.metadata_names or ()):
                 file.seek(0)
                 indexed_reader = make_reader(file)
                 if indexed_reader.get_summary() is None:
-                    raise SummaryUnavailableError(f'{key}: no MCAP summary for metadata lookup')
+                    raise SummaryUnavailableError(
+                        f'{shard.key}: no MCAP summary for metadata lookup'
+                    )
                 rows = [
                     m.metadata
                     for m in indexed_reader.iter_metadata()
                     if m.name == ROTATION_METADATA
                 ]
             return ShardCatalogBuilder._entry(
-                key,
-                reader.size,
+                shard.key,
+                shard.size,
                 idx,
                 rows,
                 IndexSource.MCAP_SUMMARY,

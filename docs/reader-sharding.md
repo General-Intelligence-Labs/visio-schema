@@ -17,29 +17,31 @@ for path in Path('/recording').glob('*.mcap'):
 catalog = builder.build()
 ```
 
-For remote files, supply these two interfaces:
+For remote files, implement one `ShardProvider` using your storage client:
 
-- `BlobReader`: one object's `size` and `read_at(offset, size) -> bytes`.
-  Implement this interface using your storage client. It is a protocol, not a
-  client you can instantiate. One reader identifies one file; multiple readers
-  can share a storage connection. `BlobReaderIO` adapts it to MCAP's seekable file API.
-- `ShardProvider`: `acquire(ShardRef) -> ContextManager[Path]` pins a complete local
-  file until context exit; `prefetch(ShardRef)` is optional for the current reader.
-  The implementation owns downloading, consistency checks, caching and eviction.
+- `list_shards() -> Sequence[ShardRef]` describes this input's objects and expected sizes.
+- `read_at(shard, offset, size) -> bytes` returns exactly the requested range.
+- `acquire(shard) -> ContextManager[Path]` pins a complete local file until context exit.
+- `prefetch(shard)` permits optional preparation; the current reader does not call it.
 
-With a `shard: ShardRef`, its `reader: BlobReader`, and a `provider: ShardProvider`
-constructed by the caller:
+`ShardRef(key, size)` identifies the object and its expected length. The provider
+owns downloads, consistency checks, caching and eviction. The library internally
+adapts provider ranges to MCAP's seekable file API; callers do not create readers.
+
+With a `provider: ShardProvider` constructed by the caller:
 
 ```python
 from visio_schema.reader import OnDemandSession, ShardCatalogBuilder
 
-builder = ShardCatalogBuilder()
-builder.index_remote_shard(shard, reader=reader, provider=provider)
-# Repeat indexing for the remaining shards before build().
-catalog = builder.build()
+catalog = ShardCatalogBuilder.from_provider(provider)
 session = OnDemandSession(catalog, provider=provider)
 ```
 
+`from_provider()` lists shards once, indexes them with `index_remote_shard()`,
+and returns an ordered in-memory catalog. `OnDemandSession` uses that catalog;
+it does not list shards again. An empty listing produces an empty catalog, which
+cannot be opened as a session. For low-level control, use
+`builder.index_remote_shard(shard, provider=provider)` before `builder.build()`.
 Index methods perform I/O, retain entries internally, and return `None`.
 Remote indexing reads the summary/metadata indexes, not the whole recording.
 Only `SummaryUnavailableError` triggers a warning-logged acquire and local scan

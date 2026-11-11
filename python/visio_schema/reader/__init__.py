@@ -113,8 +113,6 @@ from .rows import cpu_video_decoders, elements, resolve_message_class
 from .session import Session, strip_device_topic_prefix
 from .sharding import (
     BaseSession,
-    BlobReader,
-    BlobReaderIO,
     IndexSource,
     OnDemandSession,
     ShardCatalog,
@@ -145,8 +143,6 @@ __all__ = [
     "AdapterContext",
     "AdapterFactory",
     "BaseSession",
-    "BlobReader",
-    "BlobReaderIO",
     "Calibration",
     "CameraCalib",
     "Element",
