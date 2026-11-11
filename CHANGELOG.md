@@ -13,6 +13,12 @@ check outcome, diagnostic reason and elapsed phase time. A mounted card may
 retain a failed or incomplete check warning: existing best-effort recording
 policy is unchanged. Older firmware omits the message; older clients ignore it.
 
+`SdCardStatus.phase_expected_s` (5) and `phase_limit_s` (6), both in seconds,
+say when an active check or repair should finish: the device's estimate from
+what it measured on this card, and the limit after which it stops waiting.
+Both are 0 when unknown or no phase is active; 0 never means finished. Older
+firmware omits them; older clients ignore them.
+
 ### Image-based hand estimates
 
 Add `HandPoseFrame` on `/camera/<index>/hand_pose` for bounded left/right image
