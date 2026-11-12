@@ -782,9 +782,13 @@ class Session:
                    require_index=require_index)
 
     @contextmanager
-    def part_session(self, part: FileSummary):
-        """Open one indexed part without changing the parent's resolved topic names."""
-        yield Session(part.path, device=self.device, require_index=True,
+    def part_session(self, part: FileSummary, *, require_index: bool = True):
+        """Open one part without changing the parent's resolved topic names.
+
+        `require_index=False` allows a linear scan of a truncated part (no
+        chunk index); the default stays fail-closed on index-less parts.
+        """
+        yield Session(part.path, device=self.device, require_index=require_index,
                       topic_mode="preserve" if self.device is None else "auto")
 
     # --- device ---------------------------------------------------------- #

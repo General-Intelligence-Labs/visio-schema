@@ -326,6 +326,10 @@ class BaseSession(Protocol):
 
     def stream_summaries(self) -> list[StreamSummary]: ...
 
+    def part_session(
+        self, part: FileSummary, *, require_index: bool = True
+    ) -> AbstractContextManager[Session]: ...
+
 
 _log = logging.getLogger(__name__)
 
@@ -685,10 +689,10 @@ class OnDemandSession:
         return dict(self._sparse_stats)
 
     @contextmanager
-    def part_session(self, part: FileSummary):
+    def part_session(self, part: FileSummary, *, require_index: bool = True):
         entry = self._entries[part.path]
         with self._provider.acquire(entry.ref) as path:
-            yield self._local([path], require_index=True)
+            yield self._local([path], require_index=require_index)
 
     def stream(self, *args, **kwargs):
         raise UnsupportedOperationError('OnDemandSession does not support full stream() reads')

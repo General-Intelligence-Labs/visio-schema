@@ -567,6 +567,29 @@ def test_part_session_is_context_managed_on_both_sessions(builder, shards):
         assert other.metadata == Session(shards[1]).metadata
 
 
+def test_part_session_reads_a_truncated_part_without_index(builder, rec):
+    """require_index=False opens a truncated part by linear scan, on both transports."""
+    path = rec().add_camera(CAM, indexed_frames(10)).write(chunk_size=200)
+    _chop_tail(path)
+    provider = LocalProvider([path])
+    builder.index_remote_shard(
+        ShardRef(path.name, path.stat().st_size), provider=provider
+    )
+    lazy = OnDemandSession(builder.build(), provider)
+    part = lazy.stream_summaries()[0].files[0]
+    with pytest.raises(ValueError, match='truncated'):
+        with lazy.part_session(part):
+            pass
+    with lazy.part_session(part, require_index=False) as child:
+        assert len(list(child.keyframe_stream(CAM))) == 10
+    assert not provider.pinned
+    eager = Session([path])
+    with eager.part_session(
+        eager.stream_summaries()[0].files[0], require_index=False
+    ) as child:
+        assert len(list(child.keyframe_stream(CAM))) == 10
+
+
 def test_rotation_metadata_range_reads_are_bounded(builder, rec):
     recording = rec().add_camera(CAM, indexed_frames(20), keyint=5)
     path = write_rows(recording.path, [(*r, i) for i, r in enumerate(recording._rows)], 0)
