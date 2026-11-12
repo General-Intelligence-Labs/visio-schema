@@ -89,7 +89,7 @@ blob walks the 512-byte tar headers.
 
 ## 5. Blocks
 
-The archive is uploaded as an Azure **block blob**. Each tar header, each 8 MiB slice of a file's
+The archive is uploaded as an Azure **block blob**. Each tar header, each 1 MiB slice of a file's
 data (the last one shorter), each padding run and the end marker is one block. Every `Put Block`
 carries `Content-MD5`, which the service verifies. Block ids have one fixed length and encode the
 member index, a version tag of the file (from its size and modification time) and the slice
