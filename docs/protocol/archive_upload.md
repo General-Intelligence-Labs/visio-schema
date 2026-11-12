@@ -28,7 +28,10 @@ archive uploads.
   keeps the job, link included, on internal storage until the upload ends, so it continues across
   host disconnects, new recordings, network drops and reboots. Sending it again for the same
   session with a fresh link for the **same blob** replaces the stored link; the upload continues
-  where it stopped. The link must be `https`, name one blob (`sr=b`) and grant read and write
+  where it stopped. A link to the blob of an upload already `COMPLETED` makes the device check
+  that blob again: one the backend has deleted is uploaded afresh, one still there ends the job
+  `FAILED` with `last_error` `already_uploaded`, since sending the same bytes again cannot change
+  it. The link must be `https`, name one blob (`sr=b`) and grant read and write
   (`sp` containing `r` and `w`): read lets the device list the blocks already uploaded, so a
   resume does not start over, and write is what Put Block and Put Block List need (create
   alone permits only a single-request Put Blob). Over BLE the command is accepted only inside the encrypted session.
@@ -49,7 +52,7 @@ archive uploads.
 | `IN_FLIGHT` | blocks are being sent; `bytes_uploaded` of `bytes_total` (= `archive_bytes`). |
 | `NEEDS_LINK` | the storage service rejected the link (expired or revoked). Send `UploadRecording` again with a fresh link for the same blob. |
 | `COMPLETED` | the archive is committed and its size checked. The local copy is kept. |
-| `FAILED` | a permanent error (`last_error`), for example the blob already exists and the link cannot overwrite it. |
+| `FAILED` | a permanent error (`last_error`), for example the blob already exists and the link cannot overwrite it, or `already_uploaded` (see `UploadRecording`). `UploadRecording` queues it again. |
 
 `upload_blob` names the blob and `archive_bytes` the archive's exact size. Once a file's bytes are
 uploaded, its `RecordingFile.md5` (MD5 of the file's data as stored in the archive, 32 lowercase
@@ -75,20 +78,12 @@ end-of-archive marker          1024 zero bytes
 - Headers: mode `0644`, uid/gid 0, empty owner names, `mtime` = the file's modification time.
 - MCAP parts are stored byte for byte as on the device (an encrypted part stays `VREC`
   ciphertext).
-- The `session.json` member is the device's `session.json` with one extra top-level key,
-  `archive`, an index of the MCAP members:
+- `session.json` is stored byte for byte as on the device too, so every file's `size` and `md5` in
+  `ListRecordings` are those of its archive member.
 
-```json
-"archive": {
-  "format": "tar/ustar",
-  "members": [
-    { "name": "<session_key>/ego_0000.mcap", "data_offset": 512, "size": 268435456 }
-  ]
-}
-```
-
-`data_offset` is the byte position of the member's first data byte in the archive, so a reader can
-fetch one part with an HTTP range request.
+The archive carries no index of its own. A host forwards each file's `archive_offset` and `size`
+to its backend, which can then fetch one file with an HTTP range request; a reader with only the
+blob walks the 512-byte tar headers.
 
 ## 5. Blocks
 
