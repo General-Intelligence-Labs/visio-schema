@@ -1096,6 +1096,21 @@ class Session:
             if schema_name == CAM_CALIB_SCHEMA and _cam_key(canon) not in cams:
                 cams[_cam_key(canon)] = _parse_camera_calib(canon, msg)
             elif schema_name == FRAME_TF_SCHEMA and canon not in seen_tf:
+                if not msg.ListFields():
+                    # The firmware publishes an empty FrameTransform on the
+                    # reference camera's extrinsics topic when cam0 has no
+                    # external parent pose — a tombstone, not a pose: the
+                    # self-transform is identity by definition. read_calibrations
+                    # already ignores it; this flat reader must too (parsing it
+                    # crashes scipy on the zero-norm quaternion). An empty
+                    # transform on any OTHER sensor is corruption, not a
+                    # tombstone, and must not pass as "no calibration".
+                    if canon.endswith("/camera/0" + _EXTRINSICS_SUFFIX):
+                        continue
+                    raise ValueError(
+                        f"{canon}: empty FrameTransform — only the reference "
+                        "camera may publish one as a tombstone"
+                    )
                 seen_tf[canon] = _parse_frame_transform(msg)
             elif schema_name == IMU_CALIB_SCHEMA and cam_imu_dt is None:
                 cam_imu_dt, imu_rate, accel_nd, gyro_nd = _parse_imu_calib(msg)
