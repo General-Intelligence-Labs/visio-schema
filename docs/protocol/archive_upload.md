@@ -40,7 +40,9 @@ archive uploads.
 - **`CancelUpload { session_key }`** stops the upload and forgets the link. Uploaded blocks stay
   with the storage service until it discards them.
 - **`DeleteRecording`** answers `protected` while an archive upload of the session is queued or
-  running. The device never deletes a session on its own after an archive upload.
+  running. Once the upload is `COMPLETED`, encrypted (`VREC`) parts no longer refuse the delete as
+  they otherwise do (recordings_pull.md): every part is in the blob. The device never deletes a
+  session on its own after an archive upload.
 
 ## 3. Progress and states
 
