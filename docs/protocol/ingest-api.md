@@ -36,7 +36,8 @@ This gives you:
 
 **What you need to run:**
 - an HTTPS service with `POST /v1/uploads/initiate` and
-  `POST /v1/uploads/{upload_id}/commit`;
+  `POST /v1/uploads/{upload_id}/commit` (and, if you want to see how uploads
+  are going, the optional `POST /v1/uploads/{upload_id}/report`, §4.7);
 - a device key per rig (a key id and a 32-byte secret), which you issue and can
   revoke;
 - a way to mint temporary, folder-scoped write credentials for your storage
@@ -68,7 +69,8 @@ requires your replies to be signed (§4.2).
 ### 2.2 The API at a glance
 
 Your service implements **two endpoints**. Between the two calls, the rig talks
-only to your bucket.
+only to your bucket. A third, `report` (§4.7), is optional: it tells you how
+the rig's uploads are going, and the rig works the same without it.
 
 | | `POST /v1/uploads/initiate` | `POST /v1/uploads/{upload_id}/commit` |
 |---|---|---|
@@ -648,6 +650,103 @@ you. The rig's credentials cannot delete.
 | 507 | `quota_exceeded` | Out of quota | Pauses uploads for an hour; shows it in the app |
 | 5xx | any | Server error | Retries with backoff |
 
+None of this applies to `report` (§4.7): the rig never acts on its reply.
+
+### 4.7 `POST /v1/uploads/{upload_id}/report` (optional)
+
+How the rig's uploads are going: what it is sending, what is left, and what has
+gone wrong. Without it, a stalled rig looks the same as an idle one, because
+the rig retries silently and a failed file leaves nothing in your bucket.
+
+Implementing it is optional, and the rig never depends on it:
+
+- **It changes nothing.** Never let a report open, close or move an upload, or
+  commit anything. It is advisory, like a log line.
+- **The rig ignores the reply,** apart from noticing that you don't implement
+  it: a `404` whose `error.code` is not `upload_unknown`, a `405` or a `501`
+  makes the rig stop sending reports until it restarts. Answer `204`.
+- **It is never retried,** and never delays an upload: the rig sends it with a
+  5-second timeout, from outside its upload thread or between files.
+
+**When the rig sends one.** Only while it holds an `upload_id` and is not
+recording:
+
+- every **60 seconds** while it has something left to upload, uploading or
+  waiting;
+- after an attempt **fails or is cut short** (a PUT, `initiate` or `commit`),
+  at most once every 10 seconds;
+- once when it has **caught up** (`state: "idle"`), and then no more until the
+  next upload.
+
+Each upload run (§3.2) gets a new `run_id`, and each report in a run a higher
+`revision`, so reports that arrive late or twice are easy to discard.
+
+**Request**
+
+```json
+{
+  "device_id": "e54a1de522f7e0f1",
+  "app_version": "1.1.8",
+  "run_id": "6f1d2c8e-9a4b-4e0f-8b7a-2c3d4e5f6a7b",
+  "revision": 7,
+  "run_seconds": 412.5,
+  "uptime_seconds": 5231,
+  "state": "waiting",
+  "reason": "backoff",
+  "progress": {
+    "files_done": 3, "bytes_done": 603979776,
+    "files_left": 4, "bytes_left": 935329792, "sessions_left": 2,
+    "current": { "session_key": "8f1c2a0b9d3e4f5a6b7c8d9e0f1a2b3c",
+                 "name": "ego_0000.mcap", "bytes": 273364793, "sent_bytes": 0 },
+    "bytes_per_second": 2097152
+  },
+  "attempts": { "failed": 5, "interrupted": 2 },
+  "network": { "rssi_dbm": -61, "link_mbps": 72 },
+  "viewers": 1,
+  "events": [
+    { "run_seconds": 398.1, "kind": "request_error", "operation": "put",
+      "error": "connection_closed", "attempt": 5,
+      "file": "ego_0000.mcap", "sent_bytes": 57671680,
+      "detail": "curl: (56) Failure when receiving data from the peer" }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `device_id`, `app_version` | As in `initiate`. |
+| `run_id` | A UUID, new for each upload run (§3.2). |
+| `revision` | 1 for a run's first report, then one higher each time. |
+| `run_seconds` | Seconds since this run started, from the rig's monotonic clock. Never its wall clock: times in a report are relative to the run, so a rig with no clock reports them correctly. |
+| `uptime_seconds` | Seconds since the rig booted. A smaller value than in an earlier report means it restarted. |
+| `state` | `uploading` (sending a file, or calling your service), `waiting` (something is left, but nothing is being sent: see `reason`), or `idle` (caught up). |
+| `reason` | Why it is waiting, else `null`: `backoff` (waiting to retry after a failure), `wifi` (no network), `recording` (a recording started; sent once the recording stops), `viewer` (paused while a phone views the live stream), `quota` (`507`), `credentials` (`401`/`403` from your service, or the bucket refused the credentials), `server` (your service answered `5xx` or did not answer), `other`. |
+| `progress` | `*_done`: what this run has finished, counting a file once it has landed. `*_left`: what is still on the card and not committed, including the file in flight. `current`: the file being sent or to be retried next (`sent_bytes` is how far the latest attempt got), or `null`. `bytes_per_second`: the recent sending rate, `0` when not sending. |
+| `attempts` | Since the run started: `failed` (an attempt that ended in an error) and `interrupted` (cut short by the rig itself, for a recording, a viewer or loss of Wi-Fi). |
+| `network` | The Wi-Fi link: `rssi_dbm` and `link_mbps`, either `null` when unknown. `null` when the rig cannot read them. |
+| `viewers` | Phones viewing the live stream now. Uploads slow down, or pause, while a phone is watching. |
+| `events` | The run's last 32 failures and interruptions, oldest first (below). Empty when nothing has gone wrong. |
+
+Each event:
+
+| Field | Meaning |
+|---|---|
+| `run_seconds` | When, in the run's time. |
+| `kind` | `request_error` (the attempt failed), `interrupted` (the rig cut it short; `error` is null and `detail` says why), or `recovered` (a request succeeded after earlier failures). |
+| `operation` | `put` (uploading a file), `initiate`, or `commit`. |
+| `error` | The failure, as one of `dns`, `connect`, `tls`, `connection_closed` (the connection dropped or was reset mid-request), `read_timeout`, `write_timeout`, `http` (an unexpected status: see `status`), `throttled` (`429`/`503`), `credentials` (`401`, or a storage `403` for expired credentials), `denied` (`403`), `server` (`5xx`), `local_io` (reading the card), `other`; `null` for `interrupted` and `recovered`. |
+| `status` | The HTTP status, if a response arrived. |
+| `attempt` | Which attempt at this file or call this was, from 1. |
+| `file`, `sent_bytes` | For `put`: the file, and how many of its bytes were sent before the attempt ended. |
+| `detail` | The rig's own message, at most 200 characters, e.g. curl's error text. For people, not for parsing. |
+
+A request is at most 16 KiB. Send fields the rig cannot fill as `null`, rather
+than leaving them out.
+
+**Response:** `204`, with no body. Return `404 upload_unknown` when the upload
+is not this rig's. You may answer `429` to a rig reporting too often; it simply
+drops the report.
+
 ---
 
 ## 5. Setting up a rig
@@ -769,9 +868,18 @@ recording encryption on the rig: files are then encrypted on the rig before
 upload (`recording_key_fingerprint` tells you which key).
 
 **Does the rig send health or telemetry to this API?**
-No. This API is only for uploading finished recordings. In ingest mode the rig
-also writes no status files into your bucket; it writes only recordings and
-their `session.json`.
+Only about uploading, and only if you implement `report` (§4.7): what it is
+sending, what is left, and the attempts that failed and why. Nothing about the
+rig's health beyond that. In ingest mode the rig also writes no status files
+into your bucket; it writes only recordings and their `session.json`.
+
+**A rig's backlog isn't going down. How do I find out why?**
+Implement `report` (§4.7). Its `state` and `reason` say whether the rig is
+sending, waiting for Wi-Fi, paused for a recording or a viewer, or backing off
+after failures; its `events` give each failed attempt, with how far it got and
+the error. Repeated `connection_closed` or `tls` failures part-way into large
+files point at the network between the rig and your bucket, not at your
+service.
 
 **What identifies a recording on my side?**
 Use `session_key` (with `device_id`). Any id you assign internally stays
