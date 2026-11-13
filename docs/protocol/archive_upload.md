@@ -79,7 +79,8 @@ end-of-archive marker          1024 zero bytes
 
 - Headers: mode `0644`, uid/gid 0, empty owner names, `mtime` = the file's modification time.
 - MCAP parts are stored byte for byte as on the device (an encrypted part stays `VREC`
-  ciphertext).
+  ciphertext). The device reads them as stored and never decrypts, so it uploads an encrypted part
+  whether or not it holds the recording key; decryption is the backend's.
 - `session.json` is stored byte for byte as on the device too, so every file's `size` and `md5` in
   `ListRecordings` are those of its archive member.
 
