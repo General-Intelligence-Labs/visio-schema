@@ -236,8 +236,17 @@ message SdCardStatus {
   // Unknown codes should be displayed as a generic storage warning.
   string reason_code = 3;
   // Monotonic elapsed time in the current active phase; no progress percentage.
-  // A slow phase may still be blocked in kernel I/O after its deadline.
+  // A slow phase may still be blocked in kernel I/O past its limit.
   uint32 phase_elapsed_s = 4;
+  // Expected total seconds of the current active phase, from what the device
+  // measured on this card (a repair: the check pass before it). 0 when unknown
+  // or no phase is active. phase_expected_s - phase_elapsed_s is the time left
+  // and can go negative. 0 never means finished: only `phase` says that.
+  uint32 phase_expected_s = 5;
+  // The longest the device lets the current active phase run, in seconds
+  // (PHASE_CHECKING: the check limit; PHASE_REPAIRING: the repair cap). 0 when
+  // the phase has none or the device does not report one.
+  uint32 phase_limit_s = 6;
 }
 
 message DeviceState {

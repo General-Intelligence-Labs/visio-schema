@@ -41,9 +41,11 @@ import heapq
 import logging
 import struct
 from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, replace
 from functools import cache
 from pathlib import Path
+from typing import BinaryIO
 
 import numpy as np
 from google.protobuf.descriptor_pb2 import FileDescriptorSet
@@ -90,6 +92,7 @@ from .rows import _reorder, cpu_video_decoders, resolve_message_class
 
 FRAME_INFO_SUFFIX = "/frame_info"
 CAPTURE_METADATA = "visio.capture"
+ROTATION_METADATA = "visio.rotation"
 _CALIB_SCHEMAS = frozenset({CAM_CALIB_SCHEMA, FRAME_TF_SCHEMA, IMU_CALIB_SCHEMA})
 # Calibration rides on these suffixes; `/tf` shares FrameTransform's schema but is
 # a runtime pose stream, so schema alone would drag it in — see `_calib_topics`.
@@ -340,11 +343,103 @@ class _CountedRead:
         return getattr(self.file, name)
 
 
-class _FileIndex:
-    """Cheap per-file index from the MCAP summary (no message scan)."""
+class _BorrowedFile:
+    """Keep MCAP from wrapping/closing a caller-owned RawIOBase stream."""
 
-    def __init__(self, path: Path, *, require_index: bool = False) -> None:
-        self.path = path
+    def __init__(self, file):
+        self.file = file
+
+    def __getattr__(self, name):
+        return getattr(self.file, name)
+
+
+class SummaryUnavailableError(ValueError):
+    """The MCAP summary is absent or unreadable; a local scan may recover it."""
+
+
+@dataclass
+class _KeyframeProgress:
+    """Sampling counters across files, including provider-pinned local sessions.
+
+    `seen` counts keyframes before thinning; `aus` counts all video access units.
+    Only the owner of the complete traversal validates the final counters.
+    """
+
+    seen: int = 0
+    aus: int = 0
+
+    def require_keyframes(self, topic: str) -> None:
+        if self.aus and not self.seen:
+            raise ValueError(
+                f"keyframe_stream: {self.aus} access unit(s) on {topic} and no keyframe "
+                f"among them — this stream cannot be sampled sparsely. Use "
+                f"Session.stream() to decode it in full."
+            )
+
+
+_RotationIdentity = tuple[str, int, bool]
+
+
+def _rotation_from_metadata(
+    rows: Sequence[Mapping[str, str]], label: str | Path,
+) -> _RotationIdentity | None:
+    """Read zero or one `visio.rotation` record's string-to-string metadata.
+
+    Example row: {"version": "1", "recording_id": "take-id", "part_index": "0",
+    "video_continuation": "false"}. Multiple identities for one file are ambiguous.
+    """
+    if not rows:
+        return None
+    if len(rows) != 1:
+        raise ValueError(f"{label}: duplicate rotation metadata")
+    row = rows[0]
+    try:
+        part = int(row["part_index"])
+        identity = row["recording_id"]
+        valid = (row["version"] == "1" and row["video_continuation"] in {"true", "false"}
+                 and identity and part >= 0)
+    except (KeyError, ValueError) as exc:
+        raise ValueError(f"{label}: invalid rotation metadata") from exc
+    if not valid:
+        raise ValueError(f"{label}: invalid rotation metadata")
+    return identity, part, row["video_continuation"] == "true"
+
+
+def _rotation_order(
+    starts: Sequence[Ns | None], rotations: Sequence[_RotationIdentity | None],
+    owners: Sequence[int],
+) -> list[int]:
+    """Order parts within recording chains, and merge independent stream starts."""
+    # A retained remote backlog can predate the predecessor's first message.
+    # Explicit recording identity takes precedence over summary timestamps.
+    chain_start: dict[tuple[int, str], Ns] = {}
+    for start, rotation, owner in zip(starts, rotations, owners, strict=True):
+        if rotation is not None:
+            key = (owner, rotation[0])
+            chain_start[key] = min(chain_start.get(key, start or 0), start or 0)
+
+    def file_order(i: int) -> tuple[Ns, int, str, int]:
+        rotation = rotations[i]
+        if rotation is None:
+            return starts[i] or 0, owners[i], "", 0
+        return chain_start[owners[i], rotation[0]], owners[i], rotation[0], rotation[1]
+
+    return sorted(range(len(starts)), key=file_order)
+
+
+class _FileIndex:
+    """Shared summary parsing for local paths and borrowed seekable streams.
+
+    Only a local path permits reopening for a recovery scan. Borrowed streams
+    (including remote ranges) never silently trigger a potentially full-file read.
+    """
+
+    def __init__(
+        self, path: Path | BinaryIO, *, require_index: bool = False,
+        label: str | None = None,
+    ) -> None:
+        local = isinstance(path, Path)
+        self.path = path if local else (label or "<MCAP stream>")
         self.chan: dict[int, tuple[str, str]] = {}  # id -> (topic, schema_name)
         self.counts: dict[int, int] = {}
         self.start_ns: Ns | None = None
@@ -361,7 +456,7 @@ class _FileIndex:
         # when the file was indexed by scan (truncated/summary-less): the names
         # were not determined, and a consumer that needs them reads the file.
         self.metadata_names: tuple[str, ...] | None = None
-        with open(path, "rb") as f:
+        with (open(path, "rb") if local else nullcontext(_BorrowedFile(path))) as f:
             # `make_reader` OUTSIDE the try: it checks the head magic, and a file
             # that fails there is not a truncated recording — it is not an MCAP
             # at all, and must keep raising InvalidMagic.
@@ -371,6 +466,8 @@ class _FileIndex:
             except _ENVIRONMENT_ERRORS:
                 raise
             except (*_TRUNCATION_ERRORS, OSError) as e:
+                if isinstance(e, OSError) and not local:
+                    raise  # Remote I/O failures are not damaged MCAP summaries.
                 # The footer lives at the END of the file, so a recording cut off
                 # mid-write (device died / upload aborted) fails exactly here —
                 # while everything before the cut is still readable. A summary-less
@@ -383,16 +480,16 @@ class _FileIndex:
                 # MCAP-shaped. Without it, one 12-byte tail chunk kills the whole
                 # Session — `_FileIndex`es are built eagerly, so no per-file
                 # quarantine catches it.
-                if not require_index:
+                if not require_index and local:
                     _log.warning(
                         "%s: unreadable MCAP summary (%s: %s) — treating as "
                         "tail-truncated and indexing by linear scan",
-                        path, type(e).__name__, e,
+                        self.path, type(e).__name__, e,
                     )
                 self.truncated = True
                 summary = None
         if summary is None:
-            if require_index:
+            if require_index or not local:
                 # The caller wants METADATA ONLY, so the fallback below — a full
                 # pass over the file — is not a smaller cost than the thing it
                 # is standing in for. A preflight that scans a 3 GB recording to
@@ -406,7 +503,7 @@ class _FileIndex:
                 # apart.
                 why = ("the file is truncated" if self.truncated
                        else "the file was written without an index")
-                raise ValueError(f"{path}: no MCAP summary — {why}")
+                raise SummaryUnavailableError(f"{self.path}: no MCAP summary — {why}")
             self._scan()
             return
         self.metadata_names = tuple(mi.name for mi in summary.metadata_indexes)
@@ -528,22 +625,10 @@ class Session:
         index = [_FileIndex(p, require_index=require_index) for p in flat]
         self._truncated = frozenset(p for p, ix in zip(flat, index, strict=True) if ix.truncated)
         self._rotation_ids = {ix.path: self._rotation_identity(ix) for ix in index}
-        # A retained remote backlog can predate the predecessor's first message.
-        # Explicit recording identity takes precedence over summary timestamps.
-        chain_start = {}
-        for i, ix in enumerate(index):
-            rotation = self._rotation_ids[ix.path]
-            if rotation is not None:
-                key = (owner[i], rotation[0])
-                chain_start[key] = min(chain_start.get(key, ix.start_ns or 0), ix.start_ns or 0)
-
-        def file_order(i):
-            rotation = self._rotation_ids[flat[i]]
-            if rotation is None:
-                return index[i].start_ns or 0, owner[i], "", 0
-            return chain_start[owner[i], rotation[0]], owner[i], rotation[0], rotation[1]
-
-        order = sorted(range(len(flat)), key=file_order)
+        order = _rotation_order(
+            [ix.start_ns for ix in index],
+            [self._rotation_ids[ix.path] for ix in index], owner,
+        )
         self._files = [flat[i] for i in order]
         self._index = [index[i] for i in order]
         owner = [owner[i] for i in order]
@@ -695,6 +780,16 @@ class Session:
         return cls(recording, *sidecars, device=device, reorder_ns=reorder_ns,
                    adapters=adapters, topic_mode=topic_mode,
                    require_index=require_index)
+
+    @contextmanager
+    def part_session(self, part: FileSummary, *, require_index: bool = True):
+        """Open one part without changing the parent's resolved topic names.
+
+        `require_index=False` allows a linear scan of a truncated part (no
+        chunk index); the default stays fail-closed on index-less parts.
+        """
+        yield Session(part.path, device=self.device, require_index=require_index,
+                      topic_mode="preserve" if self.device is None else "auto")
 
     # --- device ---------------------------------------------------------- #
     def _auto_device(self) -> str | None:
@@ -1001,6 +1096,21 @@ class Session:
             if schema_name == CAM_CALIB_SCHEMA and _cam_key(canon) not in cams:
                 cams[_cam_key(canon)] = _parse_camera_calib(canon, msg)
             elif schema_name == FRAME_TF_SCHEMA and canon not in seen_tf:
+                if not msg.ListFields():
+                    # The firmware publishes an empty FrameTransform on the
+                    # reference camera's extrinsics topic when cam0 has no
+                    # external parent pose — a tombstone, not a pose: the
+                    # self-transform is identity by definition. read_calibrations
+                    # already ignores it; this flat reader must too (parsing it
+                    # crashes scipy on the zero-norm quaternion). An empty
+                    # transform on any OTHER sensor is corruption, not a
+                    # tombstone, and must not pass as "no calibration".
+                    if canon.endswith("/camera/0" + _EXTRINSICS_SUFFIX):
+                        continue
+                    raise ValueError(
+                        f"{canon}: empty FrameTransform — only the reference "
+                        "camera may publish one as a tombstone"
+                    )
                 seen_tf[canon] = _parse_frame_transform(msg)
             elif schema_name == IMU_CALIB_SCHEMA and cam_imu_dt is None:
                 cam_imu_dt, imu_rate, accel_nd, gyro_nd = _parse_imu_calib(msg)
@@ -1351,26 +1461,12 @@ class Session:
                         return pos
         return 0
 
-    def _rotation_identity(self, idx: _FileIndex):
-        if idx.metadata_names is not None and "visio.rotation" not in idx.metadata_names:
+    def _rotation_identity(self, idx: _FileIndex) -> _RotationIdentity | None:
+        if idx.metadata_names is not None and ROTATION_METADATA not in idx.metadata_names:
             return None
         rows = [m.metadata for m in self._iter_file_metadata(idx.path)
-                if m.name == "visio.rotation"]
-        if not rows:
-            return None
-        if len(rows) != 1:
-            raise ValueError(f"{idx.path}: duplicate rotation metadata")
-        row = rows[0]
-        try:
-            part = int(row["part_index"])
-            identity = row["recording_id"]
-            valid = (row["version"] == "1" and row["video_continuation"] in {"true", "false"}
-                     and identity and part >= 0)
-        except (KeyError, ValueError) as exc:
-            raise ValueError(f"{idx.path}: invalid rotation metadata") from exc
-        if not valid:
-            raise ValueError(f"{idx.path}: invalid rotation metadata")
-        return identity, part, row["video_continuation"] == "true"
+                if m.name == ROTATION_METADATA]
+        return _rotation_from_metadata(rows, idx.path)
 
     def _wanted_prefixed(
         self, idx: _FileIndex, want: set[str] | None, raw_all: bool = False
@@ -1776,11 +1872,13 @@ class Session:
 
     def _keyframe_frames(
         self, topic: str, *, every_n: int, start_ns: Ns | None, end_ns: Ns | None,
-        make_decoders,
+        make_decoders, progress: _KeyframeProgress | None = None,
     ) -> Iterator[Frame]:
+        own_progress = progress is None
+        if progress is None:
+            progress = _KeyframeProgress()
         # ONE counter for the whole call: a per-file one would restart the phase at
         # every chunk boundary, a re-phase the caller never asked for.
-        seen = aus = 0
         for path, prefixed in self._video_files(
             topic, start_ns=start_ns, end_ns=end_ns
         ):
@@ -1796,24 +1894,22 @@ class Session:
             for _t_ns, key in self._iter_video_aus(
                 path, prefixed, topic, video, start_ns=start_ns, end_ns=end_ns
             ):
-                aus += 1
+                progress.aus += 1
                 if not key:
                     continue
-                take = seen % every_n == 0
-                seen += 1
+                take = progress.seen % every_n == 0
+                progress.seen += 1
                 if take:
                     yield from (el for _t, _arrival, el in emit(topic, _t_ns))
             yield from (el for _t, _arrival, el in flush())
-        if aus and not seen:
+        if own_progress:
             # Access units, but not one of them classified as a keyframe. Yielding
             # nothing would be indistinguishable from an empty recording, and this
             # is the one failure `is_keyframe`'s quiet `False` could otherwise hide
             # (a bitstream whose slices sit past the prefix bound, say).
-            raise ValueError(
-                f"keyframe_stream: {aus} access unit(s) on {topic} and no keyframe "
-                f"among them — this stream cannot be sampled sparsely. Use "
-                f"Session.stream() to decode it in full."
-            )
+            # An on-demand caller owns the whole traversal and checks once after
+            # all parts, not after a keyframe-free but otherwise valid part.
+            progress.require_keyframes(topic)
 
     def _video_topic_in(self, idx: _FileIndex, canon: str) -> str | None:
         """This file's PREFIXED name for the canonical video topic, if it has it."""

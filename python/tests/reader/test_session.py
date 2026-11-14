@@ -495,3 +495,28 @@ def test_gpu_stream_stays_monotonic_when_nvdec_hands_frames_back_late(
         make_decoders=sess._decoder_binder(False, True, "stream"),
         raw_all=False, reorder_ns=sess._reorder_ns))
     assert [e.t_ns for e in narrow] != sorted(e.t_ns for e in narrow)
+
+
+def test_empty_reference_camera_extrinsics_is_a_tombstone(stereo_calib_rec):
+    """Firmware publishes a 0-byte FrameTransform on camera/0/extrinsics when
+    cam0 has no external parent pose (visio-embedded 437eec48). The flat
+    `calibration` reader must ignore it like `calibrations` does — parsing the
+    default message crashes scipy on the zero-norm quaternion."""
+    path, b = stereo_calib_rec()
+    b._rows.append(("/ego/camera/0/extrinsics", "foxglove.FrameTransform", T0, b""))
+    path = b.write()
+    cal = Session([path]).calibration
+    assert cal.baseline_m == pytest.approx(0.062, abs=1e-6)
+    assert np.allclose(cal.stereo_T, [-0.062, 0, 0])
+    assert set(cal.cams) == {"/ego/camera/0", "/ego/camera/1"}
+
+
+def test_empty_extrinsics_elsewhere_is_corruption(stereo_calib_rec):
+    """Only the reference camera may carry the tombstone; an empty transform on
+    any other sensor is corrupt data and must not silently drop a calibration."""
+    path, b = stereo_calib_rec()
+    b._rows = [r for r in b._rows if r[0] != "/ego/camera/1/extrinsics"]
+    b._rows.append(("/ego/camera/1/extrinsics", "foxglove.FrameTransform", T0, b""))
+    path = b.write()
+    with pytest.raises(ValueError, match="empty FrameTransform"):
+        _ = Session([path]).calibration
