@@ -305,6 +305,23 @@ def test_ui_snapshot_leaves_plain_wifi_row_in_place() -> None:
     assert sorted(x["transport"] for x in ui) == ["sta", "usb"]
 
 
+@pytest.mark.parametrize(("host", "source"), [
+    ("10.3.0.106", "10.3.0.137"),
+    ("10.3.0.2", "10.3.0.137"),
+    ("10.3.0.106", "10.3.0.1"),
+])
+def test_office_wifi_is_not_presented_or_resolved_as_usb(monkeypatch, host, source) -> None:
+    d = _disc()
+    svc = d.DiscoveryService()
+    usb, wifi = _usb_dto(d), _ncm_dto(d, host=host)
+    _seed(svc, usb, wifi)
+    monkeypatch.setattr(d, "_local_source_ip", lambda host: source)
+
+    assert svc.ui_snapshot() == [usb, wifi]
+    assert svc.resolve(usb["id"]) == usb
+    assert svc.resolve(wifi["id"]) == wifi
+
+
 def test_ui_snapshot_passthrough_when_no_tether() -> None:
     d = _disc()
     svc = d.DiscoveryService()

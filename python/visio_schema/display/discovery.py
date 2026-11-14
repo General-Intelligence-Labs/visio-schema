@@ -118,14 +118,13 @@ def _local_source_ip(host: str) -> str | None:
 def _is_ncm_tether(host: str | None) -> bool:
     """Is ``host`` a device reached over its CDC-NCM USB-Ethernet tether, as opposed to
     Wi-Fi/LAN? S41device-id puts every NCM device on a private per-device /24
-    (``10.<b0>.<b1>.2``, the USB host taking ``.1``), so the tether is a 10/8 address our
-    own source address shares a /24 with — directly link-attached, not routed via a
-    gateway. That same-subnet test doubles as a reachability guarantee, so redirecting a
-    connect onto it can never strand us on an unreachable leg."""
-    if not host or not host.startswith("10."):
+    (``10.<b0>.<b1>.2``, the USB host taking ``.1``). Require that exact address pair:
+    merely sharing a 10/8 subnet also matches ordinary office Wi-Fi, which would hide
+    its row under USB and redirect serial clicks onto Wi-Fi."""
+    if not host or not host.startswith("10.") or not host.endswith(".2"):
         return False
     src = _local_source_ip(host)
-    return bool(src) and src.rsplit(".", 1)[0] == host.rsplit(".", 1)[0]
+    return src == host.rsplit(".", 1)[0] + ".1"
 
 
 class DiscoveryService:
