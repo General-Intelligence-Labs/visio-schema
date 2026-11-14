@@ -1703,6 +1703,40 @@ def test_replay_eof_reaches_ended_state(monkeypatch) -> None:
         mgr.shutdown()
 
 
+@pytest.mark.parametrize("transport", ["usb", "sta", "ap"])
+def test_live_connection_closed_without_messages_reports_error(monkeypatch, transport) -> None:
+    s = _install_bridge(monkeypatch, lambda dto: _FakeEndpoint(eof=True))
+    mgr = s.BridgeManager(ws_port=0, viewer="desktop")
+    try:
+        mgr.connect({"id": "x", "label": "L", "transport": transport})
+        deadline = time.time() + 2
+        while mgr.status()["state"] == "connecting" and time.time() < deadline:
+            time.sleep(0.01)
+        st = mgr.status()
+        assert st["state"] == "error"
+        assert st["messages"] == 0
+        assert "closed the connection" in st["error"]
+        assert "Another viewer may already be connected" in st["error"]
+    finally:
+        mgr.shutdown()
+
+
+def test_empty_replay_is_a_normal_end_of_stream(monkeypatch) -> None:
+    s = _install_bridge(monkeypatch, lambda dto: _FakeEndpoint(eof=True))
+    mgr = s.BridgeManager(ws_port=0, viewer="desktop")
+    try:
+        mgr.connect({"id": "mcap:empty", "label": "empty", "transport": "mcap"})
+        deadline = time.time() + 2
+        while mgr.status()["state"] == "connecting" and time.time() < deadline:
+            time.sleep(0.01)
+        st = mgr.status()
+        assert st["state"] == "ended"
+        assert st["messages"] == 0
+        assert st["error"] is None
+    finally:
+        mgr.shutdown()
+
+
 def test_open_endpoint_mcap_returns_replay(tmp_path) -> None:
     s = _serve()
     ep = s._open_endpoint(_mcap_dto(_make_mcap(tmp_path / "r.mcap")))

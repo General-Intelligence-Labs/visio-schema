@@ -478,6 +478,11 @@ class BridgeManager:
             with self._lock:
                 if self._stop is stop and not stop.is_set():
                     self._ended = True
+                    if dto["transport"] != MCAP and self._status.snapshot()[0] == 0:
+                        self._error = (
+                            "Device closed the connection before any stream messages arrived. "
+                            "Another viewer may already be connected; disconnect it and retry."
+                        )
         except Exception as exc:
             traceback.print_exc(file=sys.stderr)
             with self._lock:
