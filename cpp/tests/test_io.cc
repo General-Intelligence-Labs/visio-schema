@@ -4,6 +4,10 @@
 // fd (the endpoint owns + closes its own) to simulate a hangup.
 #include <gtest/gtest.h>
 
+#include <fcntl.h>
+#include <stdlib.h>
+#include <termios.h>
+
 #include <chrono>
 #include <atomic>
 #include <cerrno>
@@ -149,4 +153,59 @@ TEST(Io, TimedPartialWritesCountAsProgressRatherThanAStalledLink) {
   }
   EXPECT_GE(read_bytes,200000u);EXPECT_FALSE(stalled);
   tx.Stop();CloseFd(b);
+}
+
+TEST(Io, SerialOpenSetsLocal) {
+  using namespace visio_schema::transport;
+  const int master = ::posix_openpt(O_RDWR | O_NOCTTY);
+  ASSERT_GE(master, 0);
+  FramedFdEndpoint master_owner(master);
+  ASSERT_EQ(::grantpt(master), 0);
+  ASSERT_EQ(::unlockpt(master), 0);
+  const char* path = ::ptsname(master);
+  ASSERT_NE(path, nullptr);
+  const int slave = ::open(path, O_RDWR | O_NOCTTY);
+  ASSERT_GE(slave, 0);
+  FramedFdEndpoint slave_owner(slave);
+
+  termios expected{};
+  ASSERT_EQ(::tcgetattr(slave, &expected), 0);
+  ::cfmakeraw(&expected);
+  expected.c_cflag &= ~CLOCAL;
+  expected.c_cflag |= HUPCL;
+#ifdef CRTSCTS
+  expected.c_cflag |= CRTSCTS;
+#endif
+  ASSERT_EQ(::cfsetispeed(&expected, B38400), 0);
+  ASSERT_EQ(::cfsetospeed(&expected, B38400), 0);
+  ASSERT_EQ(::tcsetattr(slave, TCSANOW, &expected), 0);
+  ASSERT_EQ(::tcgetattr(slave, &expected), 0);
+  SetRawMode(slave);
+  termios raw{};
+  ASSERT_EQ(::tcgetattr(slave, &raw), 0);
+  EXPECT_EQ(raw.c_cflag, expected.c_cflag);
+  ASSERT_EQ(raw.c_cflag & CLOCAL, 0u);
+
+  const int opened = OpenSerialFd(path);
+  ASSERT_GE(opened, 0);
+  const int flags = ::fcntl(opened, F_GETFL, 0);
+  FramedFdEndpoint opened_owner(opened);
+  ASSERT_GE(flags, 0);
+  EXPECT_NE(flags & O_NONBLOCK, 0);
+  termios actual{};
+  ASSERT_EQ(::tcgetattr(opened, &actual), 0);
+  EXPECT_NE(actual.c_cflag & CLOCAL, 0u);
+  EXPECT_EQ(actual.c_cflag, expected.c_cflag | CLOCAL);
+  EXPECT_EQ(actual.c_iflag, expected.c_iflag);
+  EXPECT_EQ(actual.c_oflag, expected.c_oflag);
+  EXPECT_EQ(actual.c_lflag, expected.c_lflag);
+  EXPECT_EQ(actual.c_cc[VMIN], 1);
+  EXPECT_EQ(actual.c_cc[VTIME], 0);
+  EXPECT_EQ(::cfgetispeed(&actual), B38400);
+  EXPECT_EQ(::cfgetospeed(&actual), B38400);
+
+  // Ignoring carrier must still report a real peer close.
+  master_owner.Stop();
+  std::uint8_t bytes[16];
+  EXPECT_EQ(ReadSome(opened, bytes, sizeof(bytes)), -1);
 }

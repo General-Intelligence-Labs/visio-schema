@@ -7,12 +7,19 @@ silently-dead endpoint.
 from __future__ import annotations
 
 import os
+import termios
 import time
+import tty
 
 import pytest
 
 from visio_schema.transport import SerialEndpoint, make_fd_pair
 from visio_schema.transport.endpoint import EndpointClosed
+from visio_schema.transport.link import (
+    open_serial_fd,
+    read_some,
+    set_raw_mode,
+)
 from visio_schema.wire.message import Message
 
 
@@ -55,3 +62,45 @@ def test_requires_exactly_one_of_fd_or_path() -> None:
     finally:
         os.close(a)
         os.close(b)
+
+
+@pytest.mark.pty
+@pytest.mark.parametrize("hangup", [False, True])
+def test_open_sets_local(hangup: bool) -> None:
+    master, slave = os.openpty()
+    opened = -1
+    try:
+        tty.setraw(slave)
+        attrs = termios.tcgetattr(slave)
+        attrs[2] &= ~termios.CLOCAL
+        if hangup:
+            attrs[2] |= termios.HUPCL
+        else:
+            attrs[2] &= ~termios.HUPCL
+        attrs[2] |= getattr(termios, "CRTSCTS", 0)
+        attrs[4] = attrs[5] = termios.B38400
+        termios.tcsetattr(slave, termios.TCSANOW, attrs)
+        expected = termios.tcgetattr(slave)
+
+        # Generic raw mode keeps its carrier semantics.
+        set_raw_mode(slave)
+        assert termios.tcgetattr(slave) == expected
+        assert not expected[2] & termios.CLOCAL
+
+        opened = open_serial_fd(os.ttyname(slave))
+        assert opened >= 0
+        actual = termios.tcgetattr(opened)
+        assert actual[2] & termios.CLOCAL
+        expected[2] |= termios.CLOCAL
+        assert actual == expected
+        assert not os.get_blocking(opened)
+
+        os.close(master)
+        master = -1
+        assert read_some(opened, 16) is None
+    finally:
+        if opened >= 0:
+            os.close(opened)
+        if master >= 0:
+            os.close(master)
+        os.close(slave)

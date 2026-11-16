@@ -102,6 +102,12 @@ int OpenSerialFd(const char* path) {
   const int fd = ::open(path, O_RDWR | O_NOCTTY | O_CLOEXEC);
   if (fd < 0) return -1;
   SetRawMode(fd);
+  // CDC-ACM carries bytes independently of modem carrier transitions.
+  termios tio{};
+  if (::tcgetattr(fd, &tio) == 0) {
+    tio.c_cflag |= CLOCAL;
+    ::tcsetattr(fd, TCSANOW, &tio);
+  }
   if (!SetNonblocking(fd)) {
     ::close(fd);
     return -1;

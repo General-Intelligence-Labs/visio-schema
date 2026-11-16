@@ -82,12 +82,19 @@ def close_fd(fd: int) -> None:
 
 
 def open_serial_fd(path: str) -> int:
-    """Open a device path raw + non-blocking. Returns the fd or -1 on failure."""
+    """Open local serial raw and non-blocking; return the fd or -1."""
     try:
         fd = os.open(path, os.O_RDWR | os.O_NOCTTY | os.O_CLOEXEC)
     except OSError:
         return -1
     set_raw_mode(fd)
+    if termios is not None:
+        try:
+            attrs = termios.tcgetattr(fd)
+            attrs[2] |= termios.CLOCAL
+            termios.tcsetattr(fd, termios.TCSANOW, attrs)
+        except termios.error:
+            pass
     set_nonblocking(fd)
     return fd
 
