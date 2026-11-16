@@ -3,6 +3,8 @@
 #include <dirent.h>
 #include <cstdio>
 
+#include "visio_schema/log.hpp"
+
 namespace visio_schema::transport {
 
 SerialEndpoint::SerialEndpoint(FdFactory factory, WritePolicy policy,
@@ -13,7 +15,8 @@ SerialEndpoint::SerialEndpoint(FdFactory factory, WritePolicy policy,
 
 SerialEndpoint::SerialEndpoint(std::string path, WritePolicy policy,
                                UsbStateFn usb_state)
-    : SerialEndpoint(MakeFactory(std::move(path)), policy, std::move(usb_state)) {}
+    : SerialEndpoint(MakeFactory(std::move(path)), policy,
+                     std::move(usb_state)) {}
 
 // Runs on the endpoint's own I/O thread (FramedFdEndpoint::Loop -> Tick).
 void SerialEndpoint::Tick(std::int64_t now_ns) {
@@ -25,12 +28,26 @@ void SerialEndpoint::Tick(std::int64_t now_ns) {
     last_usb_read_ns_ = now_ns;
     last_usb_state_ = usb_state_fn_ ? usb_state_fn_() : std::string();
   }
-  const auto action = watchdog_.tick(last_usb_state_, outbox_pending(),
-                                     accepted_total(), link_up_unlocked(),
-                                     now_ns / 1'000'000);
+  const auto pending = outbox_pending();
+  const auto accepted = accepted_total();
+  const bool open = link_up_unlocked();
+  const bool stalled = Stalled();
+  const auto action = watchdog_.tick(last_usb_state_, pending, accepted, open,
+                                    stalled, now_ns / 1'000'000);
   if (action == SerialWatchdog::Action::None) return;
-  // CONFIGURED edge / drain-stall / retry: drop the (possibly stale) link + outbox
-  // and open a fresh one. The blocking close/open is on THIS leg's thread only.
+  // The watchdog's reopen interval bounds these reason logs.
+  log::WriteSampled(
+      log::Severity::kWarning,
+      "[serial-reopen] action=%d usb=%s pending=%zu accepted=%llu "
+      "open=%d stalled=%d uptime_ms=%lld",
+      static_cast<int>(action), last_usb_state_.c_str(), pending,
+      static_cast<unsigned long long>(accepted), static_cast<int>(open),
+      static_cast<int>(stalled),
+      static_cast<long long>(now_ns / 1'000'000));
+  // CONFIGURED edge / drain-stall / retry: drop the (possibly stale) link +
+  // outbox
+  // and open a fresh one. The blocking close/open is on THIS leg's thread
+  // only.
   MarkLinkDead();
   Reopen();
   watchdog_.on_reopen_result(link_up_unlocked());

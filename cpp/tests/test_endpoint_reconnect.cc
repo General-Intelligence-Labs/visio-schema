@@ -1,12 +1,14 @@
 // Reconnect coverage for the active-object fd endpoints: FramedFdEndpoint's
-// FdFactory / Tick reopen / backoff and SerialEndpoint wiring the SerialWatchdog
+// FdFactory / Tick reopen / backoff and SerialEndpoint wiring the
+// SerialWatchdog
 // to a real reopen via injected link factory + USB-state reader.
 //
 // The reopen/backoff/watchdog logic lives in the protected Tick()/Reopen()/
-// MarkLinkDead(), driven on the endpoint's own I/O thread once Start()ed. These
-// tests drive them DIRECTLY via a test subclass (no thread) so timing is
-// deterministic and there is no data race on the internal link. The EOF→reopen
-// wiring on the read path is exercised threaded by test_io (fixed-link on_closed).
+// MarkLinkDead(), driven on the endpoint's own I/O thread once Start()ed.
+// These
+// Most tests drive them directly via a test subclass for deterministic timing.
+// The stall test runs the I/O thread against a real socketpair; test_io covers
+// the threaded EOF path for fixed links.
 // All host-runnable over socketpairs — no /dev/ttyGS0, no hardware.
 #include "visio_schema/transport/framed_fd.hpp"
 
@@ -14,8 +16,11 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <atomic>
+#include <chrono>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "visio_schema/transport/link.hpp"
@@ -29,11 +34,12 @@ using visio_schema::transport::WritePolicy;
 namespace {
 
 // An FdFactory stand-in: each call makes a fresh socketpair and hands back one
-// end's fd (the endpoint adopts it + sets O_NONBLOCK), retaining the peer fd so a
+// end's fd (the endpoint adopts it + sets O_NONBLOCK), retaining the peer fd
+// so a
 // test can close it to simulate the far side dropping. `return_fail` models a
 // failed (re)connect (-1).
 struct FakeFactory {
-  int invocations = 0;
+  std::atomic<int> invocations{0};
   bool return_fail = false;
   std::vector<int> peer_fds;
 
@@ -53,7 +59,8 @@ FdFactory FnOf(std::shared_ptr<FakeFactory> s) {
 }
 
 // Exposes the protected reopen hooks so tests can drive them synchronously,
-// standing in for the I/O thread (which calls Tick() each loop and MarkLinkDead()
+// standing in for the I/O thread (which calls Tick() each loop and
+// MarkLinkDead()
 // on a read EOF).
 class TestFd : public FramedFdEndpoint {
  public:
@@ -67,6 +74,7 @@ class TestSerial : public SerialEndpoint {
   using SerialEndpoint::SerialEndpoint;
   using SerialEndpoint::Tick;
   void SimulatePeerEof() { MarkLinkDead(); }
+  std::uint64_t Accepted() const { return accepted_total(); }
 };
 
 }  // namespace
@@ -82,15 +90,16 @@ TEST(EndpointReconnect, SelfHealsOnPeerCloseAndReopensOnTick) {
   auto s = std::make_shared<FakeFactory>();
   TestFd ep(FnOf(s), WritePolicy::drop_oldest(), /*reopen_backoff_ns=*/1000);
   ASSERT_TRUE(ep.link_up());  // factory ran eagerly in the ctor
-  EXPECT_EQ(s->invocations, 1);
+  EXPECT_EQ(s->invocations.load(), 1);
 
   ::close(s->last_peer());  // far side hangs up
-  ep.SimulatePeerEof();     // what the I/O thread does when ReadSome reports EOF
+  ep.SimulatePeerEof();
+  // what the I/O thread does when ReadSome reports EOF
   EXPECT_FALSE(ep.link_up());
 
   ep.Tick(0);  // MarkLinkDead armed an immediate retry
   EXPECT_TRUE(ep.link_up());
-  EXPECT_EQ(s->invocations, 2);
+  EXPECT_EQ(s->invocations.load(), 2);
 }
 
 TEST(EndpointReconnect, FailedReopenBacksOff) {
@@ -98,30 +107,32 @@ TEST(EndpointReconnect, FailedReopenBacksOff) {
   s->return_fail = true;  // every (re)connect fails
   TestFd ep(FnOf(s), WritePolicy::drop_oldest(), /*reopen_backoff_ns=*/1000);
   EXPECT_FALSE(ep.link_up());
-  EXPECT_EQ(s->invocations, 1);  // initial attempt (in the ctor)
+  EXPECT_EQ(s->invocations.load(), 1);  // initial attempt (in the ctor)
 
   ep.Tick(0);                    // retry → fails → arms backoff until t=1000
-  EXPECT_EQ(s->invocations, 2);
+  EXPECT_EQ(s->invocations.load(), 2);
   ep.Tick(500);                  // within backoff → no attempt
-  EXPECT_EQ(s->invocations, 2);
+  EXPECT_EQ(s->invocations.load(), 2);
   ep.Tick(1000);                 // backoff elapsed → retry
-  EXPECT_EQ(s->invocations, 3);
+  EXPECT_EQ(s->invocations.load(), 3);
 }
 
 TEST(EndpointReconnect, StopHaltsIoThreadWithoutReopen) {
   auto s = std::make_shared<FakeFactory>();
   FramedFdEndpoint ep(FnOf(s), WritePolicy::drop_oldest(), 1000);
   ASSERT_TRUE(ep.link_up());
-  EXPECT_EQ(s->invocations, 1);
+  EXPECT_EQ(s->invocations.load(), 1);
   ep.Start(nullptr, nullptr);
   ep.Stop();  // joins the I/O thread + closes the link
   EXPECT_FALSE(ep.link_up());
   // The link stayed up for the run, so Tick never reopened: factory ran once.
-  EXPECT_EQ(s->invocations, 1);
+  EXPECT_EQ(s->invocations.load(), 1);
 }
 
-// The fixed-fd SerialEndpoint ctor is the NON-RECONNECTING mode: no factory, no
-// watchdog. After a peer EOF the link stays down and a Tick() must NOT reopen it
+// The fixed-fd SerialEndpoint ctor is the NON-RECONNECTING mode: no factory,
+// no
+// watchdog. After a peer EOF the link stays down and a Tick() must NOT reopen
+// it
 // (vs the watchdog/factory modes above) — the owner is expected to re-discover
 // the device (whose /dev/ttyACMn number may have changed) rather than the
 // endpoint silently reopening a stale path.
@@ -144,14 +155,14 @@ TEST(SerialEndpointWatchdog, ReopensOnConfiguredEdge) {
   std::string usb = "DISCONNECTED";
   TestSerial ep(FnOf(s), WritePolicy::drop_oldest(), [&usb] { return usb; });
   ASSERT_TRUE(ep.link_up());
-  EXPECT_EQ(s->invocations, 1);
+  EXPECT_EQ(s->invocations.load(), 1);
 
   ep.Tick(0);  // seeds prev USB state; healthy + draining → no reopen
-  EXPECT_EQ(s->invocations, 1);
+  EXPECT_EQ(s->invocations.load(), 1);
 
   usb = "CONFIGURED";        // host (re)enumerated → CONFIGURED edge
   ep.Tick(1'000'000'000);    // now_ms = 1000
-  EXPECT_EQ(s->invocations, 2);  // watchdog forced a reopen
+  EXPECT_EQ(s->invocations.load(), 2);  // watchdog forced a reopen
   EXPECT_TRUE(ep.link_up());
 }
 
@@ -175,25 +186,29 @@ TEST(SerialEndpointWatchdog, UsbFlipWithinPollWindowIsDeferredToNextSample) {
   ep.Tick(100'000'000);
   ep.Tick(199'999'999);
   EXPECT_EQ(reads, 1);           // cached value fed to the watchdog
-  EXPECT_EQ(s->invocations, 1);  // edge deferred: no reopen yet
+  EXPECT_EQ(s->invocations.load(), 1);  // edge deferred: no reopen yet
 
   ep.Tick(200'000'000);          // window elapsed: re-sample, edge seen
   EXPECT_EQ(reads, 2);
-  EXPECT_EQ(s->invocations, 2);  // reopen at most one interval late
+  EXPECT_EQ(s->invocations.load(), 2);  // reopen at most one interval late
   EXPECT_TRUE(ep.link_up());
 }
 
 // The NEGATIVE half of the fixed-fd close report: a REOPENABLE link that dies
-// must NOT tell its owner it closed. It is about to come back on the next Tick,
-// and reporting would have the owner detach a link that then self-heals — on the
+// must NOT tell its owner it closed. It is about to come back on the next
+// Tick,
+// and reporting would have the owner detach a link that then self-heals — on
+// the
 // device that is the CDC-ACM serial leg leaving the bus on any write hiccup,
 // after which Tick reopens an endpoint the bus no longer holds.
 TEST(EndpointReconnect, AReopenableLinkDyingDoesNotReportClosed) {
   auto s = std::make_shared<FakeFactory>();
   TestFd ep(FnOf(s), WritePolicy::drop_oldest(), /*reopen_backoff_ns=*/1000);
   int closed_calls = 0;
-  ep.Start([](visio_schema::wire::Message, visio_schema::transport::Endpoint*) {},
-           [&closed_calls](visio_schema::transport::Endpoint*) { ++closed_calls; });
+  ep.Start(
+      [](visio_schema::wire::Message,
+         visio_schema::transport::Endpoint*) {},
+      [&closed_calls](visio_schema::transport::Endpoint*) { ++closed_calls; });
   ASSERT_TRUE(ep.link_up());
 
   ::close(s->last_peer());
@@ -204,4 +219,58 @@ TEST(EndpointReconnect, AReopenableLinkDyingDoesNotReportClosed) {
   EXPECT_TRUE(ep.link_up());
   EXPECT_EQ(closed_calls, 0);
   ep.Stop();
+}
+
+TEST(SerialEndpointWatchdog, BriefPauseThenRealStall) {
+  using Clock = std::chrono::steady_clock;
+  using namespace std::chrono_literals;
+  auto factory = std::make_shared<FakeFactory>();
+  std::atomic<bool> configured{false};
+  TestSerial ep(FnOf(factory), WritePolicy::drop_oldest(128), [&] {
+    return configured.load() ? std::string("CONFIGURED") : std::string();
+  });
+  const int peer = factory->last_peer();
+  ASSERT_TRUE(visio_schema::transport::SetNonblocking(peer));
+  visio_schema::wire::Message message;
+  message.stream_id = 16;
+  message.payload = std::string(4096, 'p');
+  message.bulk = true;
+  ep.Start({}, {});
+
+  // Real writes establish reader proof before the peer stops reading.
+  const auto proof =
+      visio_schema::transport::SerialWatchdog::kReaderProofBytes;
+  const auto prime_deadline = Clock::now() + 2s;
+  std::uint8_t bytes[65536];
+  while (ep.Accepted() < proof && Clock::now() < prime_deadline) {
+    ep.Send(message);
+    while (visio_schema::transport::ReadSome(
+               peer, bytes, sizeof(bytes)) > 0) {}
+    std::this_thread::sleep_for(1ms);
+  }
+  const bool reader_seen = ep.Accepted() >= proof;
+  if (reader_seen) {
+    configured.store(true);
+    const auto started = Clock::now();
+    const auto stall_window =
+        std::chrono::nanoseconds(FramedFdEndpoint::kDefaultStallNs);
+    // Wake on each enqueue while the kernel send buffer is full. These
+    // callbacks must not turn a brief pause into a stale-link decision.
+    while (Clock::now() - started < stall_window / 4) {
+      ep.Send(message);
+      std::this_thread::sleep_for(1ms);
+    }
+    EXPECT_EQ(factory->invocations.load(), 1);
+
+    // Genuine sustained backpressure must still reopen the serial leg.
+    while (factory->invocations.load() == 1 &&
+           Clock::now() - started < stall_window + 2s) {
+      ep.Send(message);
+      std::this_thread::sleep_for(1ms);
+    }
+    EXPECT_EQ(factory->invocations.load(), 2);
+  }
+  ep.Stop();
+  for (int fd : factory->peer_fds) ::close(fd);
+  ASSERT_TRUE(reader_seen) << "socketpair did not establish reader proof";
 }
