@@ -108,6 +108,14 @@ message RecordingEntry {
   // Archive upload only: the archive's exact size in bytes (the tar holding
   // the session's files); 0 until the device has planned the archive.
   uint64 archive_bytes = 22;
+
+  // Size in bytes of the preview video stored with this recording, downloaded
+  // with GetRecordingPreview. 0 when the session has none (recording preview
+  // off, a recording shorter than one preview interval, or firmware that does
+  // not store one). The preview is not a pullable file: file_count, files and
+  // size_bytes do not count or list it. Grows while the session is being
+  // recorded, so a host that keeps a copy can tell it is out of date.
+  uint64 preview_bytes = 23;
 }
 
 // One file inside a recorded session.
@@ -597,7 +605,8 @@ message CommandResult {
   }
 }
 
-// The image described by CaptureSnapshot's single command acknowledgment.
+// The image described by CaptureSnapshot's single command acknowledgment, or
+// the recording preview video described by GetRecordingPreview's.
 // JPEG bytes arrive separately on the caller-only /<device>/snapshot channel
 // as visio_schema.v1.service.snapshot.SnapshotChunk messages. Chunks may arrive
 // before this acknowledgment; correlate by snapshot_id == command_id.
@@ -608,8 +617,10 @@ message Snapshot {
   uint32 height = 4;
   // Original VI capture PTS, CLOCK_BOOTTIME microseconds, in the camera's own
   // clock. This is not UTC and is not shifted by hop-level header timesync.
+  // 0 for a recording preview, whose frames carry no timing.
   uint64 capture_pts_us = 5;
-  uint32 total_bytes = 6; // 1..131072; fixed bound on the full JPEG
+  // 1..131072 for a JPEG; 1..16777216 for a recording preview video.
+  uint32 total_bytes = 6;
 }
 
 // IngestSign's answer: the request's Authorization header value,

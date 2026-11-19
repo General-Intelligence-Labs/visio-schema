@@ -23,6 +23,11 @@ capture. A disconnect or deadline also fails it; request a fresh capture rather
 than retrying byte reads. There is no cache, lease, read command, cancel command,
 extra socket, file, or GATT characteristic.
 
+The preview video a device stored with a recording is downloaded with
+`GetRecordingPreview`, which answers in this same format with a larger size
+bound and a between-chunks deadline: see
+[recording preview](recording_preview.md).
+
 The image defaults to an upright 640×360 JPEG at quality 60. The full camera
 field of view is scaled to fit, with black bars when its aspect ratio differs
 from 16:9. Capture leaves the configured camera resolution alone and creates
@@ -38,7 +43,11 @@ microseconds, rather than UTC or the timesynchronized bus header timestamp.
 
 The device admits one capture and stream-enqueue operation at a time, holds at
 most 128 KiB of transient JPEG bytes, and bounds waiting for queue capacity to
-30 seconds. The receiver also bounds the whole operation to 30 seconds. The
+30 seconds. A new request on the connection that holds that operation replaces
+it: the device stops the old one (sends no more of its chunks) and admits the
+new one, because a receiver that gave up on a response has no way to say so
+and must not have to wait it out. A request from any other connection while
+one is in flight is `busy`. The receiver also bounds the whole operation to 30 seconds. The
 transport accepts chunks into a separate non-evicting response queue of at most 8 KiB
 queued bytes plus one in-flight frame. When full, the worker waits for local
 queue capacity; it does not ask the host for another command. Normal control

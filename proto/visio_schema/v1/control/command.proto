@@ -81,6 +81,8 @@ message Command {
 
     UploadRecording upload_recording = 56;
     CancelUpload    cancel_upload    = 57;
+
+    GetRecordingPreview get_recording_preview = 58;
   }
 }
 
@@ -135,6 +137,38 @@ message SetCapturePreset {
 // or enable live video. Errors include unsupported, busy, timeout,
 // encode_failed, and image_too_large. Exactly one capture is admitted at a time.
 message CaptureSnapshot {}
+
+// Download the preview video that the device stored with a recording, whole.
+// While a recording runs, a device with the recording preview enabled encodes
+// a small frame of its primary camera every few seconds and appends it to a
+// short H.265 video beside the recording, so a host can show what a recording
+// holds (for example, to ask the wearer's consent before it is uploaded)
+// without pulling the recording itself. RecordingEntry.preview_bytes says
+// whether a session has one, and how large it is.
+//
+// The answer has CaptureSnapshot's form: one CommandResult.snapshot descriptor
+// (snapshot_id = this Command's nonzero command_id; total_bytes = the whole
+// video) and a finite SnapshotChunk stream on /<device>/snapshot carrying the
+// video's bytes from offset 0, sent only to the requesting connection. The
+// bytes are a raw H.265 Annex-B elementary stream, not a JPEG. Register
+// reception before sending. Must be addressed to the directly connected
+// device, like CaptureSnapshot. Works over every command transport, including
+// BLE, but not while the device is recording ("busy_recording": ask again once
+// it has stopped). There is no partial read; an interrupted transfer is
+// requested again. The preview is
+// stored unencrypted, also on units that encrypt their recordings, and is
+// never uploaded with the recording. See docs/protocol/recording_preview.md.
+//
+// Refusals: "invalid_request" (a zero command_id, an empty or malformed
+// session_key, an empty or hub-relayed target), "no_sdcard",
+// "no_such_session", "no_preview" (the session has none),
+// "busy" (a snapshot or preview is already being captured or transferred),
+// "busy_recording" (the device is recording), "read_failed",
+// "preview_too_large", "unsupported".
+message GetRecordingPreview {
+  // The recording's id: RecordingEntry.session_key (32 lowercase hex).
+  string session_key = 1;
+}
 
 // Mains anti-flicker for every camera on this device: the switch a wearer turns
 // on when lamps on AC mains (LED, fluorescent) flicker in the video.

@@ -6,6 +6,18 @@ bump the MINOR version.
 
 ## Unreleased
 
+### Recording preview
+
+Add `GetRecordingPreview` (Command 58) and `RecordingEntry.preview_bytes`
+(23). A device can store a short H.265 preview video of its primary camera
+with each recording (one frame every few seconds, every frame an IDR); a host
+downloads it whole by recording id, in the `CaptureSnapshot` answer format
+(descriptor plus a caller-only `SnapshotChunk` stream, up to 16 MiB, with a
+30 s bound between chunks rather than on the whole transfer), over any command
+transport, BLE included. The preview is unencrypted and never uploaded with
+the recording. All additive: older firmware answers `unsupported` and reports
+no size; older hosts ignore the field. See docs/protocol/recording_preview.md.
+
 ### Archive upload through a one-file link
 
 Add `UploadRecording` (Command 56) and `CancelUpload` (57): a host hands a

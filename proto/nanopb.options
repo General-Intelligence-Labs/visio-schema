@@ -66,6 +66,7 @@ visio_schema.v1.control.DeleteRecording.session_key   max_size:33
 visio_schema.v1.control.RecordingStop.session_key     max_size:33
 visio_schema.v1.control.CancelUpload.session_key      max_size:33
 visio_schema.v1.control.UploadRecording.session_key   max_size:33
+visio_schema.v1.control.GetRecordingPreview.session_key max_size:33
 # A one-file Azure SAS URL: account host + container + blob path + SAS query
 # (a user delegation SAS adds ~250 characters of signer fields), ~600 in
 # practice. In a oneof arm, so paid once across the whole Command.
