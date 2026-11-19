@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <future>
 #include <vector>
 
 using visio_schema::transport::FramedOutbox;
@@ -219,26 +220,51 @@ TEST(FramedOutbox, EvictionNeverSplicesInFlightFrame) {
   EXPECT_EQ(sink.received, want);
 }
 
-TEST(FramedOutbox, BatchAllCoalescesQueuedFrames) {
-  FramedOutbox ob(WritePolicy::stale_eviction(1 << 20, std::chrono::microseconds(0),
-                                              WritePolicy::DrainMode::BatchAll));
-  auto a = Frame(0x01, 3), b = Frame(0x02, 3), c = Frame(0x03, 3);
-  ob.Enqueue(a.data(), a.size());
-  ob.Enqueue(b.data(), b.size());
-  ob.Enqueue(c.data(), c.size());
+TEST(FramedOutbox, CoalesceDoesNotBlockEnqueue) {
+  using namespace std::chrono_literals;
+  std::promise<void> releasing, release;
+  auto released = release.get_future();
+  FramedOutbox ob(WritePolicy::stale_eviction(1 << 20, 0us));
+  FramedOutbox::SharedFrame a(new std::vector<std::uint8_t>(Frame(1, 3)),
+                            [&](const auto* bytes) {
+                              releasing.set_value();
+                              released.wait();
+                              delete bytes;
+                            });
+  const auto b = Frame(2, 3);
+  const auto c = Frame(3, 3);
+  const auto next = Frame(4, 3);
+  EXPECT_TRUE(ob.Enqueue(std::move(a)));
+  EXPECT_TRUE(ob.Enqueue(b.data(), b.size()));
+  EXPECT_TRUE(ob.Enqueue(c.data(), c.size()));
 
-  // Count write calls: BatchAll should drain all three in a single write.
-  int calls = 0;
   FakeSink sink;
-  auto base = sink.fn();
-  auto counting = [&](const std::uint8_t* p, std::size_t n) -> long {
-    ++calls;
-    return base(p, n);
-  };
-  ASSERT_TRUE(ob.Drain(counting));
+  int calls = 0;
+  auto drain = std::async(std::launch::async, [&] {
+    return ob.Drain([&](const std::uint8_t* p, std::size_t n) {
+      ++calls;
+      EXPECT_EQ(ob.PendingBytes(), 9u + next.size());
+      return sink.fn()(p, n);
+    });
+  });
+  const auto at_release = releasing.get_future().wait_for(2s);
+  auto enqueue = std::async(std::launch::async, [&] {
+    return ob.Enqueue(next.data(), next.size());
+  });
+  const auto enqueued = enqueue.wait_for(1s);
+  release.set_value();
+  EXPECT_EQ(at_release, std::future_status::ready);
+  EXPECT_EQ(enqueued, std::future_status::ready);
+  EXPECT_TRUE(enqueue.get());
+  ASSERT_TRUE(drain.get());
+  EXPECT_EQ(calls, 1);
+  const std::vector<std::uint8_t> first{1, 1, 1, 2, 2, 2, 3, 3, 3};
+  EXPECT_EQ(sink.received, first);
+  EXPECT_EQ(ob.PendingBytes(), next.size());
+  ASSERT_TRUE(ob.Drain(sink.fn()));
   EXPECT_FALSE(ob.HasPending());
-  EXPECT_EQ(calls, 1);  // one coalesced write
-  EXPECT_EQ(sink.received.size(), 9u);
+  EXPECT_EQ(sink.received, (std::vector<std::uint8_t>{
+                              1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4}));
 }
 
 TEST(FramedOutbox, DeadLinkReportedFalse) {

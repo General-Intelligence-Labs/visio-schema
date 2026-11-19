@@ -11,7 +11,9 @@ std::int64_t FramedOutbox::SteadyNowUs() {
 }
 
 FramedOutbox::FramedOutbox(WritePolicy policy, NowFn now)
-    : policy_(policy), now_(std::move(now)) {}
+    : policy_(policy), now_(std::move(now)) {
+  if (policy.drain == WritePolicy::DrainMode::BatchAll) batch_.emplace();
+}
 
 bool FramedOutbox::Enqueue(SharedFrame frame, bool keyframe) {
   if (!frame) return false;
@@ -71,8 +73,9 @@ bool FramedOutbox::Drain(const WriteFn& wr, bool one_frame) {
     if (one_frame) return true;  // let the endpoint re-check control priority
   }
 
-  // Phase 2 + 3 under the queue lock: age-evict, then promote into in_flight_.
-  {
+  // Age-evict and transfer ownership under the queue lock. If an
+  // allocation to coalesce a committed batch threw, resume it first.
+  if (!batch_ || batch_->empty()) {
     std::lock_guard<std::mutex> lk(mu_);
     if (policy_.drop == WritePolicy::DropMode::StaleEviction &&
         policy_.max_age.count() > 0) {
@@ -108,8 +111,18 @@ bool FramedOutbox::Drain(const WriteFn& wr, bool one_frame) {
       }
     }
     if (queue_.empty()) return true;
-    PromoteToInFlight();  // queue_ -> in_flight_ (commit point)
+    if (batch_ && queue_.size() > 1) {
+      batch_->swap(queue_);
+      batch_bytes_ = queue_bytes_;
+      queue_bytes_ = 0;
+    } else {
+      in_flight_ = std::move(queue_.front().data);
+      queue_bytes_ -= in_flight_->size();
+      queue_.pop_front();
+    }
   }
+
+  if (batch_ && !batch_->empty()) CoalesceBatch();
 
   // Trailing best-effort write (no lock; in_flight_ is drainer-private now).
   if (in_flight_off_ < in_flight_size()) {
@@ -125,34 +138,16 @@ bool FramedOutbox::Drain(const WriteFn& wr, bool one_frame) {
   return true;
 }
 
-// Caller holds mu_.
-void FramedOutbox::PromoteToInFlight() {
-  if (queue_.empty()) return;
-  if (policy_.drain == WritePolicy::DrainMode::BatchAll && queue_.size() > 1) {
-    // Coalesce into a drainer-private scratch. The copy is inherent to
-    // batching (one write needs one contiguous buffer); the shared entries
-    // just drop their refcounts afterwards.
-    std::size_t total = 0;
-    for (const auto& e : queue_) total += e.data->size();
-    std::vector<std::uint8_t> batch;
-    batch.reserve(total);
-    for (auto& e : queue_) {
-      batch.insert(batch.end(), e.data->begin(), e.data->end());
-    }
-    in_flight_ =
-        std::make_shared<const std::vector<std::uint8_t>>(std::move(batch));
-    queue_.clear();
-    queue_bytes_ = 0;
-  } else {
-    // OneAtATime — or a single-entry "batch", where coalescing would only
-    // re-copy the one buffer: a refcount move, no copy, shared buffer
-    // untouched. The single-entry case is the common one: the loop is woken
-    // per enqueued message, so a batch usually holds exactly one frame.
-    in_flight_ = std::move(queue_.front().data);
-    queue_bytes_ -= in_flight_->size();
-    queue_.pop_front();
+void FramedOutbox::CoalesceBatch() {
+  auto bytes = std::make_shared<std::vector<std::uint8_t>>();
+  bytes->reserve(batch_bytes_);
+  while (!batch_->empty()) {
+    const auto& frame = *batch_->front().data;
+    bytes->insert(bytes->end(), frame.begin(), frame.end());
+    batch_->pop_front();
   }
-  in_flight_off_ = 0;
+  in_flight_ = std::move(bytes);
+  batch_bytes_ = 0;
 }
 
 void FramedOutbox::Clear() {
@@ -161,7 +156,9 @@ void FramedOutbox::Clear() {
     queue_.clear();
     queue_bytes_ = 0;
   }
-  in_flight_.reset();   // drainer-private
+  if (batch_) batch_->clear();
+  batch_bytes_ = 0;
+  in_flight_.reset();
   in_flight_off_ = 0;
 }
 

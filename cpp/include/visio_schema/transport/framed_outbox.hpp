@@ -21,6 +21,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <vector>
 
 #include "visio_schema/transport/write_policy.hpp"
@@ -58,7 +59,10 @@ class FramedOutbox {
   // partial in_flight_). The owning endpoint uses this to multiplex two outboxes
   // (control + bulk) over one fd WITHOUT interleaving half-frames: it only
   // switches queues when neither has bytes mid-flight. Leg-thread-local read.
-  bool InFlightActive() const { return in_flight_off_ < in_flight_size(); }
+  bool InFlightActive() const {
+    return in_flight_off_ < in_flight_size() ||
+           (batch_ && !batch_->empty());
+  }
 
   // Drain as much as the link will accept right now, non-blocking. one_frame
   // yields at the next frame boundary so the endpoint can re-check priority.
@@ -69,7 +73,7 @@ class FramedOutbox {
   // True while there are committed-but-unwritten bytes or queued frames — i.e.
   // the sink wants POLLOUT. (in_flight_ read is leg-thread-local.)
   bool HasPending() const {
-    if (in_flight_off_ < in_flight_size()) return true;
+    if (InFlightActive()) return true;
     std::lock_guard<std::mutex> lk(mu_);
     return !queue_.empty();
   }
@@ -77,7 +81,7 @@ class FramedOutbox {
   std::size_t PendingBytes() const {
     const std::size_t inflight = in_flight_size() - in_flight_off_;
     std::lock_guard<std::mutex> lk(mu_);
-    return inflight + queue_bytes_;
+    return inflight + batch_bytes_ + queue_bytes_;
   }
   std::size_t QueuedFrames() const {
     std::lock_guard<std::mutex> lk(mu_);
@@ -98,7 +102,7 @@ class FramedOutbox {
     std::int64_t enqueue_us;
     bool keyframe = false;  // never age-evicted: it is the decoder's sync point
   };
-  void PromoteToInFlight();  // queue_ -> in_flight_, per DrainMode (caller holds mu_)
+  void CoalesceBatch();  // drainer only, outside mu_
   std::size_t in_flight_size() const {
     return in_flight_ ? in_flight_->size() : 0;
   }
@@ -108,9 +112,10 @@ class FramedOutbox {
   NowFn now_;
   std::deque<Entry> queue_;
   std::size_t queue_bytes_ = 0;
-  // Drainer-private (one leg thread). OneAtATime promotion is a refcount move
-  // of the shared entry; BatchAll wraps its concatenation scratch — either
-  // way the committed bytes are immutable and never evicted.
+  // Drainer-private. BatchAll swaps the committed entries out under mu_
+  // and copies their bytes afterward. OneAtATime moves one shared frame.
+  std::optional<std::deque<Entry>> batch_;
+  std::size_t batch_bytes_ = 0;
   SharedFrame in_flight_;
   std::size_t in_flight_off_ = 0;
   std::atomic<std::uint64_t> dropped_{0};
