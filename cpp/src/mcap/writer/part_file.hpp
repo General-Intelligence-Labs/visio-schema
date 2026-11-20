@@ -1,6 +1,5 @@
 // part_file — CloexecFileWriter, the IWritable behind each part's file.
-// Private to src/mcap; included by writer/parts.cc alone, which is why its
-// helpers keep the unnamed namespace they had in writer.cc.
+// Private to src/mcap; included by writer/parts.cc alone.
 #pragma once
 
 #include <fcntl.h>
@@ -37,16 +36,20 @@ namespace {
 constexpr std::size_t kStdioBufferBytes = 16 * 1024;
 constexpr std::size_t kCipherScratchBytes = 64 * 1024;
 
-// What one attempt to open a part came to, at the writable.
-struct PartOpening {
-  IoResult failure;      // none when the part is open
-  bool created = false;  // a file was made for it: removed if it failed
-};
+static_assert(kCipherScratchBytes > kStdioBufferBytes,
+              "cipher slices must exceed the stdio buffer to bypass it");
+
+}  // namespace
 
 // MCAP framing and VREC encryption use the same checked device backend.
 // Every failed step is reported to the part's outcome (part_outcome.hpp),
 // which decides whether it costs the part or ends the recording.
-class CloexecFileWriter final : public ::mcap::IWritable {
+class McapWriter::CloexecFileWriter final : public ::mcap::IWritable {
+  struct PartOpening {
+    IoResult failure;
+    bool created = false;
+  };
+
  public:
   explicit CloexecFileWriter(std::uint64_t sync_span_bytes,
                              const RecordingKey* key, SpanReadback* readback,
@@ -57,9 +60,11 @@ class CloexecFileWriter final : public ::mcap::IWritable {
         checkpoint_interval_(checkpoint_interval), encrypting_(key != nullptr),
         readback_(readback), sync_span_bytes_(sync_span_bytes ?
           std::max<std::uint64_t>(sync_span_bytes, file_sync::kPageBytes) : 0) {
+    static_assert(sizeof(CloexecFileWriter) < 1024,
+                  "the writable must not hold inline staging buffers");
     if (key) key_ = *key;
   }
-  ~CloexecFileWriter() override { end(); }
+  ~CloexecFileWriter() override { Finalize(); }
 
   // Make `filename` the open part: created, and for an encrypted recording
   // its VREC header written. A failed attempt says its step and errno; a
@@ -137,7 +142,11 @@ class CloexecFileWriter final : public ::mcap::IWritable {
     return wrote;
   }
 
-  void end() override {
+  // Upstream calls end() before freeing its chunk buffer and indexes.
+  // The owner finalizes after releasing them, outside noexcept destruction.
+  void end() override {}
+
+  void Finalize() {
     if (file_) {
       const uint64_t final_size = file_size();
       Report(file_->Checkpoint());
@@ -336,17 +345,5 @@ class CloexecFileWriter final : public ::mcap::IWritable {
   uint64_t evicted_end_ = 0;
   bool sync_disabled_ = false;
 };
-
-// The two sizing invariants this writable rests on, pinned where they cannot
-// drift: a slice must be an over-size request against the stdio buffer (or
-// every encrypted byte is copied into it), and no staging buffer may live
-// INLINE here — a plaintext part must carry none at all, which a member array
-// would silently undo without allocating anything for a test to notice.
-static_assert(kCipherScratchBytes > kStdioBufferBytes,
-              "cipher slices must exceed the stdio buffer to bypass it");
-static_assert(sizeof(CloexecFileWriter) < 1024,
-              "the part writable must stay small: no inline staging buffer");
-
-}  // namespace
 
 }  // namespace visio_schema::mcap

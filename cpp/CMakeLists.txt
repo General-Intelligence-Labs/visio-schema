@@ -190,6 +190,10 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT CMAKE_CROSSCOMPILI
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_executable(visio_schema_mcap_io_tests
       tests/test_mcap_io_contract.cc tests/mcap_io_fault.cc)
+    target_include_directories(visio_schema_mcap_io_tests PRIVATE
+      "${MCAP_INCLUDE_DIR}")
+    target_link_options(visio_schema_mcap_io_tests PRIVATE
+      -Wl,--wrap=_Znwm -Wl,--wrap=_ZdlPv -Wl,--wrap=_ZdlPvm)
     target_link_libraries(visio_schema_mcap_io_tests PRIVATE
       visio_schema GTest::gtest_main ${CMAKE_DL_LIBS})
     gtest_discover_tests(visio_schema_mcap_io_tests PROPERTIES TIMEOUT 30)

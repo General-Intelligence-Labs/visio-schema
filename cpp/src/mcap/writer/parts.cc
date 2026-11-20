@@ -223,7 +223,7 @@ McapWriter::PartAttempt McapWriter::TryOpenPart(bool last) {
   auto fw = std::make_unique<CloexecFileWriter>(
       sync_span_bytes_, recording_key_ ? &*recording_key_ : nullptr,
       readback_.get(), part_.get(), storage_, checkpoint_interval_);
-  const PartOpening opening = fw->open(p);
+  const auto opening = fw->open(p);
   if (opening.failure.error) {
     PartAttempt failed{opening.failure};
     if (opening.created) {
@@ -236,9 +236,10 @@ McapWriter::PartAttempt McapWriter::TryOpenPart(bool last) {
     failed.costs_attempt = !failed.name_taken;
     return failed;
   }
-  writer_ = std::make_unique<::mcap::McapWriter>();
-  writer_->open(*fw, MakeOptions());
+  auto writer = std::make_unique<::mcap::McapWriter>();
+  writer->open(*fw, MakeOptions());
   file_ = std::move(fw);
+  writer_ = std::move(writer);
   part_retry_said_ = false;  // the next part's retries are said again
   WriteStoredMetadata();  // re-emit capture metadata so each part stands alone
   WriteRotationMetadata();
@@ -285,6 +286,9 @@ void McapWriter::CloseCurrentPart() {
       (part_index_ > 0 || pending_start) && part_bytes_ == 0 && !part_->failed();
   if (drop_part) part_->Dropping();
   writer_->close();
+  writer_.reset();
+  file_->Finalize();
+  file_.reset();
   physical_closed_ += part_->result().accepted;
   if (drop_part) {
     // Before any fsync or read-back post: syncing a file about to be unlinked
@@ -305,13 +309,9 @@ void McapWriter::CloseCurrentPart() {
   if (readback_) readback_->CommitTail();
 }
 
-// The closed part's mcap writer goes with it, so a next part that cannot
-// be opened (OpenPart throws) leaves nothing a later Close() could close,
-// remove or complete a second time.
 void McapWriter::Roll() {
   if (!writer_) return;
   CloseCurrentPart();
-  writer_.reset();
   if (part_->refused()) return;  // the volume takes nothing more
   ++part_index_;
   OpenPart();

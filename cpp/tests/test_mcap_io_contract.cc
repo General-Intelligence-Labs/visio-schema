@@ -48,6 +48,40 @@ class McapIoContract : public ::testing::TestWithParam<bool> {
     }
     ep.Stop();
   }
+  mcap_io_test::CloseOrderStats close_order(std::uint64_t limit,
+                                            bool explicit_close) {
+    mcap_io_test::CloseOrderScope probe(root_);
+    {
+      visio_schema::mcap::McapWriter writer(
+          root_ + "/writer.mcap", limit, 0.0, false, 0, 0, key());
+      for (unsigned i = 0; i < 32; ++i) {
+        auto message = mcap_test::Data(16, std::string(32768, 'x'));
+        message.seq = i;
+        writer.Write(channel_, message);
+      }
+      const auto before = probe.stats();
+      EXPECT_EQ(before.acquired, before.released + 1)
+          << "the final part must still own its writer before closing";
+      if (explicit_close) {
+        writer.Close();
+        writer.Close();
+      }
+    }
+    return probe.stats();
+  }
+  void expect_order(bool explicit_close) {
+    for (const std::uint64_t limit : {0u, 65536u}) {
+      const auto observed = close_order(limit, explicit_close);
+      const unsigned parts = limit ? 16 : 1;
+      EXPECT_EQ(observed.acquired, parts);
+      EXPECT_EQ(observed.released, parts);
+      EXPECT_EQ(observed.overlapping, 0u);
+      EXPECT_EQ(observed.checkpoints, parts);
+      EXPECT_EQ(observed.closes, parts);
+      EXPECT_EQ(observed.early_barriers, 0u);
+      EXPECT_EQ(held_recording_fds(), 0u);
+    }
+  }
   // The shim fails a short write with ENOSPC (a full volume: the recording
   // ends) and everything else with EIO (the part is kept unconfirmed; the
   // recording goes on). Either way the error reaches the save outcome.
@@ -204,4 +238,25 @@ TEST_P(McapIoContract, RealKernelFileSizeLimitMustReachRecordingHealth) {
     if (size != 65536) ::_exit(3);  // positive control: actually hit the limit
     ::_exit(ep->write_failed() || ep->storage_fault() ? 0 : 1);
   }, ::testing::ExitedWithCode(0), "");
+}
+
+TEST_P(McapIoContract, ReleasesWriterBeforeFinalBarriers) {
+  expect_order(true);
+}
+
+TEST_P(McapIoContract, DestructorReleasesBeforeFinalBarriers) {
+  expect_order(false);
+}
+
+TEST_P(McapIoContract, FinalBarrierExceptionReachesOwner) {
+  auto ep = endpoint();
+  {
+    FaultScope fault(root_, Fault::FileSyncThrow);
+    ASSERT_NO_THROW(record(*ep));
+    EXPECT_EQ(fault.hits(), 1u);
+    EXPECT_TRUE(ep->write_failed());
+    EXPECT_TRUE(ep->finalized());
+  }
+  ep.reset();
+  EXPECT_EQ(held_recording_fds(), 0u);
 }

@@ -43,7 +43,6 @@
 
 namespace mcap {
 class McapWriter;
-class IWritable;
 }
 
 namespace visio_schema::mcap {
@@ -244,6 +243,7 @@ class McapWriter {
   std::uint64_t part_open_retries() const;
 
  private:
+  class CloexecFileWriter;
   struct Pending { Channel channel; Message msg; std::size_t bytes; };
   void WriteRecord(const Channel& channel, const RecordedMessage& msg);
   void WriteContinuation(const Channel& channel, const RecordedMessage& msg);
@@ -321,7 +321,7 @@ class McapWriter {
   std::atomic<bool> ended_{false};
 
   // Write-time read-back; null when off. Declared before file_: the
-  // writable holds a raw pointer into it and reports its tail from end(),
+  // writable holds a raw pointer into it and reports its tail at finalization,
   // so this must be destroyed after it.
   std::unique_ptr<SpanReadback> readback_;
 
@@ -332,7 +332,7 @@ class McapWriter {
   // a later `umount` (and thus the "format SD card" command) fail with EBUSY.
   // Declared before writer_ so it is destroyed *after* it: ~McapWriter()/close()
   // flush through this writable on teardown.
-  std::unique_ptr<::mcap::IWritable> file_;
+  std::unique_ptr<CloexecFileWriter> file_;
   std::unique_ptr<::mcap::McapWriter> writer_;
   bool closed_ = false;
   std::size_t part_index_ = 0;
