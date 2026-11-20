@@ -166,6 +166,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT CMAKE_CROSSCOMPILI
     tests/test_monotonic_cv.cc
     tests/test_tcp_io.cc
     tests/test_backpressure.cc
+    tests/test_frame_priority.cc
     tests/test_serial_watchdog.cc
     tests/test_endpoint_reconnect.cc
   )

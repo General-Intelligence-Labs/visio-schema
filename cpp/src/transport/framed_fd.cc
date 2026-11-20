@@ -376,17 +376,6 @@ void FramedFdEndpoint::Wake() { wake_.Signal(); }
 
 void FramedFdEndpoint::Pump() {
   if (fd_ < 0) return;
-  // Shed the video queued before the client's last change of mind — a backlog
-  // it either no longer wants, or (on a resume) cannot decode and which would
-  // only delay the keyframe it is waiting for.
-  //
-  // Frame boundary only: Clear() mid-write would splice a frame and desync the
-  // reader's COBS framing. Clear() is leg-thread-only and Pump runs on the leg
-  // thread, so this is the safe place.
-  if (bulk_flush_.load(std::memory_order_relaxed) && !outbox_.InFlightActive()) {
-    outbox_.Clear();
-    bulk_flush_.store(false, std::memory_order_relaxed);
-  }
   const int fd = fd_;
   long accepted = 0;  // bytes the fd took this pass — feeds stall detection
   const auto wr = [fd, &accepted](const std::uint8_t* p, std::size_t n) {
@@ -410,6 +399,13 @@ void FramedFdEndpoint::Pump() {
   // starve this thread's inbound reads.
   constexpr int kMaxFramesPerPump = 64;
   for (int i = 0; i < kMaxFramesPerPump; ++i) {
+    // Finish committed bytes before flushing queued video. Consume the
+    // request first so a new request during the flush stays pending.
+    if (bulk_flush_.load(std::memory_order_relaxed) &&
+        !outbox_.InFlightActive()) {
+      bulk_flush_.store(false, std::memory_order_relaxed);
+      outbox_.DiscardQueued();
+    }
     // Once a timed frame starts, finish it before switching lanes. Otherwise
     // enter this lane only at a boundary in every existing outbox.
     if (timed_active_ ||
@@ -435,16 +431,15 @@ void FramedFdEndpoint::Pump() {
     else if (!outbox_.InFlightActive()) {
       if (ctrl_outbox_.HasPending()) pick = &ctrl_outbox_;
       else if (reliable_outbox_.HasPending()) pick = &reliable_outbox_;
+      else if (!outbox_.HasPending()) break;
     }
-    if (!pick->Drain(wr, pick == &reliable_outbox_)) {
+    if (!pick->Drain(wr, pick != &ctrl_outbox_)) {
       MarkLinkDead();
       return;
     }
     // Bytes still in flight => the write hit EAGAIN; wait for the next POLLOUT
     // rather than spinning on a socket that isn't taking data.
     if (pick->InFlightActive()) break;
-    if (!ctrl_outbox_.HasPending() && !reliable_outbox_.HasPending() &&
-        !outbox_.HasPending()) break;
   }
   UpdateStallState(accepted);
 }
