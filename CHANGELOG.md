@@ -6,6 +6,18 @@ bump the MINOR version.
 
 ## Unreleased
 
+### Ingest API: optional upload reports
+
+Add `POST /v1/uploads/{upload_id}/report` to the Ingest API
+([`docs/protocol/ingest-api.md`](docs/protocol/ingest-api.md) §4.7): a rig
+holding an upload reports every 60 seconds while it has a backlog, after each
+failed or interrupted attempt, and once when it has caught up. It reports state
+and reason, progress, attempt counts, the Wi-Fi link, live-stream viewers, and
+its last 32 failures. Optional on both sides and advisory: the rig ignores the
+reply and stops reporting to a service that answers `404`, `405` or `501`; the
+service must not let a report change an upload. Existing services and rigs are
+unaffected.
+
 ### SD startup and insertion status
 
 Add optional `DeviceState.sd_card_status` (tag 56), reporting storage phase,
