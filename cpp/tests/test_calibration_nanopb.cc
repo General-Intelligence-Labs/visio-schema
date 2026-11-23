@@ -9,11 +9,13 @@
 
 #include <string>
 #include <cstring>
+#include <memory>
 #include <vector>
 
 #include "foxglove/CameraCalibration.pb.h"
 #include "foxglove/FrameTransform.pb.h"
 #include "visio_schema/v1/calibration/imu.pb.h"
+#include "visio_schema/v1/calibration/tactile.pb.h"
 #include "visio_schema/v1/control/command.pb.h"
 
 namespace {
@@ -198,4 +200,33 @@ TEST(CalibrationNanopb, MaximumFiducialBundleAndEmptyClearRoundTrip) {
   visio_schema_v1_calibration_FiducialCalibration empty =
       visio_schema_v1_calibration_FiducialCalibration_init_zero;
   EXPECT_TRUE(Encode(visio_schema_v1_calibration_FiducialCalibration_fields, empty).empty());
+}
+
+TEST(CalibrationNanopb, TachinLayoutCapacityRoundTripAndBound) {
+  auto layout = std::make_unique<visio_schema_v1_calibration_TactileLayout>();
+  auto output = std::make_unique<visio_schema_v1_calibration_TactileLayout>();
+  constexpr auto kCapacity = sizeof(layout->points) / sizeof(layout->points[0]);
+  static_assert(kCapacity == 784);
+  layout->precision = visio_schema_v1_calibration_TactileLayout_Precision_APPROXIMATE;
+  layout->groups_count = 1;
+  layout->groups[0].fields_count = 1;
+  auto& field = layout->groups[0].fields[0];
+  std::snprintf(field.name, sizeof(field.name), "raw");
+  field.type = foxglove_PackedElementField_NumericType_INT16;
+  for (std::size_t n : {std::size_t{783}, kCapacity}) {
+    layout->points_count = n;
+    for (std::size_t i = 0; i < n; ++i) {
+      layout->points[i].index = 2 * i;
+      layout->points[i].taxel_id = i + 1;
+    }
+    const std::string wire = Encode(visio_schema_v1_calibration_TactileLayout_fields, *layout);
+    ASSERT_TRUE(Decode(visio_schema_v1_calibration_TactileLayout_fields, wire, output.get()));
+    ASSERT_EQ(output->points_count, n);
+    EXPECT_EQ(output->points[n - 1].index, 2 * (n - 1));
+  }
+  // The repeated bound must fail closed rather than wrap or truncate.
+  layout->points_count = kCapacity + 1;
+  std::size_t size = 0;
+  EXPECT_FALSE(pb_get_encoded_size(&size, visio_schema_v1_calibration_TactileLayout_fields,
+                                   layout.get()));
 }

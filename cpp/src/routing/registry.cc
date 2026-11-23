@@ -163,7 +163,11 @@ std::uint32_t ChannelRegistry::Declare(const std::string& topic,
                                        const std::string& encoding,
                                        const std::string& schema_encoding) {
   auto it = topic_to_id_.find(topic);
-  if (it != topic_to_id_.end()) return it->second;
+  if (it != topic_to_id_.end()) {
+    if (own_ids_.count(it->second) == 0)
+      throw DuplicateTopicError("topic '" + topic + "' belongs to a learned source");
+    return it->second;
+  }
   std::uint32_t cid = Alloc();
   Channel ch;
   ch.id = cid;

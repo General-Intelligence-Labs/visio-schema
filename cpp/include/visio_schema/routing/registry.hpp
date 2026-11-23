@@ -54,6 +54,7 @@ class ChannelRegistry {
   std::uint32_t Alloc() { return next_id_++; }
 
   // ── Own outputs ──────────────────────────────────────────────────────
+  // Idempotent for an own topic; throws DuplicateTopicError for a learned one.
   std::uint32_t Declare(const std::string& topic, const std::string& schema_name,
                         const std::string& schema = "",
                         const std::string& encoding = kDefaultEncoding,
