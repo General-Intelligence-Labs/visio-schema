@@ -1,0 +1,13 @@
+// The image sensor actually probed for one configured camera.
+syntax = "proto3";
+
+package visio_schema.v1.control;
+
+message CameraSensor {
+  // Matches this device's camera/<index> topics; not a probe ordinal.
+  uint32 camera_index = 1;
+
+  // Driver-reported model, e.g. "ar0234", "ar0235" or "sc235hai".
+  // Capture dimensions and board revision do not identify the sensor.
+  string sensor_model = 2;
+}

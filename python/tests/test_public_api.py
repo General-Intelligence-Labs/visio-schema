@@ -101,11 +101,40 @@ def test_camera_and_ingest_wire_numbers_coexist():
             "max_recording_duration_s": 47, "last_recording_stop": 48,
             "capture_settings": 50,
             "supported_video_modes": 51, "capture_state": 52,
+            "notices": 58, "camera_sensors": 59,
         },
     }
     for message, fields in expected.items():
         for name, number in fields.items():
             assert message.DESCRIPTOR.fields_by_name[name].number == number
+
+
+def test_camera_sensors_roundtrip():
+    from visio_schema.v1.control import command_result_pb2
+
+    reply = command_result_pb2.CommandResult(ok=True)
+    expected = [(0, "sc235hai"), (3, "ar0235"), (5, "ar0234")]
+    for index, model in expected:
+        reply.state.camera_sensors.add(
+            camera_index=index, sensor_model=model
+        )
+    decoded = command_result_pb2.CommandResult.FromString(
+        reply.SerializeToString()
+    )
+    assert decoded.ok
+    assert [(sensor.camera_index, sensor.sensor_model)
+            for sensor in decoded.state.camera_sensors] == expected
+
+
+def test_camera_sensors_absent_on_older_state():
+    from visio_schema.v1.control import command_result_pb2
+
+    # Existing recording_task field 19, encoded before camera metadata.
+    decoded = command_result_pb2.DeviceState.FromString(
+        b"\x9a\x01\x08existing"
+    )
+    assert decoded.recording_task == "existing"
+    assert not decoded.camera_sensors
 
 
 def test_facade_names_resolve():

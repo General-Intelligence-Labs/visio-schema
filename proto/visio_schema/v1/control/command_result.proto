@@ -15,6 +15,7 @@ syntax = "proto3";
 
 package visio_schema.v1.control;
 
+import "visio_schema/v1/control/camera_sensor.proto";
 import "visio_schema/v1/control/required_devices.proto";
 import "visio_schema/v1/control/notice_pack.proto";
 import "visio_schema/v1/sensor/capture_state.proto";
@@ -252,6 +253,8 @@ message SdCardStatus {
 }
 
 message DeviceState {
+  // Actual probed sensors, keyed by camera index. Empty on older firmware.
+  repeated CameraSensor camera_sensors = 59;
   // Absent on older firmware and devices without local recording storage.
   SdCardStatus sd_card_status = 56;
   // The SetRequiredDevices list in force. Absent when the firmware predates the

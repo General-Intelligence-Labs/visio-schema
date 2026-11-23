@@ -375,6 +375,8 @@ visio_schema.v1.service.heartbeat.Heartbeat.camera_sync max_count:8
 
 # Per-board validated capture modes (small bounded allowlist).
 visio_schema.v1.control.DeviceState.supported_video_modes max_count:16
+visio_schema.v1.control.DeviceState.camera_sensors max_count:8
+visio_schema.v1.control.CameraSensor.sensor_model max_size:32
 
 # Authoritative capture state; rig sizes remain bounded on embedded targets.
 visio_schema.v1.sensor.CaptureState.capture_id max_size:64

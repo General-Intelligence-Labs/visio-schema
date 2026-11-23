@@ -286,3 +286,12 @@ def test_ingest_authorization_fits_the_longest_key_id(sizes: dict[str, int]) -> 
     longest = authorization_header(
         "k" * (sizes["SetStorage.access_key_id"] - 1), "0" * 64)
     assert len(longest) <= sizes["IngestSignature.authorization"] - 1
+
+
+def test_camera_sensor_model_capacity(sizes: dict[str, int]) -> None:
+    for model in ("sc235hai", "ar0235", "ar0234"):
+        assert len(model) < sizes["CameraSensor.sensor_model"]
+    assert re.search(
+        r"DeviceState\.camera_sensors\s+max_count:8\b",
+        _OPTIONS.read_text(),
+    )
