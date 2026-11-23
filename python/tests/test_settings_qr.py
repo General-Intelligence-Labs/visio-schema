@@ -13,6 +13,7 @@ import stat
 import time
 from pathlib import Path
 
+import _golden
 import pytest
 from _settings_qr_support import (
     TEST_PRIVATE,
@@ -38,9 +39,13 @@ from visio_schema.settings_qr.cli import main
 from visio_schema.settings_qr.interactive import interactive
 from visio_schema.settings_qr.payload import (
     PROVIDERS,
+    REQUIRED_DEVICE_ROLES,
+    REQUIRED_DEVICE_SIDED_ROLES,
+    REQUIRED_DEVICES_MAX,
     RegionSource,
     normalize_bare_numbers,
     normalize_storage_prefix,
+    parse_required_device,
     provider_from_endpoint,
     region_from_endpoint,
     region_must_be_typed,
@@ -672,6 +677,71 @@ class TestFieldRules:
 # caught in review; the failure mode is named so a future edit that reopens it
 # fails with the reason attached.
 # ---------------------------------------------------------------------------
+def _required_device_vectors() -> dict:
+    """tests/golden/required_device_vectors.txt, which the firmware and the app
+    replay too: one grammar, three parsers."""
+    out: dict = {"accept": [], "reject": [], "roles": [], "sided": []}
+    for line in (_golden.GOLDEN_DIR / "required_device_vectors.txt").read_text().splitlines():
+        if line.startswith("#") or not line:
+            continue
+        kind, _, rest = line.partition(" ")
+        if kind == "reject":
+            out["reject"].append(rest)
+        elif kind == "accept":
+            text, role, side, unit = rest.split(" ")
+            out["accept"].append((text, (role, side.strip("-"), unit.strip("-"))))
+        else:
+            out[kind] = rest.split(" ")
+    return out
+
+
+_REQUIRED = _required_device_vectors()
+
+
+class TestRequiredDevices:
+    """The required-devices gate's QR form: "role[:side][@unit]" entries that
+    become one SetRequiredDevices. Entries need not be attached when scanned."""
+
+    @pytest.mark.parametrize("entry,parsed", _REQUIRED["accept"])
+    def test_grammar(self, entry, parsed) -> None:
+        assert parse_required_device(entry) == parsed
+
+    @pytest.mark.parametrize("entry", _REQUIRED["reject"])
+    def test_rejects(self, entry) -> None:
+        assert parse_required_device(entry) is None
+
+    def test_role_tables_match_the_shared_vectors(self) -> None:
+        assert list(REQUIRED_DEVICE_ROLES) == _REQUIRED["roles"]
+        assert list(REQUIRED_DEVICE_SIDED_ROLES) == _REQUIRED["sided"]
+
+    def test_valid_list_validates(self, config) -> None:
+        config["required_devices"] = ["gripper:left", "glove:right", "vive@LHR-0A1B2C3D"]
+        assert validate(config) == []
+
+    def test_empty_list_is_valid_and_clears(self, config) -> None:
+        config["required_devices"] = []
+        assert validate(config) == []
+
+    def test_a_qr_with_only_the_gate_is_a_settings_code(self) -> None:
+        cfg = {"t": "visio-settings", "v": PLAINTEXT_VERSION,
+               "required_devices": ["glove:left"]}
+        assert validate(cfg) == []
+
+    def test_bad_entry_names_its_index(self, config) -> None:
+        config["required_devices"] = ["glove:left", "glvoe:right"]
+        problems = validate(config)
+        assert len(problems) == 1 and problems[0].startswith("required_devices[1]:")
+
+    @pytest.mark.parametrize("value", ["glove:left", {"glove": "left"}, [1]])
+    def test_must_be_a_list_of_strings(self, config, value) -> None:
+        config["required_devices"] = value
+        assert any(p.startswith("required_devices:") for p in validate(config))
+
+    def test_bounded_by_the_device(self, config) -> None:
+        config["required_devices"] = ["glove:left"] * (REQUIRED_DEVICES_MAX + 1)
+        assert any(p.startswith("required_devices:") for p in validate(config))
+
+
 class TestRegressions:
     def test_replay_guards_survive_a_secret_free_qr(self, config) -> None:
         """`--device`/`--expires-in` set no settings, so an "is it empty?"
@@ -764,6 +834,19 @@ class TestInteractive:
         monkeypatch.setattr("builtins.input", _input)
         monkeypatch.setattr("getpass.getpass", _getpass)
 
+    def test_required_devices_are_asked_last_and_an_empty_answer_clears(
+            self, monkeypatch) -> None:
+        self._script(monkeypatch, [
+            "n", "n", "n", "n", "n",     # meta, storage, bitrate, resolution, wifi
+            "y", "gripper:left, glove:right ,vive@LHR-0A1B2C3D",
+        ], [])
+        cfg = interactive()
+        assert cfg["required_devices"] == [
+            "gripper:left", "glove:right", "vive@LHR-0A1B2C3D"]
+        assert validate(cfg) == []
+        self._script(monkeypatch, ["n", "n", "n", "n", "n", "y", ""], [])
+        assert interactive()["required_devices"] == []
+
     def test_an_overlong_meta_answer_reprompts_instead_of_printing_it(
             self, monkeypatch, capsys) -> None:
         """A field one byte over the device buffer would time out on the rig,
@@ -774,6 +857,7 @@ class TestInteractive:
             "x" * 256, "pick-and-place",  # task: over the 255-byte cap, then ok
             "", "", "",                   # location, message, capturer skipped
             "n", "n", "n", "n",           # storage, bitrate, resolution, wifi
+            "n",                          # required devices
         ], [])
         cfg = interactive()
         assert cfg["meta"]["task"] == "pick-and-place"
@@ -791,6 +875,7 @@ class TestInteractive:
             "gilabs-captures", "LTAI5tExampleKeyId00",  # bucket, access key
             "recordings/", "n",                         # prefix, auto-upload
             "n", "n", "n",                              # bitrate, resolution, wifi
+            "n",                          # required devices
         ], [long_secret, "s3cr3t-ok"])                  # getpass: over-long, then ok
         cfg = interactive()
         assert cfg["storage"]["secret_access_key"] == "s3cr3t-ok"
@@ -804,6 +889,7 @@ class TestInteractive:
             "y", "Aliyun OSS", "cn-hangzhou", "gilabs-captures",
             "LTAI5tExampleKeyId00", "factory-7/", "y",   # storage + auto-upload
             "n", "n", "n",                         # bitrate, resolution, wifi
+            "n",                          # required devices
         ], [SECRET])
         cfg = interactive()
         assert cfg["v"] == PLAINTEXT_VERSION
@@ -821,6 +907,7 @@ class TestInteractive:
             "n", "n",
             "y", "not-a-number", "999999", "8000",   # bitrate: junk, high, ok
             "n", "n",
+            "n",                          # required devices
         ], [])
         cfg = interactive()
         assert cfg["bitrate_kbps"] == 8000
@@ -839,6 +926,7 @@ class TestInteractive:
             "y", "Azure Blob", "gilabscaptures", "recordings",
             "gilabscaptures", "prefix/", "n",
             "n", "n", "n",
+            "n",                          # required devices
         ], [SECRET])
         cfg = interactive()
         assert validate(cfg) == []
@@ -857,6 +945,7 @@ class TestInteractive:
             "y", "Google Cloud Storage", "", "gilabs-captures",
             "GOOG1EEXAMPLE", "recordings/", "n",
             "n", "n", "n",
+            "n",                          # required devices
         ], [SECRET])
         cfg = interactive()
         assert validate(cfg) == []
@@ -876,6 +965,7 @@ class TestInteractive:
             "y", "Azure Blob", "gilabscaptures", "recordings",
             "gilabscaptures", "prefix/", "n",
             "n", "n", "n",
+            "n",                          # required devices
         ], [SECRET], asked)
         interactive()
         storage = " ".join(asked)
@@ -891,6 +981,7 @@ class TestInteractive:
             "y", "custom", "https://minio.internal.example", "us-east-1",
             "b", "AKID", "recordings/", "n",
             "n", "n", "n",
+            "n",                          # required devices
         ], [SECRET])
         cfg = interactive()
         assert cfg["storage"]["endpoint_url"] == "https://minio.internal.example"
@@ -912,6 +1003,7 @@ class TestInteractive:
             "y", "custom", "https://cos.ap-guangzhou.myqcloud.com",
             "gilabs-captures-1250000000", "AKIDExample", "recordings/", "n",
             "n", "n", "n",
+            "n",                          # required devices
         ], [SECRET], asked)
         cfg = interactive()
         assert cfg["storage"]["region"] == "ap-guangzhou"
@@ -927,6 +1019,7 @@ class TestInteractive:
             "y", "custom", "https://gilabscaptures.blob.core.windows.net",
             "recordings", "gilabscaptures", "prefix/", "n",
             "n", "n", "n",
+            "n",                          # required devices
         ], [SECRET])
         cfg = interactive()
         assert validate(cfg) == []

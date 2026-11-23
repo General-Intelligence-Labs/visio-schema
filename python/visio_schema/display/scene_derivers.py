@@ -69,6 +69,8 @@ class TactileSceneDeriver:
 
     def __init__(self):
         self._placement = {}   # data_topic -> [(index, taxel_id, x, y)]
+        self._cube = {}        # data_topic -> bar footprint (m)
+        self._layout = {}      # data_topic -> the layout payload placed above
         self._scene_ch = {}    # data_topic -> derived scene Channel
         self._last_ns = {}     # data_topic -> capture ns of the last emitted scene
         self._seq = {}         # data_topic -> next per-stream seq (uint32)
@@ -76,16 +78,23 @@ class TactileSceneDeriver:
     def derive(self, msg, ch):
         topic = ch.topic
         if ch.schema_name == _LAYOUT_SCHEMA and topic.endswith("/layout"):
+            data_topic = topic[: -len("/layout")]
+            # Re-sent at 1 Hz and almost always unchanged; placing it again
+            # is an O(n^2) pitch search for nothing.
+            if self._layout.get(data_topic) == msg.payload:
+                return None
             lay = TactileLayout()
             lay.ParseFromString(msg.payload)
-            data_topic = topic[: -len("/layout")]
             side = hg.side_of_topic(data_topic)
             if side is None:
                 # Unassigned unit (rooted at its code8): the placement is
                 # mirrored about the side, so drawing it would put the taxels on
                 # the wrong hand. Skip rather than guess — calibrate the unit.
                 return None
-            self._placement[data_topic] = hg.build_placement(lay, side == "left")
+            pl = hg.build_placement(lay, side == "left")
+            self._placement[data_topic] = pl
+            self._cube[data_topic] = hg.footprint(pl)
+            self._layout[data_topic] = msg.payload
             return None
         if ch.schema_name == _TACTILE_SCHEMA and "/tactile/" in topic:
             pl = self._placement.get(topic)
@@ -103,7 +112,8 @@ class TactileSceneDeriver:
             tr = TactileRaw()
             tr.ParseFromString(msg.payload)
             frame = topic.strip("/").split("/")[0]  # /glove_left/tactile/0 -> glove_left
-            scene = _tactile_scene(tr.data, pl, frame, msg.timestamp)
+            scene = _tactile_scene(tr.data, pl, frame, msg.timestamp,
+                                   self._cube.get(topic, hg.CUBE))
             seq = self._seq.get(topic, 0)
             self._seq[topic] = (seq + 1) & 0xFFFFFFFF
             out = Message(stream_id=out_ch.id, payload=scene.SerializeToString(), seq=seq)
@@ -112,7 +122,7 @@ class TactileSceneDeriver:
         return None
 
 
-def _tactile_scene(data, placement, frame_id, timestamp):
+def _tactile_scene(data, placement, frame_id, timestamp, cube=hg.CUBE):
     cubes, texts = [], []
     for index, taxel_id, x, y in placement:
         p = min(data[index] / hg.FULL_SCALE, 1.0) if index < len(data) else 0.0
@@ -120,7 +130,7 @@ def _tactile_scene(data, placement, frame_id, timestamp):
         cubes.append(
             CubePrimitive(
                 pose=Pose(position=Vector3(x=x, y=y, z=h / 2), orientation=_UNIT_Q),
-                size=Vector3(x=hg.CUBE, y=hg.CUBE, z=h),
+                size=Vector3(x=cube, y=cube, z=h),
                 color=Color(r=p, g=0.1, b=1.0 - p, a=1.0),
             )
         )

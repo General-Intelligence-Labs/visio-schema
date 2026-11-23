@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file visio_schema/v1/sensor/capture_state.proto.
  */
 export const file_visio_schema_v1_sensor_capture_state: GenFile = /*@__PURE__*/
-  fileDesc("Cip2aXNpb19zY2hlbWEvdjEvc2Vuc29yL2NhcHR1cmVfc3RhdGUucHJvdG8SFnZpc2lvX3NjaGVtYS52MS5zZW5zb3Ii6wMKDENhcHR1cmVTdGF0ZRIYChBhdHRhY2hlZF9tZW1iZXJzGAggAygJEhQKDHJvc3Rlcl9yZWFkeRgJIAEoCBIgChhmcm96ZW5fcm9zdGVyX2dlbmVyYXRpb24YCiABKAQSGQoRcm9zdGVyX2dlbmVyYXRpb24YASABKAQSEgoKY2FwdHVyZV9pZBgCIAEoCRJFCgtkZXN0aW5hdGlvbhgDIAEoDjIwLnZpc2lvX3NjaGVtYS52MS5zZW5zb3IuQ2FwdHVyZVN0YXRlLkRlc3RpbmF0aW9uEjkKBXN0YXRlGAQgASgOMioudmlzaW9fc2NoZW1hLnYxLnNlbnNvci5DYXB0dXJlU3RhdGUuU3RhdGUSEwoLc3RvcF9yZWFzb24YBSABKAkSFgoOZnJvemVuX21lbWJlcnMYBiADKAkSFwoPY2hhbmdlZF9tZW1iZXJzGAcgAygJIlQKBVN0YXRlEg4KClNUQVRFX0lETEUQABITCg9TVEFURV9SRUNPUkRJTkcQARIRCg1TVEFURV9TVE9QUEVEEAISEwoPU1RBVEVfUFJFUEFSSU5HEAMiPAoLRGVzdGluYXRpb24SFgoSREVTVElOQVRJT05fREVWSUNFEAASFQoRREVTVElOQVRJT05fUEhPTkUQAWIGcHJvdG8z");
+  fileDesc("Cip2aXNpb19zY2hlbWEvdjEvc2Vuc29yL2NhcHR1cmVfc3RhdGUucHJvdG8SFnZpc2lvX3NjaGVtYS52MS5zZW5zb3Ii9QcKDENhcHR1cmVTdGF0ZRIYChBhdHRhY2hlZF9tZW1iZXJzGAggAygJEhQKDHJvc3Rlcl9yZWFkeRgJIAEoCBIgChhmcm96ZW5fcm9zdGVyX2dlbmVyYXRpb24YCiABKAQSGQoRcm9zdGVyX2dlbmVyYXRpb24YASABKAQSEgoKY2FwdHVyZV9pZBgCIAEoCRJFCgtkZXN0aW5hdGlvbhgDIAEoDjIwLnZpc2lvX3NjaGVtYS52MS5zZW5zb3IuQ2FwdHVyZVN0YXRlLkRlc3RpbmF0aW9uEjkKBXN0YXRlGAQgASgOMioudmlzaW9fc2NoZW1hLnYxLnNlbnNvci5DYXB0dXJlU3RhdGUuU3RhdGUSEwoLc3RvcF9yZWFzb24YBSABKAkSFgoOZnJvemVuX21lbWJlcnMYBiADKAkSFwoPY2hhbmdlZF9tZW1iZXJzGAcgAygJEksKDHJlcXVpcmVtZW50cxgLIAMoCzI1LnZpc2lvX3NjaGVtYS52MS5zZW5zb3IuQ2FwdHVyZVN0YXRlLlJlcXVpcmVtZW50U3RhdGUSGAoQcmVxdWlyZW1lbnRzX21ldBgMIAEoCBI8CgdtZW1iZXJzGA0gAygLMisudmlzaW9fc2NoZW1hLnYxLnNlbnNvci5DYXB0dXJlU3RhdGUuTWVtYmVyGoECChBSZXF1aXJlbWVudFN0YXRlEgwKBHJvbGUYASABKAkSDAoEc2lkZRgCIAEoCRIMCgR1bml0GAMgASgJEkoKBXN0YXRlGAQgASgOMjsudmlzaW9fc2NoZW1hLnYxLnNlbnNvci5DYXB0dXJlU3RhdGUuUmVxdWlyZW1lbnRTdGF0ZS5TdGF0ZRIOCgZtZW1iZXIYBSABKAkSDgoGZGV0YWlsGAYgASgJIlcKBVN0YXRlEhUKEVNUQVRFX1VOU1BFQ0lGSUVEEAASDwoLU1RBVEVfUkVBRFkQARIRCg1TVEFURV9NSVNTSU5HEAISEwoPU1RBVEVfTk9UX1JFQURZEAMaXwoGTWVtYmVyEgwKBHJvbGUYASABKAkSDAoEc2lkZRgCIAEoCRIMCgR1bml0GAMgASgJEgwKBG5hbWUYBCABKAkSDQoFcmVhZHkYBSABKAgSDgoGZGV0YWlsGAYgASgJIlQKBVN0YXRlEg4KClNUQVRFX0lETEUQABITCg9TVEFURV9SRUNPUkRJTkcQARIRCg1TVEFURV9TVE9QUEVEEAISEwoPU1RBVEVfUFJFUEFSSU5HEAMiPAoLRGVzdGluYXRpb24SFgoSREVTVElOQVRJT05fREVWSUNFEAASFQoRREVTVElOQVRJT05fUEhPTkUQAWIGcHJvdG8z");
 
 /**
  * Head-authoritative capture lifecycle for both SD and phone destinations.
@@ -75,6 +75,23 @@ export type CaptureState = Message<"visio_schema.v1.sensor.CaptureState"> & {
    * @generated from field: repeated string changed_members = 7;
    */
   changedMembers: string[];
+
+  /**
+   * @generated from field: repeated visio_schema.v1.sensor.CaptureState.RequirementState requirements = 11;
+   */
+  requirements: CaptureState_RequirementState[];
+
+  /**
+   * True when every requirement is READY, and when the list is empty.
+   *
+   * @generated from field: bool requirements_met = 12;
+   */
+  requirementsMet: boolean;
+
+  /**
+   * @generated from field: repeated visio_schema.v1.sensor.CaptureState.Member members = 13;
+   */
+  members: CaptureState_Member[];
 };
 
 /**
@@ -83,6 +100,148 @@ export type CaptureState = Message<"visio_schema.v1.sensor.CaptureState"> & {
  */
 export const CaptureStateSchema: GenMessage<CaptureState> = /*@__PURE__*/
   messageDesc(file_visio_schema_v1_sensor_capture_state, 0);
+
+/**
+ * One entry per DeviceState.required_devices entry, judged now: whether a
+ * start would pass the required-devices gate, and what holds it up.
+ *
+ * @generated from message visio_schema.v1.sensor.CaptureState.RequirementState
+ */
+export type CaptureState_RequirementState = Message<"visio_schema.v1.sensor.CaptureState.RequirementState"> & {
+  /**
+   * The requirement, as in visio_schema.v1.control.RequiredDevice (repeated
+   * here rather than imported: control already depends on this package).
+   *
+   * @generated from field: string role = 1;
+   */
+  role: string;
+
+  /**
+   * @generated from field: string side = 2;
+   */
+  side: string;
+
+  /**
+   * @generated from field: string unit = 3;
+   */
+  unit: string;
+
+  /**
+   * @generated from field: visio_schema.v1.sensor.CaptureState.RequirementState.State state = 4;
+   */
+  state: CaptureState_RequirementState_State;
+
+  /**
+   * the member that satisfies (or would satisfy) it; "" when missing
+   *
+   * @generated from field: string member = 5;
+   */
+  member: string;
+
+  /**
+   * why it is not ready, for logs and support (English, not for display)
+   *
+   * @generated from field: string detail = 6;
+   */
+  detail: string;
+};
+
+/**
+ * Describes the message visio_schema.v1.sensor.CaptureState.RequirementState.
+ * Use `create(CaptureState_RequirementStateSchema)` to create a new message.
+ */
+export const CaptureState_RequirementStateSchema: GenMessage<CaptureState_RequirementState> = /*@__PURE__*/
+  messageDesc(file_visio_schema_v1_sensor_capture_state, 0, 0);
+
+/**
+ * @generated from enum visio_schema.v1.sensor.CaptureState.RequirementState.State
+ */
+export enum CaptureState_RequirementState_State {
+  /**
+   * Never sent: a verdict left unset must not read as "ready".
+   *
+   * @generated from enum value: STATE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * a matching member is attached and ready
+   *
+   * @generated from enum value: STATE_READY = 1;
+   */
+  READY = 1,
+
+  /**
+   * no matching member is attached
+   *
+   * @generated from enum value: STATE_MISSING = 2;
+   */
+  MISSING = 2,
+
+  /**
+   * attached, not ready yet (see detail)
+   *
+   * @generated from enum value: STATE_NOT_READY = 3;
+   */
+  NOT_READY = 3,
+}
+
+/**
+ * Describes the enum visio_schema.v1.sensor.CaptureState.RequirementState.State.
+ */
+export const CaptureState_RequirementState_StateSchema: GenEnum<CaptureState_RequirementState_State> = /*@__PURE__*/
+  enumDesc(file_visio_schema_v1_sensor_capture_state, 0, 0, 0);
+
+/**
+ * Every attached member the gate can name, required or not: relayed limbs,
+ * and head-local attachments (USB tactile gloves, Vive trackers) that have no
+ * DeviceInfo of their own. What a host lists when the operator chooses what
+ * to require. `role`/`side`/`unit` are the RequiredDevice vocabulary.
+ *
+ * @generated from message visio_schema.v1.sensor.CaptureState.Member
+ */
+export type CaptureState_Member = Message<"visio_schema.v1.sensor.CaptureState.Member"> & {
+  /**
+   * @generated from field: string role = 1;
+   */
+  role: string;
+
+  /**
+   * @generated from field: string side = 2;
+   */
+  side: string;
+
+  /**
+   * @generated from field: string unit = 3;
+   */
+  unit: string;
+
+  /**
+   * how to name it to a person: a limb's device_name, "moxian-<SN>"
+   *
+   * @generated from field: string name = 4;
+   */
+  name: string;
+
+  /**
+   * @generated from field: bool ready = 5;
+   */
+  ready: boolean;
+
+  /**
+   * why it is not ready, for logs and support (English, not for display)
+   *
+   * @generated from field: string detail = 6;
+   */
+  detail: string;
+};
+
+/**
+ * Describes the message visio_schema.v1.sensor.CaptureState.Member.
+ * Use `create(CaptureState_MemberSchema)` to create a new message.
+ */
+export const CaptureState_MemberSchema: GenMessage<CaptureState_Member> = /*@__PURE__*/
+  messageDesc(file_visio_schema_v1_sensor_capture_state, 0, 1);
 
 /**
  * @generated from enum visio_schema.v1.sensor.CaptureState.State

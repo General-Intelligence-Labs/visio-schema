@@ -55,6 +55,9 @@ __all__ = [
     "PLAINTEXT_VERSION",
     "PROVIDERS",
     "REGION_PROMPT",
+    "REQUIRED_DEVICES_MAX",
+    "REQUIRED_DEVICE_ROLES",
+    "REQUIRED_DEVICE_SIDED_ROLES",
     "RESOLUTION_PX",
     "SEALED_HAS",
     "SEALED_MAX_BYTES",
@@ -67,6 +70,7 @@ __all__ = [
     "encode",
     "normalize_bare_numbers",
     "normalize_storage_prefix",
+    "parse_required_device",
     "provider_from_endpoint",
     "region_from_endpoint",
     "region_must_be_typed",
@@ -89,7 +93,7 @@ WARN_BYTES = 1200
 MAX_BYTES = 1800
 
 _COMMON_KEYS = {"t", "v", "meta", "storage", "auto_upload", "bitrate_kbps",
-                "resolution", "wifi"}
+                "resolution", "wifi", "required_devices"}
 KNOWN_KEYS = {
     PLAINTEXT_VERSION: _COMMON_KEYS,
     SEALED_VERSION: _COMMON_KEYS | {"sealed"},
@@ -150,6 +154,9 @@ DEVICE_MAX_SIZE = {
     "SetStorage.destination_hint": 64,
     "ConnectWifi.ssid": 33,
     "ConnectWifi.passphrase": 64,
+    "RequiredDevice.role": 16,
+    "RequiredDevice.side": 8,
+    "RequiredDevice.unit": 32,
 }
 
 
@@ -157,6 +164,39 @@ def _usable_bytes(proto_field: str) -> int:
     """Bytes a field can carry: the buffer, less the NUL nanopb reserves.
     A 64-byte buffer holds 63 bytes of text."""
     return DEVICE_MAX_SIZE[proto_field] - 1
+
+
+# The required-devices gate (proto/visio_schema/v1/control/required_devices.proto).
+# Each entry is the text form "role[:side][@unit]" — "gripper:left",
+# "stereo_addon", "glove:right@CG020ZLRBB712020", "vive@LHR-0A1B2C3D" — which the
+# app parses with the same grammar into one SetRequiredDevices. The roles are
+# what limbs announce as DeviceInfo.equipment_type plus the head-local
+# attachments (a USB tactile glove is "glove", a Vive tracker is "vive"). The
+# device re-validates; the bound is SetRequiredDevices.required's max_count.
+REQUIRED_DEVICE_ROLES = ("gripper", "glove", "wrist", "stereo_addon", "vive")
+REQUIRED_DEVICE_SIDES = ("left", "right")
+# Roles that come in a left and a right; any other role takes no side.
+REQUIRED_DEVICE_SIDED_ROLES = ("gripper", "glove", "wrist")
+REQUIRED_DEVICES_MAX = 16
+_REQUIRED_DEVICE_RE = re.compile(
+    r"(?P<role>[a-z_]+)(?::(?P<side>[a-z]+))?(?:@(?P<unit>[^\s@:]+))?")
+
+
+def parse_required_device(text: str) -> tuple[str, str, str] | None:
+    """`"glove:left@CG01"` -> `("glove", "left", "CG01")`; None when the text
+    does not follow the grammar, names an unknown role or side, or carries a
+    unit longer than the device's buffer."""
+    m = _REQUIRED_DEVICE_RE.fullmatch(text)
+    if not m:
+        return None
+    role, side, unit = m["role"], m["side"] or "", m["unit"] or ""
+    if role not in REQUIRED_DEVICE_ROLES:
+        return None
+    if side and (side not in REQUIRED_DEVICE_SIDES or role not in REQUIRED_DEVICE_SIDED_ROLES):
+        return None
+    if len(unit.encode()) > _usable_bytes("RequiredDevice.unit"):
+        return None
+    return role, side, unit
 
 
 # The device byte limit for each field an operator types into. Meta, storage
@@ -462,6 +502,21 @@ def _validate_wifi(errs: list, wifi) -> None:
         _err(errs, "wifi.passphrase", "wifiPassphraseLength")
 
 
+def _validate_required_devices(errs: list, entries) -> None:
+    # An empty list is valid: it clears the device's list (no gate).
+    if not isinstance(entries, list) or not all(
+            isinstance(e, str) for e in entries):
+        _err(errs, "required_devices", "mustBeStringList")
+        return
+    if len(entries) > REQUIRED_DEVICES_MAX:
+        _err(errs, "required_devices", "tooManyEntries",
+             count=len(entries), max=REQUIRED_DEVICES_MAX)
+    for i, entry in enumerate(entries):
+        if parse_required_device(entry) is None:
+            _err(errs, f"required_devices[{i}]", "badRequiredDevice",
+                 entry=repr(entry), roles=", ".join(REQUIRED_DEVICE_ROLES))
+
+
 def _validate_sealed(errs: list, sealed) -> None:
     if not isinstance(sealed, dict):
         _err(errs, "sealed", "mustBeObject")
@@ -525,6 +580,8 @@ def validate(cfg: dict) -> list:
         _validate_wifi(errs, cfg["wifi"])
     if "sealed" in cfg:
         _validate_sealed(errs, cfg["sealed"])
+    if "required_devices" in cfg:
+        _validate_required_devices(errs, cfg["required_devices"])
     return errs
 
 

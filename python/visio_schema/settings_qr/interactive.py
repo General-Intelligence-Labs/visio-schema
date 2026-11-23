@@ -248,6 +248,12 @@ def interactive() -> dict:
             wifi["passphrase"] = psk
         cfg["wifi"] = wifi
 
+    if _ask_yn(tr("askRequiredDevices")):
+        # Empty is a real answer here: it clears the device's list.
+        answer = _ask(tr("requiredDevicesPrompt"))
+        cfg["required_devices"] = [
+            e.strip() for e in answer.split(",") if e.strip()]
+
     return cfg
 
 

@@ -1,0 +1,41 @@
+// visio_schema/v1/control/required_devices.proto
+//
+// A rig's required-devices list: the devices that must be attached AND ready
+// before a recording may start. Stored on the head (the board the phone and the
+// recording buttons talk to), so one firmware image serves every rig layout and
+// the gate holds for every start path — a host's StartRecording, the head's own
+// button, and a limb's button relayed to the head.
+//
+// Set with Command.set_required_devices, echoed in DeviceState.required_devices,
+// and judged live in CaptureState.requirements. A start the list refuses fails
+// with CommandResult.error_code "required_devices_missing".
+//
+// An entry names a KIND of device, not a link: it is satisfied by whichever
+// attached member matches, so a list can name devices that are not attached yet
+// (a settings QR provisions a rig before it is assembled).
+
+syntax = "proto3";
+
+package visio_schema.v1.control;
+
+// One required device. Text form "role[:side][@unit]", e.g. "gripper:left",
+// "stereo_addon", "glove:right@CG020ZLRBB712020", "vive@LHR-0A1B2C3D".
+message RequiredDevice {
+  // The member's role: a DeviceInfo.equipment_type a limb announces
+  // ("gripper", "glove", "wrist", "stereo_addon"), or a head-local attachment's
+  // role ("glove" for a USB tactile glove, "vive" for a Vive tracker).
+  string role = 1;
+  // "left" | "right", or "" for a role that has no side. An entry with a side
+  // matches only a member on that side; one without matches any side.
+  string side = 2;
+  // "" matches any unit. Otherwise pins one unit by its serial: a limb's
+  // DeviceInfo.device_name, a tactile glove's SN, a Vive tracker's serial.
+  string unit = 3;
+}
+
+// The stored list. A message rather than a bare repeated field so that its
+// PRESENCE in DeviceState can say "this firmware supports the gate" apart from
+// "supported, and nothing is required" (an empty list).
+message RequiredDevices {
+  repeated RequiredDevice devices = 1;
+}

@@ -6,6 +6,25 @@ bump the MINOR version.
 
 ## Unreleased
 
+### Required-devices gate
+
+Add `SetRequiredDevices` (Command tag 56) and `control/required_devices.proto`:
+a head-stored list of devices that must be attached and ready before a
+recording starts. `DeviceState.required_devices` (57) echoes it, and its
+presence says the firmware supports the gate. `CaptureState.requirements` (11)
+and `requirements_met` (12) report each entry live, and `CaptureState.members`
+(13) lists every attached member the gate can name. A refused start answers
+`required_devices_missing`. The settings QR takes an optional
+`required_devices` list. Older firmware and clients ignore all of it. See
+[docs/protocol/required_devices.md](docs/protocol/required_devices.md).
+
+### Head-local tactile gloves
+
+A head publishes a USB tactile glove under `/glove_<side>/tactile/0` with an
+`APPROXIMATE` layout. `visio-display` now draws APPROXIMATE and MEASURED tactile
+layouts at their own coordinates instead of reshaping them as a JQ grid. No
+message changes.
+
 ### SD startup and insertion status
 
 Add optional `DeviceState.sd_card_status` (tag 56), reporting storage phase,

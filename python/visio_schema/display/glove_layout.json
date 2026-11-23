@@ -1,0 +1,154 @@
+{
+  "configById": {
+    "3D!glove_left": {
+      "followTf": "glove_left",
+      "scene": {
+        "enableStats": false,
+        "backgroundColor": "#15151f"
+      },
+      "transforms": {
+        "frame:glove_left": {
+          "visible": false
+        }
+      },
+      "topics": {
+        "/glove_left/tactile/0/scene": {
+          "visible": true
+        }
+      },
+      "layers": {
+        "grid": {
+          "layerId": "foxglove.Grid",
+          "visible": true,
+          "frameId": "glove_left",
+          "size": 0.3,
+          "divisions": 30,
+          "lineWidth": 0.5,
+          "color": "#ffffff22",
+          "position": [
+            0.032,
+            0.067,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "order": 1
+        }
+      },
+      "cameraState": {
+        "distance": 0.32,
+        "perspective": true,
+        "phi": 35,
+        "thetaOffset": 0,
+        "target": [
+          0.032,
+          0.067,
+          0
+        ],
+        "targetOffset": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "fovy": 45,
+        "near": 0.001,
+        "far": 50
+      }
+    },
+    "3D!glove_right": {
+      "followTf": "glove_right",
+      "scene": {
+        "enableStats": false,
+        "backgroundColor": "#15151f"
+      },
+      "transforms": {
+        "frame:glove_right": {
+          "visible": false
+        }
+      },
+      "topics": {
+        "/glove_right/tactile/0/scene": {
+          "visible": true
+        }
+      },
+      "layers": {
+        "grid": {
+          "layerId": "foxglove.Grid",
+          "visible": true,
+          "frameId": "glove_right",
+          "size": 0.3,
+          "divisions": 30,
+          "lineWidth": 0.5,
+          "color": "#ffffff22",
+          "position": [
+            0.058,
+            0.067,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "order": 1
+        }
+      },
+      "cameraState": {
+        "distance": 0.32,
+        "perspective": true,
+        "phi": 35,
+        "thetaOffset": 0,
+        "target": [
+          0.058,
+          0.067,
+          0
+        ],
+        "targetOffset": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "fovy": 45,
+        "near": 0.001,
+        "far": 50
+      }
+    },
+    "Image!cam0": {
+      "imageMode": {
+        "imageTopic": "/ego/camera/0",
+        "synchronize": false
+      }
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": {
+    "speed": 1
+  },
+  "layout": {
+    "first": {
+      "first": "3D!glove_left",
+      "second": "3D!glove_right",
+      "direction": "row",
+      "splitPercentage": 50
+    },
+    "second": "Image!cam0",
+    "direction": "column",
+    "splitPercentage": 70
+  }
+}

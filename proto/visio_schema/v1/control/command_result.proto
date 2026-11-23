@@ -15,6 +15,7 @@ syntax = "proto3";
 
 package visio_schema.v1.control;
 
+import "visio_schema/v1/control/required_devices.proto";
 import "visio_schema/v1/sensor/capture_state.proto";
 
 // One Wi-Fi access point seen in a scan.
@@ -252,6 +253,10 @@ message SdCardStatus {
 message DeviceState {
   // Absent on older firmware and devices without local recording storage.
   SdCardStatus sd_card_status = 56;
+  // The SetRequiredDevices list in force. Absent when the firmware predates the
+  // gate or the device does not record (so a host hides the setting); present
+  // with no entries when nothing is required.
+  RequiredDevices required_devices = 57;
   // Absent on firmware that does not implement board capture presets.
   CaptureSettings capture_settings = 50;
   visio_schema.v1.sensor.CaptureState capture_state = 52;

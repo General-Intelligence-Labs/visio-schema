@@ -96,6 +96,26 @@ first `_`.
 An unassigned limb roots at its `code8` rather than guessing a side: obviously
 unassigned beats silently becoming the wrong hand.
 
+### Head-local attachments
+
+A head can also carry sensors that are not Visio boards at all, plugged into its
+own USB host. The head publishes them under the root the equivalent limb would
+use, declares their topics when they appear and drops them when they go, and
+lists each one as a capture-roster member:
+
+- **USB tactile glove** (Moxian, `2e3c:5740`): `/glove_<side>/tactile/0`
+  (`TactileRaw`) and `/glove_<side>/tactile/0/layout` (`TactileLayout`, 1 Hz,
+  precision `APPROXIMATE`, x/y in metres for that hand). The side is the glove's
+  own answer to its hand query, never its port. One hand wears one glove: a head
+  does not bind a side whose `glove_<side>` root a relayed glove board already
+  announces.
+- **Vive trackers**: the three `/<root>/vive/...` topics above, declared when
+  the first Watchman dongle or wired tracker appears.
+
+These members take part in the [required-devices gate](required_devices.md) like
+any limb: a glove as role `glove`, a tracker as role `vive` with its serial as
+the unit.
+
 Neither is the per-unit `device_name` (`GILABS-<code8>`), which is the unique
 addressable label. A bus **may** additionally prefix a relayed leaf's topics with
 `/<device_name>` (`prefix_topics_with_device_name`) when two units genuinely share

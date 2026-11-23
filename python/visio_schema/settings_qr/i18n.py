@@ -41,6 +41,16 @@ _STRINGS: dict[str, dict[str, str]] = {
     "askBitrate": {"en": "Set video bitrate?", "zh": "设置视频码率？"},
     "askResolution": {"en": "Set camera resolution?", "zh": "设置相机分辨率？"},
     "askWifi": {"en": "Configure device Wi-Fi?", "zh": "配置设备 Wi-Fi？"},
+    "askRequiredDevices": {
+        "en": "Set the devices recording waits for?",
+        "zh": "设置开始录制前必须就绪的设备？",
+    },
+    "requiredDevicesPrompt": {
+        "en": "required devices, comma-separated, e.g. gripper:left, glove:right,"
+              " vive@LHR-0A1B2C3D (empty = require nothing)",
+        "zh": "必需设备，逗号分隔，例如 gripper:left, glove:right,"
+              " vive@LHR-0A1B2C3D（留空表示不要求任何设备）",
+    },
     "cloudProvider": {"en": "cloud provider:", "zh": "云服务商："},
     "customEndpoint": {"en": "custom endpoint URL", "zh": "自定义 endpoint URL"},
     "choose": {"en": "choose", "zh": "请选择"},
@@ -142,6 +152,16 @@ _STRINGS: dict[str, dict[str, str]] = {
     "mustBeString": {"en": "must be a string", "zh": "必须为字符串"},
     "mustBeBoolean": {"en": "must be a boolean", "zh": "必须为布尔值"},
     "mustBeInteger": {"en": "must be an integer", "zh": "必须为整数"},
+    "mustBeStringList": {
+        "en": "must be a list of strings", "zh": "必须为字符串列表"},
+    "tooManyEntries": {
+        "en": "{count} entries, but the device accepts at most {max}",
+        "zh": "共 {count} 项，但设备最多接受 {max} 项",
+    },
+    "badRequiredDevice": {
+        "en": "{entry} is not role[:left|right][@serial] with role one of: {roles}",
+        "zh": "{entry} 不符合 role[:left|right][@序列号] 格式，role 可选：{roles}",
+    },
     "required": {"en": "required", "zh": "必填"},
     "intRange": {"en": "must be {lo}-{hi}", "zh": "必须在 {lo}-{hi} 之间"},
     "tooLongChars": {

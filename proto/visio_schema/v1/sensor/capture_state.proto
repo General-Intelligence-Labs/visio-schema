@@ -26,4 +26,41 @@ message CaptureState {
   string stop_reason = 5;
   repeated string frozen_members = 6; // unique DeviceInfo.device_name, including head
   repeated string changed_members = 7; // source link tokens when identity is not yet known
+
+  // One entry per DeviceState.required_devices entry, judged now: whether a
+  // start would pass the required-devices gate, and what holds it up.
+  message RequirementState {
+    enum State {
+      // Never sent: a verdict left unset must not read as "ready".
+      STATE_UNSPECIFIED = 0;
+      STATE_READY = 1;     // a matching member is attached and ready
+      STATE_MISSING = 2;   // no matching member is attached
+      STATE_NOT_READY = 3; // attached, not ready yet (see detail)
+    }
+    // The requirement, as in visio_schema.v1.control.RequiredDevice (repeated
+    // here rather than imported: control already depends on this package).
+    string role = 1;
+    string side = 2;
+    string unit = 3;
+    State state = 4;
+    string member = 5; // the member that satisfies (or would satisfy) it; "" when missing
+    string detail = 6; // why it is not ready, for logs and support (English, not for display)
+  }
+  repeated RequirementState requirements = 11;
+  // True when every requirement is READY, and when the list is empty.
+  bool requirements_met = 12;
+
+  // Every attached member the gate can name, required or not: relayed limbs,
+  // and head-local attachments (USB tactile gloves, Vive trackers) that have no
+  // DeviceInfo of their own. What a host lists when the operator chooses what
+  // to require. `role`/`side`/`unit` are the RequiredDevice vocabulary.
+  message Member {
+    string role = 1;
+    string side = 2;
+    string unit = 3;
+    string name = 4;   // how to name it to a person: a limb's device_name, "moxian-<SN>"
+    bool ready = 5;
+    string detail = 6; // why it is not ready, for logs and support (English, not for display)
+  }
+  repeated Member members = 13;
 }

@@ -1,0 +1,34 @@
+# required_device_vectors.txt — the required-devices text form, role[:side][@unit]
+# (docs/protocol/required_devices.md). Three parsers read it — the settings-QR
+# generator (python), the firmware (contract/policy/required_devices.hpp) and the
+# companion app (types/required-device.ts) — and each replays this file, so the
+# list a device stores is always one the app and the QR can write back intact.
+#
+# roles  <every role an entry may name>
+# sided  <the roles that take :left / :right>
+# accept <text> <role> <side|-> <unit|->
+# reject <text>        (the text is the rest of the line, spaces included)
+roles gripper glove wrist stereo_addon vive
+sided gripper glove wrist
+accept gripper:left gripper left -
+accept stereo_addon stereo_addon - -
+accept glove glove - -
+accept glove:right@CG020ZLRBB712020 glove right CG020ZLRBB712020
+accept vive@LHR-0A1B2C3D vive - LHR-0A1B2C3D
+accept wrist@GILABS-RPi82Fog wrist - GILABS-RPi82Fog
+accept wrist:left@0123456789012345678901234567890 wrist left 0123456789012345678901234567890
+reject 
+reject tactile_glove:left
+reject Glove:left
+reject glove:up
+reject glove:
+reject glove@
+reject :left
+reject  glove:left
+reject glove:left 
+reject glove:left@a b
+reject vive@x@y
+reject vive@a:b
+reject vive:left
+reject stereo_addon:right
+reject wrist:left@01234567890123456789012345678901

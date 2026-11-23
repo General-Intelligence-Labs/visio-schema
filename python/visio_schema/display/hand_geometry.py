@@ -1,12 +1,15 @@
-"""hand_geometry.py — JQ glove taxel -> hand-plane geometry (for the tactile scene deriver).
+"""hand_geometry.py — tactile glove taxel -> hand-plane geometry (for the tactile scene deriver).
 
-Pure math over a TactileLayout (precision=LOGICAL, so each Point's x/y carry the
-logical grid col/row): reconstruct where each taxel sits on a hand-shaped plane,
-mirroring the layout for a left glove. No rendering deps — TactileSceneDeriver
-builds on it. The hand SHAPE is reconstructed here from (part, row, col); swapping
-to an APPROXIMATE/MEASURED layout later would drop place() and use x/y directly.
+Pure math over a TactileLayout. Under precision=LOGICAL (the JQ glove) each
+Point's x/y carry the logical grid col/row, so the hand SHAPE is reconstructed
+here from (part, row, col), mirroring for a left glove. Under APPROXIMATE or
+MEASURED (the Moxian glove) x/y are already hand-plane coordinates in metres for
+that glove's own hand, and are used as they are. No rendering deps —
+TactileSceneDeriver builds on it.
 """
 from __future__ import annotations
+
+from visio_schema.v1.calibration.tactile_pb2 import TactileLayout
 
 # ── hand geometry (metres) — an estimate over the logical layout ─────────────
 # Tuned for the RIGHT hand (palm-up, looking down +z): index/middle/ring/pinky
@@ -27,6 +30,9 @@ MAX_H = 0.05        # tallest bar (m)
 CUBE = 0.007        # taxel footprint (m)
 
 _FINGER_SLOT = {"index": 0, "middle": 1, "ring": 2, "pinky": 3}
+
+# Precisions whose x/y are real coordinates (metres), not grid col/row.
+_PLACED = (TactileLayout.APPROXIMATE, TactileLayout.MEASURED)
 
 
 def place(part, row, col, kind, is_left):
@@ -71,14 +77,18 @@ def _point_kind(layout, group_idx):
 
 
 def build_placement(layout, is_left):
-    """TactileLayout -> [(payload_index, taxel_id, x, y)] via place().
+    """TactileLayout -> [(payload_index, taxel_id, x, y)].
 
-    Single-axis v1, so the payload offset is just Point.index. Under
-    precision=LOGICAL, Point.x/y are the grid col/row, so we reconstruct the hand
-    shape with place(part, row, col, kind); kind comes from the point's group.
-    Both hands ship the SAME col/row layout (only taxel_id/index differ); place()
-    handles the left/right mirror internally.
+    Single-axis v1, so the payload offset is just Point.index. An APPROXIMATE or
+    MEASURED layout already says where each taxel is, for its own hand, so its
+    x/y pass through and `is_left` is not consulted. Under LOGICAL (and an
+    unset precision, which predates the field) Point.x/y are the grid col/row,
+    so we reconstruct the hand shape with place(part, row, col, kind); kind
+    comes from the point's group. Both JQ hands ship the SAME col/row layout
+    (only taxel_id/index differ); place() handles the left/right mirror.
     """
+    if layout.precision in _PLACED:
+        return [(pt.index, pt.taxel_id, pt.x, pt.y) for pt in layout.points]
     out = []
     for pt in layout.points:
         kind = _point_kind(layout, pt.group)
@@ -86,6 +96,18 @@ def build_placement(layout, is_left):
         x, y = place(pt.part, row, col, kind, is_left)
         out.append((pt.index, pt.taxel_id, x, y))
     return out
+
+
+def footprint(placement):
+    """The bar footprint (m) for a placement: CUBE, shrunk to 85% of the
+    tightest taxel pitch so a denser glove's bars don't overlap."""
+    pts = [(x, y) for _, _, x, y in placement]
+    pitch = min(
+        (((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+         for i, (ax, ay) in enumerate(pts) for bx, by in pts[i + 1:]
+         if (ax, ay) != (bx, by)),
+        default=CUBE / 0.85)
+    return min(CUBE, 0.85 * pitch)
 
 
 def side_of_topic(topic):
