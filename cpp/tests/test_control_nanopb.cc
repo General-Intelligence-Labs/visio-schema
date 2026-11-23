@@ -60,6 +60,80 @@ std::string MakeEnvelope(std::size_t n) {
 
 }  // namespace
 
+static_assert(sizeof(visio_schema_v1_control_NoticePackCommand) <=
+                  sizeof(visio_schema_v1_control_SetCalibration),
+              "notice chunks must not grow the command union");
+
+TEST(NoticeWire, PythonVector) {
+  // Python protobuf: Command(command_id=7, notice_pack=BEGIN hi/a*64).
+  const std::string wire =
+      std::string("\x10\x07\xca\x03\x48\x08\x01\x12\x02hi\x1a\x40", 13) +
+      std::string(64, 'a');
+  visio_schema_v1_control_Command command =
+      visio_schema_v1_control_Command_init_zero;
+  ASSERT_TRUE(Decode(visio_schema_v1_control_Command_fields, wire, &command));
+  EXPECT_EQ(command.command_id, 7u);
+  EXPECT_EQ(command.which_body,
+            visio_schema_v1_control_Command_notice_pack_tag);
+  EXPECT_EQ(command.body.notice_pack.action,
+            visio_schema_v1_control_NoticePackCommand_Action_ACTION_BEGIN);
+  EXPECT_STREQ(command.body.notice_pack.language, "hi");
+  EXPECT_STREQ(command.body.notice_pack.version, std::string(64, 'a').c_str());
+  EXPECT_EQ(Encode(visio_schema_v1_control_Command_fields, command), wire);
+}
+
+TEST(NoticeWire, StateAndLimit) {
+  visio_schema_v1_control_DeviceState state =
+      visio_schema_v1_control_DeviceState_init_zero;
+  state.has_notices = true;
+  std::snprintf(state.notices.language, sizeof(state.notices.language), "hi");
+  const char *languages[] = {"en", "zh", "hi", "kn", "ta"};
+  for (const auto *language : languages) {
+    auto &row = state.notices.packs[state.notices.packs_count++];
+    std::snprintf(row.language, sizeof(row.language), "%s", language);
+    std::snprintf(row.version, sizeof(row.version), "%s",
+                  std::string(64, 'a').c_str());
+    row.builtin = state.notices.packs_count <= 2;
+  }
+  const auto wire = Encode(visio_schema_v1_control_DeviceState_fields, state);
+  EXPECT_LT(wire.size(), 400u);
+  visio_schema_v1_control_DeviceState decoded =
+      visio_schema_v1_control_DeviceState_init_zero;
+  ASSERT_TRUE(
+      Decode(visio_schema_v1_control_DeviceState_fields, wire, &decoded));
+  EXPECT_TRUE(decoded.has_notices);
+  EXPECT_STREQ(decoded.notices.language, "hi");
+  EXPECT_EQ(decoded.notices.packs_count, 5u);
+  EXPECT_TRUE(decoded.notices.packs[0].builtin);
+  EXPECT_FALSE(decoded.notices.packs[4].builtin);
+  const std::string row("\x12\x04\x0a\x02hi", 6);
+  std::string six;
+  for (int i = 0; i < 6; ++i)
+    six += row;
+  visio_schema_v1_control_NoticeState notices =
+      visio_schema_v1_control_NoticeState_init_zero;
+  EXPECT_FALSE(
+      Decode(visio_schema_v1_control_NoticeState_fields, six, &notices));
+}
+
+TEST(NoticeWire, ChunkBound) {
+  visio_schema_v1_control_NoticePackCommand request =
+      visio_schema_v1_control_NoticePackCommand_init_zero;
+  request.data.size = 1024;
+  std::memset(request.data.bytes, 0xa5, request.data.size);
+  const auto wire =
+      Encode(visio_schema_v1_control_NoticePackCommand_fields, request);
+  visio_schema_v1_control_NoticePackCommand decoded =
+      visio_schema_v1_control_NoticePackCommand_init_zero;
+  ASSERT_TRUE(
+      Decode(visio_schema_v1_control_NoticePackCommand_fields, wire, &decoded));
+  EXPECT_EQ(decoded.data.size, 1024u);
+  const auto oversized =
+      std::string("\x32\x81\x08", 3) + std::string(1025, 'x');
+  EXPECT_FALSE(Decode(visio_schema_v1_control_NoticePackCommand_fields,
+                      oversized, &decoded));
+}
+
 TEST(ControlNanopb, JoinSavedWifiDecodesThePythonBoundaryVector) {
   const std::string ssid(32, 's');
   const std::string wire = std::string("\xf2\x02\x22\x0a\x20", 5) + ssid;

@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package visio_schema.v1.control;
+
+// One installed spoken-notice language. Versions of downloaded packs are
+// lowercase SHA-256 hex: hash the language plus NUL, then each sorted clip
+// stem plus NUL and its 32-byte WAV digest. Built-ins use the firmware version.
+message NoticePack {
+  string language = 1;
+  string version = 2;
+  bool builtin = 3;
+}
+
+// Part of the ordinary GetState reply. Read from cached metadata, never by
+// scanning audio files. Absence means this firmware/device has no pack API.
+message NoticeState {
+  string language = 1;
+  repeated NoticePack packs = 2; // At most five, including built-in en and zh.
+}
+
+// Phone-to-device transfer on the existing Command stream. One transfer at
+// a time; the phone supplies already-prepared 16-kHz stereo S16LE WAV files.
+// No device-side cloud access or archive extraction is involved.
+message NoticePackCommand {
+  enum Action {
+    ACTION_UNSPECIFIED = 0;
+    ACTION_BEGIN = 1;
+    ACTION_WRITE = 2;
+    ACTION_COMMIT = 3;
+    ACTION_CANCEL = 4;
+    ACTION_REMOVE = 5;
+  }
+  Action action = 1;
+  string language = 2; // Normalized ISO 639 primary tag, 2-3 lowercase letters.
+  string version = 3;  // Matches BEGIN until completion; CANCEL needs no fields.
+  string clip = 4;     // Voice-notice stem, without extension or directories.
+  uint32 offset = 5;   // Strictly sequential within this WAV; no implicit retry.
+  bytes data = 6;      // At most 1024 bytes. Only WRITE carries audio.
+  uint32 file_bytes = 7; // Complete WAV size, repeated on its WRITE requests.
+  // BEGIN reserves a non-built-in language slot. WRITE completes one file
+  // before another begins. COMMIT accepts only the full current notice set
+  // with the declared content version. CANCEL discards this transfer's staging.
+  // REMOVE removes only a downloaded language. Never deletes built-in en/zh.
+  // At most three extra languages; replacing one uses its existing slot.
+  // Mutations are refused while recording; callers may continue after idle.
+  // BEGIN/WRITE/CANCEL acknowledge only; COMMIT/REMOVE return fresh DeviceState.
+}

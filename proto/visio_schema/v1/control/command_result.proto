@@ -16,6 +16,7 @@ syntax = "proto3";
 package visio_schema.v1.control;
 
 import "visio_schema/v1/control/required_devices.proto";
+import "visio_schema/v1/control/notice_pack.proto";
 import "visio_schema/v1/sensor/capture_state.proto";
 
 // One Wi-Fi access point seen in a scan.
@@ -505,6 +506,8 @@ message DeviceState {
   // than render one it cannot actually move. A plain uint32 could not say
   // that, because 0 is a legal value (mute) as well as the proto3 default.
   optional uint32 notice_volume = 34;
+  // Cached voice language and installed versions; travels with GetState.
+  NoticeState notices = 58;
 
   // ── recording encryption ──
   // Fingerprint of the key this unit encrypts recordings under: 16 lowercase

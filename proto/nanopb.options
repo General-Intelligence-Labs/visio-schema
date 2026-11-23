@@ -131,6 +131,16 @@ visio_schema.v1.control.FormatStorage.fs_type         max_size:8
 # SetNoticeLang: ISO 639-1 code, possibly with a region subtag ("zh-CN").
 visio_schema.v1.control.SetNoticeLang.lang            max_size:16
 
+# Voice packs use the existing command lane and bounded cached state.
+visio_schema.v1.control.NoticePack.language           max_size:4
+visio_schema.v1.control.NoticePack.version            max_size:65
+visio_schema.v1.control.NoticeState.language          max_size:4
+visio_schema.v1.control.NoticeState.packs             max_count:5
+visio_schema.v1.control.NoticePackCommand.language    max_size:4
+visio_schema.v1.control.NoticePackCommand.version     max_size:65
+visio_schema.v1.control.NoticePackCommand.clip        max_size:48
+visio_schema.v1.control.NoticePackCommand.data        max_size:1024
+
 # SetStreamPolicy: the per-connection delivery filter. Bounded (not FT_POINTER
 # like the result lists) because it rides the inbound Command decode path, which
 # is deliberately malloc-free — same reasoning as SetCalibration's artifacts.

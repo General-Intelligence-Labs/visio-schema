@@ -18,6 +18,7 @@ import "visio_schema/v1/calibration/encoder.proto";
 import "visio_schema/v1/calibration/camera_tuning.proto";
 import "visio_schema/v1/calibration/fiducial.proto";
 import "visio_schema/v1/control/required_devices.proto";
+import "visio_schema/v1/control/notice_pack.proto";
 
 message Command {
   // Intended recipient, by device name. A receiving peer MUST ignore
@@ -80,6 +81,7 @@ message Command {
     IngestCheckReceipt ingest_check_receipt = 51;
     SetMaxRecordingDuration set_max_recording_duration = 52;
     SetRequiredDevices set_required_devices = 56;
+    NoticePackCommand notice_pack = 57;
   }
 }
 
