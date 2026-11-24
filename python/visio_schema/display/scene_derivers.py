@@ -5,7 +5,7 @@ own data, so Foxglove / an MCAP shows a hand shape without any downstream code:
 
 - ``TactileSceneDeriver`` — tactile glove: join a ``visio_schema.v1.sensor.TactileRaw`` on
   ``/glove_*/tactile/*`` with its ``TactileLayout`` on ``.../layout`` and emit a
-  bar-per-taxel scene on ``.../scene`` (height + blue->red = scalar intensity).
+  point-per-taxel scene on ``.../scene`` (blue->red = scalar intensity).
 - ``HandSkeletonDeriver`` — Quest hand tracking: turn a 26-joint
   ``foxglove.FrameTransforms`` on ``/quest/skeleton/hand_*`` into a sphere-per-joint
   + bone LINE_LIST scene on ``.../scene`` (left cyan, right amber).
@@ -24,7 +24,6 @@ from visio_schema.display import hand_geometry as hg
 from visio_schema.display.tactile_scalars import TactileSceneError, validate_range
 from visio_schema.display.tactile_scalars import compile_layout as _compile_tactile
 from visio_schema.foxglove.Color_pb2 import Color
-from visio_schema.foxglove.CubePrimitive_pb2 import CubePrimitive
 from visio_schema.foxglove.FrameTransforms_pb2 import FrameTransforms
 from visio_schema.foxglove.LinePrimitive_pb2 import LinePrimitive
 from visio_schema.foxglove.Point3_pb2 import Point3
@@ -33,7 +32,6 @@ from visio_schema.foxglove.Quaternion_pb2 import Quaternion
 from visio_schema.foxglove.SceneEntity_pb2 import SceneEntity
 from visio_schema.foxglove.SceneUpdate_pb2 import SceneUpdate
 from visio_schema.foxglove.SpherePrimitive_pb2 import SpherePrimitive
-from visio_schema.foxglove.TextPrimitive_pb2 import TextPrimitive
 from visio_schema.foxglove.Vector3_pb2 import Vector3
 from visio_schema.v1.calibration.tactile_pb2 import TactileLayout
 from visio_schema.v1.sensor.tactile_raw_pb2 import TactileRaw
@@ -51,7 +49,7 @@ _SCENE_SCHEMA = "foxglove.SceneUpdate"
 _TACTILE_SCENE_BASE = 0x7F030000
 _HAND_SCENE_BASE = 0x7F040000
 _UNIT_Q = Quaternion(x=0, y=0, z=0, w=1)
-# Building a scene (137 cubes / 26 spheres + serialize) costs a few ms — far
+# Building a scene (hundreds of taxel markers + serialize) costs a few ms — far
 # slower than the ~288 fps tactile stream. Deriving one per frame backs up the
 # bridge's read loop and stalls EVERY topic (raw data included). A scene at ~30 fps
 # is plenty for viewing, so throttle by capture time; the data itself still passes
@@ -68,15 +66,15 @@ def _ns(ts):
 # --------------------------------------------------------------------------- #
 class TactileSceneDeriver:
     """Join a glove's TactileRaw with its TactileLayout and emit a hand-shaped
-    SceneUpdate on <data-topic>/scene (a cube per taxel: height + blue->red =
-    scalar intensity, labelled with the vendor taxel id). The optional value_range
-    fixes the display range for all scalar groups; it never changes raw readings."""
+    SceneUpdate on <data-topic>/scene (one fixed-size sphere per taxel, colored
+    blue->red by scalar intensity, without text labels). The optional value_range
+    fixes the color range for all scalar groups; it never changes raw readings."""
 
     def __init__(self, *, value_range=None):
         self._value_range = validate_range(value_range)
         self._decoders = {}    # data_topic -> compiled scalar readouts and ranges
-        self._placement = {}   # data_topic -> [(index, taxel_id, x, y)]
-        self._cube = {}        # data_topic -> bar footprint (m)
+        self._placement = {}   # data_topic -> [(x, y, z)] in layout point order
+        self._diameter = {}    # data_topic -> fixed marker diameter (m)
         self._layout = {}      # data_topic -> the layout payload placed above
         self._scene_ch = {}    # data_topic -> derived scene Channel
         self._last_ns = {}     # data_topic -> capture ns of the last emitted scene
@@ -91,7 +89,7 @@ class TactileSceneDeriver:
             if self._layout.get(data_topic) == msg.payload:
                 return None
             # A changed, invalid layout must never leave the previous format active.
-            for cache in (self._layout, self._placement, self._cube,
+            for cache in (self._layout, self._placement, self._diameter,
                           self._decoders, self._last_ns):
                 cache.pop(data_topic, None)
             lay = TactileLayout()
@@ -109,7 +107,7 @@ class TactileSceneDeriver:
                 raise TactileSceneError(f"{data_topic}/layout: {exc}") from exc
             self._decoders[data_topic] = decoder
             self._placement[data_topic] = pl
-            self._cube[data_topic] = hg.footprint(pl)
+            self._diameter[data_topic] = hg.footprint(pl)
             self._layout[data_topic] = msg.payload
             return None
         if ch.schema_name == _TACTILE_SCHEMA and "/tactile/" in topic:
@@ -134,7 +132,7 @@ class TactileSceneDeriver:
                 self._scene_ch[topic] = out_ch
             frame = topic.strip("/").split("/")[0]  # /glove_left/tactile/0 -> glove_left
             scene = _tactile_scene(intensities, pl, frame, msg.timestamp,
-                                   self._cube.get(topic, hg.CUBE))
+                                   self._diameter[topic])
             self._last_ns[topic] = ns
             seq = self._seq.get(topic, 0)
             self._seq[topic] = (seq + 1) & 0xFFFFFFFF
@@ -144,26 +142,16 @@ class TactileSceneDeriver:
         return None
 
 
-def _tactile_scene(intensities, placement, frame_id, timestamp, cube=hg.CUBE):
-    cubes, texts = [], []
-    for p, (_index, taxel_id, x, y) in zip(intensities, placement, strict=True):
-        h = 0.004 + p * hg.MAX_H
-        cubes.append(
-            CubePrimitive(
-                pose=Pose(position=Vector3(x=x, y=y, z=h / 2), orientation=_UNIT_Q),
-                size=Vector3(x=cube, y=cube, z=h),
-                color=Color(r=p, g=0.1, b=1.0 - p, a=1.0),
-            )
+def _tactile_scene(intensities, placement, frame_id, timestamp, diameter=hg.POINT_SIZE):
+    spheres = [
+        SpherePrimitive(
+            pose=Pose(position=Vector3(x=x, y=y, z=z), orientation=_UNIT_Q),
+            size=Vector3(x=diameter, y=diameter, z=diameter),
+            color=Color(r=p, g=0.1, b=1.0 - p, a=1.0),
         )
-        texts.append(
-            TextPrimitive(
-                pose=Pose(position=Vector3(x=x, y=y, z=h + 0.004), orientation=_UNIT_Q),
-                billboard=True, font_size=9.0, scale_invariant=True,
-                color=Color(r=1.0, g=1.0, b=1.0, a=0.9), text=str(taxel_id),
-            )
-        )
-    ent = SceneEntity(timestamp=timestamp, frame_id=frame_id, id="hand",
-                      cubes=cubes, texts=texts)
+        for p, (x, y, z) in zip(intensities, placement, strict=True)
+    ]
+    ent = SceneEntity(timestamp=timestamp, frame_id=frame_id, id="hand", spheres=spheres)
     return SceneUpdate(entities=[ent])
 
 
@@ -216,7 +204,7 @@ class HandSkeletonDeriver:
         else:
             return None
         # Full source rate (~72 fps): the hand scene is cheap to build (26
-        # spheres + a bone LINE_LIST), so — unlike the 137-cube tactile scene —
+        # spheres + a bone LINE_LIST), so — unlike the dense tactile scene —
         # it is NOT throttled. Emitting one scene per FrameTransforms keeps the
         # viz twin per-message identical to the data stream.
         fts = FrameTransforms()

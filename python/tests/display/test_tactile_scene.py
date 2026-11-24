@@ -50,21 +50,52 @@ def _scene(deriver, data, *, ns=1_000_000_000):
 
 
 def _assert_intensities(scene, expected):
-    assert [c.color.r for c in scene.cubes] == pytest.approx(expected)
-    assert [c.color.b for c in scene.cubes] == pytest.approx([1 - p for p in expected])
-    assert [c.size.z for c in scene.cubes] == pytest.approx(
-        [0.004 + p * hg.MAX_H for p in expected])
-    assert all(c.size.z >= 0.004 and 0 <= c.color.r <= 1 for c in scene.cubes)
+    assert [p.color.r for p in scene.spheres] == pytest.approx(expected)
+    assert [p.color.b for p in scene.spheres] == pytest.approx([1 - p for p in expected])
+    assert not scene.cubes and not scene.texts
+    assert all(p.size.x == p.size.y == p.size.z > 0 for p in scene.spheres)
+    assert len({p.size.x for p in scene.spheres}) == 1
 
 
-def test_uint8_keeps_legacy_appearance_and_labels():
+def test_uint8_keeps_legacy_colors_without_labels_or_bars():
     deriver = sd.TactileSceneDeriver()
     _install(deriver, _layout(count=4))
     scene = _scene(deriver, bytes([0, 40, 80, 255]))
     _assert_intensities(scene, [0, 0.5, 1, 1])
-    assert [t.text for t in scene.texts] == ["100", "101", "102", "103"]
     assert scene.frame_id == "glove_left"
-    assert scene.cubes[1].pose.position.x == pytest.approx(0.01)
+    assert scene.spheres[1].pose.position.x == pytest.approx(0.01)
+    assert all(p.pose.position.z == 0 for p in scene.spheres)
+
+
+def test_strength_changes_only_color_not_positions_or_marker_size():
+    deriver = sd.TactileSceneDeriver(value_range=(0, 1000))
+    lay = _layout(Field.INT16, count=3)
+    for point, z in zip(lay.points, (0.015, -0.025, 0.05), strict=True):
+        point.z = z
+    _install(deriver, lay)
+    first = _scene(deriver, struct.pack("<3h", -32768, 0, 32767))
+    second = _scene(deriver, struct.pack("<3h", 1000, 500, -1), ns=2_000_000_000)
+    _assert_intensities(first, [0, 0, 1])
+    _assert_intensities(second, [1, 0.5, 0])
+    assert [p.pose for p in first.spheres] == [p.pose for p in second.spheres]
+    assert [p.size for p in first.spheres] == [p.size for p in second.spheres]
+    assert [p.pose.position.z for p in first.spheres] == pytest.approx([0.015, -0.025, 0.05])
+
+
+@pytest.mark.parametrize("precision", [TactileLayout.APPROXIMATE, TactileLayout.MEASURED])
+def test_nonplanar_points_at_same_xy_keep_their_z_and_fixed_diameter(precision):
+    deriver = sd.TactileSceneDeriver(value_range=(0, 1000))
+    lay = _layout(Field.INT16, count=2)
+    lay.precision = precision
+    lay.points[0].x = lay.points[1].x = 0.01
+    lay.points[0].z, lay.points[1].z = 0.05, 0.054
+    _install(deriver, lay)
+    scene = _scene(deriver, struct.pack("<2h", 0, 1000))
+    _assert_intensities(scene, [0, 1])
+    for marker, point in zip(scene.spheres, lay.points, strict=True):
+        assert (marker.pose.position.x, marker.pose.position.y, marker.pose.position.z) == (
+            point.x, point.y, point.z)
+        assert marker.size.x == pytest.approx(0.85 * 0.004)
 
 
 def test_signed_int16_little_endian_and_no_raw_mutation():

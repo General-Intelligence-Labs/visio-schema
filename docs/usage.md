@@ -45,8 +45,10 @@ visio-display --serial /dev/ttyACM0 --out run.mcap
 
 ### Scalar tactile scenes
 
-`--scene` adds a bar-per-taxel `foxglove.SceneUpdate` on each tactile topic's
-`.../scene` (and the existing Quest hand-skeleton scenes). It is opt-in, including
+`--scene` adds a colored-point `foxglove.SceneUpdate` on each tactile topic's
+`.../scene` (and the existing Quest hand-skeleton scenes). Each taxel is a fixed-size
+sphere with no numeric/text annotation; only its color changes with the reading.
+This is a qualitative view, not a quantitative measurement tool. It is opt-in, including
 in the device-picker launcher. Import `glove_layout.json` from the installed
 `visio_schema/display/` directory into Foxglove, or select the `.../scene` topics
 in a 3D panel.
@@ -60,8 +62,11 @@ The standard deriver reads the sole scalar field declared by each layout group,
 using `Point.index + field.offset` and the declared numeric type (little-endian).
 All eight `PackedElementField.NumericType` integer/float types are supported;
 multiple fields per group are rejected rather than guessing a force axis.
-LOGICAL layouts retain their hand-shaped placement; APPROXIMATE/MEASURED x/y
-coordinates are used as supplied, without mirroring or inferring a new hand shape.
+LOGICAL layouts retain their hand-shaped placement on the conventional z=0 plane;
+APPROXIMATE/MEASURED x/y/z coordinates are used as supplied, without mirroring or
+inferring a new hand shape. Non-planar layouts keep their depth; readings never
+move points or change their size. Marker diameter is cached from the layout's
+3D taxel spacing, capped at 7 mm.
 
 Defaults are **display parameters, not sensor calibration or physical full scales**:
 UINT8 uses 0..80 (legacy fabric-glove appearance), INT16 uses 0..32767, other
@@ -73,8 +78,8 @@ be finite, strictly increasing, with a finite span. Programmatic callers can use
 `run_bridge(..., derive_scene=True, tactile_range=(0, 2000))` or
 `TactileSceneDeriver(value_range=(0, 2000))` from the display submodules.
 
-Intensity is clipped to 0..1 (blue/short to red/tall); signed readings below MIN
-never produce negative bar heights or invalid colors. There is no per-frame
+Intensity is clipped to 0..1 (blue to red); signed readings below MIN stay blue
+instead of producing invalid colors. There is no per-frame
 auto-ranging, conversion to newtons, zeroing, or mutation of the raw stream.
 Layouts/decoders are cached until the layout bytes change; scenes stay throttled
 to about 30 fps. Invalid layouts invalidate the old decoder before reporting an
