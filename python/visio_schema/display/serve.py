@@ -310,7 +310,10 @@ class BridgeManager:
 
     def __init__(self, *, ws_port: int = 8765, viewer: str = "both",
                  baud: int = 921600, bitrate: bool = True,
-                 bitrate_window: float = 2.0) -> None:
+                 bitrate_window: float = 2.0, derive_scene: bool = False,
+                 tactile_range: tuple[float, float] | None = None) -> None:
+        self._derive_scene = derive_scene
+        self._tactile_range = tactile_range
         self._viewer = viewer
         self._baud = baud
         self._bitrate = bitrate
@@ -470,8 +473,9 @@ class BridgeManager:
         try:
             source = ChannelRegistry().resolved(raw_frames())
             run_bridge(source, [fox, self._status, self._cmd_sink], derive_tf=True,
-                       derive_bitrate=self._bitrate,
-                       bitrate_window=self._bitrate_window, close_sinks=False)
+                       derive_bitrate=self._bitrate, derive_scene=self._derive_scene,
+                       bitrate_window=self._bitrate_window,
+                       tactile_range=self._tactile_range, close_sinks=False)
             # run_bridge returned without being stopped → the source ended on its own
             # (a finished replay, or a live link that closed). Report "ended", not a
             # stale "streaming". A supersede/disconnect sets stop, so guard on it.
@@ -1107,13 +1111,16 @@ def _free_port(host: str) -> int:
 
 def run_serve(*, serve_port: int = 0, ws_port: int = 0, viewer: str = "both",
               baud: int = 921600, bitrate: bool = True, bitrate_window: float = 2.0,
-              host: str = "127.0.0.1", open_browser: bool = True) -> None:
+              host: str = "127.0.0.1", open_browser: bool = True,
+              derive_scene: bool = False,
+              tactile_range: tuple[float, float] | None = None) -> None:
     """Run the launcher web app (blocks until Ctrl-C / SIGTERM). Both ports default to 0
     (auto): the web UI takes a free port and the Foxglove WS server (ws_port=0) lets foxglove
     pick one. A caller can still pin either by passing an explicit port."""
     serve_port = serve_port or _free_port(host)
     bridge = BridgeManager(ws_port=ws_port, viewer=viewer, baud=baud,
-                           bitrate=bitrate, bitrate_window=bitrate_window)
+                           bitrate=bitrate, bitrate_window=bitrate_window,
+                           derive_scene=derive_scene, tactile_range=tactile_range)
     discovery = DiscoveryService()
     app = _build_app(bridge, discovery)
 
