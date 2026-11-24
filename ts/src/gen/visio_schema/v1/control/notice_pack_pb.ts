@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file visio_schema/v1/control/notice_pack.proto.
  */
 export const file_visio_schema_v1_control_notice_pack: GenFile = /*@__PURE__*/
-  fileDesc("Cil2aXNpb19zY2hlbWEvdjEvY29udHJvbC9ub3RpY2VfcGFjay5wcm90bxIXdmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wiQAoKTm90aWNlUGFjaxIQCghsYW5ndWFnZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJEg8KB2J1aWx0aW4YAyABKAgiUwoLTm90aWNlU3RhdGUSEAoIbGFuZ3VhZ2UYASABKAkSMgoFcGFja3MYAiADKAsyIy52aXNpb19zY2hlbWEudjEuY29udHJvbC5Ob3RpY2VQYWNrIrgCChFOb3RpY2VQYWNrQ29tbWFuZBJBCgZhY3Rpb24YASABKA4yMS52aXNpb19zY2hlbWEudjEuY29udHJvbC5Ob3RpY2VQYWNrQ29tbWFuZC5BY3Rpb24SEAoIbGFuZ3VhZ2UYAiABKAkSDwoHdmVyc2lvbhgDIAEoCRIMCgRjbGlwGAQgASgJEg4KBm9mZnNldBgFIAEoDRIMCgRkYXRhGAYgASgMEhIKCmZpbGVfYnl0ZXMYByABKA0ifQoGQWN0aW9uEhYKEkFDVElPTl9VTlNQRUNJRklFRBAAEhAKDEFDVElPTl9CRUdJThABEhAKDEFDVElPTl9XUklURRACEhEKDUFDVElPTl9DT01NSVQQAxIRCg1BQ1RJT05fQ0FOQ0VMEAQSEQoNQUNUSU9OX1JFTU9WRRAFYgZwcm90bzM");
+  fileDesc("Cil2aXNpb19zY2hlbWEvdjEvY29udHJvbC9ub3RpY2VfcGFjay5wcm90bxIXdmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wiQAoKTm90aWNlUGFjaxIQCghsYW5ndWFnZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJEg8KB2J1aWx0aW4YAyABKAgibAoLTm90aWNlU3RhdGUSEAoIbGFuZ3VhZ2UYASABKAkSMgoFcGFja3MYAiADKAsyIy52aXNpb19zY2hlbWEudjEuY29udHJvbC5Ob3RpY2VQYWNrEhcKD2luc3RhbGxlZF9jb3VudBgDIAEoDSK4AgoRTm90aWNlUGFja0NvbW1hbmQSQQoGYWN0aW9uGAEgASgOMjEudmlzaW9fc2NoZW1hLnYxLmNvbnRyb2wuTm90aWNlUGFja0NvbW1hbmQuQWN0aW9uEhAKCGxhbmd1YWdlGAIgASgJEg8KB3ZlcnNpb24YAyABKAkSDAoEY2xpcBgEIAEoCRIOCgZvZmZzZXQYBSABKA0SDAoEZGF0YRgGIAEoDBISCgpmaWxlX2J5dGVzGAcgASgNIn0KBkFjdGlvbhIWChJBQ1RJT05fVU5TUEVDSUZJRUQQABIQCgxBQ1RJT05fQkVHSU4QARIQCgxBQ1RJT05fV1JJVEUQAhIRCg1BQ1RJT05fQ09NTUlUEAMSEQoNQUNUSU9OX0NBTkNFTBAEEhEKDUFDVElPTl9SRU1PVkUQBWIGcHJvdG8z");
 
 /**
  * One installed spoken-notice language. Versions of downloaded packs are
@@ -56,11 +56,19 @@ export type NoticeState = Message<"visio_schema.v1.control.NoticeState"> & {
   language: string;
 
   /**
-   * At most five, including built-in en and zh.
+   * At most five entries. While over capacity, only downloaded packs are
+   * listed so the user can choose which one to remove.
    *
    * @generated from field: repeated visio_schema.v1.control.NoticePack packs = 2;
    */
   packs: NoticePack[];
+
+  /**
+   * Actual total, including built-ins. Older firmware omits this field.
+   *
+   * @generated from field: uint32 installed_count = 3;
+   */
+  installedCount: number;
 };
 
 /**

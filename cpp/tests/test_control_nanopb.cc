@@ -86,6 +86,7 @@ TEST(NoticeWire, StateAndLimit) {
   visio_schema_v1_control_DeviceState state =
       visio_schema_v1_control_DeviceState_init_zero;
   state.has_notices = true;
+  state.notices.installed_count = 5;
   std::snprintf(state.notices.language, sizeof(state.notices.language), "hi");
   const char *languages[] = {"en", "zh", "hi", "kn", "ta"};
   for (const auto *language : languages) {
@@ -104,6 +105,7 @@ TEST(NoticeWire, StateAndLimit) {
   EXPECT_TRUE(decoded.has_notices);
   EXPECT_STREQ(decoded.notices.language, "hi");
   EXPECT_EQ(decoded.notices.packs_count, 5u);
+  EXPECT_EQ(decoded.notices.installed_count, 5u);
   EXPECT_TRUE(decoded.notices.packs[0].builtin);
   EXPECT_FALSE(decoded.notices.packs[4].builtin);
   const std::string row("\x12\x04\x0a\x02hi", 6);

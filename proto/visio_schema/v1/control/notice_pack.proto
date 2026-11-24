@@ -15,7 +15,11 @@ message NoticePack {
 // scanning audio files. Absence means this firmware/device has no pack API.
 message NoticeState {
   string language = 1;
-  repeated NoticePack packs = 2; // At most five, including built-in en and zh.
+  // At most five entries. While over capacity, only downloaded packs are
+  // listed so the user can choose which one to remove.
+  repeated NoticePack packs = 2;
+  // Actual total, including built-ins. Older firmware omits this field.
+  uint32 installed_count = 3;
 }
 
 // Phone-to-device transfer on the existing Command stream. One transfer at
@@ -40,8 +44,8 @@ message NoticePackCommand {
   // BEGIN reserves a non-built-in language slot. WRITE completes one file
   // before another begins. COMMIT accepts only the full current notice set
   // with the declared content version. CANCEL discards this transfer's staging.
-  // REMOVE removes only a downloaded language. Never deletes built-in en/zh.
-  // At most three extra languages; replacing one uses its existing slot.
+  // REMOVE removes only a downloaded language. Never deletes built-ins.
+  // At most five languages total; replacing one uses its existing slot.
   // Mutations are refused while recording; callers may continue after idle.
   // BEGIN/WRITE/CANCEL acknowledge only; COMMIT/REMOVE return fresh DeviceState.
 }
