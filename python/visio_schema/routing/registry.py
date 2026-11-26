@@ -117,9 +117,11 @@ class ChannelRegistry:
         schema_encoding: str = _PROTOBUF,
     ) -> int:
         """Declare an output stream; return its (stable) local id. Idempotent
-        per topic."""
+        per own topic. A learned source's topic raises DuplicateTopicError."""
         existing = self._topic_to_id.get(topic)
         if existing is not None:
+            if existing not in self._own_ids:
+                raise DuplicateTopicError(f'topic {topic!r} belongs to a learned source')
             return existing
         cid = self.alloc()
         self._by_id[cid] = Channel(

@@ -50,6 +50,17 @@ def test_declare_idempotent_from_first_dynamic() -> None:
     assert {c.topic for c in reg.own_channels()} == {"/dev/imus/0/raw", "/dev/imus/1/raw"}
 
 
+def test_declare_does_not_borrow_a_learned_topic() -> None:
+    reg = ChannelRegistry('head')
+    topic = '/glove_left/tactile/0'
+    cid = reg.alloc()
+    reg.learn(_channel(cid, topic))
+    with pytest.raises(DuplicateTopicError, match='learned source'):
+        reg.declare(topic, _IMU)
+    assert reg.resolve(cid).topic == topic
+    assert reg.own_channels() == []
+
+
 def test_declare_output_self_describes() -> None:
     reg = ChannelRegistry("dev")
     cid = reg.declare_output("/dev/imus/0/raw", _IMU)

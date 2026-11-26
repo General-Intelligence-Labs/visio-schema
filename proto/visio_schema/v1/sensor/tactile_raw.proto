@@ -28,5 +28,7 @@ message TactileRaw {
 
   // Opaque flat readings straight off the sensor. Length is implicit in the
   // bytes; the sibling TactileLayout says how to slice them into taxels/axes.
+  // Multi-byte numeric fields use little-endian order, independent of the
+  // sensor transport's byte order. Point.index and field.offset are bytes.
   bytes data = 2;
 }

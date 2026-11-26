@@ -48,6 +48,16 @@ TEST(ChannelRegistry, DeclareAllocatesFromFirstDynamicIdempotent) {
   EXPECT_FALSE(r.LocalIdFor("/never").has_value());
 }
 
+TEST(ChannelRegistry, DeclareCannotBorrowALearnedTopicsId) {
+  ChannelRegistry r;
+  const auto id = r.Alloc();
+  r.Learn(MakeChannel(id, "/glove_left/tactile/0"));
+  EXPECT_THROW(r.Declare("/glove_left/tactile/0", "S"), DuplicateTopicError);
+  ASSERT_NE(r.Resolve(id), nullptr);
+  EXPECT_EQ(r.Resolve(id)->topic, "/glove_left/tactile/0");
+  EXPECT_TRUE(r.OwnChannels().empty());
+}
+
 TEST(ChannelRegistry, LearnByIdAndResolve) {
   ChannelRegistry r;
   r.Learn(MakeChannel(16, "/c/imu/0/raw"));
