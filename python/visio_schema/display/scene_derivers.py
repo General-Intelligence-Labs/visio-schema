@@ -3,9 +3,9 @@
 Two derivers that synthesize a `foxglove.SceneUpdate` "viz twin" from a device's
 own data, so Foxglove / an MCAP shows a hand shape without any downstream code:
 
-- ``TactileSceneDeriver`` — JQ glove: join a ``visio_schema.v1.sensor.TactileRaw`` on
+- ``TactileSceneDeriver`` — tactile glove: join a ``visio_schema.v1.sensor.TactileRaw`` on
   ``/glove_*/tactile/*`` with its ``TactileLayout`` on ``.../layout`` and emit a
-  bar-per-taxel scene on ``.../scene`` (height + blue->red = pressure).
+  point-per-taxel scene on ``.../scene`` (white->red = scalar intensity).
 - ``HandSkeletonDeriver`` — Quest hand tracking: turn a 26-joint
   ``foxglove.FrameTransforms`` on ``/quest/skeleton/hand_*`` into a sphere-per-joint
   + bone LINE_LIST scene on ``.../scene`` (left cyan, right amber).
@@ -17,10 +17,13 @@ policy), not in the generic routing layer.
 """
 from __future__ import annotations
 
+from google.protobuf.message import DecodeError
+
 from visio_schema import Message, make_channel
 from visio_schema.display import hand_geometry as hg
+from visio_schema.display.tactile_scalars import TactileSceneError, validate_range
+from visio_schema.display.tactile_scalars import compile_layout as _compile_tactile
 from visio_schema.foxglove.Color_pb2 import Color
-from visio_schema.foxglove.CubePrimitive_pb2 import CubePrimitive
 from visio_schema.foxglove.FrameTransforms_pb2 import FrameTransforms
 from visio_schema.foxglove.LinePrimitive_pb2 import LinePrimitive
 from visio_schema.foxglove.Point3_pb2 import Point3
@@ -29,7 +32,6 @@ from visio_schema.foxglove.Quaternion_pb2 import Quaternion
 from visio_schema.foxglove.SceneEntity_pb2 import SceneEntity
 from visio_schema.foxglove.SceneUpdate_pb2 import SceneUpdate
 from visio_schema.foxglove.SpherePrimitive_pb2 import SpherePrimitive
-from visio_schema.foxglove.TextPrimitive_pb2 import TextPrimitive
 from visio_schema.foxglove.Vector3_pb2 import Vector3
 from visio_schema.v1.calibration.tactile_pb2 import TactileLayout
 from visio_schema.v1.sensor.tactile_raw_pb2 import TactileRaw
@@ -47,7 +49,7 @@ _SCENE_SCHEMA = "foxglove.SceneUpdate"
 _TACTILE_SCENE_BASE = 0x7F030000
 _HAND_SCENE_BASE = 0x7F040000
 _UNIT_Q = Quaternion(x=0, y=0, z=0, w=1)
-# Building a scene (137 cubes / 26 spheres + serialize) costs a few ms — far
+# Building a scene (hundreds of taxel markers + serialize) costs a few ms — far
 # slower than the ~288 fps tactile stream. Deriving one per frame backs up the
 # bridge's read loop and stalls EVERY topic (raw data included). A scene at ~30 fps
 # is plenty for viewing, so throttle by capture time; the data itself still passes
@@ -60,16 +62,19 @@ def _ns(ts):
 
 
 # --------------------------------------------------------------------------- #
-# JQ glove: tactile TactileRaw + TactileLayout -> hand-shaped SceneUpdate        #
+# Tactile glove: TactileRaw + TactileLayout -> hand-shaped SceneUpdate           #
 # --------------------------------------------------------------------------- #
 class TactileSceneDeriver:
     """Join a glove's TactileRaw with its TactileLayout and emit a hand-shaped
-    SceneUpdate on <data-topic>/scene (a cube per taxel: height + blue->red =
-    pressure, labelled with the vendor taxel id)."""
+    SceneUpdate on <data-topic>/scene (one fixed-size sphere per taxel, colored
+    white->red by scalar intensity, without text labels). The optional value_range
+    fixes the color range for all scalar groups; it never changes raw readings."""
 
-    def __init__(self):
-        self._placement = {}   # data_topic -> [(index, taxel_id, x, y)]
-        self._cube = {}        # data_topic -> bar footprint (m)
+    def __init__(self, *, value_range=None):
+        self._value_range = validate_range(value_range)
+        self._decoders = {}    # data_topic -> compiled scalar readouts and ranges
+        self._placement = {}   # data_topic -> [(x, y, z)] in layout point order
+        self._diameter = {}    # data_topic -> fixed marker diameter (m)
         self._layout = {}      # data_topic -> the layout payload placed above
         self._scene_ch = {}    # data_topic -> derived scene Channel
         self._last_ns = {}     # data_topic -> capture ns of the last emitted scene
@@ -83,37 +88,52 @@ class TactileSceneDeriver:
             # is an O(n^2) pitch search for nothing.
             if self._layout.get(data_topic) == msg.payload:
                 return None
+            # A changed, invalid layout must never leave the previous format active.
+            for cache in (self._layout, self._placement, self._diameter,
+                          self._decoders, self._last_ns):
+                cache.pop(data_topic, None)
             lay = TactileLayout()
-            lay.ParseFromString(msg.payload)
-            side = hg.side_of_topic(data_topic)
-            if side is None:
-                # Unassigned unit (rooted at its code8): the placement is
-                # mirrored about the side, so drawing it would put the taxels on
-                # the wrong hand. Skip rather than guess — calibrate the unit.
-                return None
-            pl = hg.build_placement(lay, side == "left")
+            try:
+                lay.ParseFromString(msg.payload)
+                decoder = _compile_tactile(lay, self._value_range)
+                side = hg.side_of_topic(data_topic)
+                if side is None:
+                    # Unassigned unit (rooted at its code8): the placement is
+                    # mirrored about the side, so drawing it would put the taxels on
+                    # the wrong hand. Skip rather than guess — calibrate the unit.
+                    return None
+                pl = hg.build_placement(lay, side == "left")
+            except (DecodeError, TactileSceneError) as exc:
+                raise TactileSceneError(f"{data_topic}/layout: {exc}") from exc
+            self._decoders[data_topic] = decoder
             self._placement[data_topic] = pl
-            self._cube[data_topic] = hg.footprint(pl)
+            self._diameter[data_topic] = hg.footprint(pl)
             self._layout[data_topic] = msg.payload
             return None
         if ch.schema_name == _TACTILE_SCHEMA and "/tactile/" in topic:
             pl = self._placement.get(topic)
             if pl is None:
                 return None                    # no layout seen yet
-            ns = _ns(msg.timestamp)
-            if ns - self._last_ns.get(topic, 0) < _SCENE_MIN_PERIOD_NS:
-                return None                    # throttle scene to ~30 fps
-            self._last_ns[topic] = ns
+            tr = TactileRaw()
+            try:
+                tr.ParseFromString(msg.payload)
+                decoder = self._decoders[topic]
+                decoder.validate_size(tr.data)
+                ns = _ns(msg.timestamp)
+                if ns - self._last_ns.get(topic, 0) < _SCENE_MIN_PERIOD_NS:
+                    return None                    # throttle scene to ~30 fps
+                intensities = decoder.intensities(tr.data)
+            except (DecodeError, TactileSceneError) as exc:
+                raise TactileSceneError(f"{topic}: {exc}") from exc
             out_ch = self._scene_ch.get(topic)
             if out_ch is None:
                 out_ch = make_channel(topic + "/scene", _SCENE_SCHEMA,
                                       stream_id=_TACTILE_SCENE_BASE + msg.stream_id)
                 self._scene_ch[topic] = out_ch
-            tr = TactileRaw()
-            tr.ParseFromString(msg.payload)
             frame = topic.strip("/").split("/")[0]  # /glove_left/tactile/0 -> glove_left
-            scene = _tactile_scene(tr.data, pl, frame, msg.timestamp,
-                                   self._cube.get(topic, hg.CUBE))
+            scene = _tactile_scene(intensities, pl, frame, msg.timestamp,
+                                   self._diameter[topic])
+            self._last_ns[topic] = ns
             seq = self._seq.get(topic, 0)
             self._seq[topic] = (seq + 1) & 0xFFFFFFFF
             out = Message(stream_id=out_ch.id, payload=scene.SerializeToString(), seq=seq)
@@ -122,27 +142,16 @@ class TactileSceneDeriver:
         return None
 
 
-def _tactile_scene(data, placement, frame_id, timestamp, cube=hg.CUBE):
-    cubes, texts = [], []
-    for index, taxel_id, x, y in placement:
-        p = min(data[index] / hg.FULL_SCALE, 1.0) if index < len(data) else 0.0
-        h = 0.004 + p * hg.MAX_H
-        cubes.append(
-            CubePrimitive(
-                pose=Pose(position=Vector3(x=x, y=y, z=h / 2), orientation=_UNIT_Q),
-                size=Vector3(x=cube, y=cube, z=h),
-                color=Color(r=p, g=0.1, b=1.0 - p, a=1.0),
-            )
+def _tactile_scene(intensities, placement, frame_id, timestamp, diameter=hg.POINT_SIZE):
+    spheres = [
+        SpherePrimitive(
+            pose=Pose(position=Vector3(x=x, y=y, z=z), orientation=_UNIT_Q),
+            size=Vector3(x=diameter, y=diameter, z=diameter),
+            color=Color(r=1.0, g=1.0 - p, b=1.0 - p, a=1.0),
         )
-        texts.append(
-            TextPrimitive(
-                pose=Pose(position=Vector3(x=x, y=y, z=h + 0.004), orientation=_UNIT_Q),
-                billboard=True, font_size=9.0, scale_invariant=True,
-                color=Color(r=1.0, g=1.0, b=1.0, a=0.9), text=str(taxel_id),
-            )
-        )
-    ent = SceneEntity(timestamp=timestamp, frame_id=frame_id, id="hand",
-                      cubes=cubes, texts=texts)
+        for p, (x, y, z) in zip(intensities, placement, strict=True)
+    ]
+    ent = SceneEntity(timestamp=timestamp, frame_id=frame_id, id="hand", spheres=spheres)
     return SceneUpdate(entities=[ent])
 
 
@@ -195,7 +204,7 @@ class HandSkeletonDeriver:
         else:
             return None
         # Full source rate (~72 fps): the hand scene is cheap to build (26
-        # spheres + a bone LINE_LIST), so — unlike the 137-cube tactile scene —
+        # spheres + a bone LINE_LIST), so — unlike the dense tactile scene —
         # it is NOT throttled. Emitting one scene per FrameTransforms keeps the
         # viz twin per-message identical to the data stream.
         fts = FrameTransforms()

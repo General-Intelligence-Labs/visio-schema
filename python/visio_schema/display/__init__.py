@@ -1043,6 +1043,7 @@ def run_bridge(
     derive_tf: bool = False,
     derive_bitrate: bool = False,
     derive_scene: bool = False,
+    tactile_range: tuple[float, float] | None = None,
     bitrate_window: float = 2.0,
     close_sinks: bool = True,
 ) -> int:
@@ -1063,8 +1064,13 @@ def run_bridge(
     if derive_scene:
         # Device-specific scene twins live in display (viewer policy), lazily
         # imported so the base bridge carries no hard dep on them.
-        from visio_schema.display.scene_derivers import HandSkeletonDeriver, TactileSceneDeriver
-        scene = [TactileSceneDeriver(), HandSkeletonDeriver()]
+        from visio_schema.display.scene_derivers import (
+            HandSkeletonDeriver,
+            TactileSceneDeriver,
+            TactileSceneError,
+        )
+        scene = [TactileSceneDeriver(value_range=tactile_range), HandSkeletonDeriver()]
+    scene_errors = {}
     n = 0
 
     def _fan_out(msg: Message, ch: Channel) -> None:
@@ -1078,8 +1084,20 @@ def run_bridge(
             if derived is not None:
                 _fan_out(*derived)
             for sd in scene:
-                r = sd.derive(msg, ch)
+                key = (sd, ch.topic.removesuffix("/layout"))
+                try:
+                    r = sd.derive(msg, ch)
+                except TactileSceneError as exc:
+                    # Only malformed tactile input is isolated, not rendering bugs.
+                    # Repeat a diagnostic after recovery, not for every bad sample.
+                    detail = str(exc)
+                    if scene_errors.get(key) != detail:
+                        print(f"warning: {detail}; skipping tactile scene; raw stream continues",
+                              file=sys.stderr)
+                    scene_errors[key] = detail
+                    continue
                 if r is not None:
+                    scene_errors.pop(key, None)
                     _fan_out(*r)
             if bitrate is not None:
                 for d_msg, d_ch in bitrate.feed(msg, ch):
@@ -1139,11 +1157,19 @@ def main(argv: list[str] | None = None) -> int:
                    help="bitrate sliding-window length in seconds (default 2.0)")
     p.add_argument("--scene", action="store_true",
                    help="derive hand-shape SceneUpdate twins on .../scene "
-                        "(JQ tactile glove + Quest hand skeleton)")
+                        "(scalar tactile glove + Quest hand skeleton)")
+    p.add_argument("--tactile-range", type=float, nargs=2, metavar=("MIN", "MAX"),
+                   help="fixed tactile scene display range (also in --serve); "
+                        "defaults: UINT8 0..80, INT16 0..32767. Raw counts, not newtons")
     p.add_argument("--rerun", action="store_true", help="display in the Rerun viewer")
     p.add_argument("--rerun-memory", metavar="LIMIT", default="2GB",
                    help="Rerun viewer memory cap; old data drops past it (default 2GB)")
     args = p.parse_args(argv)
+    from visio_schema.display.tactile_scalars import validate_range
+    try:
+        tactile_range = validate_range(args.tactile_range)
+    except ValueError as exc:
+        p.error(str(exc))
 
     # Publish the key into the SAME resolution chain open_recording already
     # consults, instead of threading it through _replay, every sink and the
@@ -1169,6 +1195,8 @@ def main(argv: list[str] | None = None) -> int:
             baud=args.baud,
             bitrate=args.bitrate,
             bitrate_window=args.bitrate_window,
+            derive_scene=args.scene,
+            tactile_range=tactile_range,
         )
         return 0
 
@@ -1226,6 +1254,7 @@ def main(argv: list[str] | None = None) -> int:
         derive_tf=want_derived,
         derive_bitrate=bool(args.bitrate and want_derived),
         derive_scene=args.scene,
+        tactile_range=tactile_range,
         bitrate_window=args.bitrate_window,
     )
     print(f"done ({n} messages)", file=sys.stderr)

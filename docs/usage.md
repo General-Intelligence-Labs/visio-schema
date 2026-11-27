@@ -43,6 +43,55 @@ visio-display --serial /dev/ttyACM0 --foxglove
 visio-display --serial /dev/ttyACM0 --out run.mcap
 ```
 
+### Scalar tactile scenes
+
+`--scene` adds a colored-point `foxglove.SceneUpdate` on each tactile topic's
+`.../scene` (and the existing Quest hand-skeleton scenes). Each taxel is a fixed-size
+sphere with no numeric/text annotation; only its color changes with the reading.
+This is a qualitative view, not a quantitative measurement tool. It is opt-in, including
+in the device-picker launcher. Import `glove_layout.json` from the installed
+`visio_schema/display/` directory into Foxglove, or select the `.../scene` topics
+in a 3D panel.
+
+```bash
+visio-display --serial /dev/ttyACM0 --foxglove --scene
+visio-display --serve --scene --tactile-range 0 2000
+```
+
+The standard deriver reads the sole scalar field declared by each layout group,
+using `Point.index + field.offset` and the declared numeric type (little-endian).
+All eight `PackedElementField.NumericType` integer/float types are supported;
+multiple fields per group are rejected rather than guessing a force axis.
+LOGICAL layouts retain their hand-shaped placement on the conventional z=0 plane;
+APPROXIMATE/MEASURED x/y/z coordinates are used as supplied, without mirroring or
+inferring a new hand shape. Non-planar layouts keep their depth; readings never
+move points or change their size. Marker diameter is cached from the layout's
+3D taxel spacing, capped at 7 mm.
+
+The color scale runs from white (low) to red (high). Defaults are **display
+parameters, not sensor calibration or physical full scales**:
+UINT8 uses 0..80 (legacy fabric-glove appearance), INT16 uses 0..32767, other
+integers use 0..their positive type maximum, and floats use 0..1. Raw INT16 counts
+can be much smaller than 32767; use `--tactile-range MIN MAX` to set a useful fixed
+range, e.g. 0..2000 above. This override applies to all tactile scalar groups/topics,
+not to skeleton scenes, and does not enable `--scene` on its own. MIN and MAX must
+be finite, strictly increasing, with a finite span. Programmatic callers can use
+`run_bridge(..., derive_scene=True, tactile_range=(0, 2000))` or
+`TactileSceneDeriver(value_range=(0, 2000))` from the display submodules.
+
+Intensity is clipped to 0..1 (white to red); signed readings below MIN stay white
+instead of producing invalid colors. There is no per-frame
+auto-ranging, conversion to newtons, zeroing, or mutation of the raw stream.
+Layouts/decoders are cached until the layout bytes change; scenes stay throttled
+to about 30 fps. Invalid layouts invalidate the old decoder before reporting an
+error; unsupported types, ambiguous fields and truncated payloads are errors,
+not zero-filled data. The bridge reports these tactile-input errors to stderr
+with the topic and skips only the derived tactile scene, not raw capture, camera
+preview or other scene derivers. Identical consecutive errors are logged once
+until recovery. A bad layout leaves that topic's scene disabled until a valid
+layout arrives; a bad frame is skipped until a valid frame arrives. Unexpected
+rendering/programming errors still propagate instead of being silently swallowed.
+
 ### Recording while you watch
 
 `McapWriter.write(message, channel)` takes the rows straight from `read_serial` (same order):
