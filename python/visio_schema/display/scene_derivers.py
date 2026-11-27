@@ -5,7 +5,7 @@ own data, so Foxglove / an MCAP shows a hand shape without any downstream code:
 
 - ``TactileSceneDeriver`` — tactile glove: join a ``visio_schema.v1.sensor.TactileRaw`` on
   ``/glove_*/tactile/*`` with its ``TactileLayout`` on ``.../layout`` and emit a
-  point-per-taxel scene on ``.../scene`` (blue->red = scalar intensity).
+  point-per-taxel scene on ``.../scene`` (white->red = scalar intensity).
 - ``HandSkeletonDeriver`` — Quest hand tracking: turn a 26-joint
   ``foxglove.FrameTransforms`` on ``/quest/skeleton/hand_*`` into a sphere-per-joint
   + bone LINE_LIST scene on ``.../scene`` (left cyan, right amber).
@@ -67,7 +67,7 @@ def _ns(ts):
 class TactileSceneDeriver:
     """Join a glove's TactileRaw with its TactileLayout and emit a hand-shaped
     SceneUpdate on <data-topic>/scene (one fixed-size sphere per taxel, colored
-    blue->red by scalar intensity, without text labels). The optional value_range
+    white->red by scalar intensity, without text labels). The optional value_range
     fixes the color range for all scalar groups; it never changes raw readings."""
 
     def __init__(self, *, value_range=None):
@@ -147,7 +147,7 @@ def _tactile_scene(intensities, placement, frame_id, timestamp, diameter=hg.POIN
         SpherePrimitive(
             pose=Pose(position=Vector3(x=x, y=y, z=z), orientation=_UNIT_Q),
             size=Vector3(x=diameter, y=diameter, z=diameter),
-            color=Color(r=p, g=0.1, b=1.0 - p, a=1.0),
+            color=Color(r=1.0, g=1.0 - p, b=1.0 - p, a=1.0),
         )
         for p, (x, y, z) in zip(intensities, placement, strict=True)
     ]

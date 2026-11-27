@@ -68,7 +68,8 @@ inferring a new hand shape. Non-planar layouts keep their depth; readings never
 move points or change their size. Marker diameter is cached from the layout's
 3D taxel spacing, capped at 7 mm.
 
-Defaults are **display parameters, not sensor calibration or physical full scales**:
+The color scale runs from white (low) to red (high). Defaults are **display
+parameters, not sensor calibration or physical full scales**:
 UINT8 uses 0..80 (legacy fabric-glove appearance), INT16 uses 0..32767, other
 integers use 0..their positive type maximum, and floats use 0..1. Raw INT16 counts
 can be much smaller than 32767; use `--tactile-range MIN MAX` to set a useful fixed
@@ -78,7 +79,7 @@ be finite, strictly increasing, with a finite span. Programmatic callers can use
 `run_bridge(..., derive_scene=True, tactile_range=(0, 2000))` or
 `TactileSceneDeriver(value_range=(0, 2000))` from the display submodules.
 
-Intensity is clipped to 0..1 (blue to red); signed readings below MIN stay blue
+Intensity is clipped to 0..1 (white to red); signed readings below MIN stay white
 instead of producing invalid colors. There is no per-frame
 auto-ranging, conversion to newtons, zeroing, or mutation of the raw stream.
 Layouts/decoders are cached until the layout bytes change; scenes stay throttled

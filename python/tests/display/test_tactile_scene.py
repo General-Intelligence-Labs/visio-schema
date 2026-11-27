@@ -50,7 +50,8 @@ def _scene(deriver, data, *, ns=1_000_000_000):
 
 
 def _assert_intensities(scene, expected):
-    assert [p.color.r for p in scene.spheres] == pytest.approx(expected)
+    assert [p.color.r for p in scene.spheres] == pytest.approx([1] * len(expected))
+    assert [p.color.g for p in scene.spheres] == pytest.approx([1 - p for p in expected])
     assert [p.color.b for p in scene.spheres] == pytest.approx([1 - p for p in expected])
     assert not scene.cubes and not scene.texts
     assert all(p.size.x == p.size.y == p.size.z > 0 for p in scene.spheres)

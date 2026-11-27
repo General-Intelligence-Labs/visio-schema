@@ -10,7 +10,7 @@ from visio_schema.foxglove.PackedElementField_pb2 import PackedElementField as F
 from visio_schema.v1.calibration.tactile_pb2 import TactileLayout
 
 # These are viewer defaults, not calibrated physical full scales. UINT8 keeps
-# the original fabric-glove appearance; signed readings below zero clip to blue.
+# the original fabric-glove range; signed readings below zero clip to white.
 _FORMATS = {
     Field.UINT8: (struct.Struct("<B"), hg.FULL_SCALE),
     Field.INT8: (struct.Struct("<b"), 127.0),
